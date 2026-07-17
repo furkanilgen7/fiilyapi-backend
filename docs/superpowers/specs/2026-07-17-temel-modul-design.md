@@ -136,11 +136,15 @@ Avatar baş harfleri (`AY`) `full_name`'den türetilir, saklanmaz.
 | Alan | Tip | Not |
 |---|---|---|
 | `id` | UUID PK | |
-| `key` | text, unique | `system_admin`, `patron`, `site_chief`, `accounting`, `project_manager`, `procurement` |
-| `name` | text | "Sistem Yöneticisi" |
-| `emoji` | text | 🛡️ 👔 👷 📒 🏗 🛒 |
-| `description` | text | rol kartındaki açıklama |
-| `is_system` | bool | true → silinemez, adı değiştirilemez |
+| `key` | text, unique | `system_admin`, `patron`, `site_chief`, `field_engineer`, `hr_manager`, `accounting`, `project_manager`, `procurement` |
+| `name` | text | "Sistem Yöneticisi" — **düzenlenebilir** |
+| `emoji` | text | 🛡️ 👔 👷 📐 👥 📒 🏗 🛒 — düzenlenebilir |
+| `description` | text | rol kartındaki açıklama — düzenlenebilir |
+| `is_system` | bool | true → **silinemez**; adı/emojisi/açıklaması yine de düzenlenebilir |
+
+`key` sabittir ve asla değişmez — kod bu anahtara dayanır, görünen ad ise serbestçe değiştirilebilir. Kullanıcı "Saha Mühendisi"ni "Teknik Ofis" yapabilir; `field_engineer` anahtarı yerinde kalır.
+
+Yeni rol eklenebilir (`is_system = false`); bu roller hem silinebilir hem tamamen düzenlenebilir. Yalnızca `system_admin` rolünün **izin satırları** kilitlidir (§5.0 kilitlenme koruması).
 
 **`modules`** — izin matrisinin satırları (seed, sabit)
 
@@ -218,7 +222,7 @@ Arayüz dili (`tr`/`en`), para birimi (`TRY`/`USD`/`EUR`), tarih formatı, aray�
 Mockup'taki matris hücreleri iki ekseni karıştırıyor. Model bunu ayırır:
 
 ```
-access_level:  none · view · draft · request · approve · full
+access_level:  none · view · draft · request · approve · full · admin
 scope:         all · own · project · finance · stock · limited
 ```
 
@@ -226,6 +230,7 @@ Bir hücre = `(access_level, scope)` ikilisi. Mockup'taki etiket bundan **türet
 
 | Mockup etiketi | access_level | scope |
 |---|---|---|
+| `✓ Süper` | `admin` | `all` |
 | `✓ Tam` | `full` | `all` |
 | `—` | `none` | `all` (anlamsız, yok sayılır) |
 | `Görüntüle` | `view` | `all` |
@@ -238,7 +243,26 @@ Bir hücre = `(access_level, scope)` ikilisi. Mockup'taki etiket bundan **türet
 | `Talep` | `request` | `all` |
 | `Onay` | `approve` | `all` |
 
-Seviyeler sıralıdır: `none < view < draft < request < approve < full`. `require_permission(module, min_level)` bu sıraya göre karşılaştırır.
+Seviyeler sıralıdır: `none < view < draft < request < approve < full < admin`. `require_permission(module, min_level)` bu sıraya göre karşılaştırır.
+
+### 5.0 Silme kuralı
+
+Silme, ayrı ve en tepedeki yetkidir. `full` **silmeyi kapsamaz** — oluşturma, düzenleme ve onaylamayı kapsar.
+
+| Seviye | Kapsadığı |
+|---|---|
+| `full` | Oluştur · düzenle · onayla. **Silme yok.** |
+| `admin` | `full` + **kalıcı silme**. Yalnızca Sistem Yöneticisi'ne verilir. |
+
+**Taslak istisnası (seviyeden bağımsız evrensel kural):** Bir kullanıcı, aşağıdaki üç koşulun *hepsi* sağlanıyorsa kaydı silebilir:
+
+1. Kaydı kendisi oluşturmuş (`created_by = aktör`), **ve**
+2. Kayıt hâlâ taslak durumunda — onaylanmamış ve hiçbir tabloya işlenmemiş, **ve**
+3. Aktörün o modülde en az `draft` seviyesi var.
+
+Onaylanmış veya muhasebeleştirilmiş hiçbir kayıt bu istisnayla silinemez; onları yalnızca `admin` seviyesi siler. Bu kural mockup'taki denetim kaydıyla tutarlıdır (`Yusuf Kaya / Satınalma → Silme → "Taslak satın alma talebi silindi"`).
+
+**Kilitlenme koruması:** Sistem Yöneticisi rolünün izin satırları değiştirilemez — ne kendisi ne başkası tarafından. Rolün adı, emojisi ve açıklaması düzenlenebilir; izinleri kilitlidir. Aksi hâlde sistemde ayarlara girebilen kimse kalmayabilir ve kurtarma yalnızca veritabanına elle müdahaleyle mümkün olur.
 
 ### 5.1 Modüller (13 satır, seed)
 
@@ -258,25 +282,32 @@ Seviyeler sıralıdır: `none < view < draft < request < approve < full`. `requi
 | SISTEM | `settings` | Ayarlar |
 | SISTEM | `user_management` | Kullanıcı & Rol Yönetimi |
 
-### 5.2 Seed matrisi (6 rol × 13 modül)
+### 5.2 Seed matrisi (8 rol × 13 modül)
 
-`Ayarlar - İzin Matrisi.dc.html` kanon kabul edilir.
+`Ayarlar - İzin Matrisi.dc.html` mockup'taki 6 rol için kanon kabul edilir. **Saha Mühendisi** ve **İK Müdürü** mockup'ta yoktur; kullanıcı talebiyle eklenmiştir, satırları aşağıda türetilmiştir.
 
-| Modül | Sys.Yön. | Patron | Şantiye Şefi | Muhasebe | PM | Satınalma |
-|---|---|---|---|---|---|---|
-| Gösterge Paneli | Tam | Tam | Sınırlı | Mali | Tam | — |
-| Onay Kutusu | Tam | Tam | Kendi | Mali | Proje | Stok |
-| Günlük Kayıt | Tam | Tam | Tam | — | Görüntüle | — |
-| Puantaj | Tam | Tam | Tam | Görüntüle | — | — |
-| Personel | Tam | Tam | Görüntüle | Tam | Görüntüle | — |
-| Bordro | Tam | Tam | — | Tam | — | — |
-| Stok & Depo | Tam | Tam | Görüntüle | — | Görüntüle | Tam |
-| Satınalma & Teklif | Tam | Tam | Talep | — | Onay | Tam |
-| Hakedişler | Tam | Tam | Taslak | Onay | Onay | — |
-| Muhasebe | Tam | Tam | — | Tam | Görüntüle | — |
-| Hazine | Tam | Tam | — | Tam | Görüntüle | — |
-| Ayarlar | Tam | — | — | — | — | — |
-| Kullanıcı & Rol Yönetimi | Tam | — | — | — | — | — |
+Sistem Yöneticisi her modülde `admin` (`✓ Süper`) — tek silme yetkisi olan rol.
+
+| Modül | Sys.Yön. | Patron | Şantiye Şefi | Saha Müh. | İK Müdürü | Muhasebe | PM | Satınalma |
+|---|---|---|---|---|---|---|---|---|
+| Gösterge Paneli | Süper | Tam | Sınırlı | Sınırlı | Sınırlı | Mali | Tam | — |
+| Onay Kutusu | Süper | Tam | Kendi | Kendi | Kendi | Mali | Proje | Stok |
+| Günlük Kayıt | Süper | Tam | Tam | Tam | — | — | Görüntüle | — |
+| Puantaj | Süper | Tam | Tam | Görüntüle | Tam | Görüntüle | — | — |
+| Personel | Süper | Tam | Görüntüle | Görüntüle | Tam | Tam | Görüntüle | — |
+| Bordro | Süper | Tam | — | — | Tam | Tam | — | — |
+| Stok & Depo | Süper | Tam | Görüntüle | Görüntüle | — | — | Görüntüle | Tam |
+| Satınalma & Teklif | Süper | Tam | Talep | Talep | — | — | Onay | Tam |
+| Hakedişler | Süper | Tam | Taslak | Taslak | — | Onay | Onay | — |
+| Muhasebe | Süper | Tam | — | — | — | Tam | Görüntüle | — |
+| Hazine | Süper | Tam | — | — | — | Tam | Görüntüle | — |
+| Ayarlar | Süper | — | — | — | — | — | — | — |
+| Kullanıcı & Rol Yönetimi | Süper | — | — | — | — | — | — | — |
+
+**Yeni rollerin gerekçesi:**
+
+- **Saha Mühendisi** (📐 `field_engineer`) — Şantiye Şefi'nin teknik muadili. Günlük kaydı ve hakediş taslağını o hazırlar, ama **puantajda yalnızca görüntüleme** yetkisi vardır: puantaj insan/ücret kararıdır, şefin işidir. Şeften farkı tek satır budur.
+- **İK Müdürü** (👥 `hr_manager`) — Personel, Puantaj ve Bordro'da tam yetkili; saha ve mali modüllere hiç girmez. Bordro'da Muhasebe ile örtüşür: İK hazırlar, Muhasebe öder.
 
 **Çözülen çelişki:** `Ayarlar.dc.html` özet matrisinde Patron'un Ayarlar erişimi `✓`, `İzin Matrisi.dc.html`'de `—`. İkincisi kanon — `Rol Yönetimi.dc.html`'deki "Patron: tüm modüller · tüm projeler (**ayarlar hariç**)" açıklamasıyla tutarlı olan o.
 
@@ -293,7 +324,9 @@ Tek bir kapı, her uçta:
 
 Yetki kontrolü modüllere dağıtılmaz. `scope` uygulaması sorgu katmanında yapılır: `own` → yalnızca aktörün kayıtları, `project` → `user_project_access`'teki projeler, `finance`/`stock` → modüle özgü kısıt.
 
-`is_system` rollerin izinleri düzenlenebilir **değildir**; Sistem Yöneticisi her zaman tam erişimlidir (kilitlenme koruması).
+Silme uçları `AccessLevel.ADMIN` ister; taslak istisnası (§5.0) servis katmanında ayrıca kontrol edilir — `created_by` + taslak durumu + en az `draft` seviyesi.
+
+Yalnızca `system_admin` rolünün izin satırları değiştirilemez. Diğer `is_system` roller (ör. Patron) silinemez ama izinleri serbestçe düzenlenebilir.
 
 ---
 
@@ -421,9 +454,17 @@ Her faz şu kapılardan geçmeden bitmiş sayılmaz:
 
 ### Negatif izin testleri (zorunlu)
 
-Her rol için **erişemez** testleri yazılır: "Şantiye Şefi hakediş onaylayamaz", "Patron ayarlara giremez", "Muhasebe kullanıcı silemez". ERP'de asıl tehlike, bir rolün yapamaması gereken şeyi yapabilmesidir; pozitif testler bunu yakalamaz.
+Her rol için **erişemez** testleri yazılır: "Şantiye Şefi hakediş onaylayamaz", "Patron ayarlara giremez", "Saha Mühendisi puantaj değiştiremez". ERP'de asıl tehlike, bir rolün yapamaması gereken şeyi yapabilmesidir; pozitif testler bunu yakalamaz.
 
-Kapsam: her (rol, modül, izin verilmeyen eylem) üçlüsü için en az bir test. 6 rol × 13 modül matrisi bu testlerin kaynağıdır.
+Kapsam: her (rol, modül, izin verilmeyen eylem) üçlüsü için en az bir test. 8 rol × 13 modül matrisi bu testlerin kaynağıdır.
+
+**Silme kuralı için ayrıca zorunlu testler:**
+
+- `full` seviyesindeki bir rol (ör. Patron) kesinleşmiş kaydı **silemez** — yalnızca Sistem Yöneticisi siler.
+- Kullanıcı **kendi** taslağını siler; **başkasının** taslağını silemez.
+- Onaylanmış/işlenmiş kayıt, oluşturanı tarafından bile silinemez.
+- Sistem Yöneticisi rolünün izin satırları hiçbir aktör tarafından değiştirilemez (kilitlenme koruması) — Sistem Yöneticisi'nin kendisi dahil.
+- Rol adı değiştirilebilir; `key` değişmez ve izin kontrolü ada değil anahtara dayanır.
 
 ---
 
