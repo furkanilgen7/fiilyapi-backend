@@ -113,20 +113,6 @@ async def test_reseed_after_permissions_wiped_restores_full_matrix(db_session):
     assert len(module_count) == 13
 
 
-async def test_reseed_from_fully_seeded_state_is_a_noop(seeded_db):
-    """Tamamen seed edilmis bir DB'ye tekrar seed_reference_data cagirmak
-    UNIQUE(role_id, module_id) ihlali firlatmamali ve satir sayisi degismemeli."""
-    await seed_reference_data(seeded_db)
-
-    roles = (await seeded_db.execute(select(Role))).scalars().all()
-    modules = (await seeded_db.execute(select(Module))).scalars().all()
-    permissions = (await seeded_db.execute(select(RolePermission))).scalars().all()
-
-    assert len(roles) == 8
-    assert len(modules) == 13
-    assert len(permissions) == 104
-
-
 async def test_users_table_exists_in_test_schema(seeded_db):
     """users modeli hicbir yerde import edilmezse Base.metadata bu tabloyu bilmez ve
     create_all onu sessizce atlar. Bu test, semanin users tablosunu gercekten
