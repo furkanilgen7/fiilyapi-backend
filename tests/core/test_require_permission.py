@@ -4,6 +4,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.core.db import get_db
 from app.core.permissions import AccessLevel, require_permission
+from app.modules.roles.models import Role
 
 
 @pytest.fixture
@@ -84,3 +85,33 @@ async def test_system_admin_passes_every_gate(guarded_client, client, seeded_db,
     response = await guarded_client.get("/korumali", headers={"Authorization": f"Bearer {token}"})
 
     assert response.status_code == 200
+
+
+async def test_role_with_no_permission_row_is_denied(
+    guarded_client, client, seeded_db, user_factory
+):
+    """NEGATİF: (rol, modül) için hiç RolePermission satırı yoksa erişim reddedilmeli.
+
+    `seeded_db` yalnızca 8 kanonik rol için 13x8=104 hücrelik matrisi doldurur; bu test için
+    kasıtlı olarak matrisin DIŞINDA yeni bir rol oluşturuyoruz, dolayısıyla `progress_payments`
+    modülü için hiçbir izin satırı yok. `require_permission` "varsayılan kapalı" olmalı: satır
+    yoksa `permission is None` dalı 403 üretmeli — `permission.access_level`'e hiç erişmeden.
+    Bu, seviyesi `none` olan bir satırın reddedilmesini test eden
+    `test_hr_manager_has_no_access_to_progress_payments`'tan farklı bir kod yolu.
+    """
+    no_permission_role = Role(
+        key="test_no_permissions",
+        name="Izinsiz Rol",
+        emoji="",
+        description="Test icin: hicbir modulde izin satiri olmayan rol.",
+        is_system=False,
+    )
+    seeded_db.add(no_permission_role)
+    await seeded_db.flush()
+
+    await user_factory(email="izinsiz@fiil.com", password="parola", role_key="test_no_permissions")
+    token = await _token_for(client, "izinsiz@fiil.com")
+
+    response = await guarded_client.get("/korumali", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 403
