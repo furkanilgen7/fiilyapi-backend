@@ -2,8 +2,9 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from app.core.access import AccessLevel
 from app.core.db import get_db
-from app.core.permissions import AccessLevel, require_permission
+from app.core.permissions import require_permission
 from app.modules.roles.models import Role
 
 

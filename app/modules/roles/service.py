@@ -3,8 +3,8 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.access import AccessLevel, Scope
 from app.core.errors import PermissionLockedError
-from app.core.permissions import AccessLevel, Scope
 from app.modules.roles.models import SYSTEM_ADMIN_KEY, Role, RolePermission
 from app.modules.roles.repository import get_permission
 

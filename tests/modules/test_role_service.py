@@ -1,8 +1,8 @@
 import pytest
 from sqlalchemy import select
 
+from app.core.access import AccessLevel, Scope
 from app.core.errors import PermissionLockedError
-from app.core.permissions import AccessLevel, Scope
 from app.modules.roles.models import Role
 from app.modules.roles.service import rename_role, update_role_permission
 

@@ -5,8 +5,8 @@ from sqlalchemy import Boolean, Enum, ForeignKey, Integer, String, Text, UniqueC
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.access import AccessLevel, Scope
 from app.core.db import Base
-from app.core.permissions import AccessLevel, Scope
 
 SYSTEM_ADMIN_KEY = "system_admin"
 

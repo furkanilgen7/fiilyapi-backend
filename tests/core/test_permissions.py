@@ -1,6 +1,6 @@
 import pytest
 
-from app.core.permissions import AccessLevel, satisfies
+from app.core.access import AccessLevel, satisfies
 
 
 def test_levels_are_ordered():

@@ -1,7 +1,7 @@
 import uuid
 from dataclasses import dataclass
 
-from app.core.permissions import AccessLevel, can_delete
+from app.core.access import AccessLevel, can_delete
 
 
 @dataclass

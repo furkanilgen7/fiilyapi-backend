@@ -7,7 +7,7 @@ değiştirebilir; tek istisna system_admin rolüdür (kilitlenme koruması, spec
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.permissions import AccessLevel, Scope
+from app.core.access import AccessLevel, Scope
 from app.modules.roles.models import Module, ModuleGroup, Role, RolePermission
 
 ROLES: list[dict] = [

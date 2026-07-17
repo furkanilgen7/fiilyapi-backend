@@ -1,6 +1,6 @@
 from sqlalchemy import select, text
 
-from app.core.permissions import AccessLevel
+from app.core.access import AccessLevel
 from app.modules.roles.models import Module, Role, RolePermission
 from app.modules.roles.seed_data import seed_reference_data
 
