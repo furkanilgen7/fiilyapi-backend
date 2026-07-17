@@ -39,3 +39,9 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+# UP042: StrEnum onerisini kasitli olarak yok sayiyoruz. Proje genelinde
+# (str, enum.Enum) deseni bilinclidir; StrEnum'a gecis __str__ davranisini
+# degistirir ((str, Enum) -> "UserStatus.active", StrEnum -> "active") ve bu,
+# ortuk string donusumlerini sessizce bozar. Desen AccessLevel, Scope,
+# ModuleGroup gibi diger enum siniflarinda da spec geregi tekrarlanacak.
+ignore = ["UP042"]

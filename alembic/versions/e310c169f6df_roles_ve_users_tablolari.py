@@ -71,3 +71,9 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_roles_key'), table_name='roles')
     op.drop_table('roles')
     # ### end Alembic commands ###
+    # op.drop_table('users') bos kolonlu bir Table nesnesi olusturdugu icin
+    # SQLAlchemy'nin _on_table_drop event'i (enum tipini otomatik dusuren mekanizma)
+    # devreye girmiyor. upgrade() tarafinda CREATE TYPE checkfirst=False ile
+    # calistigi icin, bu tip burada acikca dusurulmezse "alembic downgrade -1"
+    # sonrasi "alembic upgrade head" DuplicateObject hatasiyla patlar.
+    sa.Enum(name='user_status').drop(op.get_bind(), checkfirst=True)

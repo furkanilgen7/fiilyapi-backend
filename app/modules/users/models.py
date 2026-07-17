@@ -10,7 +10,7 @@ from app.core.db import Base
 from app.modules.roles.models import Role
 
 
-class UserStatus(str, enum.Enum):  # noqa: UP042 (brief'teki tanım birebir korunuyor)
+class UserStatus(str, enum.Enum):
     active = "active"
     on_leave = "on_leave"
     passive = "passive"
