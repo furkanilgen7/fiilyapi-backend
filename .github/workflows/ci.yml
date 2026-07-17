@@ -30,4 +30,31 @@ jobs:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
       - run: python -m ruff check .
+      - run: python -m ruff format --check .
       - run: python -m pytest --cov=app --cov-report=term-missing --cov-fail-under=80
+
+  alembic-cycle:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: fiil
+          POSTGRES_PASSWORD: fiil
+          POSTGRES_DB: fiil_erp_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://fiil:fiil@localhost:5433/fiil_erp_test
+      JWT_SECRET: ci-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: alembic upgrade head
+      - run: alembic downgrade -1
+      - run: alembic upgrade head
