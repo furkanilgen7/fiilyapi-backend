@@ -1,4 +1,5 @@
 from collections.abc import AsyncGenerator
+from decimal import Decimal
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -10,6 +11,7 @@ from app.core.db import Base, get_db
 from app.core.security import hash_password
 from app.main import app
 from app.modules.projects import models as projects_models  # noqa: F401
+from app.modules.projects.models import Project, ProjectStatus
 from app.modules.roles import models as roles_models  # noqa: F401
 from app.modules.roles.models import Role
 from app.modules.roles.seed_data import seed_reference_data
@@ -104,5 +106,28 @@ def user_factory(seeded_db: AsyncSession):
         seeded_db.add(user)
         await seeded_db.flush()
         return user
+
+    return _create
+
+
+@pytest.fixture
+def project_factory(db_session: AsyncSession):
+    async def _create(
+        code: str,
+        name: str = "Test Proje",
+        status: str = "active",
+        budget: str = "1000000.00",
+        progress_pct: str = "0.00",
+    ) -> Project:
+        project = Project(
+            code=code,
+            name=name,
+            status=ProjectStatus(status),
+            budget=Decimal(budget),
+            progress_pct=Decimal(progress_pct),
+        )
+        db_session.add(project)
+        await db_session.flush()
+        return project
 
     return _create

@@ -26,3 +26,9 @@ async def test_create_and_read_project(db_session):
 
 def test_project_status_values():
     assert {s.value for s in ProjectStatus} == {"active", "on_hold", "completed"}
+
+
+async def test_project_factory_creates_row(project_factory):
+    project = await project_factory("TMP-1", name="Geçici")
+    assert project.id is not None
+    assert project.code == "TMP-1"
