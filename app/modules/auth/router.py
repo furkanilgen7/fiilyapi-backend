@@ -48,9 +48,7 @@ async def refresh(
     # göstermemek için ikisinde de aynı yanıtı dönüyoruz.
     user = await session.get(User, user_id)
     if user is None or user.status is not UserStatus.active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Oturum süresi dolmuş"
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Oturum süresi dolmuş")
 
     return TokenPair(
         access_token=create_access_token(user_id),
@@ -72,5 +70,5 @@ async def me(user: Annotated[User, Depends(get_current_user)]) -> MeResponse:
         full_name=user.full_name,
         title=user.title,
         role_key=user.role.key,
-        status=user.status.value,
+        status=user.status,
     )

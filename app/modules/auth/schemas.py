@@ -2,6 +2,8 @@ import uuid
 
 from pydantic import BaseModel, EmailStr
 
+from app.modules.users.models import UserStatus
+
 
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -20,8 +22,8 @@ class TokenPair(BaseModel):
 
 class MeResponse(BaseModel):
     id: uuid.UUID
-    email: str
+    email: EmailStr
     full_name: str
     title: str
     role_key: str
-    status: str
+    status: UserStatus

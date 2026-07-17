@@ -1,6 +1,7 @@
 import uuid
 
 from app.core.security import create_refresh_token
+from app.main import app
 from app.modules.auth import service as auth_service
 from app.modules.users.models import UserStatus
 
@@ -139,9 +140,7 @@ async def test_refresh_issues_new_access_token(client, seeded_db, user_factory):
 
 async def test_refresh_for_passive_user_is_rejected(client, seeded_db, user_factory):
     """Pasife alinan bir kullanicinin eski refresh token'i yeni access token basmamali."""
-    user = await user_factory(
-        email="pasif-refresh@fiil.com", password="parola", role_key="patron"
-    )
+    user = await user_factory(email="pasif-refresh@fiil.com", password="parola", role_key="patron")
     login = await client.post(
         "/auth/login", json={"email": "pasif-refresh@fiil.com", "password": "parola"}
     )
@@ -173,3 +172,29 @@ async def test_login_stamps_last_login_at(client, seeded_db, user_factory):
 
     await seeded_db.refresh(user)
     assert user.last_login_at is not None
+
+
+async def test_me_status_wire_format_is_plain_string(client, seeded_db, user_factory):
+    """MeResponse.status daha sıkı tiplense de kablo formatı (frontend'in beklediği)
+    düz "active" string'i olmaya devam etmeli, "UserStatus.active" gibi bir şey değil."""
+    await user_factory(email="patron2@fiil.com", password="parola", role_key="patron")
+    login = await client.post(
+        "/auth/login", json={"email": "patron2@fiil.com", "password": "parola"}
+    )
+    token = login.json()["access_token"]
+
+    response = await client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.json()["status"] == "active"
+
+
+def test_me_response_status_schema_references_user_status_enum() -> None:
+    schema = app.openapi()
+    status_property = schema["components"]["schemas"]["MeResponse"]["properties"]["status"]
+
+    ref_target = status_property.get("$ref") or status_property.get("allOf", [{}])[0].get("$ref")
+    assert ref_target is not None
+    assert ref_target.endswith("UserStatus")
+
+    enum_schema = schema["components"]["schemas"]["UserStatus"]
+    assert set(enum_schema["enum"]) == {"active", "on_leave", "passive"}
