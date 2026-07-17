@@ -1,5 +1,6 @@
 import enum
-from typing import Annotated
+import uuid
+from typing import Annotated, Protocol
 
 from fastapi import Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -80,3 +81,22 @@ def require_permission(module_key: str, min_level: AccessLevel):
             )
 
     return Depends(_check)
+
+
+class Deletable(Protocol):
+    """Silinebilirliği değerlendirilecek kaydın taşıması gereken asgari alanlar."""
+
+    created_by: uuid.UUID
+    is_draft: bool
+
+
+def can_delete(actor_id: uuid.UUID, level: AccessLevel, record: Deletable) -> bool:
+    """Spec §5.0 silme kuralı.
+
+    admin seviyesi her şeyi siler. Bunun dışında yalnızca taslak istisnası geçerlidir:
+    kaydı aktör oluşturmuş + kayıt hâlâ taslak + aktörün en az draft seviyesi var.
+    """
+    if satisfies(level, AccessLevel.admin):
+        return True
+
+    return record.created_by == actor_id and record.is_draft and satisfies(level, AccessLevel.draft)
