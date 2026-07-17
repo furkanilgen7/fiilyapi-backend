@@ -404,7 +404,7 @@ Bu boş durumlar geçici bir kusur değil: gerçek uygulamada da yeni kurulan bi
 |---|---|
 | B0 | İskelet: FastAPI, config, Postgres (docker-compose), Alembic, sağlık ucu, CI |
 | B1 | Auth: `users`+`roles`, argon2, JWT access/refresh, `login`/`logout`/`refresh`/`me` |
-| B2 | İzin modeli: `modules`+`role_permissions`, `require_permission`, 6×13 seed |
+| B2 | İzin modeli: `modules`+`role_permissions`, `require_permission`, silme kuralı + kilitlenme koruması, 8×13 seed |
 | B3 | Kullanıcı yönetimi + `user_project_access` + minimal `projects` |
 | B4 | Şirket bilgileri + tercihler (görünüm, bildirim) |
 | B5 | Denetim günlüğü: otomatik yakalama + filtre + Excel dışa aktarım |
