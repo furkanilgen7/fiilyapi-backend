@@ -65,9 +65,7 @@ async def test_commit_in_one_session_does_not_leak_into_a_later_session():
     second_session_gen = db_session.__wrapped__()
     second_db_session = await anext(second_session_gen)
     try:
-        result = await second_db_session.execute(
-            text(f"SELECT to_regclass('{LEAK_PROBE_TABLE}')")
-        )
+        result = await second_db_session.execute(text(f"SELECT to_regclass('{LEAK_PROBE_TABLE}')"))
         assert result.scalar() is None, (
             "Onceki session'in commit'i sizdi: tablo hala mevcut. "
             "db_session fixture'i SAVEPOINT ile korunmuyor olabilir."
