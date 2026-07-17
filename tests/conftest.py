@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.core.config import settings
 from app.core.db import Base, get_db
 from app.main import app
+from app.modules.roles.seed_data import seed_reference_data
 
 test_engine = create_async_engine(settings.test_database_url, pool_pre_ping=True)
 TestSessionLocal = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
@@ -67,3 +68,10 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     async with AsyncClient(transport=transport, base_url="http://test") as async_client:
         yield async_client
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+async def seeded_db(db_session: AsyncSession) -> AsyncSession:
+    """Rolleri, modülleri ve izin matrisini yükler. Test sonunda geri alınır."""
+    await seed_reference_data(db_session)
+    return db_session
