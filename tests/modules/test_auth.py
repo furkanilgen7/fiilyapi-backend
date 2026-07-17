@@ -1,3 +1,10 @@
+import uuid
+
+from app.core.security import create_refresh_token
+from app.modules.auth import service as auth_service
+from app.modules.users.models import UserStatus
+
+
 async def test_login_returns_token_pair(client, seeded_db, user_factory):
     await user_factory(email="patron@fiil.com", password="dogru-parola", role_key="patron")
 
@@ -40,6 +47,7 @@ async def test_login_error_does_not_reveal_whether_email_exists(client, seeded_d
         "/auth/login", json={"email": "yok@fiil.com", "password": "yanlis"}
     )
 
+    assert wrong_password.status_code == unknown_email.status_code
     assert wrong_password.json() == unknown_email.json()
 
 
@@ -51,6 +59,31 @@ async def test_passive_user_cannot_log_in(client, seeded_db, user_factory):
         "/auth/login", json={"email": "pasif@fiil.com", "password": "parola"}
     )
     assert response.status_code == 401
+
+
+async def test_unknown_email_still_runs_password_verification(
+    client, seeded_db, user_factory, monkeypatch
+):
+    """Zamanlama sizintisi korumasi: argon2 dogrulamasi hem bilinmeyen e-posta hem de
+    bilinen-e-posta/yanlis-parola durumunda calismali — aksi halde suresi cok kisa olan
+    yol (kullanici yok) saldirgana e-postanin var olup olmadigini sizdirir. Duvar saati
+    zamanlamasi yerine `verify_password` cagrilarini sayiyoruz (flaky olmasin diye)."""
+    await user_factory(email="var@fiil.com", password="dogru-parola", role_key="patron")
+
+    calls: list[str] = []
+    original_verify = auth_service.verify_password
+
+    def spy_verify_password(plain: str, hashed: str) -> bool:
+        calls.append(hashed)
+        return original_verify(plain, hashed)
+
+    monkeypatch.setattr(auth_service, "verify_password", spy_verify_password)
+
+    await client.post("/auth/login", json={"email": "yok@fiil.com", "password": "herhangi"})
+    assert len(calls) == 1, "Bilinmeyen e-posta icin argon2 dogrulamasi calismadi"
+
+    await client.post("/auth/login", json={"email": "var@fiil.com", "password": "yanlis"})
+    assert len(calls) == 2, "Bilinen e-posta/yanlis parola icin argon2 dogrulamasi calismadi"
 
 
 async def test_me_returns_current_user(client, seeded_db, user_factory):
@@ -102,6 +135,34 @@ async def test_refresh_issues_new_access_token(client, seeded_db, user_factory):
 
     assert response.status_code == 200
     assert response.json()["access_token"]
+
+
+async def test_refresh_for_passive_user_is_rejected(client, seeded_db, user_factory):
+    """Pasife alinan bir kullanicinin eski refresh token'i yeni access token basmamali."""
+    user = await user_factory(
+        email="pasif-refresh@fiil.com", password="parola", role_key="patron"
+    )
+    login = await client.post(
+        "/auth/login", json={"email": "pasif-refresh@fiil.com", "password": "parola"}
+    )
+    refresh_token = login.json()["refresh_token"]
+
+    user.status = UserStatus.passive
+    await seeded_db.flush()
+
+    response = await client.post("/auth/refresh", json={"refresh_token": refresh_token})
+
+    assert response.status_code == 401
+
+
+async def test_refresh_for_nonexistent_user_is_rejected(client, seeded_db):
+    """Silinmis/hic var olmamis bir kullanici icin gecerli imzali refresh token bile
+    yeni token basmamali."""
+    fake_refresh_token = create_refresh_token(uuid.uuid4())
+
+    response = await client.post("/auth/refresh", json={"refresh_token": fake_refresh_token})
+
+    assert response.status_code == 401
 
 
 async def test_login_stamps_last_login_at(client, seeded_db, user_factory):

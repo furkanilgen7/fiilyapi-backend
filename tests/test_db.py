@@ -1,9 +1,13 @@
 import pytest
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+import app.core.db as db_module
+from app.core.config import settings
 from tests.conftest import db_session, test_engine
 
 LEAK_PROBE_TABLE = "test_isolation_leak_probe"
+GET_DB_PROBE_TABLE = "test_get_db_commit_probe"
 
 
 async def test_db_session_executes_query(db_session):
@@ -71,3 +75,71 @@ async def test_commit_in_one_session_does_not_leak_into_a_later_session():
     finally:
         with pytest.raises(StopAsyncIteration):
             await anext(second_session_gen)
+
+
+@pytest.fixture
+async def get_db_scratch_sessionmaker(monkeypatch):
+    """`app.core.db.get_db`, modul seviyesindeki `SessionLocal`i kullanir; bu da normalde
+    prod `DATABASE_URL`ine bagli engine'e isaret eder. Bu testte `client` fixture'inin
+    `get_db` override'ini DEGIL, gercek `get_db` fonksiyonunu dogrudan calistirmak
+    istiyoruz — ama prod veritabanina asla dokunmadan. Bu yuzden `SessionLocal`i, yalnizca
+    bu test suresince, TEST_DATABASE_URL'e bagli ayri (izole) bir engine/sessionmaker ile
+    degistiriyoruz. Kendi olusturup kendi drop ettigimiz bir scratch tablo disinda hicbir
+    seye dokunulmuyor; seed edilmis semaya karisilmiyor.
+    """
+    scratch_engine = create_async_engine(settings.test_database_url, pool_pre_ping=True)
+    scratch_session_local = async_sessionmaker(
+        scratch_engine, class_=AsyncSession, expire_on_commit=False
+    )
+    monkeypatch.setattr(db_module, "SessionLocal", scratch_session_local)
+
+    async with scratch_engine.begin() as conn:
+        await conn.execute(
+            text(f"CREATE TABLE IF NOT EXISTS {GET_DB_PROBE_TABLE} (id serial primary key)")
+        )
+
+    try:
+        yield scratch_session_local
+    finally:
+        async with scratch_engine.begin() as conn:
+            await conn.execute(text(f"DROP TABLE IF EXISTS {GET_DB_PROBE_TABLE}"))
+        await scratch_engine.dispose()
+
+
+async def _count_probe_rows(session_local: async_sessionmaker[AsyncSession]) -> int:
+    async with session_local() as verify_session:
+        result = await verify_session.execute(text(f"SELECT count(*) FROM {GET_DB_PROBE_TABLE}"))
+        return result.scalar_one()
+
+
+async def test_get_db_commits_on_clean_exit(get_db_scratch_sessionmaker):
+    """get_db'nin GERCEK jeneratorunu (client fixture'inin override'ini degil) elle
+    suruyoruz: normal (istisnasiz) bitiste yazi commit edilmis olmali. Duzeltmeden once bu
+    test KIRMIZI: `async with SessionLocal() as session: yield session` commit etmedigi
+    icin session kapanirken SQLAlchemy transaction'i sessizce geri aliyordu.
+    """
+    gen = db_module.get_db()
+    session = await anext(gen)
+    await session.execute(text(f"INSERT INTO {GET_DB_PROBE_TABLE} DEFAULT VALUES"))
+
+    with pytest.raises(StopAsyncIteration):
+        await anext(gen)  # generator'i normal sonlandirir -> get_db'nin commit yolu calisir
+
+    assert await _count_probe_rows(get_db_scratch_sessionmaker) == 1, (
+        "get_db temiz cikiste commit etmedi: yazi kayboldu."
+    )
+
+
+async def test_get_db_rolls_back_on_exception(get_db_scratch_sessionmaker):
+    """Endpoint kodu `yield` noktasinda bir istisna firlatirsa get_db, yariya kalmis
+    yaziyi commit etmemeli, geri almali."""
+    gen = db_module.get_db()
+    session = await anext(gen)
+    await session.execute(text(f"INSERT INTO {GET_DB_PROBE_TABLE} DEFAULT VALUES"))
+
+    with pytest.raises(RuntimeError):
+        await gen.athrow(RuntimeError("simulated endpoint failure"))
+
+    assert await _count_probe_rows(get_db_scratch_sessionmaker) == 0, (
+        "get_db, istisna sonrasi yariya kalmis yaziyi geri almadi."
+    )

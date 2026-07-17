@@ -8,7 +8,7 @@ from app.core.deps import get_current_user
 from app.core.security import TokenError, create_access_token, create_refresh_token, decode_token
 from app.modules.auth.schemas import LoginRequest, MeResponse, RefreshRequest, TokenPair
 from app.modules.auth.service import AuthError, authenticate
-from app.modules.users.models import User
+from app.modules.users.models import User, UserStatus
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -31,13 +31,26 @@ async def login(
 
 
 @router.post("/refresh", response_model=TokenPair)
-async def refresh(payload: RefreshRequest) -> TokenPair:
+async def refresh(
+    payload: RefreshRequest, session: Annotated[AsyncSession, Depends(get_db)]
+) -> TokenPair:
     try:
         user_id = decode_token(payload.refresh_token, expected_type="refresh")
     except TokenError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Oturum süresi dolmuş"
         ) from exc
+
+    # Kullanıcıyı yeniden yükleyip durumunu kontrol etmeden yeni token basmak,
+    # pasife alınmış bir kullanıcının eski refresh token'ıyla 30 gün boyunca
+    # yeni access token üretmeye devam etmesine izin verir. get_current_user ile
+    # aynı kuralı burada da uyguluyoruz. Kullanıcı yok ile pasif arasında fark
+    # göstermemek için ikisinde de aynı yanıtı dönüyoruz.
+    user = await session.get(User, user_id)
+    if user is None or user.status is not UserStatus.active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Oturum süresi dolmuş"
+        )
 
     return TokenPair(
         access_token=create_access_token(user_id),
