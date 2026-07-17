@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, func
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -41,3 +41,21 @@ class User(Base):
     # lazy="raise" kasıtlıdır: async ortamda tembel yükleme sessizce patlar.
     # Bu ayar, ilişkiyi açıkça yüklemeyi unuttuğumuzda hatayı geliştirme anında görünür kılar.
     role: Mapped[Role] = relationship(lazy="raise")
+
+
+class UserProjectAccess(Base):
+    """Kullanıcının erişebildiği projeler (spec §4.1).
+
+    all_projects=True (project_id NULL) → tüm projeler. Aksi hâlde her satır bir proje.
+    """
+
+    __tablename__ = "user_project_access"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True
+    )
+    all_projects: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
