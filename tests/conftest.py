@@ -2,14 +2,18 @@ from collections.abc import AsyncGenerator
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import settings
 from app.core.db import Base, get_db
+from app.core.security import hash_password
 from app.main import app
 from app.modules.roles import models as roles_models  # noqa: F401
+from app.modules.roles.models import Role
 from app.modules.roles.seed_data import seed_reference_data
 from app.modules.users import models as users_models  # noqa: F401
+from app.modules.users.models import User, UserStatus
 
 test_engine = create_async_engine(settings.test_database_url, pool_pre_ping=True)
 TestSessionLocal = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
@@ -77,3 +81,27 @@ async def seeded_db(db_session: AsyncSession) -> AsyncSession:
     """Rolleri, modülleri ve izin matrisini yükler. Test sonunda geri alınır."""
     await seed_reference_data(db_session)
     return db_session
+
+
+@pytest.fixture
+def user_factory(seeded_db: AsyncSession):
+    async def _create(
+        email: str,
+        password: str,
+        role_key: str,
+        status: str = "active",
+        full_name: str = "Test Kullanıcı",
+    ) -> User:
+        role = (await seeded_db.execute(select(Role).where(Role.key == role_key))).scalar_one()
+        user = User(
+            email=email,
+            password_hash=hash_password(password),
+            full_name=full_name,
+            role_id=role.id,
+            status=UserStatus(status),
+        )
+        seeded_db.add(user)
+        await seeded_db.flush()
+        return user
+
+    return _create
