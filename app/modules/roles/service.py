@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel, Scope
-from app.core.errors import PermissionLockedError
+from app.core.errors import NotFoundError, PermissionLockedError
 from app.modules.roles.models import SYSTEM_ADMIN_KEY, Role, RolePermission
 from app.modules.roles.repository import get_permission
 
@@ -20,14 +20,18 @@ async def update_role_permission(
 
     system_admin rolünün hiçbir hücresi değiştirilemez — aktör kim olursa olsun.
     """
-    role = (await session.execute(select(Role).where(Role.id == role_id))).scalar_one()
+    role = (
+        await session.execute(select(Role).where(Role.id == role_id))
+    ).scalar_one_or_none()
+    if role is None:
+        raise NotFoundError("Rol bulunamadı")
 
     if role.key == SYSTEM_ADMIN_KEY:
         raise PermissionLockedError("Sistem Yöneticisi rolünün izinleri değiştirilemez")
 
     permission = await get_permission(session, role_id, module_key)
     if permission is None:
-        raise PermissionLockedError("İzin satırı bulunamadı")
+        raise NotFoundError("İzin satırı bulunamadı")
 
     permission.access_level = level
     permission.scope = scope

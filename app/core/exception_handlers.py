@@ -1,7 +1,12 @@
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
-from app.core.errors import DeleteNotAllowedError, DomainError, PermissionLockedError
+from app.core.errors import (
+    DeleteNotAllowedError,
+    DomainError,
+    NotFoundError,
+    PermissionLockedError,
+)
 
 
 async def _permission_locked_handler(request: Request, exc: PermissionLockedError) -> JSONResponse:
@@ -10,6 +15,10 @@ async def _permission_locked_handler(request: Request, exc: PermissionLockedErro
 
 async def _delete_not_allowed_handler(request: Request, exc: DeleteNotAllowedError) -> JSONResponse:
     return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"detail": str(exc)})
+
+
+async def _not_found_handler(request: Request, exc: NotFoundError) -> JSONResponse:
+    return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"detail": str(exc)})
 
 
 async def _domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
@@ -25,4 +34,5 @@ def register_exception_handlers(app: FastAPI) -> None:
     """
     app.add_exception_handler(PermissionLockedError, _permission_locked_handler)
     app.add_exception_handler(DeleteNotAllowedError, _delete_not_allowed_handler)
+    app.add_exception_handler(NotFoundError, _not_found_handler)
     app.add_exception_handler(DomainError, _domain_error_handler)

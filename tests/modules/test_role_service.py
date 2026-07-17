@@ -1,8 +1,10 @@
+import uuid
+
 import pytest
 from sqlalchemy import select
 
 from app.core.access import AccessLevel, Scope
-from app.core.errors import PermissionLockedError
+from app.core.errors import NotFoundError, PermissionLockedError
 from app.modules.roles.models import Role
 from app.modules.roles.service import rename_role, update_role_permission
 
@@ -49,3 +51,26 @@ async def test_renaming_never_changes_key(seeded_db):
     role = await _role(seeded_db, "field_engineer")
     renamed = await rename_role(seeded_db, role.id, name="Teknik Ofis", emoji="📐", description="")
     assert renamed.key == "field_engineer"
+
+
+async def test_update_permission_missing_row_raises_not_found(seeded_db):
+    patron = await _role(seeded_db, "patron")
+    with pytest.raises(NotFoundError):
+        await update_role_permission(
+            seeded_db, patron.id, "olmayan_modul", AccessLevel.view, Scope.all
+        )
+
+
+async def test_update_permission_unknown_role_raises_not_found(seeded_db):
+    with pytest.raises(NotFoundError):
+        await update_role_permission(
+            seeded_db, uuid.uuid4(), "dashboard", AccessLevel.view, Scope.all
+        )
+
+
+async def test_update_permission_system_admin_still_locked(seeded_db):
+    sysadmin = await _role(seeded_db, "system_admin")
+    with pytest.raises(PermissionLockedError):
+        await update_role_permission(
+            seeded_db, sysadmin.id, "dashboard", AccessLevel.view, Scope.all
+        )

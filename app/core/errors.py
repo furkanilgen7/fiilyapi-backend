@@ -8,3 +8,7 @@ class PermissionLockedError(DomainError):
 
 class DeleteNotAllowedError(DomainError):
     """Silme koşulları sağlanmadı (spec §5.0)."""
+
+
+class NotFoundError(DomainError):
+    """İstenen kayıt bulunamadı — router katmanı 404'e çevirir."""
