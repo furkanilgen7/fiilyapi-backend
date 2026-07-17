@@ -151,26 +151,36 @@ MATRIX: dict[str, list[tuple[AccessLevel, Scope]]] = {
 
 
 async def seed_reference_data(session: AsyncSession) -> None:
-    """Rolleri, modülleri ve izin matrisini yükler. Idempotent: mevcut satırlara dokunmaz."""
-    existing_roles = set((await session.execute(select(Role.key))).scalars())
-    roles_by_key: dict[str, Role] = {}
+    """Rolleri, modülleri ve izin matrisini yükler.
+
+    Idempotent: hangi başlangıç durumundan çalıştırılırsa çalıştırılsın (boş DB,
+    tamamen seed edilmiş DB, ya da roller/modüller var ama role_permissions boş)
+    sonuçta 8 rol, 13 modül ve 104 izin satırı bulunur; mevcut satırlar
+    üzerine yazılmaz ve `uq_role_module` UNIQUE kısıtı asla ihlal edilmez.
+    """
+    existing_role_rows = (await session.execute(select(Role))).scalars().all()
+    roles_by_key: dict[str, Role] = {role.key: role for role in existing_role_rows}
     for row in ROLES:
-        if row["key"] in existing_roles:
+        if row["key"] in roles_by_key:
             continue
         role = Role(**row)
         session.add(role)
         roles_by_key[row["key"]] = role
 
-    existing_modules = set((await session.execute(select(Module.key))).scalars())
-    modules_by_key: dict[str, Module] = {}
+    existing_module_rows = (await session.execute(select(Module))).scalars().all()
+    modules_by_key: dict[str, Module] = {module.key: module for module in existing_module_rows}
     for row in MODULES:
-        if row["key"] in existing_modules:
+        if row["key"] in modules_by_key:
             continue
         module = Module(**row)
         session.add(module)
         modules_by_key[row["key"]] = module
 
     await session.flush()
+
+    existing_permission_pairs = set(
+        (await session.execute(select(RolePermission.role_id, RolePermission.module_id))).all()
+    )
 
     for module_key, cells in MATRIX.items():
         module = modules_by_key.get(module_key)
@@ -181,6 +191,8 @@ async def seed_reference_data(session: AsyncSession) -> None:
         for role_key, (level, scope) in zip(ROLE_ORDER, cells, strict=True):
             role = roles_by_key.get(role_key)
             if role is None:
+                continue
+            if (role.id, module.id) in existing_permission_pairs:
                 continue
             session.add(
                 RolePermission(

@@ -7,7 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.core.config import settings
 from app.core.db import Base, get_db
 from app.main import app
+from app.modules.roles import models as roles_models  # noqa: F401
 from app.modules.roles.seed_data import seed_reference_data
+from app.modules.users import models as users_models  # noqa: F401
 
 test_engine = create_async_engine(settings.test_database_url, pool_pre_ping=True)
 TestSessionLocal = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)

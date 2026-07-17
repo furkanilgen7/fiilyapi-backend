@@ -1,7 +1,8 @@
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.core.permissions import AccessLevel
 from app.modules.roles.models import Module, Role, RolePermission
+from app.modules.roles.seed_data import seed_reference_data
 
 EXPECTED_ROLE_KEYS = {
     "system_admin",
@@ -88,3 +89,47 @@ async def test_hr_manager_is_confined_to_people_modules(seeded_db):
         assert await _level_of(seeded_db, "hr_manager", module_key) == AccessLevel.full
     for module_key in ("accounting", "treasury", "inventory", "site_diary"):
         assert await _level_of(seeded_db, "hr_manager", module_key) == AccessLevel.none
+
+
+async def test_reseed_after_permissions_wiped_restores_full_matrix(db_session):
+    """roles/modules mevcutken role_permissions bosaltilip yeniden seed edilirse
+    104 izin satirinin tamami geri gelmeli - kismi/basarisiz bir onceki calistirma
+    sonrasi operasyonel yeniden calistirmayi simule eder."""
+    await seed_reference_data(db_session)
+
+    await db_session.execute(RolePermission.__table__.delete())
+    await db_session.flush()
+    remaining = (await db_session.execute(select(RolePermission))).scalars().all()
+    assert len(remaining) == 0
+
+    await seed_reference_data(db_session)
+
+    rows = (await db_session.execute(select(RolePermission))).scalars().all()
+    assert len(rows) == 104
+
+    role_count = (await db_session.execute(select(Role))).scalars().all()
+    module_count = (await db_session.execute(select(Module))).scalars().all()
+    assert len(role_count) == 8
+    assert len(module_count) == 13
+
+
+async def test_reseed_from_fully_seeded_state_is_a_noop(seeded_db):
+    """Tamamen seed edilmis bir DB'ye tekrar seed_reference_data cagirmak
+    UNIQUE(role_id, module_id) ihlali firlatmamali ve satir sayisi degismemeli."""
+    await seed_reference_data(seeded_db)
+
+    roles = (await seeded_db.execute(select(Role))).scalars().all()
+    modules = (await seeded_db.execute(select(Module))).scalars().all()
+    permissions = (await seeded_db.execute(select(RolePermission))).scalars().all()
+
+    assert len(roles) == 8
+    assert len(modules) == 13
+    assert len(permissions) == 104
+
+
+async def test_users_table_exists_in_test_schema(seeded_db):
+    """users modeli hicbir yerde import edilmezse Base.metadata bu tabloyu bilmez ve
+    create_all onu sessizce atlar. Bu test, semanin users tablosunu gercekten
+    icerdigini dogrudan introspection ile kanitlar."""
+    result = await seeded_db.execute(text("SELECT to_regclass('public.users')"))
+    assert result.scalar_one() is not None
