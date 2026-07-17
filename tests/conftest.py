@@ -2,10 +2,7 @@ from collections.abc import AsyncGenerator
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import Session as SyncSession
-from sqlalchemy.orm import SessionTransaction
 
 from app.core.config import settings
 from app.core.db import Base, get_db
@@ -30,25 +27,28 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 
     Session, dış transaction'ın üstünde bir SAVEPOINT (nested transaction) üzerinde çalışır.
     Test altındaki kod `await session.commit()` çağırsa bile bu yalnızca SAVEPOINT'i kapatır;
-    dış transaction etkilenmez. `after_transaction_end` olay dinleyicisi, SAVEPOINT her
-    kapandığında (commit sonrası dahil) yenisini hemen açar, böylece sonraki her `commit()`
-    çağrısı da aynı korumadan yararlanır. Teardown'da dış transaction her zaman geri alınır,
-    dolayısıyla hiçbir yazı `fiil_erp_test` veritabanına kalıcı olarak sızmaz.
+    dış transaction etkilenmez.
+
+    `join_transaction_mode="create_savepoint"` tek başına yeterli: session'ın kendi "autobegin"
+    davranışı, her yeni işlemden (execute/flush) önce bağlantının hâlâ açık bir dış transaction
+    içinde olduğunu görüp otomatik olarak YENİ bir SAVEPOINT açar — commit sonrası da dahil.
+    Bu ampirik olarak doğrulandı: `connection.begin_nested()` çağrısını session oluşturulmadan
+    önce elle yapmak ve/veya bir `after_transaction_end` dinleyicisiyle SAVEPOINT'i elle yeniden
+    başlatmak denendi; elle `begin_nested()` çağrısı SAVEPOINT'i session'dan bağımsız olarak
+    kalıcı şekilde açık tuttuğu için dinleyicinin "yeniden başlat" dalı hiçbir zaman çalışmıyordu
+    (her seferinde no-op). Elle `begin_nested()` çağrısı kaldırılınca dinleyici gerçekten
+    tetiklenip SAVEPOINT'i yeniden açtı, fakat art arda üç `commit()` içeren bir stres testi
+    dinleyici tamamen kaldırıldığında da (yalnızca `join_transaction_mode` ile) sızıntısız
+    geçti. Yani koruma tamamen `join_transaction_mode`'dan geliyor; elle `begin_nested()` ve
+    `after_transaction_end` dinleyicisi gereksizdi ve kaldırıldı.
+
+    Teardown'da dış transaction her zaman geri alınır, dolayısıyla hiçbir yazı `fiil_erp_test`
+    veritabanına kalıcı olarak sızmaz.
     (SQLAlchemy'nin resmi "joining a session into an external transaction" tarifi.)
     """
     async with test_engine.connect() as connection:
         transaction = await connection.begin()
-        await connection.begin_nested()
         session = TestSessionLocal(bind=connection, join_transaction_mode="create_savepoint")
-
-        @event.listens_for(session.sync_session, "after_transaction_end")
-        def _restart_savepoint(
-            sync_session: SyncSession, sync_transaction: SessionTransaction
-        ) -> None:
-            if connection.closed:
-                return
-            if not connection.sync_connection.in_nested_transaction():
-                connection.sync_connection.begin_nested()
 
         try:
             yield session

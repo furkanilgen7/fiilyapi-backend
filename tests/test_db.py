@@ -1,7 +1,7 @@
 import pytest
 from sqlalchemy import text
 
-from tests.conftest import test_engine
+from tests.conftest import db_session, test_engine
 
 LEAK_PROBE_TABLE = "test_isolation_leak_probe"
 
@@ -33,24 +33,41 @@ async def _cleanup_leak_probe_table():
         await conn.execute(text(f"DROP TABLE IF EXISTS {LEAK_PROBE_TABLE}"))
 
 
-async def test_commit_inside_db_session_then_leak_is_checked_by_next_test(db_session):
-    """db_session icinde commit cagrilsa bile, degisiklikler test sonunda geri alinmali
-    (SAVEPOINT korumasi). Bu test sadece degisikligi yapar; sizinti kontrolu bir
-    SONRAKI testte yapilir, cunku sizinti tanimi geregi baska bir testin gorebilmesidir.
-    """
-    await db_session.execute(
-        text(f"CREATE TABLE IF NOT EXISTS {LEAK_PROBE_TABLE} (id serial primary key)")
-    )
-    await db_session.execute(text(f"INSERT INTO {LEAK_PROBE_TABLE} DEFAULT VALUES"))
-    await db_session.commit()
+async def test_commit_in_one_session_does_not_leak_into_a_later_session():
+    """Bir db_session'da yapilan commit, AYNI TEST icinde alinan sonraki bir db_session'a
+    sizmamali (SAVEPOINT korumasi).
 
-
-async def test_previous_test_commit_did_not_leak_into_this_session(db_session):
-    """Bir onceki testin commit'i, bu testin ayri transaction'inda GORUNMEMELI.
-    Gorunuyorsa, izolasyon kirilmis demektir (fixture'daki SAVEPOINT korumasi eksik/bozuk).
+    Onceki halde bu iki adim iki AYRI test fonksiyonuydu ve ikinci test yalnizca birincinin
+    dosya icindeki sirada ONCE calismis olmasi sayesinde anlamliydi: testler `-k` ile
+    filtrelenirse, rastgele siraya sokan bir plugin'le calisirsa ya da baska bir dosyadan
+    calistirilirsa, ikinci test probe tablosunu hic gormez ve BOSUNA yesil gecerdi (hicbir
+    sey kanitlamadan). Bu tek test, fixture'in generator'ini ELLE surerek iki ayri db_session
+    ornegini AYNI test icinde art arda uretir; boylece bagimlilik olay sirasina degil, kod
+    yapisina dayanir ve dosya/siralama degisikliklerinden etkilenmez.
     """
-    result = await db_session.execute(text(f"SELECT to_regclass('{LEAK_PROBE_TABLE}')"))
-    assert result.scalar() is None, (
-        "Onceki testin commit'i sizdi: tablo hala mevcut. "
-        "db_session fixture'i SAVEPOINT ile korunmuyor olabilir."
-    )
+    first_session_gen = db_session.__wrapped__()
+    first_db_session = await anext(first_session_gen)
+    try:
+        await first_db_session.execute(
+            text(f"CREATE TABLE IF NOT EXISTS {LEAK_PROBE_TABLE} (id serial primary key)")
+        )
+        await first_db_session.execute(text(f"INSERT INTO {LEAK_PROBE_TABLE} DEFAULT VALUES"))
+        await first_db_session.commit()
+    finally:
+        # fixture'in finally/teardown blogunu (session.close + outer rollback) calistirir.
+        with pytest.raises(StopAsyncIteration):
+            await anext(first_session_gen)
+
+    second_session_gen = db_session.__wrapped__()
+    second_db_session = await anext(second_session_gen)
+    try:
+        result = await second_db_session.execute(
+            text(f"SELECT to_regclass('{LEAK_PROBE_TABLE}')")
+        )
+        assert result.scalar() is None, (
+            "Onceki session'in commit'i sizdi: tablo hala mevcut. "
+            "db_session fixture'i SAVEPOINT ile korunmuyor olabilir."
+        )
+    finally:
+        with pytest.raises(StopAsyncIteration):
+            await anext(second_session_gen)
