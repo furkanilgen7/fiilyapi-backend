@@ -1426,9 +1426,19 @@ Expected: Üç komut da hatasız — migration'ın geri alınabilir olduğunu ka
 
 Run:
 ```bash
-docker compose exec -T db psql -U fiil -d fiil_erp -c "SELECT count(*) FROM role_permissions;"
+python - <<'PY'
+import asyncio, re
+from pathlib import Path
+import asyncpg
+url = next(l.split("=",1)[1] for l in Path(".env").read_text().splitlines() if l.startswith("DATABASE_URL"))
+async def main():
+    conn = await asyncpg.connect(re.sub(r"\+asyncpg", "", url))
+    print("role_permissions:", await conn.fetchval("SELECT count(*) FROM role_permissions"))
+    await conn.close()
+asyncio.run(main())
+PY
 ```
-Expected: `104`
+Expected: `role_permissions: 104`
 
 - [ ] **Step 7: Commit**
 
