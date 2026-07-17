@@ -36,7 +36,7 @@ Sistem sıfırdan yazılıyor. Önceki bir uygulama (`insaat-old`) mevcut ve can
 |---|---|---|
 | Backend | Sıfırdan FastAPI + PostgreSQL | Kullanıcı kararı; eski kod taşınmıyor |
 | Supabase | **Kullanılmıyor** | Özel izin matrisi + RLS = çifte yetki kaynağı; Alembic ile Supabase migration akışı çakışır |
-| Veritabanı | Lokal Docker Postgres, canlı ortam sonra | — |
+| Veritabanı | **Railway Postgres** (bulut, proje `fiilyapi`) — geliştirme de canlı da orada | Kullanıcı lokale kurulum istemedi; Docker/brew yok |
 | Auth | FastAPI'de JWT (access + refresh), argon2 parola özeti | Tek yetki kaynağı |
 | İzin modeli | İki eksen (seviye + kapsam), DB'den yönetilir | Mockup'taki matrisin birebir karşılığı |
 | Çok şirketlilik | **Yok.** Tek şirket, `company_id` yok | Kullanıcı kararı — bkz. §9 Kabul edilen ödünçler |
@@ -72,8 +72,7 @@ insaat/
 │   │       └── dashboard/
 │   ├── alembic/
 │   ├── tests/
-│   ├── docs/             ← bu spec (kanonik)
-│   └── docker-compose.yml
+│   └── docs/             ← bu spec (kanonik)
 └── frontend/             git repo — Next.js
     ├── src/
     │   ├── app/          App Router
