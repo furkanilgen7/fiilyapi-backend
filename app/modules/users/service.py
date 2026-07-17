@@ -7,8 +7,8 @@ from app.core.errors import DomainError, NotFoundError
 from app.core.security import hash_password
 from app.modules.roles.models import Role
 from app.modules.users import repository
-from app.modules.users.models import User
-from app.modules.users.schemas import UserCreate, UserUpdate
+from app.modules.users.models import User, UserProjectAccess
+from app.modules.users.schemas import ProjectAccessInput, UserCreate, UserUpdate
 
 
 async def _require_role(session: AsyncSession, role_id: uuid.UUID) -> Role:
@@ -67,3 +67,14 @@ async def delete_user(session: AsyncSession, user_id: uuid.UUID) -> None:
         raise NotFoundError("Kullanıcı bulunamadı")
     await session.delete(user)
     await session.flush()
+
+
+async def set_project_access(
+    session: AsyncSession, user_id: uuid.UUID, data: ProjectAccessInput
+) -> list[UserProjectAccess]:
+    user = await repository.get_user(session, user_id)
+    if user is None:
+        raise NotFoundError("Kullanıcı bulunamadı")
+    return await repository.replace_project_access(
+        session, user_id, data.all_projects, data.project_ids
+    )

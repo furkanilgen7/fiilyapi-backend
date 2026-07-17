@@ -25,6 +25,16 @@ class PasswordReset(BaseModel):
     new_password: str = Field(min_length=8, max_length=128)
 
 
+class ProjectAccessInput(BaseModel):
+    all_projects: bool = False
+    project_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class ProjectAccessResponse(BaseModel):
+    all_projects: bool
+    project_ids: list[uuid.UUID]
+
+
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

@@ -9,7 +9,14 @@ from app.core.db import get_db
 from app.core.errors import NotFoundError
 from app.core.permissions import require_permission
 from app.modules.users import repository, service
-from app.modules.users.schemas import PasswordReset, UserCreate, UserResponse, UserUpdate
+from app.modules.users.schemas import (
+    PasswordReset,
+    ProjectAccessInput,
+    ProjectAccessResponse,
+    UserCreate,
+    UserResponse,
+    UserUpdate,
+)
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -92,3 +99,34 @@ async def delete_user_endpoint(
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> None:
     await service.delete_user(session, user_id)
+
+
+@router.put(
+    "/{user_id}/project-access",
+    response_model=ProjectAccessResponse,
+    dependencies=[require_permission("user_management", AccessLevel.full)],
+)
+async def set_project_access_endpoint(
+    user_id: uuid.UUID,
+    data: ProjectAccessInput,
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> ProjectAccessResponse:
+    rows = await service.set_project_access(session, user_id, data)
+    all_projects = any(r.all_projects for r in rows)
+    project_ids = [r.project_id for r in rows if r.project_id is not None]
+    return ProjectAccessResponse(all_projects=all_projects, project_ids=project_ids)
+
+
+@router.get(
+    "/{user_id}/project-access",
+    response_model=ProjectAccessResponse,
+    dependencies=[require_permission("user_management", AccessLevel.view)],
+)
+async def get_project_access_endpoint(
+    user_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> ProjectAccessResponse:
+    rows = await repository.get_project_access(session, user_id)
+    all_projects = any(r.all_projects for r in rows)
+    project_ids = [r.project_id for r in rows if r.project_id is not None]
+    return ProjectAccessResponse(all_projects=all_projects, project_ids=project_ids)
