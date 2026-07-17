@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 from app.core.config import settings
 from app.core.db import Base
+
 # Task 4'te bu iki satırın yorumunu aç (modelleri metadata'ya kaydeder):
 # from app.modules.roles import models as roles_models  # noqa: F401
 # from app.modules.users import models as users_models  # noqa: F401
