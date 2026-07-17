@@ -30,8 +30,7 @@
 | Dosya | Sorumluluk |
 |---|---|
 | `pyproject.toml` | Bağımlılıklar, pytest/ruff yapılandırması |
-| `docker-compose.yml` | Lokal Postgres (uygulama + test veritabanı) |
-| `.env.example` | Gerekli ortam değişkenlerinin şablonu |
+| `.env.example` | Ortam değişkeni şablonu (gerçek `.env` hazır, git'te değil) |
 | `app/main.py` | FastAPI uygulaması, router kaydı, sağlık ucu |
 | `app/core/config.py` | Ortam değişkenleri (pydantic-settings) |
 | `app/core/db.py` | `Base`, engine, `SessionLocal`, `get_db` |
@@ -208,7 +207,7 @@ git commit -m "feat: FastAPI iskeleti ve saglik ucu"
 ## Task 2: Postgres, SQLAlchemy tabanı ve Alembic
 
 **Files:**
-- Create: `docker-compose.yml`, `app/core/db.py`, `alembic.ini`, `alembic/env.py`, `alembic/script.py.mako`, `alembic/versions/`
+- Create: `app/core/db.py`, `alembic.ini`, `alembic/env.py`, `alembic/script.py.mako`, `alembic/versions/`
 - Modify: `tests/conftest.py`
 - Test: `tests/test_db.py`
 
@@ -216,39 +215,18 @@ git commit -m "feat: FastAPI iskeleti ve saglik ucu"
 - Consumes: `app.core.config:settings`
 - Produces: `app.core.db:Base` (DeclarativeBase) · `app.core.db:get_db` (`AsyncGenerator[AsyncSession, None]` FastAPI bağımlılığı) · `app.core.db:engine` · pytest fixture `db_session: AsyncSession`
 
-- [ ] **Step 1: Postgres'i ayağa kaldır**
+- [ ] **Step 1: Postgres bağlantısını doğrula**
 
-`docker-compose.yml`:
+**Docker YOK.** Veritabanı Railway'de bulut olarak çalışıyor (proje: `fiilyapi`, servis: `Postgres`). Geliştirme makinesine hiçbir şey kurulmuyor.
 
-```yaml
-services:
-  db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: fiil
-      POSTGRES_PASSWORD: fiil
-      POSTGRES_DB: fiil_erp
-    ports:
-      - "5433:5432"
-    volumes:
-      - fiil_pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U fiil -d fiil_erp"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
+`.env` dosyası **zaten hazır** ve `.gitignore`'da — içinde `DATABASE_URL` (railway veritabanı), `TEST_DATABASE_URL` (`fiil_erp_test` veritabanı) ve `JWT_SECRET` var. Her ikisi de `postgresql+asyncpg://` sürücüsüyle ve Railway'in **public proxy** adresini kullanıyor (`*.proxy.rlwy.net`), yani makineden doğrudan erişilebilir.
 
-volumes:
-  fiil_pgdata:
-```
+`fiil_erp_test` veritabanı da oluşturulmuş durumda. Testler şemayı silip yeniden kurduğu için ayrı veritabanı **zorunludur** — `DATABASE_URL` ile `TEST_DATABASE_URL` asla aynı olmamalı.
 
-Run:
-```bash
-docker compose up -d
-sleep 5
-docker compose exec -T db psql -U fiil -d fiil_erp -c "CREATE DATABASE fiil_erp_test;"
-```
-Expected: `CREATE DATABASE` (ikinci çalıştırmada "already exists" hatası normaldir, yok sayılabilir)
+Run: `python -c "import os; from pathlib import Path; print([l.split('=')[0] for l in Path('.env').read_text().splitlines() if l])"`
+Expected: `['DATABASE_URL', 'TEST_DATABASE_URL', 'JWT_SECRET', 'ENVIRONMENT']`
+
+> Not: Testler internet üzerinden Railway'e bağlandığı için lokal veritabanına göre yavaş koşar. Bu beklenen davranıştır, hata değildir.
 
 - [ ] **Step 2: Başarısız testi yaz**
 
@@ -376,9 +354,11 @@ config.set_main_option("sqlalchemy.url", settings.database_url)
 - [ ] **Step 7: Commit**
 
 ```bash
-git add docker-compose.yml app/core/db.py alembic.ini alembic tests
-git commit -m "feat: Postgres, SQLAlchemy tabani ve Alembic kurulumu"
+git add app/core/db.py alembic.ini alembic tests
+git commit -m "feat: SQLAlchemy tabani ve Alembic kurulumu"
 ```
+
+> `.env` commit **edilmez** — Railway şifresi içeriyor ve `.gitignore`'da.
 
 ---
 
@@ -2303,15 +2283,45 @@ Expected: `All checks passed!`
 
 - [ ] **Step 3: Migration zincirini sıfırdan doğrula**
 
-Run:
+Migration zincirinin sıfırdan çalıştığını, geliştirme veritabanını bozmadan `fiil_erp_test` üzerinde doğrula:
+
 ```bash
-docker compose down -v && docker compose up -d
-sleep 5
-docker compose exec -T db psql -U fiil -d fiil_erp -c "CREATE DATABASE fiil_erp_test;"
-python -m alembic upgrade head
-docker compose exec -T db psql -U fiil -d fiil_erp -c "SELECT count(*) FROM role_permissions;"
+python - <<'PY'
+import asyncio, os, re
+from pathlib import Path
+url = next(l.split("=",1)[1] for l in Path(".env").read_text().splitlines() if l.startswith("TEST_DATABASE_URL"))
+import asyncpg
+async def main():
+    raw = re.sub(r"\+asyncpg", "", url)
+    conn = await asyncpg.connect(raw)
+    await conn.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
+    await conn.close()
+    print("test semasi sifirlandi")
+asyncio.run(main())
+PY
+
+DATABASE_URL="$(grep '^TEST_DATABASE_URL' .env | cut -d= -f2-)" python -m alembic upgrade head
 ```
-Expected: Migration'lar boş veritabanında hatasız uygulanır ve son sorgu `104` döner. Bu, `alembic upgrade head`'in canlıda çalışacağının kanıtıdır.
+
+Expected: Tüm migration'lar boş şemada hatasız uygulanır. Bu, `alembic upgrade head`'in canlıda çalışacağının kanıtıdır.
+
+Ardından seed'in gerçekten 104 satır yazdığını doğrula:
+
+```bash
+python - <<'PY'
+import asyncio, re
+from pathlib import Path
+import asyncpg
+url = next(l.split("=",1)[1] for l in Path(".env").read_text().splitlines() if l.startswith("TEST_DATABASE_URL"))
+async def main():
+    conn = await asyncpg.connect(re.sub(r"\+asyncpg", "", url))
+    print("role_permissions:", await conn.fetchval("SELECT count(*) FROM role_permissions"))
+    await conn.close()
+asyncio.run(main())
+PY
+```
+
+Expected: `role_permissions: 104`
 
 - [ ] **Step 4: Güvenlik incelemesi**
 
