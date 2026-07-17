@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.core.db import Base, get_db
 from app.core.security import hash_password
 from app.main import app
+from app.modules.projects import models as projects_models  # noqa: F401
 from app.modules.roles import models as roles_models  # noqa: F401
 from app.modules.roles.models import Role
 from app.modules.roles.seed_data import seed_reference_data
