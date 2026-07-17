@@ -20,8 +20,12 @@ async def test_create_and_list_user_as_admin(client, user_factory, seeded_db):
     rid = await _role_id(seeded_db, "accounting")
     resp = await client.post(
         "/users",
-        json={"email": "yeni@t.co", "password": "parola1234", "full_name": "Yeni Kullanıcı",
-              "role_id": rid},
+        json={
+            "email": "yeni@t.co",
+            "password": "parola1234",
+            "full_name": "Yeni Kullanıcı",
+            "role_id": rid,
+        },
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 201

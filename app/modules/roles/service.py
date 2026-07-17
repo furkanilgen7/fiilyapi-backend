@@ -21,9 +21,7 @@ async def update_role_permission(
 
     system_admin rolünün hiçbir hücresi değiştirilemez — aktör kim olursa olsun.
     """
-    role = (
-        await session.execute(select(Role).where(Role.id == role_id))
-    ).scalar_one_or_none()
+    role = (await session.execute(select(Role).where(Role.id == role_id))).scalar_one_or_none()
     if role is None:
         raise NotFoundError("Rol bulunamadı")
 
@@ -65,8 +63,11 @@ async def create_custom_role(session: AsyncSession, data: RoleCreate) -> Role:
         raise DomainError("Bu rol anahtarı zaten kullanılıyor")
 
     role = Role(
-        key=data.key, name=data.name, emoji=data.emoji,
-        description=data.description, is_system=False,
+        key=data.key,
+        name=data.name,
+        emoji=data.emoji,
+        description=data.description,
+        is_system=False,
     )
     session.add(role)
     await session.flush()
@@ -75,8 +76,10 @@ async def create_custom_role(session: AsyncSession, data: RoleCreate) -> Role:
     for module in modules:
         session.add(
             RolePermission(
-                role_id=role.id, module_id=module.id,
-                access_level=AccessLevel.none, scope=Scope.all,
+                role_id=role.id,
+                module_id=module.id,
+                access_level=AccessLevel.none,
+                scope=Scope.all,
             )
         )
     await session.flush()
@@ -85,9 +88,7 @@ async def create_custom_role(session: AsyncSession, data: RoleCreate) -> Role:
 
 async def delete_role(session: AsyncSession, role_id: uuid.UUID) -> None:
     """Özel rolü siler. Sistem rolleri kilitlidir."""
-    role = (
-        await session.execute(select(Role).where(Role.id == role_id))
-    ).scalar_one_or_none()
+    role = (await session.execute(select(Role).where(Role.id == role_id))).scalar_one_or_none()
     if role is None:
         raise NotFoundError("Rol bulunamadı")
     if role.is_system:

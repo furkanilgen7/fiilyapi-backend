@@ -16,9 +16,7 @@ async def test_create_and_read_project(db_session):
     db_session.add(project)
     await db_session.flush()
 
-    loaded = (
-        await db_session.execute(select(Project).where(Project.code == "GK-A"))
-    ).scalar_one()
+    loaded = (await db_session.execute(select(Project).where(Project.code == "GK-A"))).scalar_one()
     assert loaded.name == "Güneşkent A-Blok"
     assert loaded.status is ProjectStatus.active
     assert loaded.budget == Decimal("1500000.00")

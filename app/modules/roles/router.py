@@ -103,9 +103,7 @@ async def update_permission_endpoint(
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> PermissionCell:
     # system_admin -> PermissionLockedError(403); satir/rol yok -> NotFoundError(404)
-    perm = await update_role_permission(
-        session, role_id, module_key, data.access_level, data.scope
-    )
+    perm = await update_role_permission(session, role_id, module_key, data.access_level, data.scope)
     return PermissionCell(module_key=module_key, access_level=perm.access_level, scope=perm.scope)
 
 

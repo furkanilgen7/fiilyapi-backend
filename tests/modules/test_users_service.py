@@ -17,7 +17,9 @@ async def _role_id(session, key):
 
 async def test_create_user_hashes_password(seeded_db):
     data = UserCreate(
-        email="a@t.co", password="parola1234", full_name="Ahmet",
+        email="a@t.co",
+        password="parola1234",
+        full_name="Ahmet",
         role_id=await _role_id(seeded_db, "patron"),
     )
     user = await service.create_user(seeded_db, data)
@@ -47,9 +49,7 @@ async def test_create_user_unknown_role_raises(seeded_db):
 
 async def test_update_user_changes_status(seeded_db, user_factory):
     user = await user_factory(email="u@t.co", password="parola1234", role_key="site_chief")
-    updated = await service.update_user(
-        seeded_db, user.id, UserUpdate(status=UserStatus.passive)
-    )
+    updated = await service.update_user(seeded_db, user.id, UserUpdate(status=UserStatus.passive))
     assert updated.status is UserStatus.passive
 
 

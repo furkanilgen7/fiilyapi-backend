@@ -51,9 +51,7 @@ async def update_user(session: AsyncSession, user_id: uuid.UUID, data: UserUpdat
     return user
 
 
-async def set_user_password(
-    session: AsyncSession, user_id: uuid.UUID, new_password: str
-) -> None:
+async def set_user_password(session: AsyncSession, user_id: uuid.UUID, new_password: str) -> None:
     user = await repository.get_user(session, user_id)
     if user is None:
         raise NotFoundError("Kullanıcı bulunamadı")
