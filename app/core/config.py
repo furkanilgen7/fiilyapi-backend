@@ -1,7 +1,24 @@
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _DEFAULT_JWT_SECRET = "dev-only-change-me"
+
+
+def _asyncpg_url(url: str) -> str:
+    """Düz `postgresql://` / `postgres://` URL'sini asyncpg sürücüsüne çevirir.
+
+    Uygulama motoru ve alembic `create_async_engine` kullanır; bu da `postgresql+asyncpg://`
+    şeması bekler. Railway/Heroku'nun sağladığı `DATABASE_URL` düz `postgresql://` (bazen
+    `postgres://`) olduğundan, normalize edilmezse açılışta senkron sürücü (psycopg2)
+    aranır — kurulu değildir — ve uygulama sessizce çöker.
+    """
+    if url.startswith("postgresql+"):
+        return url
+    if url.startswith("postgresql://"):
+        return "postgresql+asyncpg://" + url[len("postgresql://") :]
+    if url.startswith("postgres://"):
+        return "postgresql+asyncpg://" + url[len("postgres://") :]
+    return url
 
 
 class Settings(BaseSettings):
@@ -14,6 +31,17 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 30
     environment: str = "development"
+
+    # İlk sistem yöneticisi bootstrap'ı (opsiyonel). İkisi de doluysa ve DB'de hiç kullanıcı
+    # yoksa açılışta bu hesap oluşturulur; aksi halde bootstrap atlanır. Kullanıcı oluşturma
+    # ucu admin yetkisi istediğinden ilk kurulumdaki tavuk-yumurta sorununu bu çözer.
+    admin_email: str = ""
+    admin_password: str = ""
+
+    @field_validator("database_url", "test_database_url")
+    @classmethod
+    def _normalize_pg_driver(cls, value: str) -> str:
+        return _asyncpg_url(value)
 
     @model_validator(mode="after")
     def _reddet_prod_ortaminda_varsayilan_jwt_secret(self) -> "Settings":
