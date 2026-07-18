@@ -30,8 +30,8 @@ async def login(
         ) from exc
 
     return TokenPair(
-        access_token=create_access_token(user.id),
-        refresh_token=create_refresh_token(user.id),
+        access_token=create_access_token(user.id, user.token_version),
+        refresh_token=create_refresh_token(user.id, user.token_version),
     )
 
 
@@ -43,7 +43,7 @@ async def refresh(
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> TokenPair:
     try:
-        user_id = decode_token(payload.refresh_token, expected_type="refresh")
+        decoded = decode_token(payload.refresh_token, expected_type="refresh")
     except TokenError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Oturum süresi dolmuş"
@@ -54,13 +54,17 @@ async def refresh(
     # yeni access token üretmeye devam etmesine izin verir. get_current_user ile
     # aynı kuralı burada da uyguluyoruz. Kullanıcı yok ile pasif arasında fark
     # göstermemek için ikisinde de aynı yanıtı dönüyoruz.
-    user = await session.get(User, user_id)
-    if user is None or user.status is not UserStatus.active:
+    user = await session.get(User, decoded.user_id)
+    if (
+        user is None
+        or user.status is not UserStatus.active
+        or user.token_version != decoded.token_version
+    ):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Oturum süresi dolmuş")
 
     return TokenPair(
-        access_token=create_access_token(user_id),
-        refresh_token=create_refresh_token(user_id),
+        access_token=create_access_token(user.id, user.token_version),
+        refresh_token=create_refresh_token(user.id, user.token_version),
     )
 
 

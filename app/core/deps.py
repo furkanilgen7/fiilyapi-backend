@@ -26,12 +26,16 @@ async def get_current_user(
         raise _UNAUTHORIZED
 
     try:
-        user_id = decode_token(credentials.credentials, expected_type="access")
+        decoded = decode_token(credentials.credentials, expected_type="access")
     except TokenError as exc:
         raise _UNAUTHORIZED from exc
 
-    user = await session.get(User, user_id, options=[joinedload(User.role)])
-    if user is None or user.status is not UserStatus.active:
+    user = await session.get(User, decoded.user_id, options=[joinedload(User.role)])
+    if (
+        user is None
+        or user.status is not UserStatus.active
+        or user.token_version != decoded.token_version
+    ):
         raise _UNAUTHORIZED
 
     return user

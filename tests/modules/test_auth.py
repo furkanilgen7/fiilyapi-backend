@@ -157,7 +157,7 @@ async def test_refresh_for_passive_user_is_rejected(client, seeded_db, user_fact
 async def test_refresh_for_nonexistent_user_is_rejected(client, seeded_db):
     """Silinmis/hic var olmamis bir kullanici icin gecerli imzali refresh token bile
     yeni token basmamali."""
-    fake_refresh_token = create_refresh_token(uuid.uuid4())
+    fake_refresh_token = create_refresh_token(uuid.uuid4(), 0)
 
     response = await client.post("/auth/refresh", json={"refresh_token": fake_refresh_token})
 

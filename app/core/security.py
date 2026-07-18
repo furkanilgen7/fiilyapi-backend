@@ -1,4 +1,5 @@
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import jwt
@@ -25,10 +26,21 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
-def _create_token(user_id: uuid.UUID, token_type: str, expires_delta: timedelta) -> str:
+@dataclass(frozen=True)
+class DecodedToken:
+    """Bir token'dan çözülen kimlik + iptal sürümü."""
+
+    user_id: uuid.UUID
+    token_version: int
+
+
+def _create_token(
+    user_id: uuid.UUID, token_version: int, token_type: str, expires_delta: timedelta
+) -> str:
     now = datetime.now(UTC)
     payload = {
         "sub": str(user_id),
+        "ver": token_version,
         "type": token_type,
         "iat": now,
         "exp": now + expires_delta,
@@ -36,15 +48,19 @@ def _create_token(user_id: uuid.UUID, token_type: str, expires_delta: timedelta)
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def create_access_token(user_id: uuid.UUID) -> str:
-    return _create_token(user_id, "access", timedelta(minutes=settings.access_token_expire_minutes))
+def create_access_token(user_id: uuid.UUID, token_version: int) -> str:
+    return _create_token(
+        user_id, token_version, "access", timedelta(minutes=settings.access_token_expire_minutes)
+    )
 
 
-def create_refresh_token(user_id: uuid.UUID) -> str:
-    return _create_token(user_id, "refresh", timedelta(days=settings.refresh_token_expire_days))
+def create_refresh_token(user_id: uuid.UUID, token_version: int) -> str:
+    return _create_token(
+        user_id, token_version, "refresh", timedelta(days=settings.refresh_token_expire_days)
+    )
 
 
-def decode_token(token: str, expected_type: str) -> uuid.UUID:
+def decode_token(token: str, expected_type: str) -> DecodedToken:
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
     except jwt.PyJWTError as exc:
@@ -54,6 +70,10 @@ def decode_token(token: str, expected_type: str) -> uuid.UUID:
         raise TokenError("Token tipi beklenenden farklı")
 
     try:
-        return uuid.UUID(payload["sub"])
+        user_id = uuid.UUID(payload["sub"])
     except (KeyError, ValueError) as exc:
         raise TokenError("Token içeriği bozuk") from exc
+
+    # Eski (ver'siz) token'lar 0 sayılır — geriye dönük uyumluluk (yeni sütun default 0).
+    token_version = int(payload.get("ver", 0))
+    return DecodedToken(user_id=user_id, token_version=token_version)
