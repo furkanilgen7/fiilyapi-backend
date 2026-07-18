@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     db_connect_timeout: int = 10
     db_command_timeout: int = 30
 
+    # CORS izin listesi (virgülle ayrılmış origin'ler). Boşsa CORS middleware eklenmez
+    # (dev'de kırmaz). BFF deseni nedeniyle tarayıcı backend'e doğrudan gitmez; bu
+    # savunma-derinliğidir. Wildcard `*` + credentials ASLA birlikte kullanılmaz.
+    cors_origins: str = ""
+
     # İlk sistem yöneticisi bootstrap'ı (opsiyonel). İkisi de doluysa ve DB'de hiç kullanıcı
     # yoksa açılışta bu hesap oluşturulur; aksi halde bootstrap atlanır. Kullanıcı oluşturma
     # ucu admin yetkisi istediğinden ilk kurulumdaki tavuk-yumurta sorununu bu çözer.
@@ -61,6 +66,11 @@ class Settings(BaseSettings):
                 "gerçek bir gizli anahtar tanımlayın."
             )
         return self
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        """`cors_origins`'i temizlenmiş origin listesine çevirir (boşları atar)."""
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
 
 settings = Settings()

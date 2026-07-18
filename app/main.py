@@ -3,8 +3,10 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.bootstrap import ensure_first_admin
+from app.core.config import Settings, settings
 from app.core.exception_handlers import register_exception_handlers
 from app.modules.auth.router import router as auth_router
 from app.modules.projects.router import router as projects_router
@@ -25,8 +27,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
 
+def _configure_cors(app: FastAPI, cfg: Settings) -> None:
+    """Env'de origin verilmişse sıkı CORS middleware'i ekler.
+
+    Wildcard `*` + credentials birlikte KULLANILMAZ — origin'ler açık liste olmalı.
+    Liste boşsa (dev varsayılanı) middleware hiç eklenmez.
+    """
+    origins = cfg.cors_origin_list
+    if not origins:
+        return
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+
 app = FastAPI(title="FİİL Yapı ERP API", version="0.1.0", lifespan=lifespan)
 register_exception_handlers(app)
+_configure_cors(app, settings)
 app.include_router(auth_router)
 app.include_router(projects_router)
 app.include_router(roles_router)
