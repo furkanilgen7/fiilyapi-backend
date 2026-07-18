@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 30
     environment: str = "development"
 
+    # Veritabanı bağlantı/komut zaman aşımları (saniye). Asılı bir sorgu ya da bağlantı
+    # canlıda tek instance'ı kilitlemesin diye asyncpg'ye açıkça sınır veriyoruz.
+    db_connect_timeout: int = 10
+    db_command_timeout: int = 30
+
     # İlk sistem yöneticisi bootstrap'ı (opsiyonel). İkisi de doluysa ve DB'de hiç kullanıcı
     # yoksa açılışta bu hesap oluşturulur; aksi halde bootstrap atlanır. Kullanıcı oluşturma
     # ucu admin yetkisi istediğinden ilk kurulumdaki tavuk-yumurta sorununu bu çözer.

@@ -3,14 +3,30 @@ from collections.abc import AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
-from app.core.config import settings
+from app.core.config import Settings, settings
 
 
 class Base(DeclarativeBase):
     pass
 
 
-engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+def build_engine(cfg: Settings):
+    """Yapılandırılmış zaman aşımlarıyla async engine kurar.
+
+    connect_args asyncpg'ye iletilir: `timeout` bağlantı açma, `command_timeout` ise tek
+    bir sorgunun üst sınırıdır. Böylece asılı bir sorgu instance'ı süresiz kilitleyemez.
+    """
+    return create_async_engine(
+        cfg.database_url,
+        pool_pre_ping=True,
+        connect_args={
+            "timeout": cfg.db_connect_timeout,
+            "command_timeout": cfg.db_command_timeout,
+        },
+    )
+
+
+engine = build_engine(settings)
 SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
