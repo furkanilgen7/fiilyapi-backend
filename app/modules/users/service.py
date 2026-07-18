@@ -110,8 +110,10 @@ async def set_project_access(
         raise NotFoundError("Kullanıcı bulunamadı")
     if not data.all_projects and data.project_ids:
         found = (
-            await session.execute(select(Project.id).where(Project.id.in_(data.project_ids)))
-        ).scalars().all()
+            (await session.execute(select(Project.id).where(Project.id.in_(data.project_ids))))
+            .scalars()
+            .all()
+        )
         missing = set(data.project_ids) - set(found)
         if missing:
             raise NotFoundError("Proje bulunamadı")

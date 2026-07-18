@@ -71,9 +71,7 @@ async def test_delete_user_admin_only(client, user_factory):
 
 async def test_list_users_pagination(client, user_factory, seeded_db):
     token = await _login(client, user_factory, "system_admin")
-    resp = await client.get(
-        "/users?limit=1&offset=0", headers={"Authorization": f"Bearer {token}"}
-    )
+    resp = await client.get("/users?limit=1&offset=0", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 200
     body = resp.json()
     assert body["limit"] == 1 and body["offset"] == 0
