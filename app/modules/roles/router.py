@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.access import AccessLevel
 from app.core.db import get_db
 from app.core.errors import NotFoundError
+from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
 from app.modules.roles import repository, service
 from app.modules.roles.schemas import (
@@ -19,7 +20,7 @@ from app.modules.roles.schemas import (
 )
 from app.modules.roles.service import update_role_permission
 
-router = APIRouter(tags=["roles"])
+router = APIRouter(tags=["roles"], responses=COMMON_ERROR_RESPONSES)
 
 
 @router.get(

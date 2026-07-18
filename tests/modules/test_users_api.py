@@ -35,7 +35,7 @@ async def test_create_and_list_user_as_admin(client, user_factory, seeded_db):
 
     listing = await client.get("/users", headers={"Authorization": f"Bearer {token}"})
     assert listing.status_code == 200
-    assert any(u["email"] == "yeni@t.co" for u in listing.json())
+    assert any(u["email"] == "yeni@t.co" for u in listing.json()["items"])
 
 
 async def test_create_user_forbidden_for_non_admin(client, user_factory, seeded_db):
@@ -67,3 +67,22 @@ async def test_delete_user_admin_only(client, user_factory):
         f"/users/{target.id}", headers={"Authorization": f"Bearer {admin_token}"}
     )
     assert resp.status_code == 204
+
+
+async def test_list_users_pagination(client, user_factory, seeded_db):
+    token = await _login(client, user_factory, "system_admin")
+    resp = await client.get(
+        "/users?limit=1&offset=0", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["limit"] == 1 and body["offset"] == 0
+    assert len(body["items"]) <= 1
+
+
+def test_openapi_documents_error_responses():
+    from app.main import app
+
+    schema = app.openapi()
+    responses = schema["paths"]["/users"]["get"]["responses"]
+    assert "403" in responses

@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import (
     DeleteNotAllowedError,
@@ -25,6 +26,12 @@ async def _domain_error_handler(request: Request, exc: DomainError) -> JSONRespo
     return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
 
 
+async def _integrity_error_handler(request: Request, exc: IntegrityError) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_409_CONFLICT, content={"detail": "Veri bütünlüğü hatası"}
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Alan hatalarını uygun HTTP koduna çeviren handler'ları kaydeder.
 
@@ -36,3 +43,4 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(DeleteNotAllowedError, _delete_not_allowed_handler)
     app.add_exception_handler(NotFoundError, _not_found_handler)
     app.add_exception_handler(DomainError, _domain_error_handler)
+    app.add_exception_handler(IntegrityError, _integrity_error_handler)

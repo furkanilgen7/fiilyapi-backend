@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,10 +33,10 @@ async def authenticate(session: AsyncSession, email: str, password: str) -> User
         # Kullanıcı bulunamasa bile argon2 doğrulamasını çalıştır — aksi halde bu yol
         # gerçek parola doğrulamasından çok daha hızlı döner ve zamanlama farkı
         # saldırganın e-postanın var olup olmadığını anlamasına izin verir.
-        verify_password(password, _DUMMY_HASH)
+        await run_in_threadpool(verify_password, password, _DUMMY_HASH)
         raise AuthError("Kimlik bilgileri hatalı")
 
-    if not verify_password(password, user.password_hash):
+    if not await run_in_threadpool(verify_password, password, user.password_hash):
         raise AuthError("Kimlik bilgileri hatalı")
 
     if user.status is not UserStatus.active:

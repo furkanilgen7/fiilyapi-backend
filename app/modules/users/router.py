@@ -1,13 +1,14 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel
 from app.core.db import get_db
 from app.core.deps import get_current_user
 from app.core.errors import NotFoundError
+from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
 from app.modules.users import repository, service
 from app.modules.users.models import User
@@ -16,23 +17,32 @@ from app.modules.users.schemas import (
     ProjectAccessInput,
     ProjectAccessResponse,
     UserCreate,
+    UserListResponse,
     UserResponse,
     UserUpdate,
 )
 
-router = APIRouter(prefix="/users", tags=["users"])
+router = APIRouter(prefix="/users", tags=["users"], responses=COMMON_ERROR_RESPONSES)
 
 
 @router.get(
     "",
-    response_model=list[UserResponse],
+    response_model=UserListResponse,
     dependencies=[require_permission("user_management", AccessLevel.view)],
 )
 async def list_users_endpoint(
     session: Annotated[AsyncSession, Depends(get_db)],
-) -> list[UserResponse]:
-    users = await repository.list_users(session)
-    return [UserResponse.model_validate(u) for u in users]
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> UserListResponse:
+    users = await repository.list_users(session, limit=limit, offset=offset)
+    total = await repository.count_users(session)
+    return UserListResponse(
+        items=[UserResponse.model_validate(u) for u in users],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get(

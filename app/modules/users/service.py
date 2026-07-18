@@ -1,5 +1,6 @@
 import uuid
 
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -46,9 +47,10 @@ async def create_user(session: AsyncSession, actor: User, data: UserCreate) -> U
         raise DomainError("Bu e-posta zaten kayıtlı")
     await _require_assignable_role(session, actor, data.role_id)
 
+    password_hash = await run_in_threadpool(hash_password, data.password)
     user = User(
         email=data.email,
-        password_hash=hash_password(data.password),
+        password_hash=password_hash,
         full_name=data.full_name,
         title=data.title,
         role_id=data.role_id,
@@ -86,7 +88,7 @@ async def set_user_password(session: AsyncSession, user_id: uuid.UUID, new_passw
     user = await repository.get_user(session, user_id)
     if user is None:
         raise NotFoundError("Kullanıcı bulunamadı")
-    user.password_hash = hash_password(new_password)
+    user.password_hash = await run_in_threadpool(hash_password, new_password)
     await session.flush()
 
 

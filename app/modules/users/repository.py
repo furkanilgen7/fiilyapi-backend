@@ -7,11 +7,21 @@ from sqlalchemy.orm import joinedload
 from app.modules.users.models import User, UserProjectAccess
 
 
-async def list_users(session: AsyncSession) -> list[User]:
+async def list_users(session: AsyncSession, limit: int = 50, offset: int = 0) -> list[User]:
     result = await session.execute(
-        select(User).options(joinedload(User.role)).order_by(User.full_name)
+        select(User)
+        .options(joinedload(User.role))
+        .order_by(User.full_name)
+        .limit(limit)
+        .offset(offset)
     )
     return list(result.scalars().all())
+
+
+async def count_users(session: AsyncSession) -> int:
+    from sqlalchemy import func
+
+    return (await session.execute(select(func.count()).select_from(User))).scalar_one()
 
 
 async def get_user(session: AsyncSession, user_id: uuid.UUID) -> User | None:

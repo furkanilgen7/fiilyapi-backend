@@ -42,3 +42,19 @@ async def test_domain_error_returns_400_with_message(handler_client):
 
     assert response.status_code == 400
     assert response.json() == {"detail": "Alan kuralı ihlal edildi"}
+
+
+async def test_integrity_error_maps_to_409():
+    from sqlalchemy.exc import IntegrityError
+
+    app = FastAPI()
+    register_exception_handlers(app)
+
+    @app.get("/boom")
+    async def boom():
+        raise IntegrityError("stmt", {}, Exception("fk"))
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        resp = await c.get("/boom")
+    assert resp.status_code == 409

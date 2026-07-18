@@ -44,3 +44,10 @@ class UserResponse(BaseModel):
     title: str
     role_id: uuid.UUID
     status: UserStatus
+
+
+class UserListResponse(BaseModel):
+    items: list[UserResponse]
+    total: int
+    limit: int
+    offset: int
