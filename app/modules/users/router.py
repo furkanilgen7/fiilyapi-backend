@@ -6,9 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel
 from app.core.db import get_db
+from app.core.deps import get_current_user
 from app.core.errors import NotFoundError
 from app.core.permissions import require_permission
 from app.modules.users import repository, service
+from app.modules.users.models import User
 from app.modules.users.schemas import (
     PasswordReset,
     ProjectAccessInput,
@@ -56,9 +58,10 @@ async def get_user_endpoint(
 )
 async def create_user_endpoint(
     data: UserCreate,
+    current_user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> UserResponse:
-    user = await service.create_user(session, data)
+    user = await service.create_user(session, current_user, data)
     return UserResponse.model_validate(user)
 
 
@@ -70,9 +73,10 @@ async def create_user_endpoint(
 async def update_user_endpoint(
     user_id: uuid.UUID,
     data: UserUpdate,
+    current_user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> UserResponse:
-    user = await service.update_user(session, user_id, data)
+    user = await service.update_user(session, current_user, user_id, data)
     return UserResponse.model_validate(user)
 
 

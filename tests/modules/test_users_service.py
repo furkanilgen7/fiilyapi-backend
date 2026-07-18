@@ -3,8 +3,8 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from app.core.errors import DomainError, NotFoundError
-from app.core.security import verify_password
+from app.core.errors import DomainError, NotFoundError, PermissionLockedError
+from app.core.security import hash_password, verify_password
 from app.modules.roles.models import Role
 from app.modules.users import service
 from app.modules.users.models import User, UserStatus
@@ -15,41 +15,64 @@ async def _role_id(session, key):
     return (await session.execute(select(Role).where(Role.key == key))).scalar_one().id
 
 
+async def _system_admin_actor(session):
+    role = (await session.execute(select(Role).where(Role.key == "system_admin"))).scalar_one()
+    actor = User(
+        email="actor-admin@t.co",
+        password_hash=hash_password("parola1234"),
+        full_name="Actor",
+        role_id=role.id,
+    )
+    session.add(actor)
+    await session.flush()
+    return actor
+
+
 async def test_create_user_hashes_password(seeded_db):
+    actor = await _system_admin_actor(seeded_db)
     data = UserCreate(
         email="a@t.co",
         password="parola1234",
         full_name="Ahmet",
         role_id=await _role_id(seeded_db, "patron"),
     )
-    user = await service.create_user(seeded_db, data)
+    user = await service.create_user(seeded_db, actor, data)
     assert user.password_hash != "parola1234"
     assert verify_password("parola1234", user.password_hash)
 
 
 async def test_create_user_duplicate_email_raises(seeded_db):
+    actor = await _system_admin_actor(seeded_db)
     rid = await _role_id(seeded_db, "patron")
     await service.create_user(
-        seeded_db, UserCreate(email="d@t.co", password="parola1234", full_name="A", role_id=rid)
+        seeded_db,
+        actor,
+        UserCreate(email="d@t.co", password="parola1234", full_name="A", role_id=rid),
     )
     with pytest.raises(DomainError):
         await service.create_user(
             seeded_db,
+            actor,
             UserCreate(email="d@t.co", password="parola1234", full_name="B", role_id=rid),
         )
 
 
 async def test_create_user_unknown_role_raises(seeded_db):
+    actor = await _system_admin_actor(seeded_db)
     with pytest.raises(NotFoundError):
         await service.create_user(
             seeded_db,
+            actor,
             UserCreate(email="x@t.co", password="parola1234", full_name="X", role_id=uuid.uuid4()),
         )
 
 
 async def test_update_user_changes_status(seeded_db, user_factory):
+    actor = await _system_admin_actor(seeded_db)
     user = await user_factory(email="u@t.co", password="parola1234", role_key="site_chief")
-    updated = await service.update_user(seeded_db, user.id, UserUpdate(status=UserStatus.passive))
+    updated = await service.update_user(
+        seeded_db, actor, user.id, UserUpdate(status=UserStatus.passive)
+    )
     assert updated.status is UserStatus.passive
 
 
@@ -70,3 +93,50 @@ async def test_delete_user(seeded_db, user_factory):
 async def test_delete_unknown_user_raises(seeded_db):
     with pytest.raises(NotFoundError):
         await service.delete_user(seeded_db, uuid.uuid4())
+
+
+async def test_full_actor_cannot_assign_system_role(seeded_db):
+    from app.core.access import AccessLevel, Scope
+    from app.modules.roles.schemas import RoleCreate
+    from app.modules.roles.service import create_custom_role, update_role_permission
+
+    mgr_role = await create_custom_role(
+        seeded_db, RoleCreate(key="kul_yonetici", name="Kul", emoji="", description="")
+    )
+    await update_role_permission(
+        seeded_db, mgr_role.id, "user_management", AccessLevel.full, Scope.all
+    )
+    actor = User(
+        email="mgr@t.co",
+        password_hash=hash_password("parola1234"),
+        full_name="Mgr",
+        role_id=mgr_role.id,
+    )
+    seeded_db.add(actor)
+    await seeded_db.flush()
+    sysadmin = (
+        await seeded_db.execute(select(Role).where(Role.key == "system_admin"))
+    ).scalar_one()
+    with pytest.raises(PermissionLockedError):
+        await service.create_user(
+            seeded_db,
+            actor,
+            UserCreate(
+                email="hedef@t.co", password="parola1234", full_name="H", role_id=sysadmin.id
+            ),
+        )
+
+
+async def test_admin_actor_can_assign_system_role(seeded_db):
+    actor = await _system_admin_actor(seeded_db)
+    sysadmin = (
+        await seeded_db.execute(select(Role).where(Role.key == "system_admin"))
+    ).scalar_one()
+    user = await service.create_user(
+        seeded_db,
+        actor,
+        UserCreate(
+            email="yeni-admin@t.co", password="parola1234", full_name="A", role_id=sysadmin.id
+        ),
+    )
+    assert user.role_id == sysadmin.id

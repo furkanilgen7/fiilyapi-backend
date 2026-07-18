@@ -3,26 +3,34 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import DomainError, NotFoundError
+from app.core.access import AccessLevel, satisfies
+from app.core.errors import DomainError, NotFoundError, PermissionLockedError
 from app.core.security import hash_password
 from app.modules.projects.models import Project
 from app.modules.roles.models import Role
+from app.modules.roles.repository import get_permission
 from app.modules.users import repository
 from app.modules.users.models import User, UserProjectAccess
 from app.modules.users.schemas import ProjectAccessInput, UserCreate, UserUpdate
 
 
-async def _require_role(session: AsyncSession, role_id: uuid.UUID) -> Role:
+async def _require_assignable_role(session: AsyncSession, actor: User, role_id: uuid.UUID) -> Role:
     role = (await session.execute(select(Role).where(Role.id == role_id))).scalar_one_or_none()
     if role is None:
         raise NotFoundError("Rol bulunamadı")
+    if role.is_system:
+        perm = await get_permission(session, actor.role_id, "user_management")
+        if perm is None or not satisfies(perm.access_level, AccessLevel.admin):
+            raise PermissionLockedError(
+                "Sistem rolleri yalnızca Sistem Yöneticisi tarafından atanabilir"
+            )
     return role
 
 
-async def create_user(session: AsyncSession, data: UserCreate) -> User:
+async def create_user(session: AsyncSession, actor: User, data: UserCreate) -> User:
     if await repository.get_user_by_email(session, data.email) is not None:
         raise DomainError("Bu e-posta zaten kayıtlı")
-    await _require_role(session, data.role_id)
+    await _require_assignable_role(session, actor, data.role_id)
 
     user = User(
         email=data.email,
@@ -35,12 +43,14 @@ async def create_user(session: AsyncSession, data: UserCreate) -> User:
     return await repository.add_user(session, user)
 
 
-async def update_user(session: AsyncSession, user_id: uuid.UUID, data: UserUpdate) -> User:
+async def update_user(
+    session: AsyncSession, actor: User, user_id: uuid.UUID, data: UserUpdate
+) -> User:
     user = await repository.get_user(session, user_id)
     if user is None:
         raise NotFoundError("Kullanıcı bulunamadı")
     if data.role_id is not None:
-        await _require_role(session, data.role_id)
+        await _require_assignable_role(session, actor, data.role_id)
         user.role_id = data.role_id
     if data.full_name is not None:
         user.full_name = data.full_name

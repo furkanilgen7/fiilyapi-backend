@@ -66,7 +66,7 @@ async def get_role_permissions_endpoint(
     "/roles",
     response_model=RoleResponse,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[require_permission("user_management", AccessLevel.full)],
+    dependencies=[require_permission("user_management", AccessLevel.admin)],
 )
 async def create_role_endpoint(
     data: RoleCreate,
@@ -78,7 +78,7 @@ async def create_role_endpoint(
 @router.patch(
     "/roles/{role_id}",
     response_model=RoleResponse,
-    dependencies=[require_permission("user_management", AccessLevel.full)],
+    dependencies=[require_permission("user_management", AccessLevel.admin)],
 )
 async def rename_role_endpoint(
     role_id: uuid.UUID,
@@ -92,7 +92,7 @@ async def rename_role_endpoint(
 @router.put(
     "/roles/{role_id}/permissions/{module_key}",
     response_model=PermissionCell,
-    dependencies=[require_permission("user_management", AccessLevel.full)],
+    dependencies=[require_permission("user_management", AccessLevel.admin)],
 )
 async def update_permission_endpoint(
     role_id: uuid.UUID,
