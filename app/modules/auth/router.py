@@ -1,10 +1,12 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.db import get_db
 from app.core.deps import get_current_user
+from app.core.ratelimit import limiter
 from app.core.security import TokenError, create_access_token, create_refresh_token, decode_token
 from app.modules.auth.schemas import LoginRequest, MeResponse, RefreshRequest, TokenPair
 from app.modules.auth.service import AuthError, authenticate
@@ -14,8 +16,11 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/login", response_model=TokenPair)
+@limiter.limit(settings.login_rate_limit)
 async def login(
-    payload: LoginRequest, session: Annotated[AsyncSession, Depends(get_db)]
+    request: Request,
+    payload: LoginRequest,
+    session: Annotated[AsyncSession, Depends(get_db)],
 ) -> TokenPair:
     try:
         user = await authenticate(session, payload.email, payload.password)
@@ -31,8 +36,11 @@ async def login(
 
 
 @router.post("/refresh", response_model=TokenPair)
+@limiter.limit(settings.refresh_rate_limit)
 async def refresh(
-    payload: RefreshRequest, session: Annotated[AsyncSession, Depends(get_db)]
+    request: Request,
+    payload: RefreshRequest,
+    session: Annotated[AsyncSession, Depends(get_db)],
 ) -> TokenPair:
     try:
         user_id = decode_token(payload.refresh_token, expected_type="refresh")

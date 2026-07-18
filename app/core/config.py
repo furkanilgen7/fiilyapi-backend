@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     # savunma-derinliğidir. Wildcard `*` + credentials ASLA birlikte kullanılmaz.
     cors_origins: str = ""
 
+    # Kaba-kuvvet denemelerine karşı IP başına login/refresh hız sınırı (slowapi biçimi).
+    login_rate_limit: str = "10/minute"
+    refresh_rate_limit: str = "20/minute"
+
     # İlk sistem yöneticisi bootstrap'ı (opsiyonel). İkisi de doluysa ve DB'de hiç kullanıcı
     # yoksa açılışta bu hesap oluşturulur; aksi halde bootstrap atlanır. Kullanıcı oluşturma
     # ucu admin yetkisi istediğinden ilk kurulumdaki tavuk-yumurta sorununu bu çözer.

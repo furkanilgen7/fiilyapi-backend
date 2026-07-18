@@ -4,10 +4,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi.errors import RateLimitExceeded
 
 from app.core.bootstrap import ensure_first_admin
 from app.core.config import Settings, settings
 from app.core.exception_handlers import register_exception_handlers
+from app.core.ratelimit import limiter, rate_limit_exceeded_handler
 from app.modules.auth.router import router as auth_router
 from app.modules.projects.router import router as projects_router
 from app.modules.roles.router import router as roles_router
@@ -46,6 +48,8 @@ def _configure_cors(app: FastAPI, cfg: Settings) -> None:
 
 
 app = FastAPI(title="FİİL Yapı ERP API", version="0.1.0", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 register_exception_handlers(app)
 _configure_cors(app, settings)
 app.include_router(auth_router)

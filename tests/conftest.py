@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.core.config import settings
 from app.core.db import Base, get_db
+from app.core.ratelimit import limiter
 from app.core.security import hash_password
 from app.main import app
 from app.modules.projects import models as projects_models  # noqa: F401
@@ -17,6 +18,10 @@ from app.modules.roles.models import Role
 from app.modules.roles.seed_data import seed_reference_data
 from app.modules.users import models as users_models  # noqa: F401
 from app.modules.users.models import User, UserStatus
+
+# Testlerde login/refresh hız sınırını kapat: login-yoğun testler paylaşılan in-memory
+# limiter'da birbirini boğmasın. test_auth_ratelimit kendi ayrı limiter'ını kurar.
+limiter.enabled = False
 
 test_engine = create_async_engine(settings.test_database_url, pool_pre_ping=True)
 TestSessionLocal = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
