@@ -89,6 +89,8 @@ async def set_user_password(session: AsyncSession, user_id: uuid.UUID, new_passw
     if user is None:
         raise NotFoundError("Kullanıcı bulunamadı")
     user.password_hash = await run_in_threadpool(hash_password, new_password)
+    # Parola değişince mevcut token'ları geçersiz kıl — eski oturumlar düşmeli.
+    user.token_version += 1
     await session.flush()
 
 

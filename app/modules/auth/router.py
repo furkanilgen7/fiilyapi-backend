@@ -69,8 +69,14 @@ async def refresh(
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout() -> None:
-    """Token'lar durumsuzdur; oturumu sonlandırmak cookie'yi silen BFF katmanının işidir."""
+async def logout(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """token_version'ı artırır — o ana dek basılmış tüm token'lar (access + refresh) geçersiz
+    olur (gerçek sunucu-taraflı çıkış). BFF ayrıca httpOnly cookie'yi siler."""
+    user.token_version += 1
+    await session.flush()
     return None
 
 

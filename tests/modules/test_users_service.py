@@ -83,6 +83,13 @@ async def test_set_password(seeded_db, user_factory):
     assert verify_password("yeniParola9", refreshed.password_hash)
 
 
+async def test_set_password_bumps_token_version(seeded_db, user_factory):
+    user = await user_factory(email="tv@t.co", password="parola1234", role_key="patron")
+    assert user.token_version == 0
+    await service.set_user_password(seeded_db, user.id, "yeniParola9")
+    assert user.token_version == 1
+
+
 async def test_delete_user(seeded_db, user_factory):
     user = await user_factory(email="del@t.co", password="parola1234", role_key="accounting")
     await service.delete_user(seeded_db, user.id)

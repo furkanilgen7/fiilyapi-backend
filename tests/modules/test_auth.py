@@ -198,3 +198,16 @@ def test_me_response_status_schema_references_user_status_enum() -> None:
 
     enum_schema = schema["components"]["schemas"]["UserStatus"]
     assert set(enum_schema["enum"]) == {"active", "on_leave", "passive"}
+
+
+async def test_logout_revokes_existing_tokens(client, user_factory) -> None:
+    await user_factory(email="logout@fiil.com", password="parola1234", role_key="patron")
+    login = await client.post(
+        "/auth/login", json={"email": "logout@fiil.com", "password": "parola1234"}
+    )
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    assert (await client.get("/auth/me", headers=headers)).status_code == 200
+    assert (await client.post("/auth/logout", headers=headers)).status_code == 204
+    # logout token_version'ı artırdı — o token'la basılan her şey artık geçersiz.
+    assert (await client.get("/auth/me", headers=headers)).status_code == 401
