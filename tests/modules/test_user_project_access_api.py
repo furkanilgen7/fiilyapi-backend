@@ -41,6 +41,19 @@ async def test_set_specific_projects_then_replace(client, user_factory, project_
     assert r2.json()["project_ids"] == [str(p1.id)]
 
 
+async def test_set_project_access_unknown_project_404(client, user_factory):
+    import uuid
+
+    token = await _login(client, user_factory, "system_admin")
+    target = await user_factory(email="pa@t.co", password="parola1234", role_key="site_chief")
+    resp = await client.put(
+        f"/users/{target.id}/project-access",
+        json={"all_projects": False, "project_ids": [str(uuid.uuid4())]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 404
+
+
 async def test_project_access_forbidden_for_non_admin(client, user_factory):
     token = await _login(client, user_factory, "accounting")
     target = await user_factory(email="t@t.co", password="parola1234", role_key="site_chief")

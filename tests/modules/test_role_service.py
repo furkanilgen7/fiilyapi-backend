@@ -53,6 +53,11 @@ async def test_renaming_never_changes_key(seeded_db):
     assert renamed.key == "field_engineer"
 
 
+async def test_rename_unknown_role_raises_not_found(seeded_db):
+    with pytest.raises(NotFoundError):
+        await rename_role(seeded_db, uuid.uuid4(), "X", "", "")
+
+
 async def test_update_permission_missing_row_raises_not_found(seeded_db):
     patron = await _role(seeded_db, "patron")
     with pytest.raises(NotFoundError):

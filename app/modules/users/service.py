@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import DomainError, NotFoundError
 from app.core.security import hash_password
+from app.modules.projects.models import Project
 from app.modules.roles.models import Role
 from app.modules.users import repository
 from app.modules.users.models import User, UserProjectAccess
@@ -73,6 +74,13 @@ async def set_project_access(
     user = await repository.get_user(session, user_id)
     if user is None:
         raise NotFoundError("Kullanıcı bulunamadı")
+    if not data.all_projects and data.project_ids:
+        found = (
+            await session.execute(select(Project.id).where(Project.id.in_(data.project_ids)))
+        ).scalars().all()
+        missing = set(data.project_ids) - set(found)
+        if missing:
+            raise NotFoundError("Proje bulunamadı")
     return await repository.replace_project_access(
         session, user_id, data.all_projects, data.project_ids
     )

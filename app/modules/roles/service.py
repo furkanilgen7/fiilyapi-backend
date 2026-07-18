@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel, Scope
@@ -46,7 +46,11 @@ async def rename_role(
     description: str,
 ) -> Role:
     """Rolün görünen bilgilerini günceller. key asla değişmez — kod ona dayanır."""
-    role = (await session.execute(select(Role).where(Role.id == role_id))).scalar_one()
+    role = (
+        await session.execute(select(Role).where(Role.id == role_id))
+    ).scalar_one_or_none()
+    if role is None:
+        raise NotFoundError("Rol bulunamadı")
     role.name = name
     role.emoji = emoji
     role.description = description
@@ -93,5 +97,16 @@ async def delete_role(session: AsyncSession, role_id: uuid.UUID) -> None:
         raise NotFoundError("Rol bulunamadı")
     if role.is_system:
         raise PermissionLockedError("Sistem rolleri silinemez")
+
+    from app.modules.users.models import User  # fonksiyon ici import (dongu riskini onler)
+
+    in_use = (
+        await session.execute(
+            select(func.count()).select_from(User).where(User.role_id == role_id)
+        )
+    ).scalar_one()
+    if in_use > 0:
+        raise DomainError("Bu role atanmış kullanıcılar var; önce onları başka role taşıyın")
+
     await session.delete(role)  # role_permissions CASCADE ile silinir
     await session.flush()

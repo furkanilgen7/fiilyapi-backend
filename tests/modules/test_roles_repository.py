@@ -44,6 +44,15 @@ async def test_delete_unknown_role_raises(seeded_db):
         await service.delete_role(seeded_db, uuid.uuid4())
 
 
+async def test_delete_role_in_use_rejected(seeded_db, user_factory):
+    role = await service.create_custom_role(
+        seeded_db, RoleCreate(key="gecici_rol", name="Geçici", emoji="", description="")
+    )
+    await user_factory(email="ru@t.co", password="parola1234", role_key="gecici_rol")
+    with pytest.raises(DomainError):
+        await service.delete_role(seeded_db, role.id)
+
+
 async def test_get_role_matrix_returns_all_modules(seeded_db):
     patron = (await seeded_db.execute(select(Role).where(Role.key == "patron"))).scalar_one()
     matrix = await repository.get_role_matrix(seeded_db, patron.id)

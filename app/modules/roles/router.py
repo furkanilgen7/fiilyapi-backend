@@ -85,8 +85,6 @@ async def rename_role_endpoint(
     data: RoleRename,
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> RoleResponse:
-    if await repository.get_role(session, role_id) is None:
-        raise NotFoundError("Rol bulunamadı")
     role = await service.rename_role(session, role_id, data.name, data.emoji, data.description)
     return RoleResponse.model_validate(role)
 
