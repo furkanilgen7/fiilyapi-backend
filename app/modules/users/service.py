@@ -1,17 +1,31 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel, satisfies
 from app.core.errors import DomainError, NotFoundError, PermissionLockedError
 from app.core.security import hash_password
 from app.modules.projects.models import Project
-from app.modules.roles.models import Role
+from app.modules.roles.models import SYSTEM_ADMIN_KEY, Role
 from app.modules.roles.repository import get_permission
 from app.modules.users import repository
-from app.modules.users.models import User, UserProjectAccess
+from app.modules.users.models import User, UserProjectAccess, UserStatus
 from app.modules.users.schemas import ProjectAccessInput, UserCreate, UserUpdate
+
+
+async def _is_last_active_system_admin(session: AsyncSession, user: User) -> bool:
+    if user.role.key != SYSTEM_ADMIN_KEY or user.status is not UserStatus.active:
+        return False
+    count = (
+        await session.execute(
+            select(func.count())
+            .select_from(User)
+            .join(Role, Role.id == User.role_id)
+            .where(Role.key == SYSTEM_ADMIN_KEY, User.status == UserStatus.active)
+        )
+    ).scalar_one()
+    return count <= 1
 
 
 async def _require_assignable_role(session: AsyncSession, actor: User, role_id: uuid.UUID) -> Role:
@@ -49,6 +63,12 @@ async def update_user(
     user = await repository.get_user(session, user_id)
     if user is None:
         raise NotFoundError("Kullanıcı bulunamadı")
+
+    demotes_role = data.role_id is not None and data.role_id != user.role_id
+    deactivates = data.status is not None and data.status is not UserStatus.active
+    if (demotes_role or deactivates) and await _is_last_active_system_admin(session, user):
+        raise DomainError("Son aktif Sistem Yöneticisi düşürülemez")
+
     if data.role_id is not None:
         await _require_assignable_role(session, actor, data.role_id)
         user.role_id = data.role_id
@@ -74,6 +94,8 @@ async def delete_user(session: AsyncSession, user_id: uuid.UUID) -> None:
     user = await repository.get_user(session, user_id)
     if user is None:
         raise NotFoundError("Kullanıcı bulunamadı")
+    if await _is_last_active_system_admin(session, user):
+        raise DomainError("Son aktif Sistem Yöneticisi silinemez")
     await session.delete(user)
     await session.flush()
 

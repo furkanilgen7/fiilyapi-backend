@@ -140,3 +140,9 @@ async def test_admin_actor_can_assign_system_role(seeded_db):
         ),
     )
     assert user.role_id == sysadmin.id
+
+
+async def test_cannot_delete_last_system_admin(seeded_db):
+    actor = await _system_admin_actor(seeded_db)  # tek aktif system_admin
+    with pytest.raises(DomainError):
+        await service.delete_user(seeded_db, actor.id)
