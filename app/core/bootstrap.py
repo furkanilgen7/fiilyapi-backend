@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 from app.core.config import settings
 from app.core.db import SessionLocal
 from app.core.security import hash_password
+from app.modules.company.models import Company
 from app.modules.roles.models import SYSTEM_ADMIN_KEY, Role
 from app.modules.users.models import User, UserProjectAccess, UserStatus
 
@@ -29,9 +30,7 @@ async def ensure_first_admin() -> None:
 
         role = await session.scalar(select(Role).where(Role.key == SYSTEM_ADMIN_KEY))
         if role is None:
-            logger.warning(
-                "İlk admin oluşturulamadı: '%s' rolü seed edilmemiş.", SYSTEM_ADMIN_KEY
-            )
+            logger.warning("İlk admin oluşturulamadı: '%s' rolü seed edilmemiş.", SYSTEM_ADMIN_KEY)
             return
 
         admin = User(
@@ -47,3 +46,18 @@ async def ensure_first_admin() -> None:
         session.add(UserProjectAccess(user_id=admin.id, all_projects=True))
         await session.commit()
         logger.info("İlk sistem yöneticisi oluşturuldu: %s", settings.admin_email)
+
+
+async def ensure_company() -> None:
+    """DB'de sirket satiri yoksa bos tek satiri olusturur (spec §4.1: tek sirket).
+
+    Idempotent: satir varsa hicbir sey yapmaz. GET /company okuma yolunda da get-or-create
+    vardir; bu bootstrap yalnizca ilk istegin yazma yapmamasi icin sicak-baslatmadir.
+    """
+    async with SessionLocal() as session:
+        existing = await session.scalar(select(func.count()).select_from(Company))
+        if existing:
+            return
+        session.add(Company())
+        await session.commit()
+        logger.info("Bos sirket satiri olusturuldu.")

@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -52,6 +54,14 @@ class Settings(BaseSettings):
     admin_email: str = ""
     admin_password: str = ""
 
+    # Sirket logosu DB'de bytea saklanir (object storage yok). Yukleme sinirlari + marka
+    # varsayilanlari config'ten gelir (hardcode degil).
+    logo_max_bytes: int = 1_048_576  # 1 MB
+    allowed_logo_content_types: str = "image/png,image/jpeg,image/svg+xml,image/webp"
+    default_brand_color: str = "#2563eb"
+    default_accent_color: str = "#2563eb"
+    default_vat_rate: Decimal = Decimal("20.00")
+
     @field_validator("database_url", "test_database_url")
     @classmethod
     def _normalize_pg_driver(cls, value: str) -> str:
@@ -75,6 +85,11 @@ class Settings(BaseSettings):
     def cors_origin_list(self) -> list[str]:
         """`cors_origins`'i temizlenmiş origin listesine çevirir (boşları atar)."""
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def allowed_logo_content_type_set(self) -> set[str]:
+        """Izin verilen logo MIME tiplerini kume olarak dondurur."""
+        return {t.strip() for t in self.allowed_logo_content_types.split(",") if t.strip()}
 
 
 settings = Settings()

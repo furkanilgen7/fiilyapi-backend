@@ -8,8 +8,10 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 from app.core.config import settings
 from app.core.db import Base
+from app.modules.company import models as company_models  # noqa: F401
 from app.modules.projects import models as projects_models  # noqa: F401
 from app.modules.roles import models as roles_models  # noqa: F401
+from app.modules.settings import models as settings_models  # noqa: F401
 from app.modules.users import models as users_models  # noqa: F401
 
 # this is the Alembic Config object, which provides
