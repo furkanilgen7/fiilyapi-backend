@@ -45,6 +45,22 @@ async def test_update_notification_unknown_event_rejected(client, user_factory, 
     assert resp.status_code == 422
 
 
+async def test_update_notification_duplicate_event_rejected(client, user_factory, seeded_db):
+    token = await _login(client, user_factory, "n6@t.co")
+    key = NOTIFICATION_EVENTS[0]["event_key"]
+    resp = await client.put(
+        "/settings/notifications",
+        json={
+            "items": [
+                {"event_key": key, "email": True, "in_app": True, "sms": False},
+                {"event_key": key, "email": False, "in_app": False, "sms": True},
+            ]
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 422
+
+
 async def test_notifications_are_per_user(client, user_factory, seeded_db):
     token_a = await _login(client, user_factory, "n4@t.co")
     token_b = await _login(client, user_factory, "n5@t.co")

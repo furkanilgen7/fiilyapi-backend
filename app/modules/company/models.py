@@ -15,6 +15,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.config import settings
 from app.core.db import Base
 
 
@@ -45,12 +46,12 @@ class Company(Base):
     logo_content_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     logo_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     brand_color: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="#2563eb", server_default="#2563eb"
+        String(20), nullable=False, default=settings.default_brand_color, server_default="#2563eb"
     )
     gib_integration_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     earsiv_portal: Mapped[str | None] = mapped_column(String(255), nullable=True)
     default_vat_rate: Mapped[Decimal] = mapped_column(
-        Numeric(5, 2), nullable=False, default=Decimal("20.00"), server_default="20.00"
+        Numeric(5, 2), nullable=False, default=settings.default_vat_rate, server_default="20.00"
     )
     auto_einvoice: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"

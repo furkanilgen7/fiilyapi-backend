@@ -42,6 +42,10 @@ async def update_company_endpoint(
 @router.post(
     "/logo",
     response_model=CompanyRead,
+    responses={
+        413: {"description": "Logo boyutu cok buyuk"},
+        422: {"description": "Gecersiz logo bicimi veya icerigi"},
+    },
     dependencies=[require_permission("settings", AccessLevel.full)],
 )
 async def upload_logo_endpoint(
@@ -53,17 +57,18 @@ async def upload_logo_endpoint(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Desteklenmeyen logo bicimi (izinli: PNG, JPEG, SVG, WEBP)",
         )
-    if file.size is not None and file.size > settings.logo_max_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="Logo boyutu cok buyuk (en fazla 1 MB)",
-        )
-    content = await file.read()
-    if len(content) > settings.logo_max_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="Logo boyutu cok buyuk (en fazla 1 MB)",
-        )
+    max_bytes = settings.logo_max_bytes
+    chunks: list[bytes] = []
+    total = 0
+    while chunk := await file.read(65536):
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="Logo boyutu cok buyuk (en fazla 1 MB)",
+            )
+        chunks.append(chunk)
+    content = b"".join(chunks)
     if not service.logo_signature_matches(file.content_type, content):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

@@ -1,5 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.modules.settings import repository
 from app.modules.settings.constants import NOTIFICATION_EVENTS, NOTIFICATION_LABELS
 from app.modules.settings.models import UICurrency, UIDensity, UILocale, UITheme, UserPreferences
@@ -19,7 +20,7 @@ def _default_preferences() -> PreferencesRead:
         date_format="DD.MM.YYYY",
         density=UIDensity.normal,
         theme=UITheme.light,
-        accent_color="#2563eb",
+        accent_color=settings.default_accent_color,
     )
 
 

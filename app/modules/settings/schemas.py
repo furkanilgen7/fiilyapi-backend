@@ -54,7 +54,7 @@ class NotificationPrefUpdateItem(BaseModel):
 
 
 class NotificationPrefsUpdate(BaseModel):
-    items: list[NotificationPrefUpdateItem]
+    items: list[NotificationPrefUpdateItem] = Field(max_length=len(NOTIFICATION_EVENT_KEYS))
 
     @field_validator("items")
     @classmethod
@@ -64,4 +64,7 @@ class NotificationPrefsUpdate(BaseModel):
         unknown = {i.event_key for i in items} - NOTIFICATION_EVENT_KEYS
         if unknown:
             raise ValueError(f"Bilinmeyen bildirim olayi: {', '.join(sorted(unknown))}")
+        keys = [i.event_key for i in items]
+        if len(keys) != len(set(keys)):
+            raise ValueError("Ayni bildirim olayi birden fazla kez gonderildi")
         return items
