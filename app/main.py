@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
 
-from app.core.bootstrap import ensure_first_admin
+from app.core.bootstrap import ensure_company, ensure_first_admin
 from app.core.config import Settings, settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.ratelimit import limiter, rate_limit_exceeded_handler
@@ -26,6 +26,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await ensure_first_admin()
     except Exception:
         logger.exception("İlk admin bootstrap'ı başarısız oldu")
+    try:
+        await ensure_company()
+    except Exception:
+        logger.exception("Sirket bootstrap'i basarisiz oldu")
     yield
 
 
