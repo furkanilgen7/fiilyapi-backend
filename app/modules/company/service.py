@@ -17,6 +17,21 @@ async def update_company(session: AsyncSession, data: CompanyUpdate) -> Company:
     return company
 
 
+def logo_signature_matches(content_type: str, data: bytes) -> bool:
+    """Yuklenen ikili verinin, bildirilen MIME tipiyle gercekten eslesip eslesmedigini
+    magic-byte imzasiyla dogrular. Istemcinin bildirdigi content_type'a korU korune guvenmez."""
+    if content_type == "image/png":
+        return data.startswith(b"\x89PNG\r\n\x1a\n")
+    if content_type == "image/jpeg":
+        return data.startswith(b"\xff\xd8\xff")
+    if content_type == "image/webp":
+        return len(data) >= 12 and data[0:4] == b"RIFF" and data[8:12] == b"WEBP"
+    if content_type == "image/svg+xml":
+        head = data[:1024].lstrip().lower()
+        return head.startswith(b"<?xml") or head.startswith(b"<svg")
+    return False
+
+
 async def set_logo(
     session: AsyncSession, content_type: str, filename: str | None, data: bytes
 ) -> Company:

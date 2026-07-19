@@ -53,11 +53,21 @@ async def upload_logo_endpoint(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Desteklenmeyen logo bicimi (izinli: PNG, JPEG, SVG, WEBP)",
         )
+    if file.size is not None and file.size > settings.logo_max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Logo boyutu cok buyuk (en fazla 1 MB)",
+        )
     content = await file.read()
     if len(content) > settings.logo_max_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="Logo boyutu cok buyuk (en fazla 1 MB)",
+        )
+    if not service.logo_signature_matches(file.content_type, content):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Logo icerigi bildirilen bicimle uyusmuyor",
         )
     company = await service.set_logo(session, file.content_type, file.filename, content)
     return CompanyRead.from_model(company)
@@ -74,6 +84,10 @@ async def get_logo_endpoint(
     return Response(
         content=company.logo_data,
         media_type=company.logo_content_type or "application/octet-stream",
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": f'attachment; filename="{company.logo_filename or "logo"}"',
+        },
     )
 
 

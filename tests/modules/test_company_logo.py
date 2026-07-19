@@ -23,6 +23,8 @@ async def test_upload_and_fetch_logo(client, user_factory, seeded_db):
     assert got.status_code == 200
     assert got.headers["content-type"].startswith("image/png")
     assert got.content == _PNG
+    assert got.headers["x-content-type-options"] == "nosniff"
+    assert "attachment" in got.headers["content-disposition"]
 
 
 async def test_upload_logo_invalid_content_type(client, user_factory, seeded_db):
@@ -44,6 +46,16 @@ async def test_upload_logo_too_large(client, user_factory, seeded_db):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 413
+
+
+async def test_upload_logo_content_mismatch(client, user_factory, seeded_db):
+    token = await _login(client, user_factory, "system_admin")
+    resp = await client.post(
+        "/company/logo",
+        files={"file": ("fake.png", b"<svg>x</svg>", "image/png")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 422
 
 
 async def test_get_logo_when_none(client, user_factory, seeded_db):
