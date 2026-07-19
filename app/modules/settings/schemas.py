@@ -1,5 +1,6 @@
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.modules.settings.constants import NOTIFICATION_EVENT_KEYS
 from app.modules.settings.models import UICurrency, UIDensity, UILocale, UITheme
 
 _HEX_COLOR = r"^#[0-9A-Fa-f]{6}$"
@@ -33,3 +34,34 @@ class PreferencesUpdate(BaseModel):
         if value is not None and value is not UITheme.light:
             raise ValueError("Koyu tema henuz aktif degil")
         return value
+
+
+class NotificationPrefItem(BaseModel):
+    event_key: str
+    label: str
+    email: bool
+    in_app: bool
+    sms: bool
+
+
+class NotificationPrefUpdateItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_key: str
+    email: bool
+    in_app: bool
+    sms: bool
+
+
+class NotificationPrefsUpdate(BaseModel):
+    items: list[NotificationPrefUpdateItem]
+
+    @field_validator("items")
+    @classmethod
+    def _known_event_keys(
+        cls, items: list[NotificationPrefUpdateItem]
+    ) -> list[NotificationPrefUpdateItem]:
+        unknown = {i.event_key for i in items} - NOTIFICATION_EVENT_KEYS
+        if unknown:
+            raise ValueError(f"Bilinmeyen bildirim olayi: {', '.join(sorted(unknown))}")
+        return items
