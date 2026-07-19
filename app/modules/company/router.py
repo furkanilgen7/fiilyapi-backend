@@ -81,12 +81,13 @@ async def get_logo_endpoint(
     company = await service.get_company(session)
     if company.logo_data is None:
         raise NotFoundError("Logo yuklenmemis")
+    safe_filename = service.safe_logo_filename(company.logo_filename)
     return Response(
         content=company.logo_data,
         media_type=company.logo_content_type or "application/octet-stream",
         headers={
             "X-Content-Type-Options": "nosniff",
-            "Content-Disposition": f'attachment; filename="{company.logo_filename or "logo"}"',
+            "Content-Disposition": f'attachment; filename="{safe_filename}"',
         },
     )
 

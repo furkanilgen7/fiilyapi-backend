@@ -1,8 +1,24 @@
+import re
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.company import repository
 from app.modules.company.models import Company
 from app.modules.company.schemas import CompanyUpdate
+
+_SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def safe_logo_filename(filename: str | None) -> str:
+    """Content-Disposition basligina guvenli sekilde konacak dosya adini uretir.
+
+    Istemci-saglamali dosya adindaki tirnak/CRLF/kontrol karakterleri header enjeksiyonuna
+    yol acabilir; guvenli karakter kumesi disindaki her sey alt-cizgiyle degistirilir.
+    Bos/gecersiz ad 'logo' olur."""
+    if not filename:
+        return "logo"
+    cleaned = _SAFE_FILENAME.sub("_", filename).strip("._") or "logo"
+    return cleaned
 
 
 async def get_company(session: AsyncSession) -> Company:

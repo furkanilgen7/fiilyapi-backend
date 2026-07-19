@@ -58,6 +58,23 @@ async def test_upload_logo_content_mismatch(client, user_factory, seeded_db):
     assert resp.status_code == 422
 
 
+async def test_logo_filename_sanitized_in_header(client, user_factory, seeded_db):
+    token = await _login(client, user_factory, "system_admin")
+    up = await client.post(
+        "/company/logo",
+        files={"file": ('ev"il\r\n.png', _PNG, "image/png")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert up.status_code == 200
+
+    got = await client.get("/company/logo", headers={"Authorization": f"Bearer {token}"})
+    assert got.status_code == 200
+    disposition = got.headers["content-disposition"]
+    assert "\r" not in disposition
+    assert "\n" not in disposition
+    assert 'ev"il' not in disposition
+
+
 async def test_get_logo_when_none(client, user_factory, seeded_db):
     token = await _login(client, user_factory, "patron")
     resp = await client.get("/company/logo", headers={"Authorization": f"Bearer {token}"})
