@@ -12,3 +12,23 @@ async def get_or_create_singleton(session: AsyncSession) -> Company:
         session.add(company)
         await session.flush()
     return company
+
+
+async def set_logo(
+    session: AsyncSession, content_type: str, filename: str | None, data: bytes
+) -> Company:
+    company = await get_or_create_singleton(session)
+    company.logo_data = data
+    company.logo_content_type = content_type
+    company.logo_filename = filename
+    await session.flush()
+    return company
+
+
+async def clear_logo(session: AsyncSession) -> Company:
+    company = await get_or_create_singleton(session)
+    company.logo_data = None
+    company.logo_content_type = None
+    company.logo_filename = None
+    await session.flush()
+    return company

@@ -15,3 +15,13 @@ async def update_company(session: AsyncSession, data: CompanyUpdate) -> Company:
         setattr(company, field, value)
     await session.flush()
     return company
+
+
+async def set_logo(
+    session: AsyncSession, content_type: str, filename: str | None, data: bytes
+) -> Company:
+    return await repository.set_logo(session, content_type, filename, data)
+
+
+async def clear_logo(session: AsyncSession) -> Company:
+    return await repository.clear_logo(session)
