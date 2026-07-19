@@ -26,7 +26,9 @@ async def test_update_notification_overrides_default(client, user_factory, seede
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 200
-    again = await client.get("/settings/notifications", headers={"Authorization": f"Bearer {token}"})
+    again = await client.get(
+        "/settings/notifications", headers={"Authorization": f"Bearer {token}"}
+    )
     row = next(i for i in again.json() if i["event_key"] == key)
     assert row["email"] is False and row["in_app"] is False and row["sms"] is True
 
@@ -35,7 +37,9 @@ async def test_update_notification_unknown_event_rejected(client, user_factory, 
     token = await _login(client, user_factory, "n3@t.co")
     resp = await client.put(
         "/settings/notifications",
-        json={"items": [{"event_key": "bilinmeyen_olay", "email": True, "in_app": True, "sms": False}]},
+        json={
+            "items": [{"event_key": "bilinmeyen_olay", "email": True, "in_app": True, "sms": False}]
+        },
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 422
@@ -50,7 +54,9 @@ async def test_notifications_are_per_user(client, user_factory, seeded_db):
         json={"items": [{"event_key": key, "email": True, "in_app": True, "sms": True}]},
         headers={"Authorization": f"Bearer {token_a}"},
     )
-    resp_b = await client.get("/settings/notifications", headers={"Authorization": f"Bearer {token_b}"})
+    resp_b = await client.get(
+        "/settings/notifications", headers={"Authorization": f"Bearer {token_b}"}
+    )
     row_b = next(i for i in resp_b.json() if i["event_key"] == key)
     default = next(e for e in NOTIFICATION_EVENTS if e["event_key"] == key)
     assert row_b["sms"] == default["sms"]  # B kullanicisi varsayilanda kaldi
