@@ -12,3 +12,4 @@ argon2-cffi>=23.1
 pyjwt>=2.10
 slowapi>=0.1.9
 python-multipart>=0.0.20
+openpyxl>=3.1

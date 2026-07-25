@@ -1,14 +1,15 @@
-"""Denetim gunlugu okuma ucu (plan Task 4).
+"""Denetim gunlugu okuma ve disa aktarim uclari (plan Task 4-5).
 
-Yalnizca okuma ucu tanimlanir; audit satirlari `record_audit` ile yazma uclarinda
+Yalnizca okuma uclari tanimlanir; audit satirlari `record_audit` ile yazma uclarinda
 uretilir. Bu tablo icin UPDATE/DELETE ucu YOKTUR.
 """
 
 import uuid
+from dataclasses import dataclass
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel
@@ -16,11 +17,39 @@ from app.core.db import get_db
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
 from app.modules.audit import repository
+from app.modules.audit.export import build_audit_workbook
 from app.modules.audit.models import AuditAction
 from app.modules.audit.repository import AuditRow
 from app.modules.audit.schemas import AuditActorRead, AuditItem, AuditListResponse
 
 router = APIRouter(prefix="/audit-log", tags=["audit"], responses=COMMON_ERROR_RESPONSES)
+
+XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+XLSX_FILENAME = "denetim-gunlugu.xlsx"
+
+
+@dataclass
+class AuditFilters:
+    """Liste ve disa aktarim uclarinin PAYLASTIGI filtre kumesi — tek yerde tanimli."""
+
+    actor_user_id: Annotated[uuid.UUID | None, Query()] = None
+    action: Annotated[AuditAction | None, Query()] = None
+    date_from: Annotated[
+        date | None, Query(description="YYYY-MM-DD — o gunun 00:00'indan itibaren (UTC, dahil)")
+    ] = None
+    date_to: Annotated[
+        date | None, Query(description="YYYY-MM-DD — o gunun sonuna kadar (UTC, dahil)")
+    ] = None
+    q: Annotated[str | None, Query(description="Detay metni veya aktor adinda kismi arama")] = None
+
+    def as_kwargs(self) -> dict[str, object]:
+        return {
+            "actor_user_id": self.actor_user_id,
+            "action": self.action,
+            "date_from": self.date_from,
+            "date_to": self.date_to,
+            "q": self.q,
+        }
 
 
 def _to_item(row: AuditRow) -> AuditItem:
@@ -49,28 +78,38 @@ def _to_item(row: AuditRow) -> AuditItem:
 )
 async def list_audit_log_endpoint(
     session: Annotated[AsyncSession, Depends(get_db)],
-    actor_user_id: Annotated[uuid.UUID | None, Query()] = None,
-    action: Annotated[AuditAction | None, Query()] = None,
-    date_from: Annotated[
-        date | None, Query(description="YYYY-MM-DD — o gunun 00:00'indan itibaren (UTC, dahil)")
-    ] = None,
-    date_to: Annotated[
-        date | None, Query(description="YYYY-MM-DD — o gunun sonuna kadar (UTC, dahil)")
-    ] = None,
-    q: Annotated[str | None, Query(description="Detay metni veya aktor adinda kismi arama")] = None,
+    filters: Annotated[AuditFilters, Depends()],
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> AuditListResponse:
     """Filtrelenebilir/sayfalanabilir denetim gunlugu listesi (`occurred_at DESC`)."""
-    filters = {
-        "actor_user_id": actor_user_id,
-        "action": action,
-        "date_from": date_from,
-        "date_to": date_to,
-        "q": q,
-    }
-    rows = await repository.list_audit_entries(session, limit=limit, offset=offset, **filters)
-    total = await repository.count_audit_entries(session, **filters)
+    kwargs = filters.as_kwargs()
+    rows = await repository.list_audit_entries(session, limit=limit, offset=offset, **kwargs)
+    total = await repository.count_audit_entries(session, **kwargs)
     return AuditListResponse(
         items=[_to_item(row) for row in rows], total=total, limit=limit, offset=offset
+    )
+
+
+@router.get(
+    "/export.xlsx",
+    dependencies=[require_permission("settings", AccessLevel.view)],
+    response_class=Response,
+    responses={200: {"content": {XLSX_MEDIA_TYPE: {}}, "description": "Excel dosyasi"}},
+)
+async def export_audit_log_endpoint(
+    session: Annotated[AsyncSession, Depends(get_db)],
+    filters: Annotated[AuditFilters, Depends()],
+) -> Response:
+    """Filtrelenmis denetim gunlugunu Excel dosyasi olarak doner.
+
+    Liste ucuyle AYNI filtreler gecerlidir; `limit`/`offset` YOKTUR — eslesen tum
+    kayitlar yazilir (sessiz kirpma yapilmaz, bkz. plan Task 5 sinir notu).
+    """
+    rows = await repository.list_audit_entries(session, limit=None, **filters.as_kwargs())
+    buffer = build_audit_workbook(rows)
+    return Response(
+        content=buffer.getvalue(),
+        media_type=XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": f'attachment; filename="{XLSX_FILENAME}"'},
     )
