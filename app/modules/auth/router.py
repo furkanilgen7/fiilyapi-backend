@@ -6,8 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.deps import get_current_user
-from app.core.ratelimit import limiter
+from app.core.ratelimit import client_ip, limiter
 from app.core.security import TokenError, create_access_token, create_refresh_token, decode_token
+from app.modules.audit import messages
+from app.modules.audit.models import AuditAction
+from app.modules.audit.service import record_audit
 from app.modules.auth.schemas import LoginRequest, MeResponse, RefreshRequest, TokenPair
 from app.modules.auth.service import AuthError, authenticate
 from app.modules.users.models import User, UserStatus
@@ -28,6 +31,16 @@ async def login(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Kimlik bilgileri hatalı"
         ) from exc
+
+    # Yalnizca basarili giris denetime yazilir; basarisiz denemeler kapsam disidir
+    # (plan §Kapsam disi) — hiz siniri zaten kotuye kullanimi frenliyor.
+    await record_audit(
+        session,
+        action=AuditAction.login,
+        detail=messages.LOGIN_DETAIL,
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
 
     return TokenPair(
         access_token=create_access_token(user.id, user.token_version),

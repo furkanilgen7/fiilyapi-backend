@@ -4,7 +4,7 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 
 
-def _client_ip(request: Request) -> str:
+def client_ip(request: Request) -> str:
     """Hız sınırı anahtarı: gerçek istemci IP'si.
 
     Railway/prod proxy arkasında `request.client.host` proxy'nin IP'sidir; gerçek istemci
@@ -17,7 +17,7 @@ def _client_ip(request: Request) -> str:
 
 
 # In-memory limiter — Railway tek instance olduğundan Redis gerekmez.
-limiter = Limiter(key_func=_client_ip)
+limiter = Limiter(key_func=client_ip)
 
 
 async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:

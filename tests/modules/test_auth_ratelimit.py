@@ -3,16 +3,16 @@ from httpx import ASGITransport, AsyncClient
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 
-from app.core.ratelimit import _client_ip, rate_limit_exceeded_handler
+from app.core.ratelimit import client_ip, rate_limit_exceeded_handler
 
 
 def test_client_ip_prefers_forwarded_for() -> None:
     scope = {"type": "http", "headers": [(b"x-forwarded-for", b"203.0.113.7, 10.0.0.1")]}
-    assert _client_ip(Request(scope)) == "203.0.113.7"
+    assert client_ip(Request(scope)) == "203.0.113.7"
 
 
 async def test_rate_limit_returns_429_over_threshold() -> None:
-    limiter = Limiter(key_func=_client_ip)
+    limiter = Limiter(key_func=client_ip)
     app = FastAPI()
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)

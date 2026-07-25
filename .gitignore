@@ -11,3 +11,5 @@ venv/
 htmlcov/
 .DS_Store
 *.egg-info/
+# Uretim ciktisi: sozlesmenin izlenen kopyasi frontend/openapi/openapi.json (bkz. README).
+openapi.json

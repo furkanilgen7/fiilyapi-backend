@@ -262,6 +262,65 @@ GET /audit-log?actor_user_id=&action=&date_from=&date_to=&limit=50&offset=0
 
 **Commit:** `test: b5 faz kapanisi - kapsam ve inceleme duzeltmeleri`
 
+### Kapanış sonucu (uygulandı)
+
+- Tam suite: **271 test yeşil**. Kapsam **%86** (eşik %80). `app/modules/audit/**` %90–100.
+  Kapsam raporunda "eksik" görünen satırlar (`repository.py:101`, `router.py:88-89, 110-111`)
+  **yanlış negatiftir**: `coverage.py` izleyicisi SQLAlchemy'nin greenlet bağlamı değişiminden
+  sonra `await`'i izleyen satırları kaydedemiyor. O satırların çalıştığı testlerle kanıtlı
+  (`test_audit_api` `total`/`limit`/`offset` alanlarını, `test_audit_export` dosya gövdesini
+  doğruluyor). Aynı etki `users/roles/company` router'larının düşük yüzdelerinde de var.
+- Migration temiz PG 18 veritabanında ampirik doğrulandı: `upgrade head` → `downgrade -1`
+  (tablo + `audit_action` enum tipi düşer) → `upgrade head` (3 indeks geri gelir).
+  `alembic check` → "No new upgrade operations detected" (model/migration ayrışması yok).
+- Değiştirilemezlik denetimi: `grep -rn "AuditLog" app/` yalnızca modelin tanımı,
+  `service.py`'deki tek INSERT ve `repository.py`'deki SELECT'leri gösteriyor. UPDATE/DELETE yok.
+- Kapsam-dışı kuralı regresyon kilidiyle korunuyor (`test_tercih_uclari_denetim_satiri_yazmaz`).
+
+### İnceleme bulgusu — kapatıldı
+
+- **HIGH — geçersiz IP asıl işlemi düşürüyordu.** `ip_address` kolonu `INET`; `client_ip()`
+  ise `X-Forwarded-For`'un ilk girdisini (istemci kontrolünde) ya da istemci yoksa
+  `"anonymous"` sabitini döndürüyor. Geçersiz metin insert'i `DataError` ile düşürüyor ve
+  audit satırı asıl işlemle aynı transaction'da olduğu için **işlemin kendisi geri
+  alınıyordu** (ör. `X-Forwarded-For: not-an-ip` başlıklı bir login/kullanıcı oluşturma
+  isteği). `record_audit` artık değeri `ipaddress.ip_address()` ile normalize ediyor;
+  geçersizse alan `NULL` yazılıyor, işlem korunuyor (`test_record_audit_gecersiz_ip_null_yazilir`,
+  `test_record_audit_ipv6_ve_bosluklu_ip_kabul_edilir`).
+
+### Takip maddeleri (engellemez)
+
+1. ~~**Excel'de saat dilimi (MEDIUM).**~~ **KAPANDI** (`fix: denetim gunlugu saat dilimi
+   Europe/Istanbul`). Karar: kullanıcıya dönük **tüm** zamanlar `Europe/Istanbul`. Export
+   `occurred_at`'i `to_display()` ile TR'ye çevirip `dd.MM.yyyy HH:mm` yazıyor; ekranla Excel
+   artık aynı saati gösteriyor.
+2. ~~**Tarih filtresi de UTC (MEDIUM).**~~ **KAPANDI** (aynı commit). `date_from`/`date_to`
+   artık TR gün sınırlarına açılıp (`day_start_utc`/`day_end_utc`) UTC'ye çevrilerek
+   karşılaştırılıyor; sınırlar yine **dahil**. Saat dilimi adı tek yerde:
+   `settings.display_timezone` → `app/core/timezone.py` (`zoneinfo`, sabit ofset varsayımı yok).
+3. **Export üst sınırı yok (MEDIUM).** `limit=None` ile tüm eşleşen satırlar belleğe alınıp
+   tek xlsx'e yazılıyor. Tablo büyüdüğünde bellek/süre riski; `settings ≥ view` olan her
+   kullanıcı tetikleyebilir. Sessiz kırpma yerine ya üst sınır + açık uyarı ya da streaming
+   gerekir.
+4. **Başarısız login güvenlik olayı (MEDIUM).** Şu an yalnızca başarılı girişler yazılıyor.
+   Kaba-kuvvet tespiti için ayrı bir güvenlik-olayı kanalı (veya `login_failed` action)
+   değerlendirilmeli — gürültü/değer dengesi bilinçli olarak v1'de dışarıda bırakıldı.
+5. **XFF sahteciliği (MEDIUM).** `client_ip()` proxy zincirini doğrulamıyor; istemci
+   `X-Forwarded-For` ile denetim kaydına **istediği geçerli IP'yi** yazdırabilir. Railway
+   arkasında güvenilir proxy sayısı bilinerek sağdan n'inci girdi alınmalı.
+6. **`q` uzunluk sınırı yok (LOW).** Çok uzun arama terimi iki `ILIKE` taramasını
+   pahalılaştırır; `Query(max_length=…)` ucuz bir korkuluk olur. (Joker karakter escape'i
+   `_escape_like` ile zaten yapılıyor.)
+7. **Türkçe `İ/I` ILIKE sınırı (LOW).** Postgres `ILIKE` Türkçe nokta-sız/noktalı `i`
+   eşlemesini yapmaz: "ilyas" araması "İlyas" kaydını bulmaz. Gerekirse `citext` veya
+   `lower(... COLLATE "tr-TR")` tabanlı bir çözüm.
+8. **Audit uçlarında hız sınırı yok (LOW).** Özellikle export pahalı; `settings ≥ view`
+   kapısı var ama ek bir limit savunma-derinliği sağlar.
+9. **Küçük ek sorgular (LOW).** `users`/`roles` router'larında detay metni için işlem
+   sonrası `get_user`/`get_role`/`get_module` okumaları var (istek başına 1-2 ek sorgu,
+   döngü içinde değil — N+1 değil). Okuma ucunda N+1 yok: aktör ve rol tek `outerjoin`
+   sorgusunda geliyor.
+
 ---
 
 ## Bağımlılık ve sıra notları

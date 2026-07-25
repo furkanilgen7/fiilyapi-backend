@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "fiil-erp-backend"
 version = "0.1.0"
@@ -15,6 +19,7 @@ dependencies = [
     "pyjwt>=2.10",
     "slowapi>=0.1.9",
     "python-multipart>=0.0.20",
+    "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -25,6 +30,14 @@ dev = [
     "httpx>=0.28",
     "ruff>=0.8",
 ]
+
+# setuptools'un duz-yerlesim (flat-layout) otomatik kesfi kok dizinde hem `app` hem
+# `alembic` gorunce "Multiple top-level packages discovered" hatasiyla duser ve CI'daki
+# `pip install -e .[dev]` adimini kirar. Paket yalnizca `app` ve alt paketleridir;
+# `alembic/` bir paket degil, calisma dizininden kosulan migration betikleridir
+# (Dockerfile da onu ayrica COPY eder, kurulumdan beklemez).
+[tool.setuptools.packages.find]
+include = ["app*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
