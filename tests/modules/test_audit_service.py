@@ -48,3 +48,27 @@ async def test_record_audit_actor_ve_ip_null_olabilir(db_session: AsyncSession) 
 
     assert row.actor_user_id is None
     assert row.ip_address is None
+
+
+async def test_record_audit_gecersiz_ip_null_yazilir(db_session: AsyncSession) -> None:
+    """Geçersiz IP metni satırı (ve dolayısıyla asıl işlemi) düşürmemeli.
+
+    `ip_address` kolonu INET'tir; sürücüye geçersiz bir metin verilirse insert
+    `DataError` fırlatır ve audit satırı asıl işlemle AYNI transaction'da olduğu
+    için işlemin kendisi de geri alınır. İstemci `X-Forwarded-For` başlığını
+    serbestçe belirlediğinden bu, dışarıdan tetiklenebilir bir kırılmadır:
+    denetim alanı sessizce boş bırakılır, işlem korunur.
+    """
+    await record_audit(
+        db_session, action=AuditAction.login, detail="Sisteme giriş yapıldı", ip_address="anonymous"
+    )
+
+    assert (await db_session.execute(select(AuditLog))).scalar_one().ip_address is None
+
+
+async def test_record_audit_ipv6_ve_bosluklu_ip_kabul_edilir(db_session: AsyncSession) -> None:
+    await record_audit(
+        db_session, action=AuditAction.login, detail="Sisteme giriş yapıldı", ip_address=" ::1 "
+    )
+
+    assert str((await db_session.execute(select(AuditLog))).scalar_one().ip_address) == "::1"
