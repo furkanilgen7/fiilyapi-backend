@@ -26,6 +26,11 @@ async def get_role(session: AsyncSession, role_id: uuid.UUID) -> Role | None:
     return await session.get(Role, role_id)
 
 
+async def get_module(session: AsyncSession, module_key: str) -> Module | None:
+    stmt = select(Module).where(Module.key == module_key)
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
 async def list_modules(session: AsyncSession) -> list[Module]:
     result = await session.execute(select(Module).order_by(Module.sort_order))
     return list(result.scalars().all())

@@ -1,6 +1,15 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel
@@ -10,6 +19,10 @@ from app.core.deps import get_current_user
 from app.core.errors import NotFoundError
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
+from app.core.ratelimit import client_ip
+from app.modules.audit import messages
+from app.modules.audit.models import AuditAction
+from app.modules.audit.service import record_audit
 from app.modules.company import service
 from app.modules.company.schemas import CompanyRead, CompanyUpdate
 from app.modules.users.models import User
@@ -32,10 +45,19 @@ async def get_company_endpoint(
     dependencies=[require_permission("settings", AccessLevel.full)],
 )
 async def update_company_endpoint(
+    request: Request,
     data: CompanyUpdate,
+    current_user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> CompanyRead:
     company = await service.update_company(session, data)
+    await record_audit(
+        session,
+        action=AuditAction.update,
+        detail=messages.COMPANY_UPDATED,
+        actor_user_id=current_user.id,
+        ip_address=client_ip(request),
+    )
     return CompanyRead.from_model(company)
 
 
@@ -49,6 +71,8 @@ async def update_company_endpoint(
     dependencies=[require_permission("settings", AccessLevel.full)],
 )
 async def upload_logo_endpoint(
+    request: Request,
+    current_user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
     file: Annotated[UploadFile, File(...)],
 ) -> CompanyRead:
@@ -75,6 +99,13 @@ async def upload_logo_endpoint(
             detail="Logo icerigi bildirilen bicimle uyusmuyor",
         )
     company = await service.set_logo(session, file.content_type, file.filename, content)
+    await record_audit(
+        session,
+        action=AuditAction.update,
+        detail=messages.COMPANY_LOGO_UPDATED,
+        actor_user_id=current_user.id,
+        ip_address=client_ip(request),
+    )
     return CompanyRead.from_model(company)
 
 
@@ -103,6 +134,15 @@ async def get_logo_endpoint(
     dependencies=[require_permission("settings", AccessLevel.full)],
 )
 async def delete_logo_endpoint(
+    request: Request,
+    current_user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> None:
     await service.clear_logo(session)
+    await record_audit(
+        session,
+        action=AuditAction.update,
+        detail=messages.COMPANY_LOGO_REMOVED,
+        actor_user_id=current_user.id,
+        ip_address=client_ip(request),
+    )
