@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -44,6 +45,7 @@ class UserResponse(BaseModel):
     title: str
     role_id: uuid.UUID
     status: UserStatus
+    last_login_at: datetime | None = None
 
 
 class UserListResponse(BaseModel):

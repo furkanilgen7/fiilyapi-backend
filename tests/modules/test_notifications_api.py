@@ -17,6 +17,21 @@ async def test_get_notifications_returns_full_catalog(client, user_factory, seed
     assert all("label" in item for item in body)
 
 
+async def test_get_notifications_includes_ayarlar_ui_events(client, user_factory, seeded_db):
+    token = await _login(client, user_factory, "n7@t.co")
+    resp = await client.get("/settings/notifications", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) >= 7
+    event_keys = {item["event_key"] for item in body}
+    assert {
+        "progress_payment_approved",
+        "purchase_approval_pending",
+        "payroll_payday",
+        "daily_log_missing",
+    }.issubset(event_keys)
+
+
 async def test_update_notification_overrides_default(client, user_factory, seeded_db):
     token = await _login(client, user_factory, "n2@t.co")
     key = NOTIFICATION_EVENTS[0]["event_key"]

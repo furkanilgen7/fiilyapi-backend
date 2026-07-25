@@ -12,6 +12,13 @@ NOTIFICATION_EVENTS: list[dict] = [
         "sms": False,
     },
     {
+        "event_key": "progress_payment_approved",
+        "label": "Hakedis onaylandi",
+        "email": True,
+        "in_app": True,
+        "sms": False,
+    },
+    {
         "event_key": "vat_due_soon",
         "label": "KDV odemesi yaklasiyor",
         "email": True,
@@ -28,6 +35,27 @@ NOTIFICATION_EVENTS: list[dict] = [
     {
         "event_key": "stock_low",
         "label": "Stok kritik seviyede",
+        "email": False,
+        "in_app": True,
+        "sms": False,
+    },
+    {
+        "event_key": "purchase_approval_pending",
+        "label": "Satinalma onay bekliyor",
+        "email": False,
+        "in_app": True,
+        "sms": False,
+    },
+    {
+        "event_key": "payroll_payday",
+        "label": "Bordro odeme gunu",
+        "email": True,
+        "in_app": True,
+        "sms": False,
+    },
+    {
+        "event_key": "daily_log_missing",
+        "label": "Gunluk kayit girilmedi",
         "email": False,
         "in_app": True,
         "sms": False,

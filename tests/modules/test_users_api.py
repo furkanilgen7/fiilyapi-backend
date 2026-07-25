@@ -32,10 +32,12 @@ async def test_create_and_list_user_as_admin(client, user_factory, seeded_db):
     body = resp.json()
     assert body["email"] == "yeni@t.co"
     assert "password" not in body and "password_hash" not in body
+    assert "last_login_at" in body
 
     listing = await client.get("/users", headers={"Authorization": f"Bearer {token}"})
     assert listing.status_code == 200
     assert any(u["email"] == "yeni@t.co" for u in listing.json()["items"])
+    assert all("last_login_at" in u for u in listing.json()["items"])
 
 
 async def test_create_user_forbidden_for_non_admin(client, user_factory, seeded_db):
