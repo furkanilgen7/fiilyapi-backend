@@ -1,16 +1,22 @@
-"""Migration'daki elle kopyalanmis izin matrisinin seed_data.py ile birebir
+"""Migration'lardaki elle kopyalanmis izin matrisinin seed_data.py ile birebir
 ayni oldugunu dogrular.
 
 app/modules/roles/seed_data.py (testlerin seed ettigi kaynak) ile
-alembic/versions/a477fdf00fdf_...py (production'a giden dondurulmus kopya)
-iki ayri yerde ayni 8x13 matrisi tutar. Migration app kodunu KASITLI olarak
-import etmez (uygulanmis bir migration donmus olmalidir), bu yuzden ikisinin
-esitligini garanti eden hicbir mekanizma yoktur. Bu test o bosluğu kapatir.
+alembic/versions/*.py (production'a giden dondurulmus kopyalar) ayni matrisi
+iki ayri yerde tutar. Migration'lar app kodunu KASITLI olarak import ETMEZ
+(uygulanmis bir migration donmus olmalidir), bu yuzden ikisinin esitligini
+garanti eden hicbir mekanizma yoktur. Bu test o boslugu kapatir.
 
-DB gerektirmez: migration'in upgrade() fonksiyonu, gercek `alembic.op` yerine
-satirlari bellekte toplayan sahte bir `op` ile cagrilir (bulk_insert
-cagrilarini yakalar), boylece roller/moduller icin migration'in gercekte
-INSERT edecegi satirlar hicbir veritabanina dokunmadan elde edilir.
+Matris tek bir migration'da degil, uc uca eklenen migration'larda birikir:
+  * a477fdf00fdf -> ilk 8 rol x 13 modul (bulk_insert)
+  * 2cffc2fcfcf0 -> 14. modul "invoicing" + 8 izin satiri + sort_order kaydirmasi
+Bu yuzden karsilastirma, migration'larin BILESKESI ile seed_data arasinda yapilir.
+
+DB gerektirmez: ilk migration'in upgrade() fonksiyonu, gercek `alembic.op` yerine
+satirlari bellekte toplayan sahte bir `op` ile cagrilir (bulk_insert cagrilarini
+yakalar). Ikinci migration satirlari calisma aninda DB'den okunan id'lerle
+INSERT ettigi icin bulk_insert kullanmaz; onun yerine upgrade()'in SQL uretirken
+okudugu modul-duzeyi sabitleri karsilastirilir.
 """
 
 import importlib.util
@@ -21,22 +27,28 @@ from unittest.mock import patch
 
 from app.modules.roles import seed_data as app_seed_data
 
-MIGRATION_PATH = (
-    Path(__file__).parents[2]
-    / "alembic"
-    / "versions"
-    / "a477fdf00fdf_seed_roller_modul_ve_izinler.py"
-)
+VERSIONS_DIR = Path(__file__).parents[2] / "alembic" / "versions"
+SEED_MIGRATION_PATH = VERSIONS_DIR / "a477fdf00fdf_seed_roller_modul_ve_izinler.py"
+INVOICING_MIGRATION_PATH = VERSIONS_DIR / "2cffc2fcfcf0_invoicing_izin_modulu.py"
 
 
-def _load_migration_module():
+def _load_migration_module(path: Path):
     """Dosya adi revizyon hash'i ile basladigi icin nokta-yollu import edilemez."""
-    spec = importlib.util.spec_from_file_location("_migration_a477fdf00fdf", MIGRATION_PATH)
+    name = f"_migration_{path.stem}"
+    spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _load_seed_migration():
+    return _load_migration_module(SEED_MIGRATION_PATH)
+
+
+def _load_invoicing_migration():
+    return _load_migration_module(INVOICING_MIGRATION_PATH)
 
 
 def _value(x) -> str:
@@ -69,16 +81,22 @@ def _permission_map_from_app() -> dict[tuple[str, str], tuple[str, str]]:
     return result
 
 
-def _permission_map_from_migration(
-    migration, captured: dict[str, list[dict]]
-) -> dict[tuple[str, str], tuple[str, str]]:
-    role_key_by_id = {v: k for k, v in migration.ROLE_IDS.items()}
-    module_key_by_id = {v: k for k, v in migration.MODULE_IDS.items()}
+def _permission_map_from_migrations() -> dict[tuple[str, str], tuple[str, str]]:
+    seed_migration = _load_seed_migration()
+    captured = _captured_bulk_inserts(seed_migration)
+    role_key_by_id = {v: k for k, v in seed_migration.ROLE_IDS.items()}
+    module_key_by_id = {v: k for k, v in seed_migration.MODULE_IDS.items()}
+
     result: dict[tuple[str, str], tuple[str, str]] = {}
     for row in captured["role_permissions"]:
         role_key = role_key_by_id[row["role_id"]]
         module_key = module_key_by_id[row["module_id"]]
         result[(role_key, module_key)] = (_value(row["access_level"]), _value(row["scope"]))
+
+    invoicing = _load_invoicing_migration()
+    for module_key, cells in invoicing.MATRIX.items():
+        for role_key, (level, scope) in zip(invoicing.ROLE_ORDER, cells, strict=True):
+            result[(role_key, module_key)] = (_value(level), _value(scope))
     return result
 
 
@@ -103,11 +121,24 @@ def _modules_set_from_app() -> set[tuple[str, str, str, int]]:
     }
 
 
-def _modules_set_from_migration(captured: dict[str, list[dict]]) -> set[tuple[str, str, str, int]]:
-    return {
-        (row["key"], row["name"], _value(row["group"]), row["sort_order"])
-        for row in captured["modules"]
-    }
+def _modules_set_from_migrations() -> set[tuple[str, str, str, int]]:
+    """Ilk migration'in modul satirlari + invoicing migration'inin ekledigi/kaydirdigi hali."""
+    captured = _captured_bulk_inserts(_load_seed_migration())
+    invoicing = _load_invoicing_migration()
+
+    result: set[tuple[str, str, str, int]] = set()
+    for row in captured["modules"]:
+        sort_order = invoicing.SORT_ORDER_UPDATES.get(row["key"], row["sort_order"])
+        result.add((row["key"], row["name"], _value(row["group"]), sort_order))
+    result.add(
+        (
+            invoicing.MODULE_KEY,
+            invoicing.MODULE_NAME,
+            invoicing.MODULE_GROUP,
+            invoicing.MODULE_SORT_ORDER,
+        )
+    )
+    return result
 
 
 def _all_uuids_unique(captured: dict[str, list[dict]]) -> bool:
@@ -119,46 +150,56 @@ def _all_uuids_unique(captured: dict[str, list[dict]]) -> bool:
 
 
 def test_migration_permission_matrix_matches_seed_data():
-    migration = _load_migration_module()
-    captured = _captured_bulk_inserts(migration)
-    assert _permission_map_from_app() == _permission_map_from_migration(migration, captured)
+    assert _permission_map_from_app() == _permission_map_from_migrations()
 
 
-def test_migration_permission_matrix_has_104_cells():
-    migration = _load_migration_module()
-    captured = _captured_bulk_inserts(migration)
+def test_migration_permission_matrix_has_112_cells():
     app_map = _permission_map_from_app()
-    migration_map = _permission_map_from_migration(migration, captured)
-    assert len(app_map) == 104
-    assert len(migration_map) == 104
+    migration_map = _permission_map_from_migrations()
+    assert len(app_map) == 112
+    assert len(migration_map) == 112
 
 
 def test_migration_role_keys_match_seed_data():
-    migration = _load_migration_module()
+    migration = _load_seed_migration()
     assert set(migration.ROLE_IDS.keys()) == {row["key"] for row in app_seed_data.ROLES}
     assert list(migration.ROLE_ORDER) == list(app_seed_data.ROLE_ORDER)
 
 
+def test_invoicing_migration_role_order_matches_seed_data():
+    """Sutun sirasi kaymissa izinler yanlis rollere yazilir — sessiz yetki sizintisi."""
+    invoicing = _load_invoicing_migration()
+    assert list(invoicing.ROLE_ORDER) == list(app_seed_data.ROLE_ORDER)
+
+
 def test_migration_module_keys_match_seed_data():
-    migration = _load_migration_module()
-    assert set(migration.MODULE_IDS.keys()) == {row["key"] for row in app_seed_data.MODULES}
+    migration = _load_seed_migration()
+    invoicing = _load_invoicing_migration()
+    keys = set(migration.MODULE_IDS.keys()) | {invoicing.MODULE_KEY}
+    assert keys == {row["key"] for row in app_seed_data.MODULES}
 
 
 def test_migration_role_rows_match_seed_data():
-    migration = _load_migration_module()
-    captured = _captured_bulk_inserts(migration)
+    captured = _captured_bulk_inserts(_load_seed_migration())
     assert _roles_set_from_app() == _roles_set_from_migration(captured)
 
 
 def test_migration_module_rows_match_seed_data():
-    migration = _load_migration_module()
-    captured = _captured_bulk_inserts(migration)
-    assert _modules_set_from_app() == _modules_set_from_migration(captured)
+    assert _modules_set_from_app() == _modules_set_from_migrations()
+
+
+def test_invoicing_migration_downgrade_restores_previous_sort_orders():
+    """downgrade() eski sort_order'lari geri yazar; bunlar ilk migration'in degerleri olmali."""
+    captured = _captured_bulk_inserts(_load_seed_migration())
+    invoicing = _load_invoicing_migration()
+    original = {row["key"]: row["sort_order"] for row in captured["modules"]}
+    assert invoicing.PREVIOUS_SORT_ORDERS == {
+        key: original[key] for key in invoicing.SORT_ORDER_UPDATES
+    }
 
 
 def test_migration_generated_ids_are_unique():
     """bulk_insert satirlari gercekten benzersiz UUID'ler tasiyor mu (sahte op, gercek
     DB kisitlarini calistirmadigi icin bunu ayrica dogrulamak gerekir)."""
-    migration = _load_migration_module()
-    captured = _captured_bulk_inserts(migration)
+    captured = _captured_bulk_inserts(_load_seed_migration())
     assert _all_uuids_unique(captured)

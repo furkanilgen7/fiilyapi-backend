@@ -93,7 +93,7 @@ async def test_role_with_no_permission_row_is_denied(
 ):
     """NEGATİF: (rol, modül) için hiç RolePermission satırı yoksa erişim reddedilmeli.
 
-    `seeded_db` yalnızca 8 kanonik rol için 13x8=104 hücrelik matrisi doldurur; bu test için
+    `seeded_db` yalnızca 8 kanonik rol için 14x8=112 hücrelik matrisi doldurur; bu test için
     kasıtlı olarak matrisin DIŞINDA yeni bir rol oluşturuyoruz, dolayısıyla `progress_payments`
     modülü için hiçbir izin satırı yok. `require_permission` "varsayılan kapalı" olmalı: satır
     yoksa `permission is None` dalı 403 üretmeli — `permission.access_level`'e hiç erişmeden.

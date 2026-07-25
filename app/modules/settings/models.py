@@ -87,9 +87,7 @@ class NotificationPref(Base):
     """Kullanici-basina olay kanal tercihi (spec §4.1). v1'de gonderim yok, yalnizca kayit."""
 
     __tablename__ = "notification_prefs"
-    __table_args__ = (
-        UniqueConstraint("user_id", "event_key", name="uq_notification_user_event"),
-    )
+    __table_args__ = (UniqueConstraint("user_id", "event_key", name="uq_notification_user_event"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(

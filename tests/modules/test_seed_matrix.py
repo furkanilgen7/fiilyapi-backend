@@ -1,7 +1,7 @@
 from sqlalchemy import select, text
 
 from app.core.access import AccessLevel
-from app.modules.roles.models import Module, Role, RolePermission
+from app.modules.roles.models import Module, ModuleGroup, Role, RolePermission
 from app.modules.roles.seed_data import seed_reference_data
 
 EXPECTED_ROLE_KEYS = {
@@ -26,6 +26,7 @@ EXPECTED_MODULE_KEYS = {
     "procurement",
     "progress_payments",
     "accounting",
+    "invoicing",
     "treasury",
     "settings",
     "user_management",
@@ -47,15 +48,15 @@ async def test_seeds_eight_roles(seeded_db):
     assert keys == EXPECTED_ROLE_KEYS
 
 
-async def test_seeds_thirteen_modules(seeded_db):
+async def test_seeds_fourteen_modules(seeded_db):
     keys = set((await seeded_db.execute(select(Module.key))).scalars())
     assert keys == EXPECTED_MODULE_KEYS
 
 
 async def test_matrix_is_complete(seeded_db):
-    """8 rol × 13 modül = 104 hücre; hiçbiri eksik olamaz."""
+    """8 rol × 14 modül = 112 hücre; hiçbiri eksik olamaz."""
     rows = (await seeded_db.execute(select(RolePermission))).scalars().all()
-    assert len(rows) == 104
+    assert len(rows) == 112
 
 
 async def test_system_admin_has_admin_level_everywhere(seeded_db):
@@ -93,7 +94,7 @@ async def test_hr_manager_is_confined_to_people_modules(seeded_db):
 
 async def test_reseed_after_permissions_wiped_restores_full_matrix(db_session):
     """roles/modules mevcutken role_permissions bosaltilip yeniden seed edilirse
-    104 izin satirinin tamami geri gelmeli - kismi/basarisiz bir onceki calistirma
+    112 izin satirinin tamami geri gelmeli - kismi/basarisiz bir onceki calistirma
     sonrasi operasyonel yeniden calistirmayi simule eder."""
     await seed_reference_data(db_session)
 
@@ -105,12 +106,40 @@ async def test_reseed_after_permissions_wiped_restores_full_matrix(db_session):
     await seed_reference_data(db_session)
 
     rows = (await db_session.execute(select(RolePermission))).scalars().all()
-    assert len(rows) == 104
+    assert len(rows) == 112
 
     role_count = (await db_session.execute(select(Role))).scalars().all()
     module_count = (await db_session.execute(select(Module))).scalars().all()
     assert len(role_count) == 8
-    assert len(module_count) == 13
+    assert len(module_count) == 14
+
+
+async def test_invoicing_module_is_in_mali_group_between_accounting_and_treasury(seeded_db):
+    """Fatura Yönetimi, Muhasebe'den ayrı bir ana menü maddesidir (mockup sidebar sırası)."""
+    stmt = select(Module.key, Module.group, Module.sort_order).where(
+        Module.key.in_(("accounting", "invoicing", "treasury"))
+    )
+    by_key = {row.key: row for row in (await seeded_db.execute(stmt)).all()}
+
+    assert by_key["invoicing"].group == ModuleGroup.MALI
+    assert by_key["accounting"].sort_order < by_key["invoicing"].sort_order
+    assert by_key["invoicing"].sort_order < by_key["treasury"].sort_order
+
+
+async def test_invoicing_permissions_follow_accounting_row(seeded_db):
+    """En az ayrıcalık: muhasebe tam, PM görüntüle, saha rolleri yok."""
+    assert await _level_of(seeded_db, "accounting", "invoicing") == AccessLevel.full
+    assert await _level_of(seeded_db, "system_admin", "invoicing") == AccessLevel.admin
+    assert await _level_of(seeded_db, "patron", "invoicing") == AccessLevel.full
+    assert await _level_of(seeded_db, "project_manager", "invoicing") == AccessLevel.view
+    for role_key in ("site_chief", "field_engineer", "hr_manager", "procurement"):
+        assert await _level_of(seeded_db, role_key, "invoicing") == AccessLevel.none
+
+
+async def test_module_sort_orders_are_unique_and_contiguous(seeded_db):
+    """invoicing araya girdiği için sonraki modüller kaydırılır; çakışma/boşluk olmamalı."""
+    orders = sorted((await seeded_db.execute(select(Module.sort_order))).scalars())
+    assert orders == list(range(1, 15))
 
 
 async def test_users_table_exists_in_test_schema(seeded_db):

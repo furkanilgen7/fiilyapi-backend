@@ -95,13 +95,16 @@ MODULES: list[dict] = [
         "sort_order": 9,
     },
     {"key": "accounting", "name": "Muhasebe", "group": ModuleGroup.MALI, "sort_order": 10},
-    {"key": "treasury", "name": "Hazine", "group": ModuleGroup.MALI, "sort_order": 11},
-    {"key": "settings", "name": "Ayarlar", "group": ModuleGroup.SISTEM, "sort_order": 12},
+    # Fatura Yönetimi, Muhasebe'nin altında değil ayrı bir ana menü maddesidir
+    # (mockup: projedesign/Fatura Yönetimi.dc.html sidebar sırası).
+    {"key": "invoicing", "name": "Fatura Yönetimi", "group": ModuleGroup.MALI, "sort_order": 11},
+    {"key": "treasury", "name": "Hazine", "group": ModuleGroup.MALI, "sort_order": 12},
+    {"key": "settings", "name": "Ayarlar", "group": ModuleGroup.SISTEM, "sort_order": 13},
     {
         "key": "user_management",
         "name": "Kullanıcı & Rol Yönetimi",
         "group": ModuleGroup.SISTEM,
-        "sort_order": 13,
+        "sort_order": 14,
     },
 ]
 
@@ -144,6 +147,7 @@ MATRIX: dict[str, list[tuple[AccessLevel, Scope]]] = {
     "procurement": [_A, _F, _REQ, _REQ, _N, _N, _APR, _F],
     "progress_payments": [_A, _F, _DRF, _DRF, _N, _APR, _APR, _N],
     "accounting": [_A, _F, _N, _N, _N, _F, _V, _N],
+    "invoicing": [_A, _F, _N, _N, _N, _F, _V, _N],
     "treasury": [_A, _F, _N, _N, _N, _F, _V, _N],
     "settings": [_A, _N, _N, _N, _N, _N, _N, _N],
     "user_management": [_A, _N, _N, _N, _N, _N, _N, _N],
@@ -155,7 +159,7 @@ async def seed_reference_data(session: AsyncSession) -> None:
 
     Idempotent: hangi başlangıç durumundan çalıştırılırsa çalıştırılsın (boş DB,
     tamamen seed edilmiş DB, ya da roller/modüller var ama role_permissions boş)
-    sonuçta 8 rol, 13 modül ve 104 izin satırı bulunur; mevcut satırlar
+    sonuçta 8 rol, 14 modül ve 112 izin satırı bulunur; mevcut satırlar
     üzerine yazılmaz ve `uq_role_module` UNIQUE kısıtı asla ihlal edilmez.
     """
     existing_role_rows = (await session.execute(select(Role))).scalars().all()
