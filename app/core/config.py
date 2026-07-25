@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 30
     environment: str = "development"
 
+    # Kullaniciya donuk TUM zaman ve gun sinirlarinin saat dilimi (IANA adi). Tek sirketli
+    # bir Turk ERP'si oldugu icin varsayilan TR'dir: "bugun"/"bu ay" filtreleri ve Excel
+    # ciktisindaki saatler bu dilimde yorumlanir. Bkz. `app/core/timezone.py`.
+    display_timezone: str = "Europe/Istanbul"
+
     # Veritabanı bağlantı/komut zaman aşımları (saniye). Asılı bir sorgu ya da bağlantı
     # canlıda tek instance'ı kilitlemesin diye asyncpg'ye açıkça sınır veriyoruz.
     db_connect_timeout: int = 10

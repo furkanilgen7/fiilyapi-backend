@@ -8,6 +8,10 @@ Sutun basliklari mockup (`Ayarlar - Denetim Gunlugu.dc.html`) tablosuyla BIREBIR
 FLOAT-YASAK (B4 dersi): her hucre ACIKCA `str` yazilir. openpyxl bir hucreye
 `datetime`/`int`/`Decimal` verildiginde onu sessizce sayi+bicim olarak saklar ve
 cikti hucreleri metin olmaktan cikar; bu yuzden donusum burada, tek yerde yapilir.
+
+SAAT DILIMI: `occurred_at` UTC saklanir; Zaman sutunu `Europe/Istanbul`'a cevrilerek
+yazilir (bkz. `app/core/timezone.py`) — ayni kayit ekranda ve Excel'de AYNI saatte
+gorunur.
 """
 
 from collections.abc import Iterable, Sequence
@@ -16,6 +20,7 @@ from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
+from app.core.timezone import to_display
 from app.modules.audit.models import AuditAction
 from app.modules.audit.repository import AuditRow
 
@@ -60,7 +65,8 @@ def _cells(row: AuditRow) -> tuple[str, ...]:
     """Tek denetim satirini mockup sutun sirasinda METIN hucrelere cevirir."""
     entry = row[0]
     return (
-        entry.occurred_at.strftime(_TIMESTAMP_FORMAT),
+        # Ekranla ayni saat: `occurred_at` UTC saklanir, TR'ye cevrilerek yazilir.
+        to_display(entry.occurred_at).strftime(_TIMESTAMP_FORMAT),
         _actor_label(row),
         ACTION_LABELS.get(entry.action, str(entry.action.value)),
         str(entry.detail),

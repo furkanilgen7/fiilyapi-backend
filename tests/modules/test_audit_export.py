@@ -6,12 +6,13 @@ donusumune alan birakilmaz.
 """
 
 import uuid
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 
 import pytest
 from openpyxl import load_workbook
 
+from app.core.timezone import DISPLAY_TIMEZONE
 from app.modules.audit.export import build_audit_workbook
 from app.modules.audit.models import AuditAction, AuditLog
 from app.modules.roles.models import Role
@@ -97,8 +98,26 @@ def test_islem_sutununda_turkce_rozet_etiketi(action, label):
 
 
 def test_zaman_sutunu_dd_mm_yyyy_hh_mm_stringi():
+    """UTC saklanan deger TR'ye (UTC+3) cevrilerek yazilir."""
     values = _values(_sheet([_row(occurred_at=datetime(2026, 7, 17, 9, 14, tzinfo=UTC))]))
-    assert values[1][0] == "17.07.2026 09:14"
+    assert values[1][0] == "17.07.2026 12:14"
+
+
+def test_zaman_sutunu_utc_gece_yarisi_oncesini_ertesi_gune_tasir():
+    """UTC 21:30 → Excel'de ERTESI gun 00:30 (TR=UTC+3); gun da kayar."""
+    values = _values(_sheet([_row(occurred_at=datetime(2026, 7, 17, 21, 30, tzinfo=UTC))]))
+    assert values[1][0] == "18.07.2026 00:30"
+
+
+def test_zaman_sutunu_naive_degeri_utc_sayar():
+    values = _values(_sheet([_row(occurred_at=datetime(2026, 7, 17, 21, 30))]))
+    assert values[1][0] == "18.07.2026 00:30"
+
+
+def test_zaman_sutunu_zoneinfo_kullanir_sabit_ofset_degil():
+    """2016 kisinda TR ofseti +02 idi; sabit +3 gomulmus olsa 3 saat kayardi."""
+    values = _values(_sheet([_row(occurred_at=datetime(2016, 1, 15, 12, 0, tzinfo=UTC))]))
+    assert values[1][0] == "15.01.2016 14:00"
 
 
 def test_kullanici_sutununda_ad_ve_rol():
@@ -196,7 +215,8 @@ async def test_tarih_araligi_export_a_uygulanir(client, user_factory, seeded_db)
     await _add_row(seeded_db, detail="bugun", occurred_at=now)
     await _add_row(seeded_db, detail="eski", occurred_at=now - timedelta(days=15))
 
-    d_today = date.today().isoformat()
+    # Gun siniri TR takvimine gore; "bugun" TR gunudur.
+    d_today = datetime.now(DISPLAY_TIMEZONE).date().isoformat()
     values = _values(
         load_workbook(
             BytesIO((await _download(client, headers, f"?date_from={d_today}")).content)

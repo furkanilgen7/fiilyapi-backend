@@ -4,11 +4,12 @@ Yalnizca SELECT: bu tablo icin UPDATE/DELETE yardimcisi YOKTUR (degistirilemezli
 """
 
 import uuid
-from datetime import UTC, date, datetime, time
+from datetime import date
 
 from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.timezone import day_end_utc, day_start_utc
 from app.modules.audit.models import AuditAction, AuditLog
 from app.modules.roles.models import Role
 from app.modules.users.models import User
@@ -38,9 +39,11 @@ def _filters(
 ) -> list[ColumnElement[bool]]:
     """Opsiyonel filtreleri AND'lenecek kosullara cevirir.
 
-    Tarih sinirlari UTC'de gun-dahil yorumlanir: `date_from` o gunun 00:00:00'i,
-    `date_to` o gunun 23:59:59.999999'u. Boylece `date_to=bugun` bugunun kayitlarini
-    kirpmaz. (`occurred_at` timestamptz oldugu icin karsilastirma tz-farkindadir.)
+    Tarih sinirlari TR (`Europe/Istanbul`) gununde gun-dahil yorumlanir: `date_from`
+    o TR gununun 00:00:00'i, `date_to` o TR gununun 23:59:59.999999'u; ikisi de
+    karsilastirma icin UTC'ye cevrilir. Boylece kullanicinin "bugun" filtresi TR
+    gunuyle birebir ortusur ve `date_to=bugun` gec saatli kayitlari kirpmaz.
+    (`occurred_at` timestamptz oldugu icin karsilastirma tz-farkindadir.)
     """
     conditions: list[ColumnElement[bool]] = []
     if actor_user_id is not None:
@@ -48,9 +51,9 @@ def _filters(
     if action is not None:
         conditions.append(AuditLog.action == action)
     if date_from is not None:
-        conditions.append(AuditLog.occurred_at >= datetime.combine(date_from, time.min, tzinfo=UTC))
+        conditions.append(AuditLog.occurred_at >= day_start_utc(date_from))
     if date_to is not None:
-        conditions.append(AuditLog.occurred_at <= datetime.combine(date_to, time.max, tzinfo=UTC))
+        conditions.append(AuditLog.occurred_at <= day_end_utc(date_to))
     term = (q or "").strip()
     if term:
         pattern = f"%{_escape_like(term)}%"

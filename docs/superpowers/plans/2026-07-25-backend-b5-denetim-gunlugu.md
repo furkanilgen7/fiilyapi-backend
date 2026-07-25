@@ -290,12 +290,14 @@ GET /audit-log?actor_user_id=&action=&date_from=&date_to=&limit=50&offset=0
 
 ### Takip maddeleri (engellemez)
 
-1. **Excel'de saat dilimi (MEDIUM).** `export.py` `occurred_at`'i `strftime` ile biçimlendiriyor;
-   değer **UTC**'dir. Frontend listede TR saati (UTC+3) gösterirse aynı kayıt ekranda ve
-   Excel'de **3 saat farklı** görünür. Karar tek yerde verilmeli: ya export `Europe/Istanbul`'a
-   çevirsin ya da frontend UTC göstersin. Şu an uyumsuzluk potansiyeli açık.
-2. **Tarih filtresi de UTC (MEDIUM).** `date_from`/`date_to` UTC gün sınırlarına açılıyor;
-   TR kullanıcısının "bugün" filtresi yerel günle birebir örtüşmez (1. maddeyle aynı karar).
+1. ~~**Excel'de saat dilimi (MEDIUM).**~~ **KAPANDI** (`fix: denetim gunlugu saat dilimi
+   Europe/Istanbul`). Karar: kullanıcıya dönük **tüm** zamanlar `Europe/Istanbul`. Export
+   `occurred_at`'i `to_display()` ile TR'ye çevirip `dd.MM.yyyy HH:mm` yazıyor; ekranla Excel
+   artık aynı saati gösteriyor.
+2. ~~**Tarih filtresi de UTC (MEDIUM).**~~ **KAPANDI** (aynı commit). `date_from`/`date_to`
+   artık TR gün sınırlarına açılıp (`day_start_utc`/`day_end_utc`) UTC'ye çevrilerek
+   karşılaştırılıyor; sınırlar yine **dahil**. Saat dilimi adı tek yerde:
+   `settings.display_timezone` → `app/core/timezone.py` (`zoneinfo`, sabit ofset varsayımı yok).
 3. **Export üst sınırı yok (MEDIUM).** `limit=None` ile tüm eşleşen satırlar belleğe alınıp
    tek xlsx'e yazılıyor. Tablo büyüdüğünde bellek/süre riski; `settings ≥ view` olan her
    kullanıcı tetikleyebilir. Sessiz kırpma yerine ya üst sınır + açık uyarı ya da streaming

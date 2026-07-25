@@ -5,12 +5,13 @@ Sozlesme frontend F5 ile paylasilir: filtreler AND'lenir, siralama occurred_at D
 """
 
 import uuid
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 
 import pytest
 from sqlalchemy import delete, event, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.timezone import DISPLAY_TIMEZONE
 from app.modules.audit.models import AuditAction, AuditLog
 from app.modules.roles.models import Role
 from app.modules.users.models import User
@@ -18,6 +19,16 @@ from tests.conftest import test_engine
 
 _IP = "203.0.113.42"
 _HEADERS = {"x-forwarded-for": _IP}
+
+
+def _tr_today() -> date:
+    """Filtreler TR (`Europe/Istanbul`) gununde yorumlanir; testler de TR gununu kullanir."""
+    return datetime.now(DISPLAY_TIMEZONE).date()
+
+
+def _tr(day: date, hour: int, minute: int = 0) -> datetime:
+    """Verilen TR gununde TR saatiyle bir an uretir."""
+    return datetime.combine(day, time(hour, minute), tzinfo=DISPLAY_TIMEZONE)
 
 
 async def _auth(client, user_factory, session: AsyncSession, role_key: str) -> dict[str, str]:
@@ -159,8 +170,8 @@ async def test_tarih_araligi_dahil(client, user_factory, seeded_db):
     await _add_row(seeded_db, detail="dun", occurred_at=today - timedelta(days=1))
     await _add_row(seeded_db, detail="onbes", occurred_at=today - timedelta(days=15))
 
-    d_today = date.today().isoformat()
-    d_yesterday = (date.today() - timedelta(days=1)).isoformat()
+    d_today = _tr_today().isoformat()
+    d_yesterday = (_tr_today() - timedelta(days=1)).isoformat()
 
     # date_to = bugun → bugunun kayitlari DAHIL (gun sonuna kadar).
     body = (await client.get(f"/audit-log?date_to={d_today}", headers=headers)).json()
@@ -177,14 +188,47 @@ async def test_tarih_araligi_dahil(client, user_factory, seeded_db):
 
 
 async def test_date_to_bugunun_gec_saatli_kaydini_kirpmaz(client, user_factory, seeded_db):
-    """`date_to` dahil-gun: 23:59:59.999999'a kadar (UTC)."""
+    """`date_to` dahil-gun: TR saatiyle 23:59:59.999999'a kadar."""
     headers = await _auth(client, user_factory, seeded_db, "system_admin")
-    today = date.today()
-    late = datetime(today.year, today.month, today.day, 23, 59, 30, tzinfo=UTC)
+    today = _tr_today()
+    late = datetime.combine(today, time(23, 59, 30), tzinfo=DISPLAY_TIMEZONE)
     await _add_row(seeded_db, detail="gece", occurred_at=late)
 
     body = (await client.get(f"/audit-log?date_to={today.isoformat()}", headers=headers)).json()
     assert body["total"] == 1
+
+
+async def test_date_from_tr_gununun_ilk_saatlerini_kapsar(client, user_factory, seeded_db):
+    """TR 00:30 kaydi UTC'de bir ONCEKI gune duser; `date_from` o TR gunuyle yine gelir."""
+    headers = await _auth(client, user_factory, seeded_db, "system_admin")
+    gun = date(2026, 3, 10)
+    occurred = _tr(gun, 0, 30)
+    assert occurred.astimezone(UTC).date() == date(2026, 3, 9)  # UTC'de onceki gun
+    await _add_row(seeded_db, detail="tr-gece-yarisi", occurred_at=occurred)
+
+    body = (await client.get(f"/audit-log?date_from={gun.isoformat()}", headers=headers)).json()
+    assert [i["detail"] for i in body["items"]] == ["tr-gece-yarisi"]
+
+    # Ayni kayit bir onceki TR gunune AIT DEGILDIR.
+    onceki = (gun - timedelta(days=1)).isoformat()
+    assert (await client.get(f"/audit-log?date_to={onceki}", headers=headers)).json()["total"] == 0
+
+
+async def test_date_to_tr_gununun_son_saatlerini_kapsar(client, user_factory, seeded_db):
+    """TR 23:30 kaydi `date_to`=o TR gunu ile gelir (UTC'de 20:30)."""
+    headers = await _auth(client, user_factory, seeded_db, "system_admin")
+    gun = date(2026, 3, 10)
+    occurred = _tr(gun, 23, 30)
+    assert occurred.astimezone(UTC).hour == 20
+    await _add_row(seeded_db, detail="tr-gec-saat", occurred_at=occurred)
+
+    body = (await client.get(f"/audit-log?date_to={gun.isoformat()}", headers=headers)).json()
+    assert [i["detail"] for i in body["items"]] == ["tr-gec-saat"]
+
+    # Ertesi TR gunune ait DEGILDIR.
+    ertesi = (gun + timedelta(days=1)).isoformat()
+    sonraki = await client.get(f"/audit-log?date_from={ertesi}", headers=headers)
+    assert sonraki.json()["total"] == 0
 
 
 async def test_filtre_kombinasyonu_and_lenir(client, user_factory, seeded_db):
@@ -203,7 +247,7 @@ async def test_filtre_kombinasyonu_and_lenir(client, user_factory, seeded_db):
         occurred_at=now - timedelta(days=10),
     )
 
-    d_today = date.today().isoformat()
+    d_today = _tr_today().isoformat()
     body = (
         await client.get(
             f"/audit-log?actor_user_id={a.id}&action=create&date_from={d_today}", headers=headers

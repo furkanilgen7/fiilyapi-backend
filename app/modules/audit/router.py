@@ -35,10 +35,12 @@ class AuditFilters:
     actor_user_id: Annotated[uuid.UUID | None, Query()] = None
     action: Annotated[AuditAction | None, Query()] = None
     date_from: Annotated[
-        date | None, Query(description="YYYY-MM-DD — o gunun 00:00'indan itibaren (UTC, dahil)")
+        date | None,
+        Query(description="YYYY-MM-DD — o gunun 00:00'indan itibaren (Europe/Istanbul, dahil)"),
     ] = None
     date_to: Annotated[
-        date | None, Query(description="YYYY-MM-DD — o gunun sonuna kadar (UTC, dahil)")
+        date | None,
+        Query(description="YYYY-MM-DD — o gunun sonuna kadar (Europe/Istanbul, dahil)"),
     ] = None
     q: Annotated[str | None, Query(description="Detay metni veya aktor adinda kismi arama")] = None
 
