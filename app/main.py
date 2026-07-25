@@ -13,6 +13,7 @@ from app.core.ratelimit import limiter, rate_limit_exceeded_handler
 from app.modules.audit.router import router as audit_router
 from app.modules.auth.router import router as auth_router
 from app.modules.company.router import router as company_router
+from app.modules.dashboard.router import router as dashboard_router
 from app.modules.projects.router import router as projects_router
 from app.modules.roles.router import router as roles_router
 from app.modules.settings.router import router as settings_router
@@ -62,6 +63,7 @@ _configure_cors(app, settings)
 app.include_router(audit_router)
 app.include_router(auth_router)
 app.include_router(company_router)
+app.include_router(dashboard_router)
 app.include_router(projects_router)
 app.include_router(roles_router)
 app.include_router(settings_router)
