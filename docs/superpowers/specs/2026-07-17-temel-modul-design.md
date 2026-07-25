@@ -178,6 +178,19 @@ Yeni rol eklenebilir (`is_system = false`); bu roller hem silinebilir hem tamame
 
 v1'de yazma ucu yok. Alt-proje 2 bu tabloyu genişletir. Gerekçe: hem `user_project_access` hem dashboard proje kartları buna muhtaç.
 
+**Alt-proje 2 kapsam notu (2026-07-25 eklendi).** `Ekran 4 - Projeler.dc.html` yenilendi ve bu tablonun v1 şemasının çok ötesinde bir model getirdi. Alt-proje 2 en az şunları eklemek zorunda:
+
+| Yeni alan | İçerik |
+|---|---|
+| `type` | `taahhut` · `kendi_yatirim` · `kat_karsiligi` — üç iş modeli, kart düzenini ve gelir mantığını belirler |
+| sektör + konum | "Konut · Ankara" biçiminde kart alt satırı |
+| karşı taraf | taahhütte işveren adı, kat karşılığında arsa sahibi |
+| başlangıç / bitiş | kart tarih alanları; geciken bitiş kırmızı gösterilir |
+
+Tipe özel alanlar (aynı ekrandan): **kendi yatırım** → satış hedefi, satılan, toplam maliyet, tahmini kâr, satış oranı (ünite bazlı), marj; **kat karşılığı** → pay dağılımı (biz % / arsa %, ünite adetleriyle), kendi pay değeri, arsa maliyeti (₺0), inşaat maliyeti, hissedar sayısı; **taahhüt** → sözleşme bedeli, harcanan, işçi ve taşeron sayısı.
+
+Ekran ayrıca tip başına sekme + sayaç ve "+ Yeni Proje" ucu istiyor. Bunların hiçbiri B6'yı etkilemez: gösterge paneli kartı tip rozeti göstermiyor.
+
 **`user_project_access`**
 
 | Alan | Tip | Not |
@@ -437,6 +450,44 @@ Bilinçli kararlar; sonuçları biliniyor.
 4. **Bildirim gönderimi yok.** Tercih ekranı ve tercihlerin kaydı v1'de; gerçek e-posta/SMS gönderimi kanal entegrasyonu gerektirir, alt-proje 7'ye kalır.
 5. **Yedekleme sayfası v1 dışı.** Uygulama özelliği değil, altyapı işi (S3, cron, geri yükleme). Arkasında gerçek sistem olmadan yapmak sahte olur.
 6. **Entegrasyonlar v1 dışı.** GİB, Logo, SGK, WhatsApp — hepsi dış servis; v1'de bağlanacak bir şey yok.
+
+---
+
+## 10. Mockup seti güncellemesi (2026-07-25)
+
+`projedesign/` yeniden dışa aktarıldı (76 dosya). Alt-Proje 1'i etkileyen tek değişiklik
+sidebar'a bir kalem eklenmesidir; gerisi sonraki alt-projelerin kapsamını büyütür.
+
+### 10.1 Alt-Proje 1'e etkisi
+
+`Ekran 1 - Gösterge Paneli` ana içeriği **değişmedi**. Sol menüye *Sözleşme & Mali*
+grubunda, Bordro ile Belge Arşivi arasına **Şirket Varlıkları** eklendi. F6 bu kalemi
+`nav-config.ts`'e ekler; `/sirket-varliklari` mevcut catch-all üzerinden ComingSoon'a
+düşer (diğer yazılmamış nav kalemleriyle aynı muamele).
+
+`Ekran 4 - Projeler` satır 273 ayrıca `completed` durumu için rozet tanımı veriyor
+(zemin `#f1f5f9`, metin `#64748b`, "Tamamlandı"). F6 proje kartındaki üçüncü durum
+buradan alınır — §7'nin "sahte değer üretme" kuralı korunmuş olur.
+
+### 10.2 Yeni modül: Şirket Varlıkları
+
+Gayrimenkul ve ekipman envanteri: varlık listesi (tip, konum, m², kaynak, alış/maliyet,
+güncel değer, durum), ekipman listesi (model yılı, alış bedeli, amortisman, net defter
+değeri) ve toplam varlık değeri KPI'ları. Kanon: `Şirket Varlıkları.dc.html`.
+
+İzin matrisinde karşılığı **yok**. Eklendiğinde `company_assets` anahtarıyla **15. modül**
+olur (`group = MALI`) ve 8 rol için izin satırı gerektirir. Hangi alt-projeye
+bağlanacağı henüz kararlaştırılmadı.
+
+### 10.3 Kapsamı büyüyen alt-projeler
+
+| Alt-proje | Yeni mockup'lar |
+|---|---|
+| 2 — Proje & Şantiye | `Ekran 4 - Projeler` (yenilendi, §4.1 notu), `Proje - Kendi Yatırım`, `Proje - Kat Karşılığı`, `Kat Karşılığı - Paylaşım`, `Proje Detay - Şantiyeler`, `Şantiye Detay` + `Şantiye - Planlama/Puantaj/Stok/Hakedişler/Hakediş Özeti/Günlük Kayıt/Belgeler` |
+| Kararlaştırılmadı | `Şirket Varlıkları` |
+
+Alt-Proje 2 bu setle birlikte yeniden spec'lenmelidir; eski `Ekran 6 - Şantiye Detay`
+tek ekran varsayımı artık geçerli değil.
 7. **Kullanıcı başına tek rol.** Mockup böyle gösteriyor. Çoklu rol gerekirse `users.role_id` bir ara tabloya dönüşür.
 
 ---
