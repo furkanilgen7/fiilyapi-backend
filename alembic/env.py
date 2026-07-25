@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 from app.core.config import settings
 from app.core.db import Base
+from app.modules.audit import models as audit_models  # noqa: F401
 from app.modules.company import models as company_models  # noqa: F401
 from app.modules.projects import models as projects_models  # noqa: F401
 from app.modules.roles import models as roles_models  # noqa: F401
