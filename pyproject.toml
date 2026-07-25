@@ -28,7 +28,10 @@ dev = [
     "pytest-asyncio>=0.25",
     "pytest-cov>=6.0",
     "httpx>=0.28",
-    "ruff>=0.8",
+    # Sabit surum: ruff'un bicimlendirici davranisi surumler arasinda degisiyor.
+    # Araligi acik birakmak (>=0.8) CI'nin her kosuda en yeni surumu kurmasina ve
+    # lokalde temiz olan agacin CI'da "yeniden bicimlendirilmeli" demesine yol aciyordu.
+    "ruff==0.15.22",
 ]
 
 # setuptools'un duz-yerlesim (flat-layout) otomatik kesfi kok dizinde hem `app` hem
