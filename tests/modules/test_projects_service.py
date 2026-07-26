@@ -2,9 +2,20 @@ from decimal import Decimal
 
 import pytest
 
-from app.core.errors import NotFoundError
+from app.core.errors import NotFoundError, ProjectTypeMismatchError
 from app.modules.projects.models import LandShareShareholder, ProjectLandShare
-from app.modules.projects.service import get_project_detail, list_projects_overview
+from app.modules.projects.schemas import (
+    ProjectCreate,
+    ProjectInvestmentInput,
+    ProjectLandShareInput,
+    ProjectUpdate,
+)
+from app.modules.projects.service import (
+    create_project,
+    get_project_detail,
+    list_projects_overview,
+    update_project,
+)
 from app.modules.users.models import UserProjectAccess
 
 
@@ -131,3 +142,126 @@ async def test_detail_outside_visible_set_raises_not_found(
 
     with pytest.raises(NotFoundError):
         await get_project_detail(seeded_db, user, hidden.id)
+
+
+async def test_create_taahhut_project(db_session):
+    project = await create_project(
+        db_session,
+        ProjectCreate(
+            code="GK-C",
+            name="Güneşkent C-Blok",
+            project_type="taahhut",
+            employer_name="Güneşkent A.Ş.",
+            contract_amount=Decimal("11200000.00"),
+        ),
+    )
+    assert project.id is not None
+    assert project.investment is None
+    assert project.land_share is None
+
+
+async def test_create_kat_karsiligi_with_shareholders(db_session):
+    project = await create_project(
+        db_session,
+        ProjectCreate(
+            code="KK-9",
+            name="Bahçelievler Konut",
+            project_type="kat_karsiligi",
+            land_share=ProjectLandShareInput(
+                landowner_name="Yılmaz Ailesi",
+                our_share_pct=Decimal("55.00"),
+                owner_share_pct=Decimal("45.00"),
+                shareholders=[
+                    {"name": "A. Yılmaz", "share_pct": Decimal("60.00")},
+                    {"name": "B. Yılmaz", "share_pct": Decimal("40.00")},
+                ],
+            ),
+        ),
+    )
+    assert project.land_share.our_share_pct == Decimal("55.00")
+    assert [s.name for s in project.shareholders] == ["A. Yılmaz", "B. Yılmaz"]
+
+
+async def test_investment_on_taahhut_raises_422_error(db_session):
+    with pytest.raises(ProjectTypeMismatchError):
+        await create_project(
+            db_session,
+            ProjectCreate(
+                code="T-9",
+                name="Yanlış",
+                project_type="taahhut",
+                investment=ProjectInvestmentInput(sales_target=Decimal("1.00")),
+            ),
+        )
+
+
+async def test_land_share_on_kendi_yatirim_raises_422_error(db_session):
+    with pytest.raises(ProjectTypeMismatchError):
+        await create_project(
+            db_session,
+            ProjectCreate(
+                code="KY-9",
+                name="Yanlış",
+                project_type="kendi_yatirim",
+                land_share=ProjectLandShareInput(
+                    landowner_name="X",
+                    our_share_pct=Decimal("50.00"),
+                    owner_share_pct=Decimal("50.00"),
+                ),
+            ),
+        )
+
+
+async def test_update_replaces_shareholder_list(db_session):
+    project = await create_project(
+        db_session,
+        ProjectCreate(
+            code="KK-10",
+            name="Replace Testi",
+            project_type="kat_karsiligi",
+            land_share=ProjectLandShareInput(
+                landowner_name="Yılmaz Ailesi",
+                our_share_pct=Decimal("55.00"),
+                owner_share_pct=Decimal("45.00"),
+                shareholders=[{"name": "Eski", "share_pct": Decimal("100.00")}],
+            ),
+        ),
+    )
+
+    updated = await update_project(
+        db_session,
+        project.id,
+        ProjectUpdate(
+            land_share=ProjectLandShareInput(
+                landowner_name="Yılmaz Ailesi",
+                our_share_pct=Decimal("60.00"),
+                owner_share_pct=Decimal("40.00"),
+                shareholders=[
+                    {"name": "Yeni 1", "share_pct": Decimal("70.00")},
+                    {"name": "Yeni 2", "share_pct": Decimal("30.00")},
+                ],
+            )
+        ),
+    )
+
+    assert updated.land_share.our_share_pct == Decimal("60.00")
+    assert [s.name for s in updated.shareholders] == ["Yeni 1", "Yeni 2"]
+
+
+async def test_update_common_fields_only(db_session, project_factory):
+    project = await project_factory("T-5", name="Eski Ad")
+
+    updated = await update_project(
+        db_session, project.id, ProjectUpdate(name="Yeni Ad", city="Bursa")
+    )
+
+    assert updated.name == "Yeni Ad"
+    assert updated.city == "Bursa"
+    assert updated.code == "T-5"
+
+
+async def test_update_missing_project_raises_not_found(db_session):
+    import uuid as uuid_mod
+
+    with pytest.raises(NotFoundError):
+        await update_project(db_session, uuid_mod.uuid4(), ProjectUpdate(name="X"))

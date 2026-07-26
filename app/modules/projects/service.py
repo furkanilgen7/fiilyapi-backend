@@ -4,9 +4,16 @@ from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel
-from app.core.errors import NotFoundError
+from app.core.errors import NotFoundError, ProjectTypeMismatchError
 from app.modules.projects import repository
-from app.modules.projects.models import Project, ProjectStatus, ProjectType
+from app.modules.projects.models import (
+    LandShareShareholder,
+    Project,
+    ProjectInvestment,
+    ProjectLandShare,
+    ProjectStatus,
+    ProjectType,
+)
 from app.modules.projects.schemas import (
     ContractingCard,
     CountPlaceholder,
@@ -14,9 +21,13 @@ from app.modules.projects.schemas import (
     LandShareCard,
     MetricPlaceholder,
     ProjectCounts,
+    ProjectCreate,
     ProjectDetailResponse,
+    ProjectInvestmentInput,
+    ProjectLandShareInput,
     ProjectListItem,
     ProjectListResponse,
+    ProjectUpdate,
     ShareholderResponse,
 )
 from app.modules.roles.repository import get_permission
@@ -173,3 +184,95 @@ async def get_project_detail(
     if project is None:
         raise NotFoundError("Proje bulunamadı")
     return to_detail(project)
+
+
+def _ensure_type_consistency(
+    project_type: ProjectType,
+    investment: ProjectInvestmentInput | None,
+    land_share: ProjectLandShareInput | None,
+) -> None:
+    """Spec §3.5 korkulugu. Tek yazma yolu burasi oldugu icin kontrol tek noktada."""
+    if investment is not None and project_type is not ProjectType.kendi_yatirim:
+        raise ProjectTypeMismatchError(
+            "Yatırım alanları yalnızca kendi yatırım projelerine girilebilir"
+        )
+    if land_share is not None and project_type is not ProjectType.kat_karsiligi:
+        raise ProjectTypeMismatchError(
+            "Arsa payı alanları yalnızca kat karşılığı projelerine girilebilir"
+        )
+
+
+def _apply_investment(project: Project, data: ProjectInvestmentInput) -> None:
+    if project.investment is None:
+        project.investment = ProjectInvestment(project_id=project.id)
+    project.investment.sales_target = data.sales_target
+    project.investment.land_cost = data.land_cost
+
+
+def _apply_land_share(project: Project, data: ProjectLandShareInput) -> None:
+    if project.land_share is None:
+        project.land_share = ProjectLandShare(project_id=project.id)
+    land_share = project.land_share
+    land_share.landowner_name = data.landowner_name
+    land_share.our_share_pct = data.our_share_pct
+    land_share.owner_share_pct = data.owner_share_pct
+    land_share.contract_no = data.contract_no
+    land_share.notary_date = data.notary_date
+    land_share.land_area_m2 = data.land_area_m2
+    land_share.construction_area_m2 = data.construction_area_m2
+    land_share.delivery_date = data.delivery_date
+    land_share.daily_penalty = data.daily_penalty
+    land_share.guarantee_amount = data.guarantee_amount
+    # Hissedar listesi BUTUNUYLE degistirilir (spec §5.5) — parca parca CRUD yok.
+    project.shareholders = [
+        LandShareShareholder(name=s.name, share_pct=s.share_pct) for s in data.shareholders
+    ]
+
+
+async def create_project(session: AsyncSession, data: ProjectCreate) -> Project:
+    _ensure_type_consistency(data.project_type, data.investment, data.land_share)
+    project = Project(
+        code=data.code,
+        name=data.name,
+        project_type=data.project_type,
+        status=data.status,
+        category=data.category,
+        city=data.city,
+        start_date=data.start_date,
+        end_date=data.end_date,
+        contract_no=data.contract_no,
+        contract_amount=data.contract_amount,
+        employer_name=data.employer_name,
+    )
+    session.add(project)
+    await session.flush()
+    # Yeni flush edilmis nesnenin investment/land_share/shareholders iliskileri
+    # henuz sync eslenmemis: asagidaki senkron `is None` erisimleri async ortamda
+    # MissingGreenlet patlatir. `refresh` ile async-guvenli yukleyip bosalttik.
+    await session.refresh(project, attribute_names=["investment", "land_share", "shareholders"])
+    if data.investment is not None:
+        _apply_investment(project, data.investment)
+    if data.land_share is not None:
+        _apply_land_share(project, data.land_share)
+    await session.flush()
+    await session.refresh(project)
+    return project
+
+
+async def update_project(
+    session: AsyncSession, project_id: uuid.UUID, data: ProjectUpdate
+) -> Project:
+    project = await repository.get_project(session, project_id)
+    if project is None:
+        raise NotFoundError("Proje bulunamadı")
+    _ensure_type_consistency(project.project_type, data.investment, data.land_share)
+    changes = data.model_dump(exclude_unset=True, exclude={"investment", "land_share"})
+    for field, value in changes.items():
+        setattr(project, field, value)
+    if data.investment is not None:
+        _apply_investment(project, data.investment)
+    if data.land_share is not None:
+        _apply_land_share(project, data.land_share)
+    await session.flush()
+    await session.refresh(project)
+    return project

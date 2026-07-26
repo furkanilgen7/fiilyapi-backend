@@ -12,3 +12,7 @@ class DeleteNotAllowedError(DomainError):
 
 class NotFoundError(DomainError):
     """İstenen kayıt bulunamadı — router katmanı 404'e çevirir."""
+
+
+class ProjectTypeMismatchError(DomainError):
+    """Tip uzantısı proje tipiyle uyuşmuyor (Alt-Proje 2 P1 spec §3.5) — 422."""
