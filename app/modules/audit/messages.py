@@ -61,3 +61,11 @@ def role_deleted(name: str) -> str:
 def permission_changed(role_name: str, module_name: str, level: AccessLevel) -> str:
     """Modul ADI kullanilir (module_key degil) — denetim gunlugu dili insan-okur."""
     return f"İzin değişti: {role_name} · {module_name} → {ACCESS_LEVEL_LABELS[level]}"
+
+
+def project_created(name: str) -> str:
+    return f"Yeni proje oluşturuldu: {name}"
+
+
+def project_updated(name: str) -> str:
+    return f"Proje güncellendi: {name}"
