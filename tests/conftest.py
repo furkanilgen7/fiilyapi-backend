@@ -1,4 +1,5 @@
 from collections.abc import AsyncGenerator
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -14,7 +15,7 @@ from app.main import app
 from app.modules.audit import models as audit_models  # noqa: F401
 from app.modules.company import models as company_models  # noqa: F401
 from app.modules.projects import models as projects_models  # noqa: F401
-from app.modules.projects.models import Project, ProjectStatus
+from app.modules.projects.models import Project, ProjectStatus, ProjectType
 from app.modules.roles import models as roles_models  # noqa: F401
 from app.modules.roles.models import Role
 from app.modules.roles.seed_data import seed_reference_data
@@ -126,6 +127,14 @@ def project_factory(db_session: AsyncSession):
         status: str = "active",
         budget: str = "1000000.00",
         progress_pct: str = "0.00",
+        project_type: str = "taahhut",
+        category: str | None = None,
+        city: str | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        contract_no: str | None = None,
+        contract_amount: str | None = None,
+        employer_name: str | None = None,
     ) -> Project:
         project = Project(
             code=code,
@@ -133,6 +142,14 @@ def project_factory(db_session: AsyncSession):
             status=ProjectStatus(status),
             budget=Decimal(budget),
             progress_pct=Decimal(progress_pct),
+            project_type=ProjectType(project_type),
+            category=category,
+            city=city,
+            start_date=start_date,
+            end_date=end_date,
+            contract_no=contract_no,
+            contract_amount=Decimal(contract_amount) if contract_amount is not None else None,
+            employer_name=employer_name,
         )
         db_session.add(project)
         await db_session.flush()
