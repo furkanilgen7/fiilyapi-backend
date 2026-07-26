@@ -30,6 +30,8 @@ from app.modules.roles import seed_data as app_seed_data
 VERSIONS_DIR = Path(__file__).parents[2] / "alembic" / "versions"
 SEED_MIGRATION_PATH = VERSIONS_DIR / "a477fdf00fdf_seed_roller_modul_ve_izinler.py"
 INVOICING_MIGRATION_PATH = VERSIONS_DIR / "2cffc2fcfcf0_invoicing_izin_modulu.py"
+P1_MIGRATION_PATH = next(VERSIONS_DIR.glob("*_p1_proje_cekirdegi.py"))
+EXTENSION_MIGRATION_PATHS = [INVOICING_MIGRATION_PATH, P1_MIGRATION_PATH]
 
 
 def _load_migration_module(path: Path):
@@ -93,10 +95,11 @@ def _permission_map_from_migrations() -> dict[tuple[str, str], tuple[str, str]]:
         module_key = module_key_by_id[row["module_id"]]
         result[(role_key, module_key)] = (_value(row["access_level"]), _value(row["scope"]))
 
-    invoicing = _load_invoicing_migration()
-    for module_key, cells in invoicing.MATRIX.items():
-        for role_key, (level, scope) in zip(invoicing.ROLE_ORDER, cells, strict=True):
-            result[(role_key, module_key)] = (_value(level), _value(scope))
+    for path in EXTENSION_MIGRATION_PATHS:
+        extension = _load_migration_module(path)
+        for module_key, cells in extension.MATRIX.items():
+            for role_key, (level, scope) in zip(extension.ROLE_ORDER, cells, strict=True):
+                result[(role_key, module_key)] = (_value(level), _value(scope))
     return result
 
 
@@ -122,23 +125,23 @@ def _modules_set_from_app() -> set[tuple[str, str, str, int]]:
 
 
 def _modules_set_from_migrations() -> set[tuple[str, str, str, int]]:
-    """Ilk migration'in modul satirlari + invoicing migration'inin ekledigi/kaydirdigi hali."""
+    """Ilk migration'in modul satirlari, uzanti migration'lari sirayla uygulanmis halde."""
     captured = _captured_bulk_inserts(_load_seed_migration())
-    invoicing = _load_invoicing_migration()
-
-    result: set[tuple[str, str, str, int]] = set()
-    for row in captured["modules"]:
-        sort_order = invoicing.SORT_ORDER_UPDATES.get(row["key"], row["sort_order"])
-        result.add((row["key"], row["name"], _value(row["group"]), sort_order))
-    result.add(
-        (
-            invoicing.MODULE_KEY,
-            invoicing.MODULE_NAME,
-            invoicing.MODULE_GROUP,
-            invoicing.MODULE_SORT_ORDER,
+    modules: dict[str, tuple[str, str, int]] = {
+        row["key"]: (row["name"], _value(row["group"]), row["sort_order"])
+        for row in captured["modules"]
+    }
+    for path in EXTENSION_MIGRATION_PATHS:
+        extension = _load_migration_module(path)
+        for key, sort_order in extension.SORT_ORDER_UPDATES.items():
+            name, group, _ = modules[key]
+            modules[key] = (name, group, sort_order)
+        modules[extension.MODULE_KEY] = (
+            extension.MODULE_NAME,
+            extension.MODULE_GROUP,
+            extension.MODULE_SORT_ORDER,
         )
-    )
-    return result
+    return {(key, name, group, so) for key, (name, group, so) in modules.items()}
 
 
 def _all_uuids_unique(captured: dict[str, list[dict]]) -> bool:
@@ -153,11 +156,11 @@ def test_migration_permission_matrix_matches_seed_data():
     assert _permission_map_from_app() == _permission_map_from_migrations()
 
 
-def test_migration_permission_matrix_has_112_cells():
+def test_migration_permission_matrix_has_120_cells():
     app_map = _permission_map_from_app()
     migration_map = _permission_map_from_migrations()
-    assert len(app_map) == 112
-    assert len(migration_map) == 112
+    assert len(app_map) == 120
+    assert len(migration_map) == 120
 
 
 def test_migration_role_keys_match_seed_data():
@@ -166,16 +169,18 @@ def test_migration_role_keys_match_seed_data():
     assert list(migration.ROLE_ORDER) == list(app_seed_data.ROLE_ORDER)
 
 
-def test_invoicing_migration_role_order_matches_seed_data():
+def test_extension_migration_role_orders_match_seed_data():
     """Sutun sirasi kaymissa izinler yanlis rollere yazilir — sessiz yetki sizintisi."""
-    invoicing = _load_invoicing_migration()
-    assert list(invoicing.ROLE_ORDER) == list(app_seed_data.ROLE_ORDER)
+    for path in EXTENSION_MIGRATION_PATHS:
+        extension = _load_migration_module(path)
+        assert list(extension.ROLE_ORDER) == list(app_seed_data.ROLE_ORDER)
 
 
 def test_migration_module_keys_match_seed_data():
     migration = _load_seed_migration()
-    invoicing = _load_invoicing_migration()
-    keys = set(migration.MODULE_IDS.keys()) | {invoicing.MODULE_KEY}
+    keys = set(migration.MODULE_IDS.keys())
+    for path in EXTENSION_MIGRATION_PATHS:
+        keys.add(_load_migration_module(path).MODULE_KEY)
     assert keys == {row["key"] for row in app_seed_data.MODULES}
 
 
@@ -188,14 +193,17 @@ def test_migration_module_rows_match_seed_data():
     assert _modules_set_from_app() == _modules_set_from_migrations()
 
 
-def test_invoicing_migration_downgrade_restores_previous_sort_orders():
-    """downgrade() eski sort_order'lari geri yazar; bunlar ilk migration'in degerleri olmali."""
+def test_extension_migration_downgrades_restore_previous_sort_orders():
+    """Her uzanti migration'inin PREVIOUS_SORT_ORDERS'i kendinden onceki bileskeye esit olmali."""
     captured = _captured_bulk_inserts(_load_seed_migration())
-    invoicing = _load_invoicing_migration()
-    original = {row["key"]: row["sort_order"] for row in captured["modules"]}
-    assert invoicing.PREVIOUS_SORT_ORDERS == {
-        key: original[key] for key in invoicing.SORT_ORDER_UPDATES
-    }
+    current = {row["key"]: row["sort_order"] for row in captured["modules"]}
+    for path in EXTENSION_MIGRATION_PATHS:
+        extension = _load_migration_module(path)
+        assert extension.PREVIOUS_SORT_ORDERS == {
+            key: current[key] for key in extension.SORT_ORDER_UPDATES
+        }
+        current.update(extension.SORT_ORDER_UPDATES)
+        current[extension.MODULE_KEY] = extension.MODULE_SORT_ORDER
 
 
 def test_migration_generated_ids_are_unique():

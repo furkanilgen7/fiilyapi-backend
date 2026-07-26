@@ -206,9 +206,13 @@ def upgrade() -> None:
         "ix_land_share_shareholder_project_id", "land_share_shareholder", ["project_id"]
     )
 
+    _seed_projects_module()
+
 
 def downgrade() -> None:
     """Downgrade schema."""
+    _unseed_projects_module()
+
     op.drop_index("ix_land_share_shareholder_project_id", table_name="land_share_shareholder")
     op.drop_table("land_share_shareholder")
     op.drop_table("project_land_share")
