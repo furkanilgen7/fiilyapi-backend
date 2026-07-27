@@ -69,3 +69,21 @@ def project_created(name: str) -> str:
 
 def project_updated(name: str) -> str:
     return f"Proje güncellendi: {name}"
+
+
+def site_created(name: str) -> str:
+    return f"Yeni şantiye oluşturuldu: {name}"
+
+
+def site_updated(name: str) -> str:
+    return f"Şantiye güncellendi: {name}"
+
+
+def section_created(site_name: str, name: str) -> str:
+    """Bolum adlari santiyeden bagimsiz tekrar edebilir ("Kat 6-10" her blokta
+    olabilir); santiye adi olmadan denetim satiri anlamsizlasir."""
+    return f"Yeni bölüm oluşturuldu: {site_name} · {name}"
+
+
+def section_updated(site_name: str, name: str) -> str:
+    return f"Bölüm güncellendi: {site_name} · {name}"

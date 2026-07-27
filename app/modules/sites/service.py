@@ -116,7 +116,7 @@ def _section_counts(sections: list[Section]) -> SectionStatusCounts:
     )
 
 
-def _to_section(section: Section) -> SectionResponse:
+def to_section(section: Section) -> SectionResponse:
     return SectionResponse(
         id=section.id,
         code=section.code,
@@ -164,7 +164,7 @@ def to_detail(site: Site, project: Project) -> SiteDetailResponse:
         **_card_fields(site, project),
         project=SiteProjectSummary.model_validate(project),
         section_status_counts=_section_counts(sections),
-        sections=[_to_section(s) for s in sections],
+        sections=[to_section(s) for s in sections],
         total_progress_payment=_metric(_PROGRESS_PAYMENTS),
         contract_amount=_metric(_CONTRACTS),
     )
@@ -252,7 +252,7 @@ async def list_sections_for_site(
     site, _ = await _visible_site(session, actor, site_id)
     sections = await repository.list_sections(session, site.id)
     return SectionListResponse(
-        counts=_section_counts(sections), items=[_to_section(s) for s in sections]
+        counts=_section_counts(sections), items=[to_section(s) for s in sections]
     )
 
 
@@ -321,9 +321,3 @@ async def update_section(
     await session.flush()
     await session.refresh(section)
     return section
-
-
-async def site_of_section(session: AsyncSession, actor: User, section_id: uuid.UUID) -> Site:
-    """Router'in denetim gunlugu metni icin bolumun santiyesini cozer."""
-    _, site = await _visible_section(session, actor, section_id)
-    return site
