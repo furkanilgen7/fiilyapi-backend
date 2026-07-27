@@ -311,7 +311,7 @@ async def test_create_site_derives_code_from_name(seeded_db, user_factory, proje
         seeded_db, user, project.id, SiteCreate(name="A-Blok Şantiyesi")
     )
 
-    assert site.code == "A-BLOK-SANTIYESI"
+    assert site.code == "A-BLOK"
     assert site.status is SiteStatus.active
 
 

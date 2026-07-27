@@ -1,3 +1,4 @@
+import itertools
 import re
 import unicodedata
 import uuid
@@ -44,6 +45,10 @@ _BOQ = "boq"
 
 _CODE_MAX_LENGTH = 50
 
+# Ad sonundaki genel santiye sonekleri — UZUN OLAN ONCE denenir.
+# "Şantiyesi"/"Santiyesi" ve "Şantiye"/"Santiye" normalize edilince ikiye iner.
+_SITE_SUFFIXES = ("SANTIYESI", "SANTIYE")
+
 # Turkce harfler NFKD ile ASCII'ye duzgun inmez (ı, ş, ğ) — once elle eslenir.
 _TURKISH_FOLD = str.maketrans(
     {
@@ -71,17 +76,62 @@ def _count(pending_module: str) -> CountPlaceholder:
     return CountPlaceholder(pending_module=pending_module)
 
 
+def _normalize(text: str) -> str:
+    """Turkce metni ASCII buyuk harfe indirir (ş->S, ı->I, ğ->G, ü->U, ö->O, ç->C)."""
+    folded = unicodedata.normalize("NFKD", text.translate(_TURKISH_FOLD))
+    return folded.encode("ascii", "ignore").decode("ascii").upper()
+
+
+def _slug(normalized: str) -> str:
+    return re.sub(r"[^A-Z0-9]+", "-", normalized).strip("-")
+
+
+def _strip_site_suffix(normalized: str) -> str:
+    """Ad'in SONUNDAKI genel santiye sonekini atar.
+
+    "A-Blok Santiyesi" gibi adlarda sonek koda bilgi katmaz; spec ornegi
+    "A-Blok Şantiyesi" icin A-BLOK verir. Uzun sonek once denenir, yoksa
+    "Santiyesi" -> "Santiye" eslesip geriye "SI" artigi kalir. Sonek yalnizca
+    TAM KELIME olarak atilir: "Buyuksantiye" kirpilmaz.
+    """
+    for suffix in _SITE_SUFFIXES:
+        if not normalized.endswith(suffix):
+            continue
+        head = normalized[: -len(suffix)]
+        if not head:
+            return ""
+        if not head[-1].isalnum():  # kelime siniri — ortadan kirpma yok
+            return head
+    return normalized
+
+
 def derive_code(name: str) -> str:
     """Santiye adindan kod turetir (spec §8 acik soru 2, oneri uygulandi).
 
-    Kod ZORUNLUDUR ama kullanicidan istenmez: ad ASCII'ye indirilir, buyuk
-    harfe cevrilir, alfanumerik olmayan gruplar tek tireye duser. Turetilen kod
-    kullanici tarafindan PATCH ile duzeltilebilir.
+    Kod ZORUNLUDUR ama kullanicidan istenmez; turetilen kod kullanici
+    tarafindan PATCH ile duzeltilebilir. Sonek atilinca geriye bir sey
+    kalmiyorsa ("Şantiye") ham ad slug'lanir.
     """
-    folded = unicodedata.normalize("NFKD", name.translate(_TURKISH_FOLD))
-    ascii_only = folded.encode("ascii", "ignore").decode("ascii")
-    slug = re.sub(r"[^A-Za-z0-9]+", "-", ascii_only).strip("-").upper()
+    normalized = _normalize(name)
+    slug = _slug(_strip_site_suffix(normalized)) or _slug(normalized)
     return slug[:_CODE_MAX_LENGTH] or "SANTIYE"
+
+
+async def _unique_code(session: AsyncSession, project_id: uuid.UUID, base: str) -> str:
+    """Turetilen kodu proje icinde benzersiz kilar: A-BLOK, A-BLOK-2, A-BLOK-3...
+
+    YALNIZCA turetilen koda uygulanir. Kullanici acikca cakisan bir kod verdiyse
+    sessizce degistirilmez — uq_sites_project_code ihlali 409'a cevrilir.
+    """
+    taken = {site.code for site in await repository.list_sites_for_project(session, project_id)}
+    if base not in taken:
+        return base
+    for counter in itertools.count(2):
+        suffix = f"-{counter}"
+        candidate = base[: _CODE_MAX_LENGTH - len(suffix)] + suffix
+        if candidate not in taken:
+            return candidate
+    raise AssertionError("ulasilamaz")  # pragma: no cover
 
 
 def _remaining_days(site: Site) -> int | None:
@@ -265,7 +315,7 @@ async def create_site(
     await _visible_project(session, actor, project_id)
     site = Site(
         project_id=project_id,
-        code=data.code or derive_code(data.name),
+        code=data.code or await _unique_code(session, project_id, derive_code(data.name)),
         name=data.name,
         status=data.status,
         address=data.address,

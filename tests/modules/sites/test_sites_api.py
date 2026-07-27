@@ -140,7 +140,7 @@ async def test_create_site_and_audit(client, db_session, user_factory, project_f
 
     assert resp.status_code == 201
     body = resp.json()
-    assert body["code"] == "A-BLOK-SANTIYESI"
+    assert body["code"] == "A-BLOK"
     assert body["status"] == "active"
     assert body["section_count"] == 0
     assert body["sections"] == []
