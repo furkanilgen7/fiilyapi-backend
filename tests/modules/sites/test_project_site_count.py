@@ -75,8 +75,9 @@ async def test_site_count_over_api(client, db_session, user_factory, project_fac
 
 
 async def test_created_project_detail_reports_zero_sites(client, db_session, user_factory):
-    user = await user_factory(email="sc6@t.co", password="parola1234", role_key="patron")
-    db_session.add(UserProjectAccess(user_id=user.id, project_id=None, all_projects=True))
+    # Proje olusturma admin isidir (kullanici karari 2026-07-28) — bu yuzden
+    # aktor system_admin; erisim satiri gerekmez, admin suzgeci atlar.
+    await user_factory(email="sc6@t.co", password="parola1234", role_key="system_admin")
     await db_session.flush()
     login = await client.post("/auth/login", json={"email": "sc6@t.co", "password": "parola1234"})
     token = login.json()["access_token"]

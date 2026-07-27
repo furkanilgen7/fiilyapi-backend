@@ -2,8 +2,31 @@ import uuid
 
 from sqlalchemy import select
 
+from app.core.access import AccessLevel
 from app.modules.audit.models import AuditAction, AuditLog
+from app.modules.roles.models import Module, Role, RolePermission
 from app.modules.users.models import UserProjectAccess
+
+
+async def _set_permission(session, role_key: str, module_key: str, level: AccessLevel) -> None:
+    """Bir rolun modul iznini dogrudan ayarlar.
+
+    Yetki kapisi testleri seed degerine BAGIMLI olmamali: matris degistiginde
+    test sessizce anlamsizlasmasin diye ilgili hucre testte acikca kurulur.
+    """
+    role_id = (await session.execute(select(Role.id).where(Role.key == role_key))).scalar_one()
+    module_id = (
+        await session.execute(select(Module.id).where(Module.key == module_key))
+    ).scalar_one()
+    permission = (
+        await session.execute(
+            select(RolePermission).where(
+                RolePermission.role_id == role_id, RolePermission.module_id == module_id
+            )
+        )
+    ).scalar_one()
+    permission.access_level = level
+    await session.flush()
 
 
 async def _login(client, user_factory, role_key: str) -> str:
@@ -89,7 +112,7 @@ async def test_get_project_not_found(client, user_factory):
 
 
 async def test_create_forbidden_for_view_level(client, user_factory):
-    """site_chief projects=view tasir; POST full ister."""
+    """site_chief projects=view tasir; POST admin ister."""
     token = await _login(client, user_factory, "site_chief")
     resp = await client.post(
         "/projects",
@@ -99,8 +122,29 @@ async def test_create_forbidden_for_view_level(client, user_factory):
     assert resp.status_code == 403
 
 
+async def test_create_requires_admin_not_full(client, db_session, user_factory):
+    """Kullanici karari 2026-07-28: proje olusturma ADMIN isidir.
+
+    `full` yetmez. Bu, olusturana otomatik UserProjectAccess yazmadan da
+    tutarli kalmasini saglar: admin gorunurluk suzgecini zaten atlar (P1 spec
+    §5.2), dolayisiyla yarattigi projeyi gorebilir. `full` seviyesine izin
+    verilseydi, kapsamli bir kullanici goremedigi bir proje yaratirdi.
+    """
+    body = {"code": "ADM-1", "name": "Admin Testi", "project_type": "taahhut"}
+
+    await _set_permission(db_session, "patron", "projects", AccessLevel.full)
+    full_token = await _login(client, user_factory, "patron")
+    forbidden = await client.post("/projects", json=body, headers=_auth(full_token))
+    assert forbidden.status_code == 403
+
+    admin_token = await _login(client, user_factory, "system_admin")
+    allowed = await client.post("/projects", json=body, headers=_auth(admin_token))
+    assert allowed.status_code == 201
+    assert allowed.json()["code"] == "ADM-1"
+
+
 async def test_create_kat_karsiligi_and_audit(client, db_session, user_factory):
-    token = await _login(client, user_factory, "patron")
+    token = await _login(client, user_factory, "system_admin")
 
     resp = await client.post(
         "/projects",
@@ -142,7 +186,7 @@ async def test_create_kat_karsiligi_and_audit(client, db_session, user_factory):
 
 
 async def test_create_type_mismatch_returns_422(client, user_factory):
-    token = await _login(client, user_factory, "patron")
+    token = await _login(client, user_factory, "system_admin")
     resp = await client.post(
         "/projects",
         json={
@@ -158,7 +202,7 @@ async def test_create_type_mismatch_returns_422(client, user_factory):
 
 async def test_create_duplicate_code_returns_409(client, user_factory, project_factory):
     await project_factory("GK-A")
-    token = await _login(client, user_factory, "patron")
+    token = await _login(client, user_factory, "system_admin")
     resp = await client.post(
         "/projects",
         json={"code": "GK-A", "name": "Kopya", "project_type": "taahhut"},

@@ -150,7 +150,7 @@ Sonuçları:
 | Alan | Kaynak |
 |---|---|
 | Şantiye adı | `sites.name` |
-| "Kuyubaşı Mah. · Şantiye Şefi: S. Öztürk" | `sites.address`, `site_manager.full_name` (§2.1.1) |
+| "Kuyubaşı Mah. · Şantiye Şefi: S. Öztürk" | `sites.address`, `sites.site_manager_name` (§2.1.1) |
 | Durum rozeti (Aktif / Tamamlandı) | `sites.status` |
 | "Teslim · Mayıs 2026" | `sites.delivery_date` |
 | Kalan Gün | `sites.end_date` − bugün (Europe/Istanbul, §4.2) |
@@ -242,7 +242,7 @@ de kapsar.
   "id": "…", "code": "A-BLOK", "name": "A-Blok Şantiyesi",
   "status": "active",
   "address": "Kuyubaşı Mah.", "city": "Ankara", "city_inherited": false,
-  "site_manager": { "id": "…", "full_name": "Sercan Öztürk" },   // atanmamışsa null
+  "site_manager_name": "Sercan Öztürk",                          // atanmamışsa null
   "start_date": "2025-03-01", "end_date": "2026-12-31",
   "delivery_date": null,
   "remaining_days": 157,                                     // completed ise null
