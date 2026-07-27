@@ -183,15 +183,24 @@ async def list_projects_overview(
     return ProjectListResponse(counts=_counts(visible), items=[_to_item(p) for p in selected])
 
 
-async def get_project_detail(
-    session: AsyncSession, actor: User, project_id: uuid.UUID
-) -> ProjectDetailResponse:
-    """Gorunur kumede olmayan proje 404 — varligi sizdirilmaz (spec §5.6)."""
+async def _visible_project(session: AsyncSession, actor: User, project_id: uuid.UUID) -> Project:
+    """Gorunur kumede olmayan proje 404 — varligi sizdirilmaz (spec §5.6).
+
+    TEK kimlik-ile-erisim kapisi burasidir. Hem OKUMA hem YAZMA uclari bundan
+    gecmek ZORUNDA: yalnizca okumayi suzmek, listede hic gorunmeyen bir projeyi
+    UUID'sini bilen kullanicinin PATCH ile degistirebilmesi demektir.
+    """
     visible = await visible_projects(session, actor)
     project = next((p for p in visible if p.id == project_id), None)
     if project is None:
         raise NotFoundError("Proje bulunamadı")
-    return to_detail(project)
+    return project
+
+
+async def get_project_detail(
+    session: AsyncSession, actor: User, project_id: uuid.UUID
+) -> ProjectDetailResponse:
+    return to_detail(await _visible_project(session, actor, project_id))
 
 
 def _ensure_type_consistency(
@@ -268,11 +277,9 @@ async def create_project(session: AsyncSession, data: ProjectCreate) -> Project:
 
 
 async def update_project(
-    session: AsyncSession, project_id: uuid.UUID, data: ProjectUpdate
+    session: AsyncSession, actor: User, project_id: uuid.UUID, data: ProjectUpdate
 ) -> Project:
-    project = await repository.get_project(session, project_id)
-    if project is None:
-        raise NotFoundError("Proje bulunamadı")
+    project = await _visible_project(session, actor, project_id)
     _ensure_type_consistency(project.project_type, data.investment, data.land_share)
     changes = data.model_dump(exclude_unset=True, exclude={"investment", "land_share"})
     for field, value in changes.items():

@@ -88,7 +88,7 @@ async def update_project_endpoint(
     current_user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> ProjectDetailResponse:
-    project = await service.update_project(session, project_id, data)
+    project = await service.update_project(session, current_user, project_id, data)
     await record_audit(
         session,
         action=AuditAction.update,

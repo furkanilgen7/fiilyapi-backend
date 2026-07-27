@@ -167,9 +167,55 @@ async def test_create_duplicate_code_returns_409(client, user_factory, project_f
     assert resp.status_code == 409
 
 
+async def _login_with_all_access(client, db_session, user_factory, role_key: str) -> str:
+    user = await user_factory(email=f"{role_key}@t.co", password="parola1234", role_key=role_key)
+    db_session.add(UserProjectAccess(user_id=user.id, project_id=None, all_projects=True))
+    await db_session.flush()
+    resp = await client.post(
+        "/auth/login", json={"email": f"{role_key}@t.co", "password": "parola1234"}
+    )
+    return resp.json()["access_token"]
+
+
+async def test_patch_project_outside_access_is_404_and_changes_nothing(
+    client, db_session, user_factory, project_factory
+):
+    """IDOR: GET 404 verirken PATCH gecirirse yetki suzgeci YARIM demektir.
+
+    Yalnizca "GK-A" projesine erisimi olan bir patron, "OSB-1"i GET ile
+    goremiyor; ayni kimlikle PATCH atarsa da goremiyor olmali. Aksi halde
+    kullanici, listede hic gormedigi bir projenin adini/sozlesme bedelini
+    yalnizca UUID'sini bilerek degistirebilir.
+    """
+    granted = await project_factory("GK-A")
+    hidden = await project_factory("OSB-1", name="Dokunulmamis Ad")
+    user = await user_factory(email="scoped-pm@t.co", password="parola1234", role_key="patron")
+    db_session.add(UserProjectAccess(user_id=user.id, project_id=granted.id, all_projects=False))
+    await db_session.flush()
+    login = await client.post(
+        "/auth/login", json={"email": "scoped-pm@t.co", "password": "parola1234"}
+    )
+    token = login.json()["access_token"]
+
+    assert (await client.get(f"/projects/{hidden.id}", headers=_auth(token))).status_code == 404
+
+    resp = await client.patch(
+        f"/projects/{hidden.id}", json={"name": "ELE GEÇİRİLDİ"}, headers=_auth(token)
+    )
+
+    assert resp.status_code == 404
+    await db_session.refresh(hidden)
+    assert hidden.name == "Dokunulmamis Ad"
+    # Erisimi olan proje etkilenmemeli — duzeltme fazla genis olmamali.
+    allowed = await client.patch(
+        f"/projects/{granted.id}", json={"name": "Yeni Ad"}, headers=_auth(token)
+    )
+    assert allowed.status_code == 200
+
+
 async def test_patch_updates_and_audits(client, db_session, user_factory, project_factory):
     project = await project_factory("T-1", name="Eski Ad")
-    token = await _login(client, user_factory, "project_manager")
+    token = await _login_with_all_access(client, db_session, user_factory, "project_manager")
 
     resp = await client.patch(
         f"/projects/{project.id}", json={"name": "Yeni Ad"}, headers=_auth(token)
@@ -185,10 +231,10 @@ async def test_patch_updates_and_audits(client, db_session, user_factory, projec
     assert any("Yeni Ad" in row.detail for row in audit_rows)
 
 
-async def test_patch_ignores_project_type(client, user_factory, project_factory):
+async def test_patch_ignores_project_type(client, db_session, user_factory, project_factory):
     """ProjectUpdate'te alan yok — gonderilirse sessizce yok sayilir (extra alan)."""
     project = await project_factory("T-2", project_type="taahhut")
-    token = await _login(client, user_factory, "patron")
+    token = await _login_with_all_access(client, db_session, user_factory, "patron")
 
     resp = await client.patch(
         f"/projects/{project.id}",
