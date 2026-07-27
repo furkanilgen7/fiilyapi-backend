@@ -135,11 +135,14 @@ def to_detail(project: Project) -> ProjectDetailResponse:
     return ProjectDetailResponse(**_to_item(project).model_dump())
 
 
-async def _visible_projects(session: AsyncSession, actor: User) -> list[Project]:
+async def visible_projects(session: AsyncSession, actor: User) -> list[Project]:
     """Spec §5.2: user_project_access suzgeci; projects=admin suzgeci atlar.
 
     Admin istisnasi Ayarlar kilitlenme korumasidir: erisim vermek icin tum
     projeleri listeleyebilmek gerekir.
+
+    PUBLIC: P2 santiye/bolum uclari da bu suzgecten gecer (P2 spec §5.2) ve
+    kendi kopya gorunurluk mantigini YAZMAZ. Tek kaynak burasidir.
     """
     permission = await get_permission(session, actor.role_id, "projects")
     if permission is not None and permission.access_level is AccessLevel.admin:
@@ -164,7 +167,7 @@ async def list_projects_overview(
     status_filter: ProjectStatus | str | None,
 ) -> ProjectListResponse:
     """Sayaclar filtreden ETKILENMEZ — mockup sekmeleri hep tum kumeyi sayar (spec §5.1)."""
-    visible = await _visible_projects(session, actor)
+    visible = await visible_projects(session, actor)
     selected = visible
     if type_filter is not None:
         wanted_type = ProjectType(type_filter)
@@ -179,7 +182,7 @@ async def get_project_detail(
     session: AsyncSession, actor: User, project_id: uuid.UUID
 ) -> ProjectDetailResponse:
     """Gorunur kumede olmayan proje 404 — varligi sizdirilmaz (spec §5.6)."""
-    visible = await _visible_projects(session, actor)
+    visible = await visible_projects(session, actor)
     project = next((p for p in visible if p.id == project_id), None)
     if project is None:
         raise NotFoundError("Proje bulunamadı")
