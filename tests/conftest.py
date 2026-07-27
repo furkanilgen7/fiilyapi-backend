@@ -20,6 +20,7 @@ from app.modules.roles import models as roles_models  # noqa: F401
 from app.modules.roles.models import Role
 from app.modules.roles.seed_data import seed_reference_data
 from app.modules.settings import models as settings_models  # noqa: F401
+from app.modules.sites import models as sites_models  # noqa: F401
 from app.modules.users import models as users_models  # noqa: F401
 from app.modules.users.models import User, UserStatus
 
