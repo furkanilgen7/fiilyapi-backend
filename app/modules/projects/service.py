@@ -31,6 +31,11 @@ from app.modules.projects.schemas import (
     ShareholderResponse,
 )
 from app.modules.roles.repository import get_permission
+
+# Project.sites ters iliskisi sites.models icinde backref ile tanimlanir; sayaci
+# okuyabilmek icin o modulun yuklenmis olmasi sarttir. Dongusel import YOK:
+# sites.models yalniz projects.models'i import eder, projects.service'i degil.
+from app.modules.sites.models import Site  # noqa: F401
 from app.modules.users.models import User
 
 # Spec §2: bos durum alanlari ve bagli olduklari dilim anahtarlari.
@@ -132,7 +137,7 @@ def _to_item(project: Project) -> ProjectListItem:
 
 
 def to_detail(project: Project) -> ProjectDetailResponse:
-    return ProjectDetailResponse(**_to_item(project).model_dump())
+    return ProjectDetailResponse(**_to_item(project).model_dump(), site_count=len(project.sites))
 
 
 async def visible_projects(session: AsyncSession, actor: User) -> list[Project]:
