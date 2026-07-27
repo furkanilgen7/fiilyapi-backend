@@ -260,3 +260,39 @@ async def test_unknown_ids_are_404_for_authorized_user(
     assert (
         await client.patch(f"/sections/{unknown}", json={"name": "X"}, headers=_auth(token))
     ).status_code == 404
+
+
+async def test_invisible_and_unknown_are_indistinguishable(
+    client, db_session, user_factory, project_factory
+):
+    """Varlik sizintisi: 404 durum kodu ESIT olsa da GOVDE ayrisirsa varlik sizar.
+
+    Gorunmeyen bir projedeki GERCEK santiye "Proje bulunamadı", var olmayan
+    santiye "Şantiye bulunamadı" donerse, elinde bir santiye UUID'si olan
+    (eski calisan, sizmis baglanti) bir kullanici o kaydin HALA VAR OLDUGUNU
+    ve baska bir projeye ait oldugunu dogrulayabilir. Iki cevap birebir ayni
+    olmalidir — hem kod hem govde.
+    """
+    site, section = await _fixture_tree(db_session, project_factory)
+    token = await _login(client, user_factory, WRITE_ROLE, grant_all=False)
+    unknown = uuid.uuid4()
+
+    cases = [
+        ("get", f"/sites/{site.id}", f"/sites/{unknown}", None),
+        ("get", f"/sites/{site.id}/sections", f"/sites/{unknown}/sections", None),
+        ("patch", f"/sites/{site.id}", f"/sites/{unknown}", {"name": "X"}),
+        ("patch", f"/sections/{section.id}", f"/sections/{unknown}", {"name": "X"}),
+        (
+            "post",
+            f"/sites/{site.id}/sections",
+            f"/sites/{unknown}/sections",
+            {"name": "X"},
+        ),
+    ]
+    for method, existing_url, unknown_url, payload in cases:
+        existing = await _call(client, method, existing_url, payload, token)
+        missing = await _call(client, method, unknown_url, payload, token)
+        assert existing.status_code == missing.status_code == 404
+        assert existing.json() == missing.json(), (
+            f"{method.upper()} {existing_url}: {existing.json()} != {missing.json()}"
+        )

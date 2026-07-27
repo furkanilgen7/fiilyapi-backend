@@ -241,24 +241,36 @@ def _site_counts(sites: list[Site]) -> SiteCounts:
 
 # --- Gorunurluk (spec §5.2) ---
 
+# 404 GOVDESI DE AYIRT EDICI OLMAMALIDIR. Durum kodunun 404 olmasi tek basina
+# yetmez: gorunmeyen bir projedeki GERCEK santiye icin "Proje bulunamadı",
+# var olmayan santiye icin "Şantiye bulunamadı" donerse, elinde bir UUID olan
+# kullanici kaydin hala var oldugunu ve baska bir projeye ait oldugunu ayirt
+# edebilir. Bu yuzden ISTENEN kaynagin mesaji zincir boyunca TASINIR: santiye
+# ucunda hem "yok" hem "gormuyorsun" ayni cevabi verir.
+_PROJECT_MISSING = "Proje bulunamadı"
+_SITE_MISSING = "Şantiye bulunamadı"
+_SECTION_MISSING = "Bölüm bulunamadı"
 
-async def _visible_project(session: AsyncSession, actor: User, project_id: uuid.UUID) -> Project:
+
+async def _visible_project(
+    session: AsyncSession, actor: User, project_id: uuid.UUID, missing: str = _PROJECT_MISSING
+) -> Project:
     """Kullanici projeyi goremiyorsa 404 — 403 DEGIL: varligin kendisi sizdirilmaz."""
     visible = await visible_projects(session, actor)
     project = next((p for p in visible if p.id == project_id), None)
     if project is None:
-        raise NotFoundError("Proje bulunamadı")
+        raise NotFoundError(missing)
     return project
 
 
 async def _visible_site(
-    session: AsyncSession, actor: User, site_id: uuid.UUID
+    session: AsyncSession, actor: User, site_id: uuid.UUID, missing: str = _SITE_MISSING
 ) -> tuple[Site, Project]:
     """Santiye -> proje cozumu, ardindan ayni gorunurluk suzgeci."""
     site = await repository.get_site(session, site_id)
     if site is None:
-        raise NotFoundError("Şantiye bulunamadı")
-    project = await _visible_project(session, actor, site.project_id)
+        raise NotFoundError(missing)
+    project = await _visible_project(session, actor, site.project_id, missing)
     return site, project
 
 
@@ -269,8 +281,8 @@ async def _visible_section(
     bolum kimligi ile dolayli erisim de proje suzgecinden gecmek zorundadir."""
     section = await repository.get_section(session, section_id)
     if section is None:
-        raise NotFoundError("Bölüm bulunamadı")
-    site, _ = await _visible_site(session, actor, section.site_id)
+        raise NotFoundError(_SECTION_MISSING)
+    site, _ = await _visible_site(session, actor, section.site_id, _SECTION_MISSING)
     return section, site
 
 
