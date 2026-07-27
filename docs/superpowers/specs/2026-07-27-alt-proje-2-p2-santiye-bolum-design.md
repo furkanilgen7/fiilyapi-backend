@@ -317,6 +317,11 @@ basabilir, `null` dallanması taşımaz.
 | Satınalma | `_F` | `_LIM` | şantiye tanımlamaz |
 | Taşeron | `_N` | `_N` | |
 
+> **Satınalma istisnası (kullanıcı onayı 2026-07-28):** `projects=_N` iken
+> `sites=_LIM` bilinçli istisnadır — Satınalma projeyi görmez ama şantiyeleri
+> görüntüleyebilir (yazamaz). Tutarsızlık gibi görünse de kasıtlıdır, geri
+> düzeltilmemelidir.
+
 > Bu satır **öneridir**; `Ayarlar - İzin Matrisi` mockup'ında `sites` sütunu yok.
 > Uygulamadan önce kullanıcıya doğrulatılır (§8, açık soru 1).
 

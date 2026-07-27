@@ -17,16 +17,22 @@ cozulmezse baska bir projenin bolumu sessizce duzenlenebilir.
 
 import uuid
 
+from sqlalchemy import select
+
+from app.core.access import AccessLevel
+from app.modules.roles.models import Module, Role, RolePermission
 from app.modules.sites.models import Section, Site
 from app.modules.users.models import UserProjectAccess
 
-# procurement seed matrisinde sites = none tasir. Spec §5.1'deki "Taseron"
-# satirinin sistemdeki karsiligi yoktur (roller: 8 sabit rol); _N profilini
-# tasiyan tek rol procurement oldugu icin "hicbir uca erisemez" iddiasi bu rol
-# uzerinden dogrulanir.
+# 2026-07-28 kullanici karariyla Satinalma da sites=view aldi; artik HICBIR
+# seed rolu sites=none tasimiyor. Bu yuzden 403 kapisi seed degerine
+# GUVENMEZ: test ilgili rolun izin satirini acikca none'a cekip dogrular.
+# Aksi halde matris degistiginde test sessizce anlamsizlasir.
 NO_ACCESS_ROLE = "procurement"
 # site_chief sites = view/limited: gorur, yazamaz.
 VIEW_ONLY_ROLE = "site_chief"
+# Satinalma da yalnizca goruntuler (bilincli istisna: projects=none, sites=view).
+VIEW_ONLY_PROCUREMENT = "procurement"
 # patron sites = full: yazar, ama gorunurlugu user_project_access'e baglidir.
 WRITE_ROLE = "patron"
 
@@ -39,6 +45,24 @@ async def _login(client, user_factory, role_key: str, *, grant_all: bool, sessio
         await session.flush()
     resp = await client.post("/auth/login", json={"email": address, "password": "parola1234"})
     return resp.json()["access_token"]
+
+
+async def _set_permission(session, role_key: str, module_key: str, level: AccessLevel) -> None:
+    """Bir rolun modul iznini dogrudan ayarlar — testin 403 kapisini seed
+    degerlerinden BAGIMSIZ dogrulayabilmesi icin."""
+    role_id = (await session.execute(select(Role.id).where(Role.key == role_key))).scalar_one()
+    module_id = (
+        await session.execute(select(Module.id).where(Module.key == module_key))
+    ).scalar_one()
+    permission = (
+        await session.execute(
+            select(RolePermission).where(
+                RolePermission.role_id == role_id, RolePermission.module_id == module_id
+            )
+        )
+    ).scalar_one()
+    permission.access_level = level
+    await session.flush()
 
 
 def _auth(token: str) -> dict[str, str]:
@@ -86,9 +110,29 @@ async def test_role_without_sites_permission_is_forbidden_everywhere(
     client, db_session, user_factory, project_factory
 ):
     site, section = await _fixture_tree(db_session, project_factory)
+    await _set_permission(db_session, NO_ACCESS_ROLE, "sites", AccessLevel.none)
     token = await _login(client, user_factory, NO_ACCESS_ROLE, grant_all=True, session=db_session)
 
     for method, url, payload in _all_endpoints(site, section):
+        resp = await _call(client, method, url, payload, token)
+        assert resp.status_code == 403, f"{method.upper()} {url} -> {resp.status_code}"
+
+
+async def test_procurement_can_view_but_not_write_sites(
+    client, db_session, user_factory, project_factory
+):
+    """Kullanici karari 2026-07-28: Satinalma santiyeleri GORUR, yazamaz."""
+    site, section = await _fixture_tree(db_session, project_factory)
+    token = await _login(
+        client, user_factory, VIEW_ONLY_PROCUREMENT, grant_all=True, session=db_session
+    )
+
+    assert (await client.get(f"/sites/{site.id}", headers=_auth(token))).status_code == 200
+    assert (
+        await client.get(f"/projects/{site.project_id}/sites", headers=_auth(token))
+    ).status_code == 200
+
+    for method, url, payload in _write_endpoints(site, section):
         resp = await _call(client, method, url, payload, token)
         assert resp.status_code == 403, f"{method.upper()} {url} -> {resp.status_code}"
 

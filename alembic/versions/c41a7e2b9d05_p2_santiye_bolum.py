@@ -80,8 +80,9 @@ ROLE_ORDER = [
     "procurement",
 ]
 
-# spec §8 acik soru 1 — oneri uygulandi: "projects satiriyla ayni profil".
-# Proje Muduru projects'te zaten full tasidigi icin ek bir fark olusmaz.
+# spec §5.1 + kullanici karari 2026-07-28. Taban profil projects satiridir;
+# TEK FARK Satinalma (son sutun): projects=none iken sites=view/limited.
+# Bilincli istisna — kullanici onayli, tutarlilik adina geri alinmamalidir.
 MATRIX: dict[str, list[tuple[str, str]]] = {
     MODULE_KEY: [
         ("admin", "all"),
@@ -91,7 +92,7 @@ MATRIX: dict[str, list[tuple[str, str]]] = {
         ("view", "limited"),
         ("view", "finance"),
         ("full", "all"),
-        ("none", "all"),
+        ("view", "limited"),
     ],
 }
 

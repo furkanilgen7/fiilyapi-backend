@@ -193,12 +193,19 @@ async def test_sites_module_row_and_sort(seeded_db):
     assert by_key["sites"].sort_order < by_key["site_diary"].sort_order
 
 
-async def test_sites_permissions_match_projects_row(seeded_db):
-    """spec §8 acik soru 1 — oneri: sites satiri projects satiriyla ayni profil."""
-    for role_key in EXPECTED_ROLE_KEYS:
+async def test_sites_permissions_match_projects_row_except_procurement(seeded_db):
+    """sites satiri projects satirini izler; TEK istisna Satinalma (asagida)."""
+    for role_key in EXPECTED_ROLE_KEYS - {"procurement"}:
         assert await _level_of(seeded_db, role_key, "sites") == await _level_of(
             seeded_db, role_key, "projects"
         )
+
+
+async def test_procurement_sees_sites_but_not_projects(seeded_db):
+    """Kullanici onayli BILINCLI istisna (2026-07-28): Satinalma projeyi gormez
+    ama santiyeleri goruntuleyebilir. Tutarsiz gorunur, kasitlidir."""
+    assert await _level_of(seeded_db, "procurement", "projects") == AccessLevel.none
+    assert await _level_of(seeded_db, "procurement", "sites") == AccessLevel.view
 
 
 async def test_project_manager_can_create_sites(seeded_db):
@@ -207,6 +214,6 @@ async def test_project_manager_can_create_sites(seeded_db):
 
 
 async def test_procurement_and_site_chief_cannot_write_sites(seeded_db):
-    """Satinalma santiye tanimlamaz; Santiye Sefi gorur ama duzenleyemez (spec §5.1)."""
-    assert await _level_of(seeded_db, "procurement", "sites") == AccessLevel.none
-    assert await _level_of(seeded_db, "site_chief", "sites") == AccessLevel.view
+    """Ikisi de santiye TANIMLAMAZ: view seviyesi yazma uclarini acmaz (spec §5.1)."""
+    for role_key in ("procurement", "site_chief"):
+        assert await _level_of(seeded_db, role_key, "sites") == AccessLevel.view

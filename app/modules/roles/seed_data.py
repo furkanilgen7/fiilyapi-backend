@@ -144,11 +144,13 @@ MATRIX: dict[str, list[tuple[AccessLevel, Scope]]] = {
     # dashboard satirinin aynisi: proje kartlari ayni gorunurluk yuzeyi,
     # asil suzgec user_project_access (spec §4).
     "projects": [_A, _F, _LIM, _LIM, _LIM, _FIN, _F, _N],
-    # spec §8 acik soru 1, oneri uygulandi: "projects satiriyla ayni profil,
-    # tek fark Proje Muduru santiye/bolum acabilmeli" — PM projects'te zaten _F
-    # tasidigi icin satirlar birebir ayni cikar. Bolum AYRI izin modulu degildir:
-    # bolum santiyenin ic kirilimidir, sites izni ikisini de kapsar (spec §4).
-    "sites": [_A, _F, _LIM, _LIM, _LIM, _FIN, _F, _N],
+    # spec §5.1 + kullanici karari 2026-07-28. Taban profil projects satiridir;
+    # TEK FARK Satinalma: projects=_N iken sites=_LIM. "Projeyi goremeyen ama
+    # santiyesini goren rol" tutarsiz gorunur ama BILINCLI istisnadir ve kullanici
+    # tarafindan onaylanmistir — tutarlilik adina geri alinmamalidir.
+    # Bolum AYRI izin modulu degildir: bolum santiyenin ic kirilimidir, sites
+    # izni ikisini de kapsar (spec §4).
+    "sites": [_A, _F, _LIM, _LIM, _LIM, _FIN, _F, _LIM],
     "site_diary": [_A, _F, _F, _F, _N, _N, _V, _N],
     "timesheet": [_A, _F, _F, _V, _F, _V, _N, _N],
     "personnel": [_A, _F, _V, _V, _F, _F, _V, _N],
