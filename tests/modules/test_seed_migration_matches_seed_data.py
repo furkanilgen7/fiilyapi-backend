@@ -10,6 +10,7 @@ garanti eden hicbir mekanizma yoktur. Bu test o boslugu kapatir.
 Matris tek bir migration'da degil, uc uca eklenen migration'larda birikir:
   * a477fdf00fdf -> ilk 8 rol x 13 modul (bulk_insert)
   * 2cffc2fcfcf0 -> 14. modul "invoicing" + 8 izin satiri + sort_order kaydirmasi
+  * b7fcd67bde1e -> 15. modul "projects", c41a7e2b9d05 -> 16. modul "sites" (ayni desen)
 Bu yuzden karsilastirma, migration'larin BILESKESI ile seed_data arasinda yapilir.
 
 DB gerektirmez: ilk migration'in upgrade() fonksiyonu, gercek `alembic.op` yerine
@@ -31,7 +32,8 @@ VERSIONS_DIR = Path(__file__).parents[2] / "alembic" / "versions"
 SEED_MIGRATION_PATH = VERSIONS_DIR / "a477fdf00fdf_seed_roller_modul_ve_izinler.py"
 INVOICING_MIGRATION_PATH = VERSIONS_DIR / "2cffc2fcfcf0_invoicing_izin_modulu.py"
 P1_MIGRATION_PATH = next(VERSIONS_DIR.glob("*_p1_proje_cekirdegi.py"))
-EXTENSION_MIGRATION_PATHS = [INVOICING_MIGRATION_PATH, P1_MIGRATION_PATH]
+P2_MIGRATION_PATH = next(VERSIONS_DIR.glob("*_p2_santiye_bolum.py"))
+EXTENSION_MIGRATION_PATHS = [INVOICING_MIGRATION_PATH, P1_MIGRATION_PATH, P2_MIGRATION_PATH]
 
 
 def _load_migration_module(path: Path):
@@ -156,11 +158,11 @@ def test_migration_permission_matrix_matches_seed_data():
     assert _permission_map_from_app() == _permission_map_from_migrations()
 
 
-def test_migration_permission_matrix_has_120_cells():
+def test_migration_permission_matrix_has_128_cells():
     app_map = _permission_map_from_app()
     migration_map = _permission_map_from_migrations()
-    assert len(app_map) == 120
-    assert len(migration_map) == 120
+    assert len(app_map) == 128
+    assert len(migration_map) == 128
 
 
 def test_migration_role_keys_match_seed_data():
