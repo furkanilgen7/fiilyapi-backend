@@ -59,16 +59,31 @@ tarihsel referanstır ve görsel karşılaştırmada kullanılmaz.
 | `status` | enum `site_status`, NOT NULL, default `active` | `active` · `on_hold` · `completed` |
 | `address` | text, null | "Kuyubaşı Mah." |
 | `city` | text, null | "Ankara" — boşsa projeninki gösterilir (§4.3) |
-| `site_manager_name` | text, null | "Sercan Öztürk" — **serbest metin** |
+| `site_manager_name` | text, null | "Sercan Öztürk" — **serbest metin**, §2.1.1 |
 | `start_date` | date, null | |
 | `end_date` | date, null | |
 | `delivery_date` | date, null | tamamlanmış şantiyede "Teslim: Mayıs 2026" |
 | `created_at` / `updated_at` | timestamptz | |
 
-**`site_manager_name` neden FK değil:** `users` tablosu var ama şantiye şefi her
-zaman sistem kullanıcısı olmayabilir (taşeron tarafı, dışarıdan atanan şef).
-P1'deki `employer_name` kararıyla aynı gerekçe — taksonomiyi erken dondurmamak.
-Kullanıcıya bağlama ihtiyacı doğarsa nullable `site_manager_user_id` eklenir.
+### 2.1.1 Şantiye şefi — bu dilimde serbest metin (kullanıcı kararı 2026-07-28)
+
+`Form - Proje Oluştur.dc.html` satır 140 şantiye şefini **`<select>`** olarak
+gösteriyor (Sercan Öztürk / Kadir Yıldız / Murat Arslan). Yani nihai hedef bir
+seçim listesidir.
+
+Ama kullanıcı kararı: *"şef işi şimdi kalsın, sonra select'e bağlarsın."*
+**Bu dilimde bağlanmaz.** `site_manager_name` düz metin sütunu olarak kalır;
+yanıtta `"site_manager_name": "Sercan Öztürk" | null` döner.
+
+Ertelenmesinin gerekçesi: seçim listesinin doğru kaynağı **Personel** modülüdür,
+o modül henüz yok. Şimdi `users.id`'ye FK açmak, Personel geldiğinde ikinci bir
+göçe zorlar — ve şantiye şefi çoğu zaman sistem kullanıcısı değildir (taşeron
+tarafı, dışarıdan atanan şef).
+
+**Sonraki dilime not (takip işi):** Personel modülü yazıldığında bu alan nullable
+bir FK'ya dönecek ve UI'da select olacak. Metin sütunu o göçte veri kaynağı olarak
+kullanılır (ad eşleştirmesi), sonra düşürülür. Alan bugün de nullable olduğu için
+geçiş kırıcı değildir.
 
 **`contract_amount` sütunu YOK.** Karar 3 gereği işveren sözleşmesi proje
 düzeyindedir; şantiyeye pay biçilmesi BOQ dağıtımının türevidir. Şantiyeye elle
@@ -135,7 +150,7 @@ Sonuçları:
 | Alan | Kaynak |
 |---|---|
 | Şantiye adı | `sites.name` |
-| "Kuyubaşı Mah. · Şantiye Şefi: S. Öztürk" | `sites.address`, `sites.site_manager_name` |
+| "Kuyubaşı Mah. · Şantiye Şefi: S. Öztürk" | `sites.address`, `site_manager.full_name` (§2.1.1) |
 | Durum rozeti (Aktif / Tamamlandı) | `sites.status` |
 | "Teslim · Mayıs 2026" | `sites.delivery_date` |
 | Kalan Gün | `sites.end_date` − bugün (Europe/Istanbul, §4.2) |
@@ -227,7 +242,7 @@ de kapsar.
   "id": "…", "code": "A-BLOK", "name": "A-Blok Şantiyesi",
   "status": "active",
   "address": "Kuyubaşı Mah.", "city": "Ankara", "city_inherited": false,
-  "site_manager_name": "Sercan Öztürk",
+  "site_manager": { "id": "…", "full_name": "Sercan Öztürk" },   // atanmamışsa null
   "start_date": "2025-03-01", "end_date": "2026-12-31",
   "delivery_date": null,
   "remaining_days": 157,                                     // completed ise null
