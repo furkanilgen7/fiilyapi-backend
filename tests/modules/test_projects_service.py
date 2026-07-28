@@ -24,6 +24,17 @@ async def _grant_all(seeded_db, user) -> None:
     await seeded_db.flush()
 
 
+async def _writer(seeded_db, user_factory, email: str):
+    """Yazma testleri icin tum projelere erisimi olan aktor.
+
+    `update_project` artik gorunurluk suzgecinden geciyor (IDOR duzeltmesi):
+    servis testleri de gercek bir aktor tasimak zorunda.
+    """
+    user = await user_factory(email=email, password="parola1234", role_key="patron")
+    await _grant_all(seeded_db, user)
+    return user
+
+
 async def test_counts_ignore_filters(seeded_db, user_factory, project_factory):
     await project_factory("T-1", project_type="taahhut", status="active")
     await project_factory("T-2", project_type="taahhut", status="completed")
@@ -212,9 +223,10 @@ async def test_land_share_on_kendi_yatirim_raises_422_error(db_session):
         )
 
 
-async def test_update_replaces_shareholder_list(db_session):
+async def test_update_replaces_shareholder_list(seeded_db, user_factory):
+    actor = await _writer(seeded_db, user_factory, "upd1@t.co")
     project = await create_project(
-        db_session,
+        seeded_db,
         ProjectCreate(
             code="KK-10",
             name="Replace Testi",
@@ -229,7 +241,8 @@ async def test_update_replaces_shareholder_list(db_session):
     )
 
     updated = await update_project(
-        db_session,
+        seeded_db,
+        actor,
         project.id,
         ProjectUpdate(
             land_share=ProjectLandShareInput(
@@ -248,11 +261,12 @@ async def test_update_replaces_shareholder_list(db_session):
     assert [s.name for s in updated.shareholders] == ["Yeni 1", "Yeni 2"]
 
 
-async def test_update_common_fields_only(db_session, project_factory):
+async def test_update_common_fields_only(seeded_db, user_factory, project_factory):
+    actor = await _writer(seeded_db, user_factory, "upd2@t.co")
     project = await project_factory("T-5", name="Eski Ad")
 
     updated = await update_project(
-        db_session, project.id, ProjectUpdate(name="Yeni Ad", city="Bursa")
+        seeded_db, actor, project.id, ProjectUpdate(name="Yeni Ad", city="Bursa")
     )
 
     assert updated.name == "Yeni Ad"
@@ -260,8 +274,10 @@ async def test_update_common_fields_only(db_session, project_factory):
     assert updated.code == "T-5"
 
 
-async def test_update_missing_project_raises_not_found(db_session):
+async def test_update_missing_project_raises_not_found(seeded_db, user_factory):
     import uuid as uuid_mod
 
+    actor = await _writer(seeded_db, user_factory, "upd3@t.co")
+
     with pytest.raises(NotFoundError):
-        await update_project(db_session, uuid_mod.uuid4(), ProjectUpdate(name="X"))
+        await update_project(seeded_db, actor, uuid_mod.uuid4(), ProjectUpdate(name="X"))

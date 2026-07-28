@@ -57,7 +57,11 @@ async def get_project_endpoint(
     "",
     response_model=ProjectDetailResponse,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[require_permission("projects", AccessLevel.full)],
+    # Proje olusturma ADMIN isidir (kullanici karari 2026-07-28). `full` kasitli
+    # olarak YETMEZ: olusturana otomatik UserProjectAccess yazilmadigi icin,
+    # kapsamli bir `full` kullanicisi goremedigi bir proje yaratirdi. Admin
+    # gorunurluk suzgecini zaten atlar (spec §5.2), boylece bu bosluk kapanir.
+    dependencies=[require_permission("projects", AccessLevel.admin)],
 )
 async def create_project_endpoint(
     request: Request,
@@ -88,7 +92,7 @@ async def update_project_endpoint(
     current_user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> ProjectDetailResponse:
-    project = await service.update_project(session, project_id, data)
+    project = await service.update_project(session, current_user, project_id, data)
     await record_audit(
         session,
         action=AuditAction.update,

@@ -32,6 +32,16 @@ def to_display(value: datetime) -> datetime:
     return aware.astimezone(DISPLAY_TIMEZONE)
 
 
+def today() -> date:
+    """Goruntuleme saat dilimindeki BUGUN.
+
+    `date.today()` sunucunun yerel saatini (Railway'de UTC) kullanir; TR gecesi
+    00:00-03:00 arasinda bir gun geride kalir ve "kalan gun" hesabi bir gun
+    kayar. Gun sinirlari tek kaynaktan okunmalidir.
+    """
+    return datetime.now(DISPLAY_TIMEZONE).date()
+
+
 def day_start_utc(day: date) -> datetime:
     """Verilen TR gununun 00:00:00'ini UTC'ye cevirir (sinir DAHIL)."""
     return datetime.combine(day, time.min, tzinfo=DISPLAY_TIMEZONE).astimezone(UTC)

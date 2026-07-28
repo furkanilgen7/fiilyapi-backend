@@ -31,6 +31,11 @@ from app.modules.projects.schemas import (
     ShareholderResponse,
 )
 from app.modules.roles.repository import get_permission
+
+# Project.sites ters iliskisi sites.models icinde backref ile tanimlanir; sayaci
+# okuyabilmek icin o modulun yuklenmis olmasi sarttir. Dongusel import YOK:
+# sites.models yalniz projects.models'i import eder, projects.service'i degil.
+from app.modules.sites.models import Site  # noqa: F401
 from app.modules.users.models import User
 
 # Spec §2: bos durum alanlari ve bagli olduklari dilim anahtarlari.
@@ -132,14 +137,17 @@ def _to_item(project: Project) -> ProjectListItem:
 
 
 def to_detail(project: Project) -> ProjectDetailResponse:
-    return ProjectDetailResponse(**_to_item(project).model_dump())
+    return ProjectDetailResponse(**_to_item(project).model_dump(), site_count=len(project.sites))
 
 
-async def _visible_projects(session: AsyncSession, actor: User) -> list[Project]:
+async def visible_projects(session: AsyncSession, actor: User) -> list[Project]:
     """Spec §5.2: user_project_access suzgeci; projects=admin suzgeci atlar.
 
     Admin istisnasi Ayarlar kilitlenme korumasidir: erisim vermek icin tum
     projeleri listeleyebilmek gerekir.
+
+    PUBLIC: P2 santiye/bolum uclari da bu suzgecten gecer (P2 spec §5.2) ve
+    kendi kopya gorunurluk mantigini YAZMAZ. Tek kaynak burasidir.
     """
     permission = await get_permission(session, actor.role_id, "projects")
     if permission is not None and permission.access_level is AccessLevel.admin:
@@ -164,7 +172,7 @@ async def list_projects_overview(
     status_filter: ProjectStatus | str | None,
 ) -> ProjectListResponse:
     """Sayaclar filtreden ETKILENMEZ — mockup sekmeleri hep tum kumeyi sayar (spec §5.1)."""
-    visible = await _visible_projects(session, actor)
+    visible = await visible_projects(session, actor)
     selected = visible
     if type_filter is not None:
         wanted_type = ProjectType(type_filter)
@@ -175,15 +183,24 @@ async def list_projects_overview(
     return ProjectListResponse(counts=_counts(visible), items=[_to_item(p) for p in selected])
 
 
-async def get_project_detail(
-    session: AsyncSession, actor: User, project_id: uuid.UUID
-) -> ProjectDetailResponse:
-    """Gorunur kumede olmayan proje 404 — varligi sizdirilmaz (spec §5.6)."""
-    visible = await _visible_projects(session, actor)
+async def _visible_project(session: AsyncSession, actor: User, project_id: uuid.UUID) -> Project:
+    """Gorunur kumede olmayan proje 404 — varligi sizdirilmaz (spec §5.6).
+
+    TEK kimlik-ile-erisim kapisi burasidir. Hem OKUMA hem YAZMA uclari bundan
+    gecmek ZORUNDA: yalnizca okumayi suzmek, listede hic gorunmeyen bir projeyi
+    UUID'sini bilen kullanicinin PATCH ile degistirebilmesi demektir.
+    """
+    visible = await visible_projects(session, actor)
     project = next((p for p in visible if p.id == project_id), None)
     if project is None:
         raise NotFoundError("Proje bulunamadı")
-    return to_detail(project)
+    return project
+
+
+async def get_project_detail(
+    session: AsyncSession, actor: User, project_id: uuid.UUID
+) -> ProjectDetailResponse:
+    return to_detail(await _visible_project(session, actor, project_id))
 
 
 def _ensure_type_consistency(
@@ -260,11 +277,9 @@ async def create_project(session: AsyncSession, data: ProjectCreate) -> Project:
 
 
 async def update_project(
-    session: AsyncSession, project_id: uuid.UUID, data: ProjectUpdate
+    session: AsyncSession, actor: User, project_id: uuid.UUID, data: ProjectUpdate
 ) -> Project:
-    project = await repository.get_project(session, project_id)
-    if project is None:
-        raise NotFoundError("Proje bulunamadı")
+    project = await _visible_project(session, actor, project_id)
     _ensure_type_consistency(project.project_type, data.investment, data.land_share)
     changes = data.model_dump(exclude_unset=True, exclude={"investment", "land_share"})
     for field, value in changes.items():

@@ -107,7 +107,9 @@ class ProjectListItem(BaseModel):
 
 
 class ProjectDetailResponse(ProjectListItem):
-    pass
+    # P2 eklemesi (spec §1): GERCEK deger, yer tutucu degil — sayacin girdisi
+    # (sites tablosu) P2'de yazildi. P1 sozlesmesine ekleme, kirici degisiklik degil.
+    site_count: int
 
 
 class ProjectCounts(BaseModel):

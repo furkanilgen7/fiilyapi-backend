@@ -2,8 +2,31 @@ import uuid
 
 from sqlalchemy import select
 
+from app.core.access import AccessLevel
 from app.modules.audit.models import AuditAction, AuditLog
+from app.modules.roles.models import Module, Role, RolePermission
 from app.modules.users.models import UserProjectAccess
+
+
+async def _set_permission(session, role_key: str, module_key: str, level: AccessLevel) -> None:
+    """Bir rolun modul iznini dogrudan ayarlar.
+
+    Yetki kapisi testleri seed degerine BAGIMLI olmamali: matris degistiginde
+    test sessizce anlamsizlasmasin diye ilgili hucre testte acikca kurulur.
+    """
+    role_id = (await session.execute(select(Role.id).where(Role.key == role_key))).scalar_one()
+    module_id = (
+        await session.execute(select(Module.id).where(Module.key == module_key))
+    ).scalar_one()
+    permission = (
+        await session.execute(
+            select(RolePermission).where(
+                RolePermission.role_id == role_id, RolePermission.module_id == module_id
+            )
+        )
+    ).scalar_one()
+    permission.access_level = level
+    await session.flush()
 
 
 async def _login(client, user_factory, role_key: str) -> str:
@@ -89,7 +112,7 @@ async def test_get_project_not_found(client, user_factory):
 
 
 async def test_create_forbidden_for_view_level(client, user_factory):
-    """site_chief projects=view tasir; POST full ister."""
+    """site_chief projects=view tasir; POST admin ister."""
     token = await _login(client, user_factory, "site_chief")
     resp = await client.post(
         "/projects",
@@ -99,8 +122,29 @@ async def test_create_forbidden_for_view_level(client, user_factory):
     assert resp.status_code == 403
 
 
+async def test_create_requires_admin_not_full(client, db_session, user_factory):
+    """Kullanici karari 2026-07-28: proje olusturma ADMIN isidir.
+
+    `full` yetmez. Bu, olusturana otomatik UserProjectAccess yazmadan da
+    tutarli kalmasini saglar: admin gorunurluk suzgecini zaten atlar (P1 spec
+    §5.2), dolayisiyla yarattigi projeyi gorebilir. `full` seviyesine izin
+    verilseydi, kapsamli bir kullanici goremedigi bir proje yaratirdi.
+    """
+    body = {"code": "ADM-1", "name": "Admin Testi", "project_type": "taahhut"}
+
+    await _set_permission(db_session, "patron", "projects", AccessLevel.full)
+    full_token = await _login(client, user_factory, "patron")
+    forbidden = await client.post("/projects", json=body, headers=_auth(full_token))
+    assert forbidden.status_code == 403
+
+    admin_token = await _login(client, user_factory, "system_admin")
+    allowed = await client.post("/projects", json=body, headers=_auth(admin_token))
+    assert allowed.status_code == 201
+    assert allowed.json()["code"] == "ADM-1"
+
+
 async def test_create_kat_karsiligi_and_audit(client, db_session, user_factory):
-    token = await _login(client, user_factory, "patron")
+    token = await _login(client, user_factory, "system_admin")
 
     resp = await client.post(
         "/projects",
@@ -142,7 +186,7 @@ async def test_create_kat_karsiligi_and_audit(client, db_session, user_factory):
 
 
 async def test_create_type_mismatch_returns_422(client, user_factory):
-    token = await _login(client, user_factory, "patron")
+    token = await _login(client, user_factory, "system_admin")
     resp = await client.post(
         "/projects",
         json={
@@ -158,7 +202,7 @@ async def test_create_type_mismatch_returns_422(client, user_factory):
 
 async def test_create_duplicate_code_returns_409(client, user_factory, project_factory):
     await project_factory("GK-A")
-    token = await _login(client, user_factory, "patron")
+    token = await _login(client, user_factory, "system_admin")
     resp = await client.post(
         "/projects",
         json={"code": "GK-A", "name": "Kopya", "project_type": "taahhut"},
@@ -167,9 +211,55 @@ async def test_create_duplicate_code_returns_409(client, user_factory, project_f
     assert resp.status_code == 409
 
 
+async def _login_with_all_access(client, db_session, user_factory, role_key: str) -> str:
+    user = await user_factory(email=f"{role_key}@t.co", password="parola1234", role_key=role_key)
+    db_session.add(UserProjectAccess(user_id=user.id, project_id=None, all_projects=True))
+    await db_session.flush()
+    resp = await client.post(
+        "/auth/login", json={"email": f"{role_key}@t.co", "password": "parola1234"}
+    )
+    return resp.json()["access_token"]
+
+
+async def test_patch_project_outside_access_is_404_and_changes_nothing(
+    client, db_session, user_factory, project_factory
+):
+    """IDOR: GET 404 verirken PATCH gecirirse yetki suzgeci YARIM demektir.
+
+    Yalnizca "GK-A" projesine erisimi olan bir patron, "OSB-1"i GET ile
+    goremiyor; ayni kimlikle PATCH atarsa da goremiyor olmali. Aksi halde
+    kullanici, listede hic gormedigi bir projenin adini/sozlesme bedelini
+    yalnizca UUID'sini bilerek degistirebilir.
+    """
+    granted = await project_factory("GK-A")
+    hidden = await project_factory("OSB-1", name="Dokunulmamis Ad")
+    user = await user_factory(email="scoped-pm@t.co", password="parola1234", role_key="patron")
+    db_session.add(UserProjectAccess(user_id=user.id, project_id=granted.id, all_projects=False))
+    await db_session.flush()
+    login = await client.post(
+        "/auth/login", json={"email": "scoped-pm@t.co", "password": "parola1234"}
+    )
+    token = login.json()["access_token"]
+
+    assert (await client.get(f"/projects/{hidden.id}", headers=_auth(token))).status_code == 404
+
+    resp = await client.patch(
+        f"/projects/{hidden.id}", json={"name": "ELE GEÇİRİLDİ"}, headers=_auth(token)
+    )
+
+    assert resp.status_code == 404
+    await db_session.refresh(hidden)
+    assert hidden.name == "Dokunulmamis Ad"
+    # Erisimi olan proje etkilenmemeli — duzeltme fazla genis olmamali.
+    allowed = await client.patch(
+        f"/projects/{granted.id}", json={"name": "Yeni Ad"}, headers=_auth(token)
+    )
+    assert allowed.status_code == 200
+
+
 async def test_patch_updates_and_audits(client, db_session, user_factory, project_factory):
     project = await project_factory("T-1", name="Eski Ad")
-    token = await _login(client, user_factory, "project_manager")
+    token = await _login_with_all_access(client, db_session, user_factory, "project_manager")
 
     resp = await client.patch(
         f"/projects/{project.id}", json={"name": "Yeni Ad"}, headers=_auth(token)
@@ -185,10 +275,10 @@ async def test_patch_updates_and_audits(client, db_session, user_factory, projec
     assert any("Yeni Ad" in row.detail for row in audit_rows)
 
 
-async def test_patch_ignores_project_type(client, user_factory, project_factory):
+async def test_patch_ignores_project_type(client, db_session, user_factory, project_factory):
     """ProjectUpdate'te alan yok — gonderilirse sessizce yok sayilir (extra alan)."""
     project = await project_factory("T-2", project_type="taahhut")
-    token = await _login(client, user_factory, "patron")
+    token = await _login_with_all_access(client, db_session, user_factory, "patron")
 
     resp = await client.patch(
         f"/projects/{project.id}",

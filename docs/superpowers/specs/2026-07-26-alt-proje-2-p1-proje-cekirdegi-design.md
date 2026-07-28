@@ -176,8 +176,9 @@ Matris satırı (8 rol, `ROLE_ORDER` sırasıyla):
 **Gerekçe:** proje kartları gösterge paneliyle aynı görünürlük yüzeyidir; satır,
 `dashboard` satırının birebir aynısıdır. Hangi projelerin görüneceğini zaten
 `user_project_access` süzer (§5.2) — buradaki seviye yalnız ekrana girip
-girememeyi ve yazabilmeyi belirler. "+ Yeni Proje" (`full`) yalnız Patron, Proje
-Müdürü ve Sistem Yöneticisi'nde.
+girememeyi ve yazabilmeyi belirler. Güncelleme (`full`) Patron, Proje Müdürü ve
+Sistem Yöneticisi'nde; "+ Yeni Proje" ise `admin` ister (2026-07-28 kararı, §5)
+ve bugün yalnız Sistem Yöneticisi'ndedir.
 
 Toplam: 8 rol × 15 modül = **120** izin satırı. `company_assets` bu dilimin
 **dışındadır** (eklendiğinde 16. modül olur; ana spec §10.2'deki "15. modül"
@@ -192,8 +193,15 @@ Hepsi `app/modules/projects/` içinde; modüle `service.py` eklenir
 |---|---|---|
 | `GET /projects` | `projects` ≥ `view` | liste + sayaçlar + filtreler |
 | `GET /projects/{id}` | `projects` ≥ `view` | tekil proje, uzantısıyla |
-| `POST /projects` | `projects` ≥ `full` | "+ Yeni Proje" |
+| `POST /projects` | `projects` = `admin` | "+ Yeni Proje" |
 | `PATCH /projects/{id}` | `projects` ≥ `full` | güncelleme |
+
+> **Düzeltme (kullanıcı kararı 2026-07-28):** proje oluşturma **admin işidir**;
+> `full` yetmez. Bu yüzden **oluşturana otomatik `UserProjectAccess` yazılmaz** —
+> gerek yoktur: `admin` seviyesi görünürlük süzgecini zaten atlar (§5.2), dolayısıyla
+> oluşturan kişi yarattığı projeyi görebilir. `full` seviyesine izin verilseydi,
+> kapsamı sınırlı bir kullanıcı listede hiç göremeyeceği bir proje yaratabilirdi.
+> `PATCH` ve `GET` uçları değişmedi.
 
 **DELETE yok** — bilinçli erteleme: silme `admin` seviyesi ister ve altında
 şantiye/sözleşme kayıtları varken silmenin ne demek olduğu (kaskad mı, blok mu)

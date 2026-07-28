@@ -73,39 +73,40 @@ MODULES: list[dict] = [
     {"key": "dashboard", "name": "Gösterge Paneli", "group": ModuleGroup.GENEL, "sort_order": 1},
     {"key": "approvals", "name": "Onay Kutusu", "group": ModuleGroup.GENEL, "sort_order": 2},
     {"key": "projects", "name": "Projeler", "group": ModuleGroup.GENEL, "sort_order": 3},
-    {"key": "site_diary", "name": "Günlük Kayıt", "group": ModuleGroup.SAHA, "sort_order": 4},
-    {"key": "timesheet", "name": "Puantaj", "group": ModuleGroup.SAHA, "sort_order": 5},
-    {"key": "personnel", "name": "Personel", "group": ModuleGroup.SAHA, "sort_order": 6},
-    {"key": "payroll", "name": "Bordro", "group": ModuleGroup.SAHA, "sort_order": 7},
+    {"key": "sites", "name": "Şantiyeler", "group": ModuleGroup.GENEL, "sort_order": 4},
+    {"key": "site_diary", "name": "Günlük Kayıt", "group": ModuleGroup.SAHA, "sort_order": 5},
+    {"key": "timesheet", "name": "Puantaj", "group": ModuleGroup.SAHA, "sort_order": 6},
+    {"key": "personnel", "name": "Personel", "group": ModuleGroup.SAHA, "sort_order": 7},
+    {"key": "payroll", "name": "Bordro", "group": ModuleGroup.SAHA, "sort_order": 8},
     {
         "key": "inventory",
         "name": "Stok & Depo",
         "group": ModuleGroup.STOK_SATINALMA,
-        "sort_order": 8,
+        "sort_order": 9,
     },
     {
         "key": "procurement",
         "name": "Satınalma & Teklif",
         "group": ModuleGroup.STOK_SATINALMA,
-        "sort_order": 9,
+        "sort_order": 10,
     },
     {
         "key": "progress_payments",
         "name": "Hakedişler",
         "group": ModuleGroup.MALI,
-        "sort_order": 10,
+        "sort_order": 11,
     },
-    {"key": "accounting", "name": "Muhasebe", "group": ModuleGroup.MALI, "sort_order": 11},
+    {"key": "accounting", "name": "Muhasebe", "group": ModuleGroup.MALI, "sort_order": 12},
     # Fatura Yönetimi, Muhasebe'nin altında değil ayrı bir ana menü maddesidir
     # (mockup: projedesign/Fatura Yönetimi.dc.html sidebar sırası).
-    {"key": "invoicing", "name": "Fatura Yönetimi", "group": ModuleGroup.MALI, "sort_order": 12},
-    {"key": "treasury", "name": "Hazine", "group": ModuleGroup.MALI, "sort_order": 13},
-    {"key": "settings", "name": "Ayarlar", "group": ModuleGroup.SISTEM, "sort_order": 14},
+    {"key": "invoicing", "name": "Fatura Yönetimi", "group": ModuleGroup.MALI, "sort_order": 13},
+    {"key": "treasury", "name": "Hazine", "group": ModuleGroup.MALI, "sort_order": 14},
+    {"key": "settings", "name": "Ayarlar", "group": ModuleGroup.SISTEM, "sort_order": 15},
     {
         "key": "user_management",
         "name": "Kullanıcı & Rol Yönetimi",
         "group": ModuleGroup.SISTEM,
-        "sort_order": 15,
+        "sort_order": 16,
     },
 ]
 
@@ -143,6 +144,13 @@ MATRIX: dict[str, list[tuple[AccessLevel, Scope]]] = {
     # dashboard satirinin aynisi: proje kartlari ayni gorunurluk yuzeyi,
     # asil suzgec user_project_access (spec §4).
     "projects": [_A, _F, _LIM, _LIM, _LIM, _FIN, _F, _N],
+    # spec §5.1 + kullanici karari 2026-07-28. Taban profil projects satiridir;
+    # TEK FARK Satinalma: projects=_N iken sites=_LIM. "Projeyi goremeyen ama
+    # santiyesini goren rol" tutarsiz gorunur ama BILINCLI istisnadir ve kullanici
+    # tarafindan onaylanmistir — tutarlilik adina geri alinmamalidir.
+    # Bolum AYRI izin modulu degildir: bolum santiyenin ic kirilimidir, sites
+    # izni ikisini de kapsar (spec §4).
+    "sites": [_A, _F, _LIM, _LIM, _LIM, _FIN, _F, _LIM],
     "site_diary": [_A, _F, _F, _F, _N, _N, _V, _N],
     "timesheet": [_A, _F, _F, _V, _F, _V, _N, _N],
     "personnel": [_A, _F, _V, _V, _F, _F, _V, _N],
@@ -163,7 +171,7 @@ async def seed_reference_data(session: AsyncSession) -> None:
 
     Idempotent: hangi başlangıç durumundan çalıştırılırsa çalıştırılsın (boş DB,
     tamamen seed edilmiş DB, ya da roller/modüller var ama role_permissions boş)
-    sonuçta 8 rol, 15 modül ve 120 izin satırı bulunur; mevcut satırlar
+    sonuçta 8 rol, 16 modül ve 128 izin satırı bulunur; mevcut satırlar
     üzerine yazılmaz ve `uq_role_module` UNIQUE kısıtı asla ihlal edilmez.
     """
     existing_role_rows = (await session.execute(select(Role))).scalars().all()
