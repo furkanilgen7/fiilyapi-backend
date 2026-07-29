@@ -3,8 +3,36 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.projects.models import Project
+from app.modules.projects.models import Employer, Project
 from app.modules.users.models import UserProjectAccess
+
+
+async def list_employers(session: AsyncSession, q: str | None, active_only: bool) -> list[Employer]:
+    """Ada gore ILIKE suzgeci + aktiflik; siralama DB'de (ORDER BY name), istemcide degil."""
+    stmt = select(Employer)
+    if active_only:
+        stmt = stmt.where(Employer.is_active.is_(True))
+    if q:
+        stmt = stmt.where(Employer.name.ilike(f"%{q}%"))
+    stmt = stmt.order_by(Employer.name)
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def get_employer(session: AsyncSession, employer_id: uuid.UUID) -> Employer | None:
+    return await session.get(Employer, employer_id)
+
+
+async def get_employer_by_tax_number(session: AsyncSession, tax_number: str) -> Employer | None:
+    return (
+        await session.execute(select(Employer).where(Employer.tax_number == tax_number))
+    ).scalar_one_or_none()
+
+
+async def add_employer(session: AsyncSession, employer: Employer) -> Employer:
+    session.add(employer)
+    await session.flush()
+    await session.refresh(employer)
+    return employer
 
 
 async def list_projects(session: AsyncSession) -> list[Project]:

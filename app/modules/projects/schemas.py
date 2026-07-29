@@ -1,11 +1,47 @@
+import re
 import uuid
 from datetime import date
 from decimal import Decimal
 from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.modules.projects.models import ProjectStatus, ProjectType
+
+# VKN/TCKN: 10 veya 11 haneli rakam (spec §3.2). Mesaj Turkce ve alana ozel.
+_TAX_NUMBER_PATTERN = re.compile(r"^\d{10,11}$")
+_TAX_NUMBER_MESSAGE = "VKN 10 veya 11 haneli rakam olmalıdır."
+
+
+# --- İşveren (employers) şemaları (spec §3.1, §3.2) ---
+
+
+class EmployerCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    tax_number: str | None = Field(default=None, max_length=11)
+    contact_person: str | None = Field(default=None, max_length=200)
+
+    @field_validator("tax_number")
+    @classmethod
+    def _validate_tax_number(cls, value: str | None) -> str | None:
+        if value is not None and not _TAX_NUMBER_PATTERN.fullmatch(value):
+            raise ValueError(_TAX_NUMBER_MESSAGE)
+        return value
+
+
+class EmployerResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    tax_number: str | None
+    contact_person: str | None
+    is_active: bool
+
+
+class EmployerListResponse(BaseModel):
+    items: list[EmployerResponse]
+
 
 # --- B6 yer tutucu deseni (dashboard spec §2.3; bu ekran icin spec §5.3) ---
 

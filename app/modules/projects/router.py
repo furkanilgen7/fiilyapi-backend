@@ -16,6 +16,9 @@ from app.modules.audit.service import record_audit
 from app.modules.projects import service
 from app.modules.projects.models import ProjectStatus, ProjectType
 from app.modules.projects.schemas import (
+    EmployerCreate,
+    EmployerListResponse,
+    EmployerResponse,
     ProjectCreate,
     ProjectDetailResponse,
     ProjectListResponse,
@@ -24,6 +27,49 @@ from app.modules.projects.schemas import (
 from app.modules.users.models import User
 
 router = APIRouter(prefix="/projects", tags=["projects"], responses=COMMON_ERROR_RESPONSES)
+
+# İşveren kartoteksi YENİ İZİN MODÜLÜ AÇMAZ (spec §2.5/§7.6): `projects`
+# view/admin ile korunur. Ayrı bir router yalnız yol farkı içindir (/employers).
+employers_router = APIRouter(
+    prefix="/employers", tags=["employers"], responses=COMMON_ERROR_RESPONSES
+)
+
+
+@employers_router.get(
+    "",
+    response_model=EmployerListResponse,
+    dependencies=[require_permission("projects", AccessLevel.view)],
+)
+async def list_employers_endpoint(
+    session: Annotated[AsyncSession, Depends(get_db)],
+    q: str | None = None,
+    active_only: bool = True,
+) -> EmployerListResponse:
+    employers = await service.list_employers(session, q, active_only)
+    return EmployerListResponse(items=[EmployerResponse.model_validate(e) for e in employers])
+
+
+@employers_router.post(
+    "",
+    response_model=EmployerResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[require_permission("projects", AccessLevel.admin)],
+)
+async def create_employer_endpoint(
+    request: Request,
+    data: EmployerCreate,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> EmployerResponse:
+    employer = await service.create_employer(session, data)
+    await record_audit(
+        session,
+        action=AuditAction.create,
+        detail=messages.employer_created(employer.name),
+        actor_user_id=current_user.id,
+        ip_address=client_ip(request),
+    )
+    return EmployerResponse.model_validate(employer)
 
 
 @router.get(

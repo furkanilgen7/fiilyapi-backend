@@ -4,9 +4,10 @@ from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel
-from app.core.errors import NotFoundError, ProjectTypeMismatchError
+from app.core.errors import DuplicateError, NotFoundError, ProjectTypeMismatchError
 from app.modules.projects import repository
 from app.modules.projects.models import (
+    Employer,
     LandShareShareholder,
     Project,
     ProjectInvestment,
@@ -17,6 +18,7 @@ from app.modules.projects.models import (
 from app.modules.projects.schemas import (
     ContractingCard,
     CountPlaceholder,
+    EmployerCreate,
     InvestmentCard,
     LandShareCard,
     MetricPlaceholder,
@@ -46,6 +48,32 @@ _UNITS = "units"
 _PROJECT_COSTS = "project_costs"
 
 _LAND_COST_FIXED = Decimal("0")  # kat karsiliginda tanim geregi 0 (spec §3.3)
+
+_DUPLICATE_TAX_NUMBER = "Bu VKN ile kayıtlı bir işveren zaten var."
+_EMPLOYER_NOT_FOUND = "İşveren bulunamadı"
+
+
+# --- İşveren (employers) servisi (spec §3.1, §3.2) ---
+
+
+async def list_employers(session: AsyncSession, q: str | None, active_only: bool) -> list[Employer]:
+    return await repository.list_employers(session, q, active_only)
+
+
+async def create_employer(session: AsyncSession, data: EmployerCreate) -> Employer:
+    """Yinelenen VKN -> DuplicateError (409). Servis ONCE SELECT ile bakar ki
+    kullaniciya alanina ozel Turkce mesaj verilsin; IntegrityError -> 409 handler'i
+    yaris durumu emniyet agi olarak KALIR (spec §3.2)."""
+    if data.tax_number is not None:
+        existing = await repository.get_employer_by_tax_number(session, data.tax_number)
+        if existing is not None:
+            raise DuplicateError(_DUPLICATE_TAX_NUMBER)
+    employer = Employer(
+        name=data.name,
+        tax_number=data.tax_number,
+        contact_person=data.contact_person,
+    )
+    return await repository.add_employer(session, employer)
 
 
 def _metric(pending_module: str) -> MetricPlaceholder:
