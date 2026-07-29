@@ -115,7 +115,34 @@ Tarifi), 98 (Birim), 99 (Miktar), 100 (Birim Fiyat), 101 (Tutar), 102 (Gerç. %)
    `group_id` PATCH ile değiştirilebilir (aynı şantiyenin başka grubuna) — 1. kural
    burada da kontrol edilir.
 
-## 4. İzin modeli — yeni modül AÇILMAZ (öneri)
+## 4. İzin modeli — **yeni `boq` modülü AÇILIR** (kullanıcı kararı, 2026-07-30)
+
+> **KARAR — aşağıdaki "yeni modül açılmaz" önerisi GEÇERSİZDİR.**
+> Kullanıcı: "şantiye şefi görsün de saha mühendisi görmesin". Mevcut matriste
+> `sites` satırı `site_chief` ve `field_engineer` için **birebir aynı** (`_LIM`,
+> `_LIM` — `projects` satırının aynısı, `seed_data.py` MATRIX). Dolayısıyla
+> `sites` izniyle kapı tutulursa bu iki rol ayrılamaz. İstenen ayrım ancak
+> **ayrı izin modülü** ile mümkündür.
+>
+> - Yeni modül anahtarı: **`boq`** (İş Kalemleri) — matrisin 17. satırı.
+> - Satır: `system_admin=_A`, `patron=_F`, **`site_chief=_LIM`**,
+>   **`field_engineer=_N`**, `hr_manager=_N`, `accounting=_FIN`,
+>   `project_manager=_F`, `procurement=_N`.
+>   (`accounting`/`project_manager` seviyeleri `projects` satırından türetildi —
+>   uygulamadan önce kullanıcıya teyit edilecek.)
+> - Okuma uçları `boq:view`, yazma uçları `boq:full` (§5 tablosundaki
+>   `sites:view`/`sites:full` bu kararla **değişti**).
+> - **Mockup sapması, bilinçli ve kaçınılmaz:** `Ayarlar - İzin Matrisi`
+>   mockup'ında `boq` satırı YOK. Ayrım mockup'ta hiç tanımlı olmadığı için
+>   mockup'a sadık kalmak istenen davranışı imkânsız kılıyordu. Sapma burada
+>   kayıt altındadır; "mockup'ta yok" diye geri alınmaz.
+> - **Plan etkisi:** T1'in "`modules`/`role_permissions`'a DOKUNMA" tuzağı
+>   T1 için geçerli kalır, ama **T4 kapsamı büyür**: modül satırı migration'ı +
+>   `seed_data.py` MATRIX güncellemesi + seed parity testlerinin yeni sayıya
+>   göre güncellenmesi + frontend İzin Matrisi ekranının görsel baseline'ının
+>   Linux CI'da yenilenmesi.
+
+### 4.1 Geçersiz kılınan özgün öneri (tarihçe için saklanır)
 
 BOQ ekranına sidebar'dan bağımsız girilmez; şantiye/sözleşme bağlamının iç
 kırılımıdır (mockup breadcrumb şantiye+sözleşme altından gelir). P2'nin "bölüm
