@@ -520,3 +520,225 @@ async def test_create_boq_item_negative_unit_price_returns_422(
     )
 
     assert resp.status_code == 422
+
+
+# --- T6 — PATCH /boq/groups/{group_id} ---
+
+
+async def test_update_boq_group_happy_path(client, db_session, user_factory, project_factory):
+    project = await project_factory("BOQ-API-23")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site, name="ESKI AD", sort_order=1)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.patch(
+        f"/boq/groups/{group.id}",
+        headers=_auth(token),
+        json={"name": "YENI AD", "sort_order": 5},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["name"] == "YENI AD"
+    assert body["sort_order"] == 5
+
+
+async def test_update_boq_group_invisible_returns_404_not_403(
+    client, db_session, user_factory, project_factory
+):
+    """IDOR (spec §5.5): grup->santiye->proje suzgecinden gecmeyen kayit 404 doner."""
+    project = await project_factory("BOQ-API-24")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    # user_project_access verilmedi -> proje/santiye gorunmez.
+    token = await _login(client, user_factory, "project_manager", "pm@boq-api-24.co")
+
+    resp = await client.patch(
+        f"/boq/groups/{group.id}", headers=_auth(token), json={"name": "YENI AD"}
+    )
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "İş kalemi grubu bulunamadı"
+
+
+async def test_update_boq_group_missing_returns_404(client, user_factory):
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.patch(
+        f"/boq/groups/{uuid.uuid4()}", headers=_auth(token), json={"name": "YENI AD"}
+    )
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "İş kalemi grubu bulunamadı"
+
+
+async def test_update_boq_group_view_only_role_forbidden(
+    client, db_session, user_factory, project_factory
+):
+    project = await project_factory("BOQ-API-25")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    token = await _login_with_access(
+        client, db_session, user_factory, "site_chief", "sc@boq-api-25.co"
+    )
+
+    resp = await client.patch(
+        f"/boq/groups/{group.id}", headers=_auth(token), json={"name": "YENI AD"}
+    )
+
+    assert resp.status_code == 403
+
+
+# --- T6 — PATCH /boq/items/{item_id} ---
+
+
+async def test_update_boq_item_happy_path(client, db_session, user_factory, project_factory):
+    project = await project_factory("BOQ-API-26")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    item = await _item(db_session, site, group, code="01.001")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.patch(
+        f"/boq/items/{item.id}",
+        headers=_auth(token),
+        json={"description": "Yeni tarif", "quantity": "500.000", "unit_price": "300.00"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["description"] == "Yeni tarif"
+    assert body["quantity"] == "500.000"
+    assert body["unit_price"] == "300.00"
+    assert body["amount"] == "150000.00"
+
+
+async def test_update_boq_item_invisible_returns_404_not_403(
+    client, db_session, user_factory, project_factory
+):
+    """IDOR (spec §5.5): kalem->santiye->proje suzgecinden gecmeyen kayit 404 doner."""
+    project = await project_factory("BOQ-API-27")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    item = await _item(db_session, site, group, code="01.001")
+    token = await _login(client, user_factory, "project_manager", "pm@boq-api-27.co")
+
+    resp = await client.patch(
+        f"/boq/items/{item.id}", headers=_auth(token), json={"description": "Yeni tarif"}
+    )
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "İş kalemi bulunamadı"
+
+
+async def test_update_boq_item_missing_returns_404(client, user_factory):
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.patch(
+        f"/boq/items/{uuid.uuid4()}", headers=_auth(token), json={"description": "Yeni tarif"}
+    )
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "İş kalemi bulunamadı"
+
+
+async def test_update_boq_item_move_to_group_of_other_site_returns_422(
+    client, db_session, user_factory, project_factory
+):
+    project = await project_factory("BOQ-API-28")
+    site_a = await _site(db_session, project, code="A-BLOK-28")
+    site_b = await _site(db_session, project, code="B-BLOK-28", name="B-Blok Şantiyesi")
+    group_a = await _group(db_session, site_a)
+    group_b = await _group(db_session, site_b)
+    item = await _item(db_session, site_a, group_a, code="01.001")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.patch(
+        f"/boq/items/{item.id}", headers=_auth(token), json={"group_id": str(group_b.id)}
+    )
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "Grup bu şantiyeye ait değil"
+
+
+async def test_update_boq_item_duplicate_code_returns_409(
+    client, db_session, user_factory, project_factory
+):
+    project = await project_factory("BOQ-API-29")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    await _item(db_session, site, group, code="01.001")
+    item_to_rename = await _item(db_session, site, group, code="01.002")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.patch(
+        f"/boq/items/{item_to_rename.id}", headers=_auth(token), json={"code": "01.001"}
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "Bu poz numarası bu şantiyede zaten kullanılıyor"
+
+
+async def test_update_boq_item_same_code_does_not_conflict_with_itself(
+    client, db_session, user_factory, project_factory
+):
+    project = await project_factory("BOQ-API-30")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    item = await _item(db_session, site, group, code="01.001")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.patch(
+        f"/boq/items/{item.id}", headers=_auth(token), json={"code": "01.001", "sort_order": 9}
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["sort_order"] == 9
+
+
+async def test_update_boq_item_nonpositive_quantity_returns_422(
+    client, db_session, user_factory, project_factory
+):
+    project = await project_factory("BOQ-API-31")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    item = await _item(db_session, site, group, code="01.001")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.patch(f"/boq/items/{item.id}", headers=_auth(token), json={"quantity": "0"})
+
+    assert resp.status_code == 422
+
+
+async def test_update_boq_item_negative_unit_price_returns_422(
+    client, db_session, user_factory, project_factory
+):
+    project = await project_factory("BOQ-API-32")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    item = await _item(db_session, site, group, code="01.001")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.patch(
+        f"/boq/items/{item.id}", headers=_auth(token), json={"unit_price": "-1"}
+    )
+
+    assert resp.status_code == 422
+
+
+async def test_update_boq_item_view_only_role_forbidden(
+    client, db_session, user_factory, project_factory
+):
+    project = await project_factory("BOQ-API-33")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    item = await _item(db_session, site, group, code="01.001")
+    token = await _login_with_access(
+        client, db_session, user_factory, "site_chief", "sc@boq-api-33.co"
+    )
+
+    resp = await client.patch(
+        f"/boq/items/{item.id}", headers=_auth(token), json={"description": "Yeni tarif"}
+    )
+
+    assert resp.status_code == 403

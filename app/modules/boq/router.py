@@ -13,18 +13,20 @@ from app.modules.boq import service
 from app.modules.boq.schemas import (
     BoqGroupCreate,
     BoqGroupResponse,
+    BoqGroupUpdate,
     BoqItemCreate,
     BoqItemResponse,
+    BoqItemUpdate,
     BoqListResponse,
 )
 from app.modules.users.models import User
 
 # Spec §4 karari: BOQ okuma/yazma uclari "sites" degil kendi "boq" iznine
 # baglidir — site_chief/field_engineer'i ayirmanin tek yolu budur. Yazma
-# uclari "_FULL" kullanir (view yetmez).
-# Uc kokleri bilincli karisiktir (plan §Frontend notu): bu ucun GET+POST'lari
-# `/sites/...` altinda; T6'daki PATCH'lar `/boq/...` kokunde olacak (dolayli
-# kimlik cozumlemesi kullandiklari icin yol parametreleri farkli).
+# uclari (T5/T6) "_FULL" kullanir (view yetmez).
+# Uc kokleri bilincli karisiktir (plan §Frontend notu): GET + POST'lar
+# `/sites/...` altinda, PATCH'lar `/boq/...` kokunde (dolayli kimlik
+# cozumlemesi kullandiklari icin yol parametreleri farkli).
 router = APIRouter(tags=["boq"], responses=COMMON_ERROR_RESPONSES)
 
 _VIEW = require_permission("boq", AccessLevel.view)
@@ -69,4 +71,26 @@ async def create_boq_item_endpoint(
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> BoqItemResponse:
     item = await service.create_item(session, user, site_id, data)
+    return service.to_item(item)
+
+
+@router.patch("/boq/groups/{group_id}", response_model=BoqGroupResponse, dependencies=[_FULL])
+async def update_boq_group_endpoint(
+    group_id: uuid.UUID,
+    data: BoqGroupUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> BoqGroupResponse:
+    group = await service.update_group(session, user, group_id, data)
+    return service.to_group(group)
+
+
+@router.patch("/boq/items/{item_id}", response_model=BoqItemResponse, dependencies=[_FULL])
+async def update_boq_item_endpoint(
+    item_id: uuid.UUID,
+    data: BoqItemUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> BoqItemResponse:
+    item = await service.update_item(session, user, item_id, data)
     return service.to_item(item)

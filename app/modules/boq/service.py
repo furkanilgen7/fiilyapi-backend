@@ -3,14 +3,16 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import BoqGroupSiteMismatchError, DuplicateError
+from app.core.errors import BoqGroupSiteMismatchError, DuplicateError, NotFoundError
 from app.modules.boq import repository
 from app.modules.boq.models import BoqGroup, BoqItem
 from app.modules.boq.schemas import (
     BoqGroupCreate,
     BoqGroupResponse,
+    BoqGroupUpdate,
     BoqItemCreate,
     BoqItemResponse,
+    BoqItemUpdate,
     BoqListResponse,
     BoqTotals,
     MetricPlaceholder,
@@ -24,7 +26,11 @@ from app.modules.sites.models import Site
 from app.modules.sites.service import _visible_site
 from app.modules.users.models import User
 
-# Spec §5.4 Turkce hata metinleri (yazma uclari).
+# Spec §5.4 Turkce hata metinleri. Grup/kalem "yok" ile "gorunmuyor" ayni
+# mesaji doner (P2 §5.2 deseninin devami, bkz. sites.service _visible_section) —
+# kaydin varligi sizdirilmaz.
+_GROUP_MISSING = "İş kalemi grubu bulunamadı"
+_ITEM_MISSING = "İş kalemi bulunamadı"
 _GROUP_SITE_MISMATCH = "Grup bu şantiyeye ait değil"
 _DUPLICATE_CODE = "Bu poz numarası bu şantiyede zaten kullanılıyor"
 
@@ -91,7 +97,36 @@ async def get_boq_for_site(
     return BoqListResponse(totals=_totals(groups), groups=groups)
 
 
-# --- Yazma korkuluklari (spec §3.3, §5.5) ---
+# --- Gorunurluk — yazma uclari icin yukari cozumleme (spec §5.5) ---
+
+
+async def _visible_group(
+    session: AsyncSession, actor: User, group_id: uuid.UUID
+) -> tuple[BoqGroup, Site]:
+    """Grup -> santiye -> proje. PATCH /boq/groups/{id} bu zincirden gecer;
+
+    gorunmeyen kayit 404 doner, 403 DEGIL (P2 IDOR dersi, spec §5.5) — en kolay
+    atlanan guvenlik noktasi budur.
+    """
+    group = await repository.get_group(session, group_id)
+    if group is None:
+        raise NotFoundError(_GROUP_MISSING)
+    site, _ = await _visible_site(session, actor, group.site_id, _GROUP_MISSING)
+    return group, site
+
+
+async def _visible_item(
+    session: AsyncSession, actor: User, item_id: uuid.UUID
+) -> tuple[BoqItem, Site]:
+    """Kalem -> santiye -> proje (item.site_id dogrudan tutulur, spec §5.5:
+
+    "item→site→project"). Gorunmeyen kayit 404 doner, 403 DEGIL.
+    """
+    item = await repository.get_item(session, item_id)
+    if item is None:
+        raise NotFoundError(_ITEM_MISSING)
+    site, _ = await _visible_site(session, actor, item.site_id, _ITEM_MISSING)
+    return item, site
 
 
 async def _ensure_group_in_site(session: AsyncSession, group_id: uuid.UUID, site: Site) -> BoqGroup:
@@ -121,7 +156,7 @@ async def _ensure_code_unique(
         raise DuplicateError(_DUPLICATE_CODE)
 
 
-# --- Yazma uclari (T5) ---
+# --- Yazma uclari (T5/T6) ---
 
 
 async def create_group(
@@ -156,6 +191,38 @@ async def create_item(
         sort_order=data.sort_order,
     )
     session.add(item)
+    await session.flush()
+    await session.refresh(item)
+    return item
+
+
+async def update_group(
+    session: AsyncSession, actor: User, group_id: uuid.UUID, data: BoqGroupUpdate
+) -> BoqGroup:
+    group, _ = await _visible_group(session, actor, group_id)
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(group, field, value)
+    await session.flush()
+    await session.refresh(group)
+    return group
+
+
+async def update_item(
+    session: AsyncSession, actor: User, item_id: uuid.UUID, data: BoqItemUpdate
+) -> BoqItem:
+    """`group_id` verilirse spec §3.3 invariant 1/4 tekrar kontrol edilir
+
+    (baska santiyenin grubuna tasima yasak); `code` degisirse §invariant 2
+    tekrar kontrol edilir. `site_id` semada yok — tasima ucu kapali.
+    """
+    item, site = await _visible_item(session, actor, item_id)
+    updates = data.model_dump(exclude_unset=True)
+    if "group_id" in updates:
+        await _ensure_group_in_site(session, updates["group_id"], site)
+    if "code" in updates and updates["code"] != item.code:
+        await _ensure_code_unique(session, site.id, updates["code"], exclude_item_id=item.id)
+    for field, value in updates.items():
+        setattr(item, field, value)
     await session.flush()
     await session.refresh(item)
     return item
