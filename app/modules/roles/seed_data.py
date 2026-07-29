@@ -108,6 +108,10 @@ MODULES: list[dict] = [
         "group": ModuleGroup.SISTEM,
         "sort_order": 16,
     },
+    # spec §4 (2026-07-30, boq izin modulu design): ayri modul, "sites"
+    # izniyle site_chief/field_engineer ayrilamadigi icin acildi. Ayarlar -
+    # Izin Matrisi mockup'inda bu satir YOK — bilincli sapma, geri alinmaz.
+    {"key": "boq", "name": "İş Kalemleri", "group": ModuleGroup.GENEL, "sort_order": 17},
 ]
 
 # Kısayollar — matrisi okunur tutmak için.
@@ -163,6 +167,12 @@ MATRIX: dict[str, list[tuple[AccessLevel, Scope]]] = {
     "treasury": [_A, _F, _N, _N, _N, _F, _V, _N],
     "settings": [_A, _N, _N, _N, _N, _N, _N, _N],
     "user_management": [_A, _N, _N, _N, _N, _N, _N, _N],
+    # spec §4 kullanici karari: site_chief=_LIM (gorur), field_engineer=_N
+    # (gormez) — "sites" satirinda ikisi birebir ayni oldugu icin bu ayrim
+    # ancak ayri modulle mumkun. accounting/project_manager seviyeleri
+    # "sites" satirindan turetildi. procurement=_N GECICIDIR: kullaniciya
+    # soruldu, cevap gelmedi (spec §4) — teyit bekliyor.
+    "boq": [_A, _F, _LIM, _N, _N, _FIN, _F, _N],
 }
 
 

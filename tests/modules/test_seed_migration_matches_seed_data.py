@@ -33,7 +33,13 @@ SEED_MIGRATION_PATH = VERSIONS_DIR / "a477fdf00fdf_seed_roller_modul_ve_izinler.
 INVOICING_MIGRATION_PATH = VERSIONS_DIR / "2cffc2fcfcf0_invoicing_izin_modulu.py"
 P1_MIGRATION_PATH = next(VERSIONS_DIR.glob("*_p1_proje_cekirdegi.py"))
 P2_MIGRATION_PATH = next(VERSIONS_DIR.glob("*_p2_santiye_bolum.py"))
-EXTENSION_MIGRATION_PATHS = [INVOICING_MIGRATION_PATH, P1_MIGRATION_PATH, P2_MIGRATION_PATH]
+BOQ_MIGRATION_PATH = next(VERSIONS_DIR.glob("*_boq_izin_modulu.py"))
+EXTENSION_MIGRATION_PATHS = [
+    INVOICING_MIGRATION_PATH,
+    P1_MIGRATION_PATH,
+    P2_MIGRATION_PATH,
+    BOQ_MIGRATION_PATH,
+]
 
 
 def _load_migration_module(path: Path):
@@ -158,11 +164,11 @@ def test_migration_permission_matrix_matches_seed_data():
     assert _permission_map_from_app() == _permission_map_from_migrations()
 
 
-def test_migration_permission_matrix_has_128_cells():
+def test_migration_permission_matrix_has_136_cells():
     app_map = _permission_map_from_app()
     migration_map = _permission_map_from_migrations()
-    assert len(app_map) == 128
-    assert len(migration_map) == 128
+    assert len(app_map) == 136
+    assert len(migration_map) == 136
 
 
 def test_migration_role_keys_match_seed_data():
