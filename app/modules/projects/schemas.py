@@ -43,6 +43,35 @@ class EmployerListResponse(BaseModel):
     items: list[EmployerResponse]
 
 
+# --- Sözleşme okuma yanıtı (spec §3.3, §5.4) ---
+
+
+class ProjectContractResponse(BaseModel):
+    """Detay/liste yanıtında sözleşme (spec §2.4). Yalnız okuma; giriş `ProjectContractInput`."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    contract_no: str | None
+    signature_date: date | None
+    amount: Decimal | None
+    advance_pct: Decimal
+    retainage_pct: Decimal
+    vat_pct: Decimal
+    late_penalty_daily: Decimal | None
+    has_price_escalation: bool
+    index_type: PriceIndexType | None
+    base_index_value: Decimal | None
+
+
+class ProjectBudgetLines(BaseModel):
+    """Dört bütçe kalemi okuma yanıtı (spec §3.3). Toplam `budget` ayrı alanda durur."""
+
+    material: Decimal
+    labor: Decimal
+    subcontractor: Decimal
+    overhead: Decimal
+
+
 # --- B6 yer tutucu deseni (dashboard spec §2.3; bu ekran icin spec §5.3) ---
 
 
@@ -134,7 +163,14 @@ class ProjectListItem(BaseModel):
     end_date: date | None
     contract_no: str | None
     contract_amount: Decimal | None
+    # employer_name anlık görüntüsü KALIR (spec §2.3): join'siz okunur, kırılmasın.
     employer_name: str | None
+    # B6: işveren/sözleşme ilişki nesneleri + bütçe kalemleri + taslak bayrağı (ekleme,
+    # kırıcı değil). Taslakta employer/contract None olabilir; alanlar sözleşmede kalır.
+    employer: EmployerResponse | None
+    contract: ProjectContractResponse | None
+    budget_lines: ProjectBudgetLines
+    is_draft: bool
     budget: Decimal
     progress_pct: Decimal
     contracting: ContractingCard | None
@@ -154,6 +190,8 @@ class ProjectCounts(BaseModel):
     kendi_yatirim: int
     kat_karsiligi: int
     completed: int
+    # B6: taslak sekmesi sayacı (spec §5.4). completed ve diğer sayaçlar aynen kalır.
+    draft: int
 
 
 class ProjectListResponse(BaseModel):

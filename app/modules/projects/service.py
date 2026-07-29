@@ -26,10 +26,13 @@ from app.modules.projects.schemas import (
     ContractingCard,
     CountPlaceholder,
     EmployerCreate,
+    EmployerResponse,
     InvestmentCard,
     LandShareCard,
     MetricPlaceholder,
+    ProjectBudgetLines,
     ProjectContractInput,
+    ProjectContractResponse,
     ProjectCounts,
     ProjectCreate,
     ProjectDetailResponse,
@@ -166,6 +169,17 @@ def _to_item(project: Project) -> ProjectListItem:
         contract_no=project.contract_no,
         contract_amount=project.contract_amount,
         employer_name=project.employer_name,
+        employer=EmployerResponse.model_validate(project.employer) if project.employer else None,
+        contract=(
+            ProjectContractResponse.model_validate(project.contract) if project.contract else None
+        ),
+        budget_lines=ProjectBudgetLines(
+            material=project.budget_material,
+            labor=project.budget_labor,
+            subcontractor=project.budget_subcontractor,
+            overhead=project.budget_overhead,
+        ),
+        is_draft=project.is_draft,
         budget=project.budget,
         progress_pct=project.progress_pct,
         contracting=_contracting_card() if is_contracting else None,
@@ -200,6 +214,7 @@ def _counts(projects: list[Project]) -> ProjectCounts:
         kendi_yatirim=sum(1 for p in projects if p.project_type is ProjectType.kendi_yatirim),
         kat_karsiligi=sum(1 for p in projects if p.project_type is ProjectType.kat_karsiligi),
         completed=sum(1 for p in projects if p.status is ProjectStatus.completed),
+        draft=sum(1 for p in projects if p.is_draft),
     )
 
 

@@ -102,6 +102,7 @@ async def test_list_filters_and_counts(client, user_factory, project_factory):
         "kendi_yatirim": 1,
         "kat_karsiligi": 0,
         "completed": 1,
+        "draft": 0,
     }
 
 
