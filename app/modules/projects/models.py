@@ -11,6 +11,10 @@ from app.core.db import Base
 
 
 class ProjectStatus(str, enum.Enum):
+    # Sira mockup Durum acilirini yansitir (spec §2.1): Planlama · Aktif · Beklemede.
+    # `completed` UI'da gorunmez ama enum'da KALIR (spec §7.2): ProjectCounts.completed
+    # ve dashboard sayaci ona baglidir; kaldirmak canli veriyi ve iki ekrani kirar.
+    planning = "planning"
     active = "active"
     on_hold = "on_hold"
     completed = "completed"
