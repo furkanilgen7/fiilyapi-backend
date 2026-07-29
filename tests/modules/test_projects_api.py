@@ -130,7 +130,8 @@ async def test_create_requires_admin_not_full(client, db_session, user_factory):
     §5.2), dolayisiyla yarattigi projeyi gorebilir. `full` seviyesine izin
     verilseydi, kapsamli bir kullanici goremedigi bir proje yaratirdi.
     """
-    body = {"code": "ADM-1", "name": "Admin Testi", "project_type": "taahhut"}
+    # is_draft: taahhüt zorunluluklarına takılmadan izin kapısını test etmek için (B4).
+    body = {"code": "ADM-1", "name": "Admin Testi", "project_type": "taahhut", "is_draft": True}
 
     await _set_permission(db_session, "patron", "projects", AccessLevel.full)
     full_token = await _login(client, user_factory, "patron")
@@ -205,7 +206,7 @@ async def test_create_duplicate_code_returns_409(client, user_factory, project_f
     token = await _login(client, user_factory, "system_admin")
     resp = await client.post(
         "/projects",
-        json={"code": "GK-A", "name": "Kopya", "project_type": "taahhut"},
+        json={"code": "GK-A", "name": "Kopya", "project_type": "taahhut", "is_draft": True},
         headers=_auth(token),
     )
     assert resp.status_code == 409

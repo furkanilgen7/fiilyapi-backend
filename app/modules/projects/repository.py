@@ -44,6 +44,12 @@ async def get_project(session: AsyncSession, project_id: uuid.UUID) -> Project |
     return await session.get(Project, project_id)
 
 
+async def list_codes_with_prefix(session: AsyncSession, prefix: str) -> list[str]:
+    """Verilen önekle başlayan tüm proje kodları (otomatik kod üretimi için, spec §3.5)."""
+    stmt = select(Project.code).where(Project.code.like(f"{prefix}%"))
+    return list((await session.execute(stmt)).scalars().all())
+
+
 async def list_projects_for_user(session: AsyncSession, user_id: uuid.UUID) -> list[Project]:
     """Kullanicinin user_project_access satirlarina gore gorunur projeler.
 

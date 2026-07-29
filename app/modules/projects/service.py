@@ -4,7 +4,13 @@ from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel
-from app.core.errors import DuplicateError, NotFoundError, ProjectTypeMismatchError
+from app.core.errors import (
+    DuplicateError,
+    NotFoundError,
+    ProjectTypeMismatchError,
+    ProjectValidationError,
+)
+from app.core.timezone import today
 from app.modules.projects import repository
 from app.modules.projects.models import (
     Employer,
@@ -51,6 +57,7 @@ _LAND_COST_FIXED = Decimal("0")  # kat karsiliginda tanim geregi 0 (spec §3.3)
 
 _DUPLICATE_TAX_NUMBER = "Bu VKN ile kayıtlı bir işveren zaten var."
 _EMPLOYER_NOT_FOUND = "İşveren bulunamadı"
+_PROJECT_CODE_PREFIX = "PRJ"
 
 
 # --- İşveren (employers) servisi (spec §3.1, §3.2) ---
@@ -274,26 +281,103 @@ def _apply_land_share(project: Project, data: ProjectLandShareInput) -> None:
     ]
 
 
+async def _next_project_code(session: AsyncSession, year: int) -> str:
+    """PRJ-{YYYY}-{NNN} üretir (spec §3.5): o yılın en büyük sırası + 1, 3 hane, 1'den.
+
+    Sayımla DEĞİL maksimum+1 ile: silinen kod yeniden kullanılmasın. Benzersizlik
+    kısıtı yarış durumunu 409'a çevirir (IntegrityError handler).
+    """
+    prefix = f"{_PROJECT_CODE_PREFIX}-{year}-"
+    codes = await repository.list_codes_with_prefix(session, prefix)
+    max_seq = 0
+    for code in codes:
+        suffix = code[len(prefix) :]
+        if suffix.isdigit():
+            max_seq = max(max_seq, int(suffix))
+    return f"{prefix}{max_seq + 1:03d}"
+
+
+async def _resolve_employer(session: AsyncSession, employer_id: uuid.UUID) -> Employer:
+    employer = await repository.get_employer(session, employer_id)
+    if employer is None:
+        raise NotFoundError(_EMPLOYER_NOT_FOUND)
+    return employer
+
+
+def _validate_taahhut_required(data: ProjectCreate) -> None:
+    """Spec §3.6 kural 3: taslak-dışı taahhüt projesinde zorunlu alanlar."""
+    if data.employer_id is None:
+        raise ProjectValidationError("İşveren firma seçiniz.")
+    contract = data.contract
+    if contract is None or not contract.contract_no:
+        raise ProjectValidationError("Sözleşme no zorunludur.")
+    if contract.signature_date is None:
+        raise ProjectValidationError("İmza tarihi zorunludur.")
+    if contract.amount is None:
+        raise ProjectValidationError("Sözleşme bedeli sayı olmalıdır.")
+    if data.start_date is None or data.end_date is None:
+        raise ProjectValidationError("Başlangıç ve bitiş tarihi zorunludur.")
+
+
+def _validate_project(data: ProjectCreate) -> None:
+    """Sunucu doğrulaması (spec §3.6). Taslak-farkındalıklı: taslakta yalnız
+    tutarlılık kuralları (4, 6, 7) uygulanır; zorunluluk kuralları (2, 3, 5) atlanır.
+    """
+    is_taahhut = data.project_type is ProjectType.taahhut
+    # Kural 7 (her zaman): taahhüt dışı tipte sözleşme/işveren yasak.
+    if not is_taahhut and (data.contract is not None or data.employer_id is not None):
+        raise ProjectTypeMismatchError(
+            "Sözleşme ve işveren bilgileri yalnızca taahhüt projelerine girilebilir."
+        )
+    # Kural 4 (her zaman): tarih sırası.
+    if (
+        data.start_date is not None
+        and data.end_date is not None
+        and data.end_date < data.start_date
+    ):
+        raise ProjectValidationError("Bitiş tarihi başlangıçtan önce olamaz.")
+    if data.is_draft:
+        return
+    # Kural 2 (taslak-dışı): il/ilçe zorunlu.
+    if not data.city:
+        raise ProjectValidationError("İl / ilçe zorunludur.")
+    # Kural 5 (taslak-dışı): fiyat farkı açıksa endeks zorunlu.
+    if data.contract is not None and data.contract.has_price_escalation:
+        if data.contract.index_type is None or data.contract.base_index_value is None:
+            raise ProjectValidationError("Endeks tipi ve baz endeks değeri zorunludur.")
+    # Kural 3 (taslak-dışı): taahhüt zorunlulukları.
+    if is_taahhut:
+        _validate_taahhut_required(data)
+
+
 async def create_project(session: AsyncSession, data: ProjectCreate) -> Project:
+    # Tip tutarlılığı (P1 §3.5) + proje doğrulaması (spec §3.6) yazmadan ÖNCE.
     _ensure_type_consistency(data.project_type, data.investment, data.land_share)
+    _validate_project(data)
+    employer = (
+        await _resolve_employer(session, data.employer_id) if data.employer_id is not None else None
+    )
+    code = data.code or await _next_project_code(session, today().year)
     project = Project(
-        code=data.code,
+        code=code,
         name=data.name,
         project_type=data.project_type,
         status=data.status,
         category=data.category,
         city=data.city,
+        parcel=data.parcel,
+        address=data.address,
         start_date=data.start_date,
         end_date=data.end_date,
-        contract_no=data.contract_no,
-        contract_amount=data.contract_amount,
-        employer_name=data.employer_name,
+        employer_id=employer.id if employer is not None else None,
+        # employer_name anlık görüntüsü (spec §2.3): işveren adı buraya kopyalanır.
+        employer_name=employer.name if employer is not None else None,
+        is_draft=data.is_draft,
     )
     session.add(project)
     await session.flush()
-    # Yeni flush edilmis nesnenin investment/land_share/shareholders iliskileri
-    # henuz sync eslenmemis: asagidaki senkron `is None` erisimleri async ortamda
-    # MissingGreenlet patlatir. `refresh` ile async-guvenli yukleyip bosalttik.
+    # Yeni flush edilmis nesnenin iliskileri henuz sync eslenmemis: asagidaki
+    # senkron `is None` erisimleri async ortamda MissingGreenlet patlatir.
     await session.refresh(project, attribute_names=["investment", "land_share", "shareholders"])
     if data.investment is not None:
         _apply_investment(project, data.investment)

@@ -9,6 +9,7 @@ from app.core.errors import (
     NotFoundError,
     PermissionLockedError,
     ProjectTypeMismatchError,
+    ProjectValidationError,
 )
 
 
@@ -26,6 +27,14 @@ async def _not_found_handler(request: Request, exc: NotFoundError) -> JSONRespon
 
 async def _project_type_mismatch_handler(
     request: Request, exc: ProjectTypeMismatchError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content={"detail": str(exc)}
+    )
+
+
+async def _project_validation_handler(
+    request: Request, exc: ProjectValidationError
 ) -> JSONResponse:
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content={"detail": str(exc)}
@@ -57,6 +66,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(DeleteNotAllowedError, _delete_not_allowed_handler)
     app.add_exception_handler(NotFoundError, _not_found_handler)
     app.add_exception_handler(ProjectTypeMismatchError, _project_type_mismatch_handler)
+    app.add_exception_handler(ProjectValidationError, _project_validation_handler)
     app.add_exception_handler(DuplicateError, _duplicate_error_handler)
     app.add_exception_handler(DomainError, _domain_error_handler)
     app.add_exception_handler(IntegrityError, _integrity_error_handler)
