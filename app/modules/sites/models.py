@@ -1,6 +1,7 @@
 import enum
 import uuid
 from datetime import date, datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     Date,
@@ -9,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     UniqueConstraint,
     func,
@@ -68,6 +70,9 @@ class Site(Base):
     address: Mapped[str | None] = mapped_column(String(300), nullable=True)
     city: Mapped[str | None] = mapped_column(String(100), nullable=True)
     site_manager_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # P1.1a §2.6: mockup santiye satirindaki "Insaat Alani (m²)". Additive + nullable;
+    # P2 yuzeylerini kirmaz, P2 ekranlari bu alani okumaz (okuma P3'un isi).
+    construction_area_m2: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     delivery_date: Mapped[date | None] = mapped_column(Date, nullable=True)

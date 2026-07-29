@@ -84,7 +84,7 @@ async def test_created_project_detail_reports_zero_sites(client, db_session, use
 
     resp = await client.post(
         "/projects",
-        json={"code": "SC-7", "name": "Yeni Proje", "project_type": "taahhut"},
+        json={"code": "SC-7", "name": "Yeni Proje", "project_type": "taahhut", "is_draft": True},
         headers={"Authorization": f"Bearer {token}"},
     )
 

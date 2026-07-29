@@ -32,7 +32,23 @@ async def test_create_and_read_project(db_session):
 
 
 def test_project_status_values():
-    assert {s.value for s in ProjectStatus} == {"active", "on_hold", "completed"}
+    # B1: `planning` eklendi; mevcut uc deger korunur (spec §2.1, §7.2).
+    assert {s.value for s in ProjectStatus} == {"planning", "active", "on_hold", "completed"}
+
+
+def test_project_status_enum_order():
+    """Enum sirasi mockup Durum acilirini yansitir: Planlama · Aktif · Beklemede · (Tamamlandi)."""
+    assert [s.value for s in ProjectStatus] == ["planning", "active", "on_hold", "completed"]
+
+
+async def test_planning_status_roundtrip(db_session, project_factory):
+    """Yeni `planning` degeri yazilip okunabiliyor; varsayilan yine `active`."""
+    project = await project_factory("PLAN-1", status="planning")
+    loaded = await db_session.get(Project, project.id, populate_existing=True)
+    assert loaded.status is ProjectStatus.planning
+
+    default_project = await project_factory("PLAN-2")
+    assert default_project.status is ProjectStatus.active
 
 
 async def test_project_factory_creates_row(project_factory):

@@ -156,14 +156,15 @@ async def test_detail_outside_visible_set_raises_not_found(
 
 
 async def test_create_taahhut_project(db_session):
+    # employer_name gövdeden kaldırıldı (B4); taahhüt zorunlulukları için ya tam
+    # veri ya taslak gerek. Burada taslak yeter (id + uzantıların None'lığı test edilir).
     project = await create_project(
         db_session,
         ProjectCreate(
             code="GK-C",
             name="Güneşkent C-Blok",
             project_type="taahhut",
-            employer_name="Güneşkent A.Ş.",
-            contract_amount=Decimal("11200000.00"),
+            is_draft=True,
         ),
     )
     assert project.id is not None
@@ -178,6 +179,7 @@ async def test_create_kat_karsiligi_with_shareholders(db_session):
             code="KK-9",
             name="Bahçelievler Konut",
             project_type="kat_karsiligi",
+            city="Ankara",
             land_share=ProjectLandShareInput(
                 landowner_name="Yılmaz Ailesi",
                 our_share_pct=Decimal("55.00"),
@@ -231,6 +233,7 @@ async def test_update_replaces_shareholder_list(seeded_db, user_factory):
             code="KK-10",
             name="Replace Testi",
             project_type="kat_karsiligi",
+            city="Ankara",
             land_share=ProjectLandShareInput(
                 landowner_name="Yılmaz Ailesi",
                 our_share_pct=Decimal("55.00"),

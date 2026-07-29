@@ -28,7 +28,10 @@ async def build_summary(session: AsyncSession, user: User) -> DashboardSummaryRe
 
     return DashboardSummaryResponse(
         role_name=role.name if role is not None else "",
-        active_project_count=sum(1 for p in projects if p.status is ProjectStatus.active),
+        # Spec §5.5: taslaklar aktif proje sayacına GİRMEZ — status active AND NOT is_draft.
+        active_project_count=sum(
+            1 for p in projects if p.status is ProjectStatus.active and not p.is_draft
+        ),
         projects=[DashboardProjectCard.model_validate(p) for p in projects],
         portfolio=MetricPlaceholder(pending_module=_PORTFOLIO_MODULE),
         receivables=MetricPlaceholder(pending_module=_RECEIVABLES_MODULE),

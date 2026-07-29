@@ -63,6 +63,10 @@ def permission_changed(role_name: str, module_name: str, level: AccessLevel) -> 
     return f"İzin değişti: {role_name} · {module_name} → {ACCESS_LEVEL_LABELS[level]}"
 
 
+def employer_created(name: str) -> str:
+    return f"Yeni işveren oluşturuldu: {name}"
+
+
 def project_created(name: str) -> str:
     return f"Yeni proje oluşturuldu: {name}"
 
