@@ -16,6 +16,7 @@ from app.modules.projects.models import (
     Employer,
     LandShareShareholder,
     Project,
+    ProjectContract,
     ProjectInvestment,
     ProjectLandShare,
     ProjectStatus,
@@ -28,6 +29,7 @@ from app.modules.projects.schemas import (
     InvestmentCard,
     LandShareCard,
     MetricPlaceholder,
+    ProjectContractInput,
     ProjectCounts,
     ProjectCreate,
     ProjectDetailResponse,
@@ -35,6 +37,7 @@ from app.modules.projects.schemas import (
     ProjectLandShareInput,
     ProjectListItem,
     ProjectListResponse,
+    ProjectSiteInput,
     ProjectUpdate,
     ShareholderResponse,
 )
@@ -350,6 +353,55 @@ def _validate_project(data: ProjectCreate) -> None:
         _validate_taahhut_required(data)
 
 
+def _apply_contract(project: Project, data: ProjectContractInput) -> None:
+    """project_contracts satırını yazar; contract_no/amount projeye anlık görüntü kopyalanır."""
+    project.contract = ProjectContract(
+        contract_no=data.contract_no,
+        signature_date=data.signature_date,
+        amount=data.amount,
+        advance_pct=data.advance_pct,
+        retainage_pct=data.retainage_pct,
+        vat_pct=data.vat_pct,
+        late_penalty_daily=data.late_penalty_daily,
+        has_price_escalation=data.has_price_escalation,
+        index_type=data.index_type,
+        base_index_value=data.base_index_value,
+    )
+    # contract_no/amount burada otoritedir; projeye kopyalanır (spec §2.4, §5).
+    project.contract_no = data.contract_no
+    project.contract_amount = data.amount
+
+
+async def _write_inline_sites(
+    session: AsyncSession, project: Project, sites_input: list[ProjectSiteInput]
+) -> None:
+    """Satır içi şantiyeleri aynı transaction'da yazar (spec §3.4, §7.7).
+
+    Kod türetmesi P2'nin `sites.service`'inden YENİDEN KULLANILIR (kopya mantık yok).
+    Kod çakışması `uq_sites_project_code` → 409 (IntegrityError) ve proje de yazılmaz
+    (tek transaction). Ayrıca `sites` izni ARANMAZ: proje oluşturmanın parçasıdır.
+    """
+    # Yerel import: sites.service, projects.service'i (visible_projects) import
+    # ettiği için modül düzeyinde çember olurdu.
+    from app.modules.sites.service import _unique_code, derive_code
+
+    for site_input in sites_input:
+        code = site_input.code or await _unique_code(
+            session, project.id, derive_code(site_input.name)
+        )
+        session.add(
+            Site(
+                project_id=project.id,
+                code=code,
+                name=site_input.name,
+                site_manager_name=site_input.site_manager_name,
+                construction_area_m2=site_input.construction_area_m2,
+            )
+        )
+        # Sonraki şantiyenin _unique_code'u bu satırı görebilsin diye hemen flush.
+        await session.flush()
+
+
 async def create_project(session: AsyncSession, data: ProjectCreate) -> Project:
     # Tip tutarlılığı (P1 §3.5) + proje doğrulaması (spec §3.6) yazmadan ÖNCE.
     _ensure_type_consistency(data.project_type, data.investment, data.land_share)
@@ -358,6 +410,9 @@ async def create_project(session: AsyncSession, data: ProjectCreate) -> Project:
         await _resolve_employer(session, data.employer_id) if data.employer_id is not None else None
     )
     code = data.code or await _next_project_code(session, today().year)
+    lines = data.budget_lines
+    # budget = Σ kalemler (spec §2.3, §3.4): SERVİS hesaplar; istemci `budget` yok sayılır.
+    total_budget = lines.material + lines.labor + lines.subcontractor + lines.overhead
     project = Project(
         code=code,
         name=data.name,
@@ -372,18 +427,29 @@ async def create_project(session: AsyncSession, data: ProjectCreate) -> Project:
         employer_id=employer.id if employer is not None else None,
         # employer_name anlık görüntüsü (spec §2.3): işveren adı buraya kopyalanır.
         employer_name=employer.name if employer is not None else None,
+        budget=total_budget,
+        budget_material=lines.material,
+        budget_labor=lines.labor,
+        budget_subcontractor=lines.subcontractor,
+        budget_overhead=lines.overhead,
         is_draft=data.is_draft,
     )
     session.add(project)
     await session.flush()
     # Yeni flush edilmis nesnenin iliskileri henuz sync eslenmemis: asagidaki
     # senkron `is None` erisimleri async ortamda MissingGreenlet patlatir.
-    await session.refresh(project, attribute_names=["investment", "land_share", "shareholders"])
+    await session.refresh(
+        project, attribute_names=["investment", "land_share", "shareholders", "contract"]
+    )
+    if data.contract is not None:
+        _apply_contract(project, data.contract)
     if data.investment is not None:
         _apply_investment(project, data.investment)
     if data.land_share is not None:
         _apply_land_share(project, data.land_share)
     await session.flush()
+    # Satır içi şantiyeler tek transaction içinde; kod çakışması tüm oluşturmayı geri alır.
+    await _write_inline_sites(session, project, data.sites)
     await session.refresh(project)
     return project
 
