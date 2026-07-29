@@ -3,7 +3,19 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, Date, DateTime, Enum, ForeignKey, Numeric, String, func
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Date,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Numeric,
+    String,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -26,6 +38,50 @@ class ProjectType(str, enum.Enum):
     taahhut = "taahhut"
     kendi_yatirim = "kendi_yatirim"
     kat_karsiligi = "kat_karsiligi"
+
+
+class PriceIndexType(str, enum.Enum):
+    """Fiyat farki endeks tipi (spec §2.4). Mockup satir 128 sirasi."""
+
+    ufe = "ufe"  # ÜFE
+    tufe = "tufe"  # TÜFE
+    construction_cost = "construction_cost"  # İnşaat Maliyet Endeksi
+    fixed_coefficient = "fixed_coefficient"  # Sabit Katsayı
+
+
+class Employer(Base):
+    """İşveren kartoteksi asgari çekirdeği (spec §2.2). Alt-Proje 3'ten öne çekildi;
+    tam firma/cari hesap alanları (kısa ad, cari kod, IBAN, adres...) orada gelecek.
+
+    Yeni izin modülü AÇILMAZ (spec §2.5/§7.6): `projects` view/admin ile korunur.
+    """
+
+    __tablename__ = "employers"
+    __table_args__ = (
+        # Kismi benzersiz indeks: VKN opsiyoneldir, coklu NULL serbest olmali.
+        # sites.uq_sections_site_code ile ayni desen (spec §2.2).
+        Index(
+            "uq_employers_tax_number",
+            "tax_number",
+            unique=True,
+            postgresql_where=text("tax_number IS NOT NULL"),
+        ),
+        Index("ix_employers_name", "name"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    tax_number: Mapped[str | None] = mapped_column(String(11), nullable=True)
+    contact_person: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
 
 
 class Project(Base):
@@ -51,8 +107,38 @@ class Project(Base):
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     contract_no: Mapped[str | None] = mapped_column(String(100), nullable=True)
     contract_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
+    # employer_name KALIR ama artik TUREV/anlik goruntudur (spec §2.3): employer_id
+    # doluysa servis her yazmada employer.name'i buraya kopyalar. P1 liste ekrani,
+    # dashboard ve sites.schemas bu alani join'siz okuyor — kirilmasin diye durur.
     employer_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    employer_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        # RESTRICT: projesi olan isveren silinemez (ileri donuk korkuluk).
+        ForeignKey("employers.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    parcel: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    address: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    # Toplam butce. Bu dilimden SONRA yazilan satirlarda degismez:
+    # budget = budget_material + budget_labor + budget_subcontractor + budget_overhead
+    # (servis hesaplar, istemci `budget` yok sayilir — spec §2.3, §7.5). Goc eski
+    # satirlara DOKUNMAZ: dort kalem 0 kalir, budget eski degerini korur.
     budget: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=0)
+    budget_material: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), nullable=False, default=0, server_default=text("0")
+    )
+    budget_labor: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), nullable=False, default=0, server_default=text("0")
+    )
+    budget_subcontractor: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), nullable=False, default=0, server_default=text("0")
+    )
+    budget_overhead: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), nullable=False, default=0, server_default=text("0")
+    )
+    is_draft: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     progress_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -61,6 +147,10 @@ class Project(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
+    employer: Mapped["Employer | None"] = relationship(lazy="selectin")
+    contract: Mapped["ProjectContract | None"] = relationship(
+        lazy="selectin", cascade="all, delete-orphan", uselist=False
+    )
     investment: Mapped["ProjectInvestment | None"] = relationship(
         lazy="selectin", cascade="all, delete-orphan", uselist=False
     )
@@ -70,6 +160,58 @@ class Project(Base):
     shareholders: Mapped[list["LandShareShareholder"]] = relationship(
         lazy="selectin", cascade="all, delete-orphan", order_by="LandShareShareholder.name"
     )
+
+
+class ProjectContract(Base):
+    """İşveren sözleşmesi (1-1, spec §2.4). Proje düzeyinde tekildir; şantiye payı
+    BOQ dağıtımının türevidir, bu yüzden alanlar `sites`'a değil buraya yazılır.
+
+    `contract_no` ve `amount` burada otoritedir; servis her yazmada bunları
+    `projects.contract_no` / `projects.contract_amount` anlık görüntüsüne kopyalar.
+    Başlangıç/bitiş tarihi ve `Süre (Gün)` BURAYA açılmaz: tarihler
+    `projects.start_date`/`end_date`'te durur, süre türevdir (spec §2.4).
+    """
+
+    __tablename__ = "project_contracts"
+    __table_args__ = (
+        CheckConstraint(
+            "advance_pct BETWEEN 0 AND 100 "
+            "AND retainage_pct BETWEEN 0 AND 100 "
+            "AND vat_pct BETWEEN 0 AND 100",
+            name="ck_contract_pct_range",
+        ),
+        # Kutucuk kapaliyken (has_price_escalation=false) dolu endeks saklanmaz.
+        CheckConstraint(
+            "has_price_escalation = true OR (index_type IS NULL AND base_index_value IS NULL)",
+            name="ck_contract_escalation",
+        ),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    contract_no: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    signature_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
+    advance_pct: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2), nullable=False, default=20, server_default=text("20")
+    )
+    retainage_pct: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2), nullable=False, default=5, server_default=text("5")
+    )
+    vat_pct: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2), nullable=False, default=20, server_default=text("20")
+    )
+    late_penalty_daily: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
+    has_price_escalation: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
+    index_type: Mapped[PriceIndexType | None] = mapped_column(
+        Enum(PriceIndexType, name="price_index_type"), nullable=True
+    )
+    base_index_value: Mapped[Decimal | None] = mapped_column(Numeric(12, 3), nullable=True)
 
 
 class ProjectInvestment(Base):
