@@ -3,10 +3,13 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import BoqGroupSiteMismatchError, DuplicateError
 from app.modules.boq import repository
 from app.modules.boq.models import BoqGroup, BoqItem
 from app.modules.boq.schemas import (
+    BoqGroupCreate,
     BoqGroupResponse,
+    BoqItemCreate,
     BoqItemResponse,
     BoqListResponse,
     BoqTotals,
@@ -17,8 +20,13 @@ from app.modules.boq.schemas import (
 # `sites.service._visible_site` yeniden kullanilir. Ayni desen zaten
 # `projects.service`'in `sites.service._unique_code`/`derive_code`'u yeniden
 # kullanmasinda var (bkz. app/modules/projects/service.py).
+from app.modules.sites.models import Site
 from app.modules.sites.service import _visible_site
 from app.modules.users.models import User
+
+# Spec §5.4 Turkce hata metinleri (yazma uclari).
+_GROUP_SITE_MISMATCH = "Grup bu şantiyeye ait değil"
+_DUPLICATE_CODE = "Bu poz numarası bu şantiyede zaten kullanılıyor"
 
 # Spec §3.2/§5.1: bu dilimde YAZILMAYAN turev alanlarin bagli oldugu modul
 # anahtarlari. Kullaniciya gosterilecek metin degil, B6 sozlesmesindeki
@@ -81,3 +89,73 @@ async def get_boq_for_site(
     site, _ = await _visible_site(session, actor, site_id)
     groups = [to_group(group) for group in await repository.list_groups_for_site(session, site.id)]
     return BoqListResponse(totals=_totals(groups), groups=groups)
+
+
+# --- Yazma korkuluklari (spec §3.3, §5.5) ---
+
+
+async def _ensure_group_in_site(session: AsyncSession, group_id: uuid.UUID, site: Site) -> BoqGroup:
+    """Spec §3.3 invariant 1: kalemin baglandigi grubun site_id'si kalemin
+
+    site_id'si ile ayni olmali. Grup hic yoksa da (spec §5.5 IDOR-2) ayni 422
+    ile karsilanir — varliginin gizli tutulmasi gerekmez, cunku site zaten
+    gorunurluk suzgecinden gecmis; yalnizca ait olmadigi bir grup enjekte
+    edilmesi engellenir.
+    """
+    group = await repository.get_group(session, group_id)
+    if group is None or group.site_id != site.id:
+        raise BoqGroupSiteMismatchError(_GROUP_SITE_MISMATCH)
+    return group
+
+
+async def _ensure_code_unique(
+    session: AsyncSession, site_id: uuid.UUID, code: str, exclude_item_id: uuid.UUID | None = None
+) -> None:
+    """Spec §3.3 invariant 2 / §5.4: (site_id, code) çakışması → 409, Türkçe
+
+    mesaj. IntegrityError → 409 handler'ı yarış durumu emniyet ağı olarak KALIR
+    (DuplicateError deseni, `projects.service.create_employer` emsali).
+    """
+    existing = await repository.get_item_by_code(session, site_id, code, exclude_item_id)
+    if existing is not None:
+        raise DuplicateError(_DUPLICATE_CODE)
+
+
+# --- Yazma uclari (T5) ---
+
+
+async def create_group(
+    session: AsyncSession, actor: User, site_id: uuid.UUID, data: BoqGroupCreate
+) -> BoqGroup:
+    site, _ = await _visible_site(session, actor, site_id)
+    group = BoqGroup(site_id=site.id, name=data.name, sort_order=data.sort_order)
+    session.add(group)
+    await session.flush()
+    await session.refresh(group)
+    return group
+
+
+async def create_item(
+    session: AsyncSession, actor: User, site_id: uuid.UUID, data: BoqItemCreate
+) -> BoqItem:
+    """Spec §5.5 IDOR-2: govdedeki `group_id` baska santiyenin grubu olabilir —
+
+    yol parametresi `site_id` ile karsi karsiya konur, uyusmazlik 422 doner.
+    """
+    site, _ = await _visible_site(session, actor, site_id)
+    group = await _ensure_group_in_site(session, data.group_id, site)
+    await _ensure_code_unique(session, site.id, data.code)
+    item = BoqItem(
+        site_id=site.id,
+        group_id=group.id,
+        code=data.code,
+        description=data.description,
+        unit=data.unit,
+        quantity=data.quantity,
+        unit_price=data.unit_price,
+        sort_order=data.sort_order,
+    )
+    session.add(item)
+    await session.flush()
+    await session.refresh(item)
+    return item

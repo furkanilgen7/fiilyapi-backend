@@ -33,3 +33,11 @@ class DuplicateError(DomainError):
     kullanıcıya alanına özel Türkçe mesaj verilebilsin. IntegrityError → 409 handler'ı
     yarış durumu emniyet ağı olarak KALIR.
     """
+
+
+class BoqGroupSiteMismatchError(DomainError):
+    """Poz kaleminin bağlanmak istediği grup, hedef şantiyeye ait değil
+
+    (Alt-Proje 2 P4 spec §3.3 invariant 1, §5.4) — 422. DB'de bileşik FK
+    açılmadığı için (P1 §3.5 gerekçesi) tek yazma yolunda servis korkuluğu.
+    """

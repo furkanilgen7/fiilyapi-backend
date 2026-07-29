@@ -1,4 +1,4 @@
-"""T4 — GET /sites/{site_id}/boq ucu + router kaydi (spec §4, §5.1, §5.4, §5.5)."""
+"""T4-T6 — BOQ okuma+yazma uclari + router kaydi (spec §4, §5.1-§5.5)."""
 
 import uuid
 from decimal import Decimal
@@ -218,3 +218,305 @@ async def test_get_boq_happy_path_matches_spec_5_1_shape(
         "value": None,
         "pending_module": "progress_payments",
     }
+
+
+# --- T5 — POST /sites/{site_id}/boq/groups ---
+
+
+async def test_create_boq_group_happy_path(client, db_session, user_factory, project_factory):
+    project = await project_factory("BOQ-API-10")
+    site = await _site(db_session, project)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.post(
+        f"/sites/{site.id}/boq/groups",
+        headers=_auth(token),
+        json={"name": "SIVA VE BOYA İŞLERİ", "sort_order": 2},
+    )
+
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["name"] == "SIVA VE BOYA İŞLERİ"
+    assert body["sort_order"] == 2
+    assert body["items"] == []
+    assert body["group_total"] == "0.00"
+
+
+async def test_create_boq_group_view_only_role_forbidden(
+    client, db_session, user_factory, project_factory
+):
+    """site_chief matriste boq=view/limited — full gerektiren yazma ucunda 403."""
+    project = await project_factory("BOQ-API-11")
+    site = await _site(db_session, project)
+    token = await _login_with_access(
+        client, db_session, user_factory, "site_chief", "sc@boq-api-11.co"
+    )
+
+    resp = await client.post(
+        f"/sites/{site.id}/boq/groups", headers=_auth(token), json={"name": "TEST GRUBU"}
+    )
+
+    assert resp.status_code == 403
+
+
+async def test_create_boq_group_field_engineer_forbidden(
+    client, db_session, user_factory, project_factory
+):
+    project = await project_factory("BOQ-API-12")
+    site = await _site(db_session, project)
+    token = await _login_with_access(
+        client, db_session, user_factory, "field_engineer", "fe@boq-api-12.co"
+    )
+
+    resp = await client.post(
+        f"/sites/{site.id}/boq/groups", headers=_auth(token), json={"name": "TEST GRUBU"}
+    )
+
+    assert resp.status_code == 403
+
+
+async def test_create_boq_group_invisible_site_returns_404(
+    client, db_session, user_factory, project_factory
+):
+    project = await project_factory("BOQ-API-13")
+    site = await _site(db_session, project)
+    token = await _login(client, user_factory, "project_manager", "pm@boq-api-13.co")
+
+    resp = await client.post(
+        f"/sites/{site.id}/boq/groups", headers=_auth(token), json={"name": "TEST GRUBU"}
+    )
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Şantiye bulunamadı"
+
+
+async def test_create_boq_group_missing_site_returns_404(client, user_factory):
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.post(
+        f"/sites/{uuid.uuid4()}/boq/groups", headers=_auth(token), json={"name": "TEST GRUBU"}
+    )
+
+    assert resp.status_code == 404
+
+
+async def test_create_boq_group_unauthenticated(client, db_session, project_factory):
+    project = await project_factory("BOQ-API-14")
+    site = await _site(db_session, project)
+
+    resp = await client.post(f"/sites/{site.id}/boq/groups", json={"name": "TEST GRUBU"})
+
+    assert resp.status_code == 401
+
+
+# --- T5 — POST /sites/{site_id}/boq/items ---
+
+
+async def test_create_boq_item_happy_path(client, db_session, user_factory, project_factory):
+    project = await project_factory("BOQ-API-15")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.post(
+        f"/sites/{site.id}/boq/items",
+        headers=_auth(token),
+        json={
+            "group_id": str(group.id),
+            "code": "01.002",
+            "description": "Dolgu (Elle)",
+            "unit": "m³",
+            "quantity": "10.500",
+            "unit_price": "150.00",
+        },
+    )
+
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["code"] == "01.002"
+    assert body["description"] == "Dolgu (Elle)"
+    assert body["unit"] == "m³"
+    assert body["quantity"] == "10.500"
+    assert body["unit_price"] == "150.00"
+    assert body["amount"] == "1575.00"
+    assert body["progress_pct"] == {
+        "available": False,
+        "value": None,
+        "pending_module": "progress_payments",
+    }
+
+
+async def test_create_boq_item_group_from_other_site_returns_422(
+    client, db_session, user_factory, project_factory
+):
+    """IDOR-2 (spec §5.5): govdedeki group_id baska santiyenin grubu -> 422."""
+    project = await project_factory("BOQ-API-16")
+    site_a = await _site(db_session, project, code="A-BLOK-16")
+    site_b = await _site(db_session, project, code="B-BLOK-16", name="B-Blok Şantiyesi")
+    group_on_b = await _group(db_session, site_b)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.post(
+        f"/sites/{site_a.id}/boq/items",
+        headers=_auth(token),
+        json={
+            "group_id": str(group_on_b.id),
+            "code": "01.003",
+            "description": "Kazı",
+            "unit": "m³",
+            "quantity": "1",
+            "unit_price": "1",
+        },
+    )
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "Grup bu şantiyeye ait değil"
+
+
+async def test_create_boq_item_nonexistent_group_returns_422(
+    client, db_session, user_factory, project_factory
+):
+    project = await project_factory("BOQ-API-17")
+    site = await _site(db_session, project)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.post(
+        f"/sites/{site.id}/boq/items",
+        headers=_auth(token),
+        json={
+            "group_id": str(uuid.uuid4()),
+            "code": "01.004",
+            "description": "Kazı",
+            "unit": "m³",
+            "quantity": "1",
+            "unit_price": "1",
+        },
+    )
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "Grup bu şantiyeye ait değil"
+
+
+async def test_create_boq_item_duplicate_code_returns_409(
+    client, db_session, user_factory, project_factory
+):
+    project = await project_factory("BOQ-API-18")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    await _item(db_session, site, group, code="01.001")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.post(
+        f"/sites/{site.id}/boq/items",
+        headers=_auth(token),
+        json={
+            "group_id": str(group.id),
+            "code": "01.001",
+            "description": "Baska tarif",
+            "unit": "m³",
+            "quantity": "1",
+            "unit_price": "1",
+        },
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "Bu poz numarası bu şantiyede zaten kullanılıyor"
+
+
+async def test_create_boq_item_view_only_role_forbidden(
+    client, db_session, user_factory, project_factory
+):
+    project = await project_factory("BOQ-API-19")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    token = await _login_with_access(
+        client, db_session, user_factory, "site_chief", "sc@boq-api-19.co"
+    )
+
+    resp = await client.post(
+        f"/sites/{site.id}/boq/items",
+        headers=_auth(token),
+        json={
+            "group_id": str(group.id),
+            "code": "01.005",
+            "description": "Kazı",
+            "unit": "m³",
+            "quantity": "1",
+            "unit_price": "1",
+        },
+    )
+
+    assert resp.status_code == 403
+
+
+async def test_create_boq_item_invisible_site_returns_404(
+    client, db_session, user_factory, project_factory
+):
+    project = await project_factory("BOQ-API-20")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    token = await _login(client, user_factory, "project_manager", "pm@boq-api-20.co")
+
+    resp = await client.post(
+        f"/sites/{site.id}/boq/items",
+        headers=_auth(token),
+        json={
+            "group_id": str(group.id),
+            "code": "01.006",
+            "description": "Kazı",
+            "unit": "m³",
+            "quantity": "1",
+            "unit_price": "1",
+        },
+    )
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Şantiye bulunamadı"
+
+
+async def test_create_boq_item_nonpositive_quantity_returns_422(
+    client, db_session, user_factory, project_factory
+):
+    project = await project_factory("BOQ-API-21")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.post(
+        f"/sites/{site.id}/boq/items",
+        headers=_auth(token),
+        json={
+            "group_id": str(group.id),
+            "code": "01.007",
+            "description": "Kazı",
+            "unit": "m³",
+            "quantity": "0",
+            "unit_price": "1",
+        },
+    )
+
+    assert resp.status_code == 422
+
+
+async def test_create_boq_item_negative_unit_price_returns_422(
+    client, db_session, user_factory, project_factory
+):
+    project = await project_factory("BOQ-API-22")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.post(
+        f"/sites/{site.id}/boq/items",
+        headers=_auth(token),
+        json={
+            "group_id": str(group.id),
+            "code": "01.008",
+            "description": "Kazı",
+            "unit": "m³",
+            "quantity": "1",
+            "unit_price": "-1",
+        },
+    )
+
+    assert resp.status_code == 422
