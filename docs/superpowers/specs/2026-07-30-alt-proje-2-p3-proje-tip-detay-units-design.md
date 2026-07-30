@@ -654,6 +654,24 @@ Doğrulama: `end_floor >= start_floor`; üretilecek toplam adet
 **409** + çakışan ilk 20 numara yanıtta listelenir. Gerekçe: 48 üniteden 3'ü sessizce
 atlanırsa kullanıcı bunu asla fark etmez.
 
+**`owner_side` toplu üretimde ATANMAZ — bu bir eksiklik değil, karardır** *(kullanıcı,
+2026-07-30)*. `UnitBulkCreate` şemasında `owner_side` alanı bilerek **yoktur** ve üretilen
+üniteler her zaman `owner_side = NULL` ile doğar (proje tipi `kat_karsiligi` olsa bile).
+Paylar sonradan **`PATCH /projects/{id}/units/allocation`** (§7.10) ile girilir.
+
+Gerekçe: KKP 78 paylaşımın **noterden sonra** girildiğini söyler — bloklar ve daireler
+paylaşım tablosu daha ortada yokken üretilir. Toplu üretime tek bir ortak `owner_side`
+koymak, 48 dairenin tamamını aynı tarafa yazmak demektir ki bu hiçbir kat karşılığı
+projesinde doğru değildir; kullanıcı bunu sonradan tek tek düzeltmek zorunda kalır ve
+düzeltmeyi unuttuğu satırlar sessizce yanlış tarafta kalır. Tek yazma yolu bırakmak
+(`allocation`) bu sessiz hata sınıfını tamamen kapatır.
+
+Sonuç olarak toplu üretimde **`owner_side` tip uyuşmazlığı diye bir hata durumu da yoktur**
+(alan gövdede taşınmadığı için doğrulanacak bir şey kalmaz); gövdeye fazladan `owner_side`
+konsa bile Pydantic onu yok sayar ve üretilen üniteler `NULL` kalır. Bu garanti
+`tests/modules/units/test_units_bulk.py::test_bulk_never_sets_owner_side_in_kendi_yatirim`
+ile kilitlenmiştir. **İleride "spec'te eksik kalmış" sanılıp eklenmemelidir.**
+
 ### 6.4 Excel içe aktarma şeması *(kullanıcı kararı — mockup yok)*
 
 ```python
@@ -711,7 +729,11 @@ Hata: `404` görünmeyen proje **veya projeye ait olmayan `site_id`** · `409` a
 
 Gövde `BlockUpdate` (kısmi). Yanıt `200 BlockResponse`.
 Kimlik **yukarı çözümlenir**: `block → project → görünürlük`. Görünmeyen projenin bloğu **404**.
-Hata: `404` · `409` ad çakışması · `422` yeni `site_id` başka projeye ait.
+Hata: `404` · `409` ad çakışması · **`404` yeni `site_id` bu projeye ait değil** (§4.5 son
+paragrafıyla aynı). Burada **422 dönülmez**: 422 "şantiye var ama bu projeye ait değil"
+bilgisini taşır ve böylece **başka bir projenin şantiyesinin varlığını sızdırır**; 404 hem
+"böyle bir şantiye yok" hem "bu projede yok" durumlarını ayırt edilemez kılar (P2'de kapatılan
+IDOR sınıfının aynısı). Mesaj `_SITE_MISSING` = `Şantiye bulunamadı` (§7.11).
 
 ### 7.4 `GET /projects/{project_id}/units`
 
@@ -744,8 +766,10 @@ değilse **404**; hedef blokta `unit_no` çakışırsa **409**.
 Gövde `UnitBulkCreate` (§6.3). Yanıt `201 UnitListResponse` (güncel tam liste — ekran
 tabloyu yeniden çizer).
 Hata: `404` görünmeyen proje / blok · **`409` üretilen numaralardan biri mevcut**
-(hiçbiri yazılmaz, çakışanlar listelenir) · `422` kat aralığı geçersiz / sınır aşımı /
-`owner_side` gerektiren tip uyuşmazlığı.
+(hiçbiri yazılmaz, çakışanlar listelenir) · `422` kat aralığı geçersiz / sınır aşımı.
+
+`owner_side` bu uçta **hiç taşınmaz** (§6.3 kararı), dolayısıyla toplu üretimde
+`owner_side` kaynaklı bir tip uyuşmazlığı hatası **yoktur**; paylar §7.10 ile girilir.
 
 Atomiktir: tek transaction, doğrulama yazmadan önce.
 
@@ -1144,6 +1168,8 @@ Her negatif senaryoda yanıt gövdesinin **kayıt varlığını sızdırmadığ�
 | 11 | Toplu ünite üretimi | **AÇILIR** (`POST …/units/bulk`) + ayrıca **Excel içe aktarma** (`POST …/units/import`, dosya **saklanmaz**) | §6.3, §6.4, §7.7, §7.8 |
 | 12 | Dilim numaralandırması (P3/P8/P9) | **ONAYLANDI** | — |
 | 13 | Migration ebeveyni | PR #4 merge edildi → `e3a8b4a5b93b` `main`'de. B1'de `alembic heads` ile yine de doğrulanır | §10.1 |
+| 14 | `PATCH /blocks/{id}` içinde yabancı `site_id` | **404** (422 değil) — 422 başka projenin şantiyesinin **varlığını sızdırır**. Rev. 2'de §7.3 §4.5 ile hizalandı | §4.5, §7.3 |
+| 15 | Toplu üretimde `owner_side` | **Atanmaz** — `UnitBulkCreate`'te alan yok, üniteler `NULL` doğar; paylar `PATCH …/allocation` ile girilir (KKP 78: paylaşım noterden sonra). Rev. 2'de açıkça yazıldı | §6.3, §7.7, §7.10 |
 
 ### 12.2 Hâlâ açık
 
