@@ -235,3 +235,28 @@ async def update_item(
     await session.flush()
     await session.refresh(item)
     return item
+
+
+async def delete_item(session: AsyncSession, actor: User, item_id: uuid.UUID) -> tuple[str, str]:
+    """Kalemi siler; denetim satiri icin (code, description) doner.
+
+    Kimlik silmeden ONCE okunur — sonra okunursa satir yoktur (users/roles
+    silme uclarindaki desen). Gorunmeyen kayit `_visible_item` uzerinden 404
+    doner, 403 DEGIL: var olmayan UUID ile ayirt edilemez olmasi gerekir.
+
+    Satir silindikten sonra grubun `items` koleksiyonu ELDEN CIKARILIR
+    (`expire`): koleksiyon zaten yuklenmisse silme onu BAYAT birakir ve ayni
+    oturumda BOQ yeniden okundugunda kalem hâlâ listede gorunup `grand_total`
+    degismemis gibi doner. `expire` IO yapmaz, yalnizca bir sonraki erisimde
+    yeniden yuklenmesini saglar. Grubun kendisi SILINMEZ; santiye toplamlari
+    kalan kalemlerden yeniden turedigi icin ayrica guncelleme gerekmez.
+    """
+    item, _ = await _visible_item(session, actor, item_id)
+    identity = (item.code, item.description)
+    group_id = item.group_id
+    await session.delete(item)
+    await session.flush()
+    group = await repository.get_group(session, group_id)
+    if group is not None:
+        session.expire(group, ["items"])
+    return identity
