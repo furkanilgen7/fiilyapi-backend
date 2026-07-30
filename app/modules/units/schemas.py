@@ -28,6 +28,7 @@ __all__ = [
     "UnitListResponse",
     "UnitNumberingPattern",
     "UnitOwnerSide",
+    "UnitOwnerSideFilter",
     "UnitResponse",
     "UnitSideSummary",
     "UnitTotals",
@@ -60,6 +61,19 @@ class UnitValueBasis(str, enum.Enum):
 
     list_price = "list_price"
     appraisal_value = "appraisal_value"
+
+
+class UnitOwnerSideFilter(str, enum.Enum):
+    """`GET .../units` sorgu suzgeci (spec §7.4).
+
+    `UnitOwnerSide`'in kendisi KULLANILAMAZ: atanmamis uniteleri (NULL) secmek
+    icin ucuncu bir deger gerekir ve bu deger sutunda saklanan bir durum degil,
+    yalnizca sorgu dilidir — modele sizmasi yanlis olurdu.
+    """
+
+    contractor = "contractor"
+    landowner = "landowner"
+    unassigned = "unassigned"
 
 
 # --- Okuma semalari ---
