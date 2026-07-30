@@ -1,9 +1,15 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+# Silme korkuluklari icin (asagida). TEPE SEVIYEDE import edilebilirler cunku
+# `boq/models` ve `units/models` yalniz `app.core.db.Base`e baglidir — sites'a
+# geri bakmazlar, dolayisiyla dongusel import RISKI YOKTUR (olcum: iki dosyanin
+# da tek `app.` importu `Base`). Fonksiyon ici import'a gerek kalmadi.
+from app.modules.boq.models import BoqGroup, BoqItem
 from app.modules.sites.models import Section, Site
+from app.modules.units.models import Block
 from app.modules.users.models import User, UserStatus
 
 
@@ -100,3 +106,57 @@ async def get_assignable_user(session: AsyncSession, user_id: uuid.UUID) -> User
     """
     stmt = select(User).where(User.id == user_id, User.status.in_(_ASSIGNABLE_USER_STATUSES))
     return (await session.execute(stmt)).scalar_one_or_none()
+
+
+# --- Silme korkuluklari (spec §7.1) ---
+#
+# ⚠️ `sites.id`'yi hedefleyen DORT FK'nin da `ON DELETE CASCADE` oldugu koddan
+# dogrulandi (`sections`, `boq_groups`, `boq_items`, `blocks`). Yani DB
+# KENDILIGINDEN KORUMAZ: korkuluksuz tek bir DELETE bu dort tabloyu SESSIZCE
+# bosaltir ve geri alinamaz. Asagidaki uc sorgu, T10'un acacagi silme ucunun
+# TEK guvencesidir — biri delinirse o dalda cascade tetiklenir.
+#
+# Ucu de `units/repository.py:97 block_has_units` deseninin birebiridir:
+# `select(<altsorgu>.exists())` — SATIR CEKMEZ. `count(*)` KULLANILMAZ: kac
+# bolum/poz/blok oldugu hicbir yerde kullanilmaz (hata mesajinda adet
+# verilmez, §7.1) ve saymak bos yere satir tarar.
+
+
+async def site_has_sections(session: AsyncSession, site_id: uuid.UUID) -> bool:
+    """Santiyede bolum var mi (`sections.site_id` -> CASCADE)."""
+    result = await session.execute(
+        select(select(Section.id).where(Section.site_id == site_id).exists())
+    )
+    return bool(result.scalar_one())
+
+
+async def site_has_boq(session: AsyncSession, site_id: uuid.UUID) -> bool:
+    """Santiyede is kalemi (poz) var mi — `boq_items` **VEYA** `boq_groups`.
+
+    IKI tablo da sorulur (spec §7.1): ikisi de `sites.id`'ye CASCADE ile
+    baglidir ve GRUP TEK BASINA da engeldir. Yalniz kalemlere bakmak, kalemsiz
+    gruplari olan bir santiyenin silinmesinde o gruplari sessizce yok ederdi.
+    Tek `SELECT`te `OR`'lanir: iki ayri gidis-donusun anlami yok.
+    """
+    result = await session.execute(
+        select(
+            or_(
+                select(BoqItem.id).where(BoqItem.site_id == site_id).exists(),
+                select(BoqGroup.id).where(BoqGroup.site_id == site_id).exists(),
+            )
+        )
+    )
+    return bool(result.scalar_one())
+
+
+async def site_has_blocks(session: AsyncSession, site_id: uuid.UUID) -> bool:
+    """Santiyede blok var mi (`blocks.site_id` -> CASCADE).
+
+    Uniteler AYRICA sorulmaz: `units.block_id` `RESTRICT`tir ve unite her zaman
+    bir bloga baglidir, dolayisiyla uniteli bir santiyenin bloklu olmasi
+    zorunludur — blok kontrolu uniteleri de kapsar.
+    """
+    result = await session.execute(
+        select(select(Block.id).where(Block.site_id == site_id).exists())
+    )
+    return bool(result.scalar_one())
