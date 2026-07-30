@@ -18,7 +18,8 @@ async def _site(session, project, code: str = "A-BLOK", **kwargs) -> Site:
 
 
 def test_site_status_values():
-    assert {s.value for s in SiteStatus} == {"active", "on_hold", "completed"}
+    # `preparation` T1'de eklendi (spec §3.1); `completed` KALDIRILMADI.
+    assert {s.value for s in SiteStatus} == {"preparation", "active", "on_hold", "completed"}
 
 
 def test_section_status_values():

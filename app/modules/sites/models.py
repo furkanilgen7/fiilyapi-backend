@@ -26,8 +26,13 @@ from app.modules.projects.models import Project
 class SiteStatus(str, enum.Enum):
     """project_status ile ayni ucludur ama AYRI enum'dur (spec §2.3): sirf bugun
     ayni olduklari icin paylasilan bir enum'a baglamak, santiyeye ileride
-    `suspended` gibi bir durum eklemeyi imkansiz kilar."""
+    `suspended` gibi bir durum eklemeyi imkansiz kilar.
 
+    Sira mockup satir 71'den gelir: Hazirlik · Aktif (secili) · Beklemede.
+    `completed` UI'da gorunmez ama KALIR — `SiteCounts.completed`, `_remaining_days`
+    ve P2 liste sekmesi ona baglidir (spec §3.1)."""
+
+    preparation = "preparation"
     active = "active"
     on_hold = "on_hold"
     completed = "completed"
