@@ -112,6 +112,11 @@ MODULES: list[dict] = [
     # izniyle site_chief/field_engineer ayrilamadigi icin acildi. Ayarlar -
     # Izin Matrisi mockup'inda bu satir YOK — bilincli sapma, geri alinmaz.
     {"key": "boq", "name": "İş Kalemleri", "group": ModuleGroup.GENEL, "sort_order": 17},
+    # spec §5 (P5, 2026-07-30): AYRI modül. Gerekçe: projects=_LIM olan roller
+    # (şef, saha, İK) taşeron birim fiyatlarını görmemeli. `Ayarlar - İzin Matrisi`
+    # mockup'ında bu satır YOK — `boq`'daki gibi BİLİNÇLİ SAPMA, geri alınmaz.
+    # sort_order 18: mevcut modüllerin sırası KAYDIRILMAZ (boq da 17 ile sona eklendi).
+    {"key": "contracts", "name": "Sözleşmeler", "group": ModuleGroup.MALI, "sort_order": 18},
 ]
 
 # Kısayollar — matrisi okunur tutmak için.
@@ -175,6 +180,11 @@ MATRIX: dict[str, list[tuple[AccessLevel, Scope]]] = {
     # akisi poz listesine bakmayi gerektiriyor — artik "sites" satiriyla
     # birebir ayni (fix/boq-procurement-permission).
     "boq": [_A, _F, _LIM, _N, _N, _FIN, _F, _LIM],
+    # spec §5 (P5): site_chief/field_engineer/hr_manager/procurement = none —
+    # taşeron sözleşmesi görmemeli. accounting = view/finance (mali görünürlük
+    # deseni, oluşturmaz). project_manager = full (taşeron sözleşmesini
+    # pratikte proje müdürü yapar).
+    "contracts": [_A, _F, _N, _N, _N, _FIN, _F, _N],
 }
 
 
@@ -183,7 +193,7 @@ async def seed_reference_data(session: AsyncSession) -> None:
 
     Idempotent: hangi başlangıç durumundan çalıştırılırsa çalıştırılsın (boş DB,
     tamamen seed edilmiş DB, ya da roller/modüller var ama role_permissions boş)
-    sonuçta 8 rol, 16 modül ve 128 izin satırı bulunur; mevcut satırlar
+    sonuçta 8 rol, 18 modül ve 144 izin satırı bulunur; mevcut satırlar
     üzerine yazılmaz ve `uq_role_module` UNIQUE kısıtı asla ihlal edilmez.
     """
     existing_role_rows = (await session.execute(select(Role))).scalars().all()

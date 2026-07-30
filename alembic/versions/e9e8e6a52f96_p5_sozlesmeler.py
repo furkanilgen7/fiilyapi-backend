@@ -2,8 +2,8 @@
 
 contract_status/payment_period enum'lari + project_contracts.status +
 subcontractors + employer_contract_groups/items + boq_items.contract_item_id
-(kismi benzersiz indeks) + subcontractor_contracts/items. Izin modulu (contracts
-satiri + 8 role_permissions) BU MIGRATION'DA YOK — Task C2'nin isi (spec §9/7).
+(kismi benzersiz indeks) + subcontractor_contracts/items + izin modulu
+(contracts satiri + 8 role_permissions, Task C2 / spec §5).
 
 Revision ID: e9e8e6a52f96
 Revises: a7c9e1f3b5d2
@@ -11,6 +11,7 @@ Create Date: 2026-07-30 22:22:09.316347
 
 """
 
+import uuid
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -26,6 +27,82 @@ depends_on: str | Sequence[str] | None = None
 
 contract_status_enum = sa.Enum("active", "completed", "on_hold", name="contract_status")
 payment_period_enum = sa.Enum("monthly", "biweekly", "on_completion", name="payment_period")
+
+# Bu migration app.modules.roles.seed_data'yi kasitli olarak import ETMEZ:
+# uygulanmis bir migration donmus olmalidir, uygulama kodu zamanla degisir.
+# Asagidaki veriler seed_data.py'daki MODULES/MATRIX'ten birebir kopyalanmistir;
+# esitligi tests/modules/test_seed_migration_matches_seed_data.py dogrular.
+
+MODULE_KEY = "contracts"
+MODULE_NAME = "Sözleşmeler"
+MODULE_GROUP = "MALI"
+MODULE_SORT_ORDER = 18
+
+# contracts son siraya eklendigi icin baska hicbir modul kaymaz (boq'daki gibi).
+SORT_ORDER_UPDATES: dict[str, int] = {}
+
+# downgrade()'in geri yazacagi degerler — kaydirma olmadigi icin bos.
+PREVIOUS_SORT_ORDERS: dict[str, int] = {}
+
+# Sutun sirasi — asagidaki MATRIX satiri bu sirayla okunur (seed_data.ROLE_ORDER).
+ROLE_ORDER = [
+    "system_admin",
+    "patron",
+    "site_chief",
+    "field_engineer",
+    "hr_manager",
+    "accounting",
+    "project_manager",
+    "procurement",
+]
+
+# spec §5: system_admin=admin, patron=full, site_chief/field_engineer/hr_manager/
+# procurement=none (projects=_LIM olan roller taseron birim fiyatlarini gormemeli),
+# accounting=view/finance, project_manager=full.
+MATRIX: dict[str, list[tuple[str, str]]] = {
+    MODULE_KEY: [
+        ("admin", "all"),
+        ("full", "all"),
+        ("none", "all"),
+        ("none", "all"),
+        ("none", "all"),
+        ("view", "finance"),
+        ("full", "all"),
+        ("none", "all"),
+    ],
+}
+
+# Canli DB'de satirlar kismen mevcut olabilir (elle mudahale, yarim kalmis kosu):
+# her yazma idempotent, boylece yeniden calistirma UNIQUE kisitini ihlal etmez.
+_INSERT_MODULE = sa.text(
+    'INSERT INTO modules (id, key, name, "group", sort_order) '
+    "VALUES (CAST(:id AS uuid), :key, :name, CAST(:group AS module_group), :sort_order) "
+    "ON CONFLICT (key) DO NOTHING"
+)
+
+# role_id/module_id canli ortamda calisma aninda okunur: ilk seed migration'i
+# UUID'leri uuid4() ile uretti, dolayisiyla sabit kodlanamazlar.
+_INSERT_PERMISSION = sa.text(
+    "INSERT INTO role_permissions (id, role_id, module_id, access_level, scope) "
+    "SELECT CAST(:id AS uuid), r.id, m.id, "
+    "CAST(:access_level AS access_level), CAST(:scope AS scope) "
+    "FROM roles r, modules m "
+    "WHERE r.key = :role_key AND m.key = :module_key "
+    "ON CONFLICT ON CONSTRAINT uq_role_module DO NOTHING"
+)
+
+_UPDATE_SORT_ORDER = sa.text("UPDATE modules SET sort_order = :sort_order WHERE key = :key")
+
+_DELETE_PERMISSIONS = sa.text(
+    "DELETE FROM role_permissions WHERE module_id IN (SELECT id FROM modules WHERE key = :key)"
+)
+
+_DELETE_MODULE = sa.text("DELETE FROM modules WHERE key = :key")
+
+
+def _apply_sort_orders(orders: dict[str, int]) -> None:
+    for key, sort_order in orders.items():
+        op.execute(_UPDATE_SORT_ORDER.bindparams(key=key, sort_order=sort_order))
 
 
 def upgrade() -> None:
@@ -338,9 +415,36 @@ def upgrade() -> None:
         ["source_contract_item_id"],
     )
 
+    # 7. Izin modulu: contracts satiri (18.) + 8 role_permissions (spec §5, Task C2)
+    op.execute(
+        _INSERT_MODULE.bindparams(
+            id=str(uuid.uuid4()),
+            key=MODULE_KEY,
+            name=MODULE_NAME,
+            group=MODULE_GROUP,
+            sort_order=MODULE_SORT_ORDER,
+        )
+    )
+    _apply_sort_orders(SORT_ORDER_UPDATES)
+
+    for role_key, (access_level, scope) in zip(ROLE_ORDER, MATRIX[MODULE_KEY], strict=True):
+        op.execute(
+            _INSERT_PERMISSION.bindparams(
+                id=str(uuid.uuid4()),
+                role_key=role_key,
+                module_key=MODULE_KEY,
+                access_level=access_level,
+                scope=scope,
+            )
+        )
+
 
 def downgrade() -> None:
     """Downgrade schema."""
+    op.execute(_DELETE_PERMISSIONS.bindparams(key=MODULE_KEY))
+    op.execute(_DELETE_MODULE.bindparams(key=MODULE_KEY))
+    _apply_sort_orders(PREVIOUS_SORT_ORDERS)
+
     op.drop_index(
         "ix_subcontractor_contract_items_source_contract_item_id",
         table_name="subcontractor_contract_items",
