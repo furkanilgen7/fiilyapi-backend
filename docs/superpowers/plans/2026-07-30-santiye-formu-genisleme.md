@@ -1282,6 +1282,16 @@ Dilim ancak aşağıdakilerin **hepsi** işaretlendiğinde kapanır.
 
 ## 5. Frontend'e devredilen iş (bu planın kapsamı DIŞI)
 
+> **T16 kapanış durumu (2026-07-30).** Aşağıdaki üç madde backend dilimi bittikten
+> sonra **yeniden ölçüldü** ve geçerlidir: (1) yeni BFF kökü **gerekmiyor** — açılan iki
+> uç mevcut `/sites` ve `/sections` köklerinden geçiyor (§5.1); (2) `openapi.json`
+> **yeniden üretildi** ve sekiz ucun tamamını + 22 kolonun API'ye yansıyan alanlarını +
+> `facilities` grubunu + `is_draft` / `counts.draft` / `sections.manager_user_id`
+> alanlarını içeriyor, testle de sabitlendi (`tests/modules/sites/test_sites_openapi.py`)
+> — dosya **commit edilmedi**, frontend'e kopyalanması §5.2'nin işidir; (3) kişi
+> seçicisinin 403 zarif düşüşü **hâlâ zorunludur**, çünkü §5.4 kararı gereği yeni seçici
+> ucu açılmadı.
+
 ### 5.1 BFF izin listesi — **değişiklik GEREKMEZ**
 
 Bu dilimde **yeni kök açılmıyor**: `/projects`, `/sites`, `/sections` üçü de

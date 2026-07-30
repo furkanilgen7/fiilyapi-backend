@@ -779,9 +779,28 @@ Görünürlük süzgeci `projects.service.visible_projects`ten **gelir**, kopyal
 
 **Yeni IDOR yüzeyi:** `site_manager_user_id` / `safety_officer_user_id` / bölüm
 `manager_user_id` — verilen UUID'ler `users` tablosunda çözümlenir. Kullanıcı **var mı**
-diye bakılır; "bu kullanıcıyı görme yetkin var mı" **aranmaz** (kullanıcı listesi
-`sites:full` sahibi için zaten `GET /users` ile erişilebilir). Var olmayan/pasif kullanıcı
+diye bakılır; "bu kullanıcıyı görme yetkin var mı" **aranmaz**. Var olmayan/pasif kullanıcı
 → 422 `Seçilen kullanıcı bulunamadı` — 404 değil, çünkü kaynak şantiyedir, kullanıcı değil.
+
+> **DÜZELTME (2026-07-30, T16).** Bu paragrafın önceki hâli *"kullanıcı listesi
+> `sites:full` sahibi için zaten `GET /users` ile erişilebilir"* diyordu; **bu yanlıştı**.
+> Ölçüm: `GET /users` kapısı `require_permission("user_management", AccessLevel.view)`
+> (`app/modules/users/router.py:36`), ve izin matrisinde `user_management` satırı
+> `[_A, _N, _N, _N, _N, _N, _N, _N]`'dir (`app/modules/roles/seed_data.py:169`) — yani
+> uç **yalnız sistem yöneticisine** açıktır.
+>
+> **Kullanıcı kararı (2026-07-30): "şimdilik böyle kalsın" — yeni seçici ucu AÇILMADI.**
+> `GET /users/selectable` benzeri dar bir uç **yazılmadı**, `user_management` satırı
+> **gevşetilmedi** (modül sayısı 17'de kalır). **Sonuç — kabul edilmiş sınırlama:**
+> `admin` dışındaki yedi rolde Şantiye Şefi / İSG Uzmanı / Bölüm Sorumlusu seçicileri
+> **boş kalır**; üç alan da `nullable` olduğu için **form yine kaydedilebilir** (İSG hiçbir
+> koşulda zorunlu değil; şantiye şefi yalnız taslak-dışı POST'ta zorunludur ve serbest
+> metin `site_manager_name` ile karşılanabilir). Bu bir **hata değildir**; ayrıntı ve
+> gerekçe: plan §5.4.
+>
+> Yukarıdaki "görme yetkin var mı aranmaz" kuralı bu düzeltmeden **etkilenmez**: kural
+> bilinçlidir — çözümleme yalnızca *varlık* kontrolüdür ve kullanıcı kimlikleri zaten
+> şantiye kaydının parçası olarak yanıtta döner.
 
 ---
 
