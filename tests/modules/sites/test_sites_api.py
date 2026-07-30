@@ -64,7 +64,8 @@ async def test_list_sites_happy_path(client, db_session, user_factory, project_f
     assert resp.status_code == 200
     body = resp.json()
     assert [s["code"] for s in body["items"]] == ["A-BLOK", "B-BLOK"]
-    assert body["counts"] == {"all": 2, "active": 2, "on_hold": 0, "completed": 0}
+    # `draft` T4'te eklendi (§5.2) — mevcut sayaclar aynen KALDI.
+    assert body["counts"] == {"all": 2, "active": 2, "on_hold": 0, "completed": 0, "draft": 0}
     assert body["items"][0]["city"] == "Ankara"
     assert body["items"][0]["city_inherited"] is True
     assert body["items"][0]["site_manager_name"] == "S. Ö."

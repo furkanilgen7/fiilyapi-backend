@@ -24,6 +24,7 @@ from app.modules.sites.schemas import (
     SiteCounts,
     SiteCreate,
     SiteDetailResponse,
+    SiteFacilities,
     SiteListResponse,
     SiteListTotals,
     SiteProjectSummary,
@@ -110,12 +111,30 @@ def _section_counts(sections: list[Section]) -> SectionStatusCounts:
     )
 
 
+def _facilities(site: Site) -> SiteFacilities:
+    """DB'deki 8 duz Boolean kolonu API'nin GRUPLU sozlesmesine cevirir (§4.1).
+
+    Donusum SERVIS katmanindadir: sema kendi basina DB bilmez.
+    """
+    return SiteFacilities(
+        closed_warehouse=site.has_closed_warehouse,
+        open_storage=site.has_open_storage,
+        cold_storage=site.has_cold_storage,
+        site_office=site.has_site_office,
+        canteen=site.has_canteen,
+        changing_room_wc=site.has_changing_room_wc,
+        dormitory=site.has_dormitory,
+        infirmary=site.has_infirmary,
+    )
+
+
 def to_section(section: Section) -> SectionResponse:
     return SectionResponse(
         id=section.id,
         code=section.code,
         name=section.name,
         status=section.status,
+        manager_user_id=section.manager_user_id,
         manager_name=section.manager_name,
         start_date=section.start_date,
         end_date=section.end_date,
@@ -145,6 +164,23 @@ def _card_fields(site: Site, project: Project) -> dict:
         "section_count": len(site.sections),
         "worker_count": _count(_TIMESHEET),
         "progress_pct": _metric(_PROGRESS_PAYMENTS),
+        # --- Santiye formu genislemesi (§6.2): YALNIZ EKLEME ---
+        "is_draft": site.is_draft,
+        "site_manager_user_id": site.site_manager_user_id,
+        "safety_officer_user_id": site.safety_officer_user_id,
+        "safety_officer_name": site.safety_officer_name,
+        "safety_officer_is_outsourced": site.safety_officer_is_outsourced,
+        "neighborhood": site.neighborhood,
+        "parcel": site.parcel,
+        "gps_coordinates": site.gps_coordinates,
+        "land_area_m2": site.land_area_m2,
+        "construction_area_m2": site.construction_area_m2,
+        "floor_info": site.floor_info,
+        "budget": site.budget,
+        "facilities": _facilities(site),
+        "electricity_subscription_no": site.electricity_subscription_no,
+        "water_subscription_no": site.water_subscription_no,
+        "planned_worker_count": site.planned_worker_count,
     }
 
 
@@ -180,6 +216,9 @@ def _site_counts(sites: list[Site]) -> SiteCounts:
         active=sum(1 for s in sites if s.status is SiteStatus.active),
         on_hold=sum(1 for s in sites if s.status is SiteStatus.on_hold),
         completed=sum(1 for s in sites if s.status is SiteStatus.completed),
+        # §5.2: TEK ekleme. Taslaklar durum sayaclarindan DUSULMEZ — durumlari
+        # ne ise o sayilir; bu sayac ayrica artar.
+        draft=sum(1 for s in sites if s.is_draft),
     )
 
 
