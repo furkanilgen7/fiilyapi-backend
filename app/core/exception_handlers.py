@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import (
+    BoqGroupSiteMismatchError,
     DeleteNotAllowedError,
     DomainError,
     DuplicateError,
@@ -45,6 +46,14 @@ async def _duplicate_error_handler(request: Request, exc: DuplicateError) -> JSO
     return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(exc)})
 
 
+async def _boq_group_site_mismatch_handler(
+    request: Request, exc: BoqGroupSiteMismatchError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content={"detail": str(exc)}
+    )
+
+
 async def _domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
     return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
 
@@ -68,5 +77,6 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ProjectTypeMismatchError, _project_type_mismatch_handler)
     app.add_exception_handler(ProjectValidationError, _project_validation_handler)
     app.add_exception_handler(DuplicateError, _duplicate_error_handler)
+    app.add_exception_handler(BoqGroupSiteMismatchError, _boq_group_site_mismatch_handler)
     app.add_exception_handler(DomainError, _domain_error_handler)
     app.add_exception_handler(IntegrityError, _integrity_error_handler)

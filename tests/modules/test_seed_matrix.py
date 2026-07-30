@@ -32,6 +32,7 @@ EXPECTED_MODULE_KEYS = {
     "treasury",
     "settings",
     "user_management",
+    "boq",
 }
 
 
@@ -50,15 +51,15 @@ async def test_seeds_eight_roles(seeded_db):
     assert keys == EXPECTED_ROLE_KEYS
 
 
-async def test_seeds_sixteen_modules(seeded_db):
+async def test_seeds_seventeen_modules(seeded_db):
     keys = set((await seeded_db.execute(select(Module.key))).scalars())
     assert keys == EXPECTED_MODULE_KEYS
 
 
 async def test_matrix_is_complete(seeded_db):
-    """8 rol × 16 modül = 128 hücre; hiçbiri eksik olamaz."""
+    """8 rol × 17 modül = 136 hücre; hiçbiri eksik olamaz."""
     rows = (await seeded_db.execute(select(RolePermission))).scalars().all()
-    assert len(rows) == 128
+    assert len(rows) == 136
 
 
 async def test_system_admin_has_admin_level_everywhere(seeded_db):
@@ -108,12 +109,12 @@ async def test_reseed_after_permissions_wiped_restores_full_matrix(db_session):
     await seed_reference_data(db_session)
 
     rows = (await db_session.execute(select(RolePermission))).scalars().all()
-    assert len(rows) == 128
+    assert len(rows) == 136
 
     role_count = (await db_session.execute(select(Role))).scalars().all()
     module_count = (await db_session.execute(select(Module))).scalars().all()
     assert len(role_count) == 8
-    assert len(module_count) == 16
+    assert len(module_count) == 17
 
 
 async def test_invoicing_module_is_in_mali_group_between_accounting_and_treasury(seeded_db):
@@ -139,9 +140,9 @@ async def test_invoicing_permissions_follow_accounting_row(seeded_db):
 
 
 async def test_module_sort_orders_are_unique_and_contiguous(seeded_db):
-    """invoicing/projects/sites araya girince sonraki moduller kayar; çakışma/boşluk olmamalı."""
+    """invoicing/projects/sites/boq araya girince sonraki moduller kayar; boşluk/çakışma olmaz."""
     orders = sorted((await seeded_db.execute(select(Module.sort_order))).scalars())
-    assert orders == list(range(1, 17))
+    assert orders == list(range(1, 18))
 
 
 async def test_users_table_exists_in_test_schema(seeded_db):
@@ -217,3 +218,33 @@ async def test_procurement_and_site_chief_cannot_write_sites(seeded_db):
     """Ikisi de santiye TANIMLAMAZ: view seviyesi yazma uclarini acmaz (spec §5.1)."""
     for role_key in ("procurement", "site_chief"):
         assert await _level_of(seeded_db, role_key, "sites") == AccessLevel.view
+
+
+async def test_boq_module_row_and_sort(seeded_db):
+    """boq: GENEL grubunda, matrisin son (17.) satiri (spec §4)."""
+    modules = (await seeded_db.execute(select(Module))).scalars().all()
+    by_key = {m.key: m for m in modules}
+    assert by_key["boq"].group is ModuleGroup.GENEL
+    assert by_key["boq"].name == "İş Kalemleri"
+    assert by_key["boq"].sort_order == 17
+
+
+async def test_site_chief_can_see_boq_but_field_engineer_cannot(seeded_db):
+    """Spec §4 kullanici karari: 'santiye sefi gorsun de saha muhendisi gormesin'.
+
+    `sites` satirinda bu iki rol birebir ayni (_LIM, _LIM) oldugu icin ayrim
+    ancak ayri `boq` modulu ile mumkun — bu testin varligi o kararin kanitidir.
+    """
+    assert await _level_of(seeded_db, "site_chief", "boq") == AccessLevel.view
+    assert await _level_of(seeded_db, "field_engineer", "boq") == AccessLevel.none
+
+
+async def test_boq_permissions_match_sites_row_except_field_engineer_and_procurement(seeded_db):
+    """boq satiri temel olarak sites satirini izler; bilincli istisnalar (spec §4):
+    field_engineer (gormez), hr_manager ve procurement (sites=_LIM iken boq=none;
+    procurement gecici, teyit bekliyor)."""
+    exceptions = {"field_engineer", "hr_manager", "procurement"}
+    for role_key in EXPECTED_ROLE_KEYS - exceptions:
+        assert await _level_of(seeded_db, role_key, "boq") == await _level_of(
+            seeded_db, role_key, "sites"
+        )
