@@ -1,4 +1,4 @@
-"""T10 — `DELETE /sites/{site_id}` (spec §7.1, §12.3).
+"""T10/T11 — `DELETE /sites/{site_id}` ve `DELETE /sections/{section_id}` (spec §7.1, §12.3).
 
 ## Bu dosya neden VERI KAYBI SINIFI bir test setidir
 
@@ -398,3 +398,85 @@ async def test_delete_invisible_site_returns_same_404_body(
 
     assert invisible.status_code == unknown.status_code == 404
     assert invisible.json() == unknown.json() == {"detail": SITE_MISSING}
+
+
+# --- T11: DELETE /sections/{section_id} ---
+
+
+async def test_delete_section_returns_204(client, db_session, user_factory, project_factory):
+    """S8. Santiye ve DIGER bolumler yerinde kalir."""
+    project = await project_factory("E-1")
+    site = await _site(db_session, project)
+    first = await _section(db_session, site, "Kaba İnşaat", sort_order=0)
+    second = await _section(db_session, site, "İnce İşler", sort_order=1)
+    token = await _login(client, user_factory)
+
+    resp = await client.delete(f"/sections/{first.id}", headers=_auth(token))
+
+    assert resp.status_code == 204
+    remaining = await _counts(db_session, site.id)
+    assert remaining["sites"] == 1
+    assert remaining["sections"] == 1
+    assert await db_session.get(Section, second.id) is not None
+
+
+async def test_delete_section_twice_returns_404(client, db_session, user_factory, project_factory):
+    project = await project_factory("E-2")
+    site = await _site(db_session, project)
+    section = await _section(db_session, site)
+    token = await _login(client, user_factory)
+
+    first = await client.delete(f"/sections/{section.id}", headers=_auth(token))
+    second = await client.delete(f"/sections/{section.id}", headers=_auth(token))
+
+    assert first.status_code == 204
+    assert second.status_code == 404
+    assert second.json()["detail"] == SECTION_MISSING
+
+
+async def test_delete_section_does_not_touch_site(
+    client, db_session, user_factory, project_factory
+):
+    project = await project_factory("E-3")
+    site = await _site(db_session, project)
+    section = await _section(db_session, site)
+    token = await _login(client, user_factory)
+
+    resp = await client.delete(f"/sections/{section.id}", headers=_auth(token))
+
+    assert resp.status_code == 204
+    assert (await _counts(db_session, site.id))["sites"] == 1
+    assert await db_session.get(Site, site.id) is not None
+
+
+async def test_delete_section_reorders_nothing(client, db_session, user_factory, project_factory):
+    """DAVRANIS KILIDI: kalan bolumlerin `sort_order` degerleri YENIDEN NUMARALANMAZ.
+
+    Yeniden numaralandirmak sessiz bir surpriz olurdu: kullanici bir bolumu
+    silince digerlerinin sirasi da degisirdi.
+    """
+    project = await project_factory("E-4")
+    site = await _site(db_session, project)
+    first = await _section(db_session, site, "Faz 1", sort_order=0)
+    second = await _section(db_session, site, "Faz 2", sort_order=1)
+    third = await _section(db_session, site, "Faz 3", sort_order=2)
+    token = await _login(client, user_factory)
+
+    resp = await client.delete(f"/sections/{first.id}", headers=_auth(token))
+
+    assert resp.status_code == 204
+    await db_session.refresh(second)
+    await db_session.refresh(third)
+    assert [second.sort_order, third.sort_order] == [1, 2]
+
+
+async def test_delete_section_returns_empty_body(client, db_session, user_factory, project_factory):
+    project = await project_factory("E-5")
+    site = await _site(db_session, project)
+    section = await _section(db_session, site)
+    token = await _login(client, user_factory)
+
+    resp = await client.delete(f"/sections/{section.id}", headers=_auth(token))
+
+    assert resp.status_code == 204
+    assert resp.content == b""

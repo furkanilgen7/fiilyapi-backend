@@ -625,3 +625,35 @@ async def delete_site(session: AsyncSession, actor: User, site_id: uuid.UUID) ->
     await session.delete(site)
     await session.flush()
     return snapshot
+
+
+async def delete_section(
+    session: AsyncSession, actor: User, section_id: uuid.UUID
+) -> tuple[str, str]:
+    """Spec §7.1. Bolum silme KOSULSUZDUR — uydurma bir engel yazilmaz.
+
+    Kod tabaninda `sections.id`'yi hedefleyen HICBIR FK yoktur (dogrulandi):
+    bolumun bugun bagli alt kaydi OLAMAZ. `delete_site`in uc korkulugunun bir
+    benzerini buraya "ihtiyatli olsun diye" eklemek, var olmayan bir bagi
+    kullaniciya kural gibi gostermek olurdu.
+
+    # P5 notu: `boq_groups.section_id` gelirse buraya `section_has_boq`
+    # korkulugu EKLENMELIDIR (spec §7.1 acik talebi). O bag acildigi anda bu
+    # fonksiyon kosulsuz olmaktan cikar; korkuluksuz birakilirsa bolum silmek
+    # poz gruplarini sessizce goturur.
+
+    Gorunurluk suzgeci ONCE kosar (`_visible_section`: bolum -> santiye ->
+    proje): gorunmeyen bolum 404 `Bölüm bulunamadı` doner ve govdesi var
+    olmayan UUID'ninkiyle BIREBIR AYNIDIR.
+
+    Kalan bolumlerin `sort_order` degerleri YENIDEN NUMARALANMAZ (davranis
+    kilidi): silme, dokunulmayan satirlarin sirasini degistirmez.
+
+    Donen deger: `(santiye adi, bolum adi)` anlik goruntusu — `delete_site` ile
+    ayni gerekce, metin satir yok olmadan ONCE kurulur.
+    """
+    section, site = await _visible_section(session, actor, section_id)
+    snapshot = (site.name, section.name)
+    await session.delete(section)
+    await session.flush()
+    return snapshot

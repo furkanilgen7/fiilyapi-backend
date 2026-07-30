@@ -169,6 +169,24 @@ async def create_section_endpoint(
     return service.to_section(section)
 
 
+@router.delete(
+    "/sections/{section_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[_ADMIN]
+)
+async def delete_section_endpoint(
+    section_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """Spec §7.1. Bolum silme KOSULSUZDUR: `sections.id`'yi hedefleyen FK yok.
+
+    Kapi `_ADMIN`'dir — bolum santiyenin ic kirilimi oldugu icin `sites`
+    modulunun seviyeleri kullanilir, AYRI izin modulu acilmaz.
+
+    Yanit `204 No Content`, GOVDESIZ. Denetim cagrisi T12'de eklenir.
+    """
+    await service.delete_section(session, current_user, section_id)
+
+
 @router.patch("/sections/{section_id}", response_model=SectionResponse, dependencies=[_FULL])
 async def update_section_endpoint(
     request: Request,
