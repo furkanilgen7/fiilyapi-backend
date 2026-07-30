@@ -6,12 +6,14 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -67,6 +69,16 @@ class BoqItem(Base):
         UniqueConstraint("site_id", "code", name="uq_boq_items_site_code"),
         CheckConstraint("quantity > 0", name="ck_boq_items_quantity_positive"),
         CheckConstraint("unit_price >= 0", name="ck_boq_items_unit_price_nonneg"),
+        # Poz dagitiminda her santiye icin tek kota hucresi vardir (POZ 98-99/108-109,
+        # spec §3.3). contract_item_id NULL olan satirlar (santiyenin kendi basina
+        # girdigi pozlar) bu kisidin disindadir.
+        Index(
+            "uq_boq_items_contract_item_site",
+            "contract_item_id",
+            "site_id",
+            unique=True,
+            postgresql_where=text("contract_item_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -90,6 +102,15 @@ class BoqItem(Base):
     quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # Spec §3.3 ONAYLI SAPMA (kalici karar 1'den): sozlesme kalemine bag. SET NULL
+    # cunku BOQ satiri sahadaki gerceklesen isin kaydidir; sozlesme kalemi silinince
+    # satir yok olmaz, yalniz bag kopar.
+    contract_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("employer_contract_items.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

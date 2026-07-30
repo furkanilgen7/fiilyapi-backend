@@ -15,6 +15,7 @@ from app.main import app
 from app.modules.audit import models as audit_models  # noqa: F401
 from app.modules.boq import models as boq_models  # noqa: F401
 from app.modules.company import models as company_models  # noqa: F401
+from app.modules.contracts import models as contracts_models  # noqa: F401
 from app.modules.projects import models as projects_models  # noqa: F401
 from app.modules.projects.models import Project, ProjectStatus, ProjectType
 from app.modules.roles import models as roles_models  # noqa: F401

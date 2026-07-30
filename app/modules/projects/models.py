@@ -20,6 +20,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
+from app.modules.contracts.models import ContractStatus
 
 
 class ProjectStatus(str, enum.Enum):
@@ -212,6 +213,15 @@ class ProjectContract(Base):
         Enum(PriceIndexType, name="price_index_type"), nullable=True
     )
     base_index_value: Mapped[Decimal | None] = mapped_column(Numeric(12, 3), nullable=True)
+    # Sunucu varsayilani anlamli (active) oldugu icin NOT NULL (spec §3.1) — "yeni
+    # kolonlar NOT NULL yapilmaz" kurali *kullanicinin doldurmasi gereken* alanlar
+    # icindir, bu onlardan biri degildir (sites'taki Boolean'larla ayni desen).
+    status: Mapped[ContractStatus] = mapped_column(
+        Enum(ContractStatus, name="contract_status"),
+        nullable=False,
+        default=ContractStatus.active,
+        server_default="active",
+    )
 
 
 class ProjectInvestment(Base):
