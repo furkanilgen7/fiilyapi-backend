@@ -10,7 +10,7 @@ from app.core.deps import get_current_user
 from app.core.errors import UnitValidationError
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
-from app.modules.units import importer, service
+from app.modules.units import batch, importer, service
 from app.modules.units.models import UnitKind
 from app.modules.units.schemas import (
     BlockCreate,
@@ -175,7 +175,7 @@ async def bulk_create_units_endpoint(
     """Spec §7.7. HEP-YA-HIC: uretilen numaralardan biri bile blokta varsa
     HICBIRI yazilmaz (409). Yanit guncel tam listedir — ekran tabloyu yeniden
     cizer, ikinci bir GET'e gerek kalmaz."""
-    return await service.bulk_create_units(session, user, project_id, data)
+    return await batch.bulk_create_units(session, user, project_id, data)
 
 
 @router.patch(
@@ -196,7 +196,7 @@ async def update_allocation_endpoint(
     BASKA projeye aitse 404 doner (IDOR-8) ve bu projenin hicbir satiri
     degismez. Yanit guncel tam listedir — ekran tabloyu yeniden cizer.
     """
-    return await service.update_allocation(session, user, project_id, data)
+    return await batch.update_allocation(session, user, project_id, data)
 
 
 @router.post(
@@ -223,4 +223,4 @@ async def import_units_endpoint(
         importer.ensure_size(file.size)
     except importer.ImportFileError as exc:
         raise UnitValidationError(str(exc)) from exc
-    return await service.import_units(session, user, project_id, await file.read())
+    return await batch.import_units(session, user, project_id, await file.read())
