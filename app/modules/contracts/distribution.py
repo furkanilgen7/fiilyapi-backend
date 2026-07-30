@@ -238,13 +238,39 @@ def _assert_within_contract_quantity(
             raise SiteValidationError(DISTRIBUTION_EXCEEDS)
 
 
-def _assert_codes_free(
+def _plan_new_rows(
     allocations: list[ContractAllocationInput],
     items_by_id: dict[uuid.UUID, EmployerContractItem],
     existing_by_key: dict[_AllocKey, BoqItem],
-    taken_codes: set[tuple[uuid.UUID, str]],
-) -> None:
-    """`uq_boq_items_site_code` çakışması `IntegrityError`'dan ÖNCE yakalanır."""
+    site_boq_items: list[BoqItem],
+) -> dict[_AllocKey, BoqItem]:
+    """Yeni açılacak her çift için planı çıkarır; `uq_boq_items_site_code`
+    çakışmasını `IntegrityError`'dan ÖNCE yakalar. **Hiçbir yazma YAPMAZ.**
+
+    Dönen sözlük: yeni çift → o şantiyede kodu eşleşen BAĞSIZ (`contract_item_id
+    IS NULL`) satır. Bu satır SİLİNİP yeniden açılmaz, YENİDEN BAĞLANIR
+    (`_apply_allocations`). İki durumu birden çözer:
+
+    * `quantity: null` ile bağı koparılan satır şantiyede kodu tutmaya devam
+      eder; yeniden kota verilince "kod dolu" diye 409 atılırsa "kotayı kaldır"
+      işlemi GERİ ALINAMAZ olurdu (düzeltme turu 1, Important 1).
+    * Şantiyenin kendi başına girdiği aynı numaralı poz (spec §3.3'te meşru)
+      zaten AYNI pozdur — ikinci bir satır açmak yerine sahiplenilir, sahadaki
+      iş kaydı korunur.
+
+    `BOQ_CODE_TAKEN_IN_SITE` yalnız GERÇEKTEN çözülemeyen çakışmada kalır: kodu
+    tutan satır BAŞKA bir sözleşme kalemine bağlıysa (BOQ ekranından `code`
+    düzenlenmişse olabilir) sahiplenmek o bağı sessizce çalmak olurdu.
+
+    Aday havuzundan `pop` edilir: aynı çağrıda iki çift aynı bağsız satırı
+    sahiplenemez (kodlar `(project_id, code)` benzersiz olduğu için pratikte
+    doğmaz, yine de plan üretimi kendi içinde tutarlı kalır).
+    """
+    relinkable = {
+        (row.site_id, row.code): row for row in site_boq_items if row.contract_item_id is None
+    }
+    taken_codes = {(row.site_id, row.code) for row in site_boq_items}
+    plan: dict[_AllocKey, BoqItem] = {}
     for alloc in allocations:
         if alloc.quantity is None:
             continue
@@ -252,8 +278,15 @@ def _assert_codes_free(
         if key in existing_by_key:
             continue  # güncelleme — yeni satır açılmıyor, kod zaten kendisinin
         item = items_by_id[alloc.contract_item_id]
-        if (alloc.site_id, item.code) in taken_codes:
+        code_key = (alloc.site_id, item.code)
+        relink_target = relinkable.pop(code_key, None)
+        if relink_target is not None:
+            plan[key] = relink_target
+            continue
+        if code_key in taken_codes:
             raise DuplicateError(BOQ_CODE_TAKEN_IN_SITE)
+        taken_codes.add(code_key)
+    return plan
 
 
 def _resolve_boq_group(
@@ -291,6 +324,7 @@ def _apply_allocations(
     items_by_id: dict[uuid.UUID, EmployerContractItem],
     group_by_item: dict[uuid.UUID, EmployerContractGroup],
     existing_by_key: dict[_AllocKey, BoqItem],
+    relink_plan: dict[_AllocKey, BoqItem],
     group_cache: dict[tuple[uuid.UUID, str], BoqGroup],
 ) -> None:
     """Spec §6.3 madde 1-3. Buraya gelindiğinde doğrulama BİTMİŞTİR."""
@@ -309,8 +343,22 @@ def _apply_allocations(
             row.quantity = alloc.quantity  # Madde 3: YALNIZ miktar
             continue
 
-        # Madde 2: yeni satır — tanımlayıcı alanlar sözleşme kaleminden kopyalanır.
         item = items_by_id[alloc.contract_item_id]
+
+        relink_target = relink_plan.get(key)
+        if relink_target is not None:
+            # Madde 2'nin ikinci hâli: satır zaten var ama BAĞSIZ — yeniden
+            # bağlanır. Grup DEĞİŞTİRİLMEZ (satır şantiyenin BOQ'sunda yerini
+            # korur); tanımlayıcı alanlar sözleşmeden TAZELENİR, çünkü artık
+            # otorite sözleşme kalemidir.
+            relink_target.contract_item_id = item.id
+            relink_target.description = item.description
+            relink_target.unit = item.unit
+            relink_target.unit_price = item.unit_price
+            relink_target.quantity = alloc.quantity
+            continue
+
+        # Madde 2: yeni satır — tanımlayıcı alanlar sözleşme kaleminden kopyalanır.
         group = _resolve_boq_group(session, group_cache, alloc.site_id, group_by_item[item.id])
         session.add(
             BoqItem(
@@ -331,6 +379,18 @@ async def save_distribution(
     session: AsyncSession, actor: User, project_id: uuid.UUID, data: ContractDistributionSave
 ) -> ContractDistributionResponse:
     """`PUT /projects/{id}/contract/distribution` — ekranın tamamı tek atomik yazma.
+
+    ## Semantik: BİRLEŞTİRME, tam-değiştirme DEĞİL (kullanıcı kararı)
+
+    Gövde ekranın tamamıdır ama **gövdede geçmeyen (kalem, şantiye) hücresi
+    KORUNUR** — dokunulmamış sayılır, silinmez. Bir hücreyi SİLMEK için o çift
+    açıkça `quantity: null` ile gönderilmelidir (spec §6.3 madde 1).
+
+    Frontend için kritik: kullanıcının boşalttığı hücreyi göndermemek "sil"
+    ANLAMINA GELMEZ; boş hücre `quantity: null` olarak gönderilmelidir, aksi
+    hâlde kullanıcı kotayı sildiğini sanırken bağ yerinde durur. Aşım hesabı da
+    bu semantiği izler: gövdede yer almayan mevcut kotalar toplama dahildir
+    (`_assert_within_contract_quantity`).
 
     Yanıt `build_distribution` ile üretilir: ekran kaydettikten sonra ikinci bir
     GET atmadan güncel matrisi alır (kalan/uyarı/şantiye özeti dahil).
@@ -354,16 +414,26 @@ async def save_distribution(
         for row in site_boq_items
         if row.contract_item_id is not None
     }
-    taken_codes = {(row.site_id, row.code) for row in site_boq_items}
-
     _assert_within_contract_quantity(data.allocations, items_by_id, existing_by_key, body_keys)
-    _assert_codes_free(data.allocations, items_by_id, existing_by_key, taken_codes)
+    relink_plan = _plan_new_rows(data.allocations, items_by_id, existing_by_key, site_boq_items)
 
     # --- 2. YAZMA (buradan sonra doğrulama YOK) ---
     boq_groups = await repository.list_boq_groups_for_sites(session, [s.id for s in sites])
-    group_cache = {(group.site_id, group.name): group for group in boq_groups}
+    # `BoqGroup`'ta `(site_id, name)` benzersiz DEĞİL — aynı adlı iki grup
+    # varsa EN ESKİSİ seçilir (`setdefault` + repository'nin `created_at, id`
+    # sıralaması): seçim nondeterministik kalırsa aynı istek farklı gruplara
+    # yazabilirdi.
+    group_cache: dict[tuple[uuid.UUID, str], BoqGroup] = {}
+    for group in boq_groups:
+        group_cache.setdefault((group.site_id, group.name), group)
     _apply_allocations(
-        session, data.allocations, items_by_id, group_by_item, existing_by_key, group_cache
+        session,
+        data.allocations,
+        items_by_id,
+        group_by_item,
+        existing_by_key,
+        relink_plan,
+        group_cache,
     )
     await session.flush()
 

@@ -102,14 +102,26 @@ async def _dagitim_kurulumu(seeded_db, project_factory):
     boq_group_a = await _boq_group(seeded_db, site_a.id, "A — Demir İşleri")
     boq_group_b = await _boq_group(seeded_db, site_b.id, "A — Demir İşleri")
     await _boq_item(
-        seeded_db, site_a.id, boq_group_a.id, distributed_item.id,
-        code="04.001", description="Demir donatı", unit="Ton",
-        quantity=Decimal("120"), unit_price=Decimal("21500"),
+        seeded_db,
+        site_a.id,
+        boq_group_a.id,
+        distributed_item.id,
+        code="04.001",
+        description="Demir donatı",
+        unit="Ton",
+        quantity=Decimal("120"),
+        unit_price=Decimal("21500"),
     )
     await _boq_item(
-        seeded_db, site_b.id, boq_group_b.id, distributed_item.id,
-        code="04.001", description="Demir donatı", unit="Ton",
-        quantity=Decimal("80"), unit_price=Decimal("21500"),
+        seeded_db,
+        site_b.id,
+        boq_group_b.id,
+        distributed_item.id,
+        code="04.001",
+        description="Demir donatı",
+        unit="Ton",
+        quantity=Decimal("80"),
+        unit_price=Decimal("21500"),
     )
 
     return {
@@ -209,9 +221,15 @@ async def test_contract_item_id_null_boq_satiri_gorunmez(
     site_a_id = _dagitim_kurulumu["site_a_id"]
     grup = await _boq_group(seeded_db, site_a_id, "Şantiye Kendi Pozları")
     await _boq_item(
-        seeded_db, site_a_id, grup.id, None,
-        code="99.001", description="Sahaya özgü poz", unit="Adet",
-        quantity=Decimal("5"), unit_price=Decimal("100"),
+        seeded_db,
+        site_a_id,
+        grup.id,
+        None,
+        code="99.001",
+        description="Sahaya özgü poz",
+        unit="Adet",
+        quantity=Decimal("5"),
+        unit_price=Decimal("100"),
     )
 
     yanit = await client.get(

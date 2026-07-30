@@ -368,6 +368,198 @@ async def test_baska_projenin_kalemi_404(
 
 
 @pytest.mark.asyncio
+async def test_kaldirilan_kotaya_yeniden_kota_verilebilir(
+    client, admin_headers, dagitimli_proje, santiye, sozlesme_kalemi
+):
+    """Düzeltme turu 1 / Important 1: `null` ile koparılan bağ GERİ kurulabilir.
+
+    Bağı koparılan satır şantiyede kodu (`04.001`) tutmaya devam eder; yeniden
+    kota verilince "kod dolu" diye 409 atılmamalı, o satır YENİDEN BAĞLANMALI.
+    """
+    kaldir = await client.put(
+        f"/projects/{dagitimli_proje}/contract/distribution",
+        json={
+            "allocations": [
+                {
+                    "contract_item_id": str(sozlesme_kalemi),
+                    "site_id": str(santiye),
+                    "quantity": None,
+                }
+            ]
+        },
+        headers=admin_headers,
+    )
+    assert kaldir.status_code == 200, kaldir.text
+
+    geri_ver = await client.put(
+        f"/projects/{dagitimli_proje}/contract/distribution",
+        json={
+            "allocations": [
+                {
+                    "contract_item_id": str(sozlesme_kalemi),
+                    "site_id": str(santiye),
+                    "quantity": 90,
+                }
+            ]
+        },
+        headers=admin_headers,
+    )
+    assert geri_ver.status_code == 200, geri_ver.text
+
+    boq = (await client.get(f"/sites/{santiye}/boq", headers=admin_headers)).json()
+    assert len(boq["groups"]) == 1
+    assert len(boq["groups"][0]["items"]) == 1  # satır ÇOĞALMADI, yeniden bağlandı
+    assert Decimal(boq["groups"][0]["items"][0]["quantity"]) == Decimal("90")
+
+    kalem = next(
+        k for g in geri_ver.json()["groups"] for k in g["items"] if k["id"] == str(sozlesme_kalemi)
+    )
+    assert [a["site_id"] for a in kalem["allocations"]] == [str(santiye)]  # bağ GERİ kuruldu
+    assert Decimal(kalem["remaining_quantity"]) == Decimal("110")
+
+
+@pytest.mark.asyncio
+async def test_santiyenin_kendi_girdigi_ayni_kodlu_poz_sahiplenilir(
+    client, admin_headers, sozlesmeli_proje, santiye, sozlesme_kalemi, seeded_db
+):
+    """Spec §3.3: `contract_item_id IS NULL` satır meşrudur — aynı poz numarası
+    şantiyede zaten varsa ikinci satır AÇILMAZ, mevcut satır sahiplenilir."""
+    grup = BoqGroup(site_id=santiye, name="Şantiye Kendi Pozları")
+    seeded_db.add(grup)
+    await seeded_db.flush()
+    seeded_db.add(
+        BoqItem(
+            site_id=santiye,
+            group_id=grup.id,
+            contract_item_id=None,
+            code="04.001",
+            description="Sahada girilen demir",
+            unit="Ton",
+            quantity=Decimal("5"),
+            unit_price=Decimal("1"),
+        )
+    )
+    await seeded_db.flush()
+
+    yanit = await client.put(
+        f"/projects/{sozlesmeli_proje}/contract/distribution",
+        json={
+            "allocations": [
+                {
+                    "contract_item_id": str(sozlesme_kalemi),
+                    "site_id": str(santiye),
+                    "quantity": 30,
+                }
+            ]
+        },
+        headers=admin_headers,
+    )
+    assert yanit.status_code == 200, yanit.text
+
+    boq = (await client.get(f"/sites/{santiye}/boq", headers=admin_headers)).json()
+    tum_kalemler = [k for g in boq["groups"] for k in g["items"]]
+    assert len(tum_kalemler) == 1  # yeni satır AÇILMADI
+    assert Decimal(tum_kalemler[0]["quantity"]) == Decimal("30")
+    # tanımlayıcı alanlar sözleşmeden TAZELENDİ
+    assert tum_kalemler[0]["description"] == "Demir donatı"
+    assert Decimal(tum_kalemler[0]["unit_price"]) == Decimal("21500")
+
+
+@pytest.mark.asyncio
+async def test_kodu_baska_kaleme_bagli_satir_409(
+    client, admin_headers, sozlesmeli_proje, santiye, sozlesme_kalemi, _kurulum, seeded_db
+):
+    """`BOQ_CODE_TAKEN_IN_SITE`'ın kalan GERÇEK çakışması: kodu tutan satır BAŞKA
+    bir sözleşme kalemine bağlı (BOQ ekranından `code` düzenlenmiş olabilir) —
+    sahiplenmek o bağı sessizce çalmak olurdu."""
+    baska_kalem = await _employer_item(
+        seeded_db,
+        _kurulum["project_id"],
+        _kurulum["group_id"],
+        code="09.014",
+        description="İnce Sıva",
+        unit="m²",
+        quantity=Decimal("500"),
+        unit_price=Decimal("180"),
+        sort_order=9,
+    )
+    grup = BoqGroup(site_id=santiye, name=GRUP_ADI)
+    seeded_db.add(grup)
+    await seeded_db.flush()
+    seeded_db.add(
+        BoqItem(
+            site_id=santiye,
+            group_id=grup.id,
+            contract_item_id=baska_kalem.id,  # BAĞLI — ama kodu 04.001'e çekilmiş
+            code="04.001",
+            description="İnce Sıva",
+            unit="m²",
+            quantity=Decimal("10"),
+            unit_price=Decimal("180"),
+        )
+    )
+    await seeded_db.flush()
+
+    yanit = await client.put(
+        f"/projects/{sozlesmeli_proje}/contract/distribution",
+        json={
+            "allocations": [
+                {
+                    "contract_item_id": str(sozlesme_kalemi),  # kodu 04.001
+                    "site_id": str(santiye),
+                    "quantity": 10,
+                }
+            ]
+        },
+        headers=admin_headers,
+    )
+    assert yanit.status_code == 409, yanit.text
+    assert yanit.json()["detail"] == "Bu poz numarası hedef şantiyede zaten kullanılıyor"
+
+
+@pytest.mark.asyncio
+async def test_govdede_gecmeyen_hucre_korunur(
+    client, admin_headers, dagitimli_proje, santiye, santiye2, sozlesme_kalemi
+):
+    """Düzeltme turu 1 / Important 2: semantik BİRLEŞTİRME, tam-değiştirme DEĞİL.
+
+    Silmek için hücre açıkça `quantity: null` gönderilmelidir; gövdede hiç
+    geçmeyen hücre DOKUNULMAMIŞ sayılır.
+    """
+    # A'da 120 var (fixture); B'ye de 50 verelim → iki hücreli dağılım.
+    ilk = await client.put(
+        f"/projects/{dagitimli_proje}/contract/distribution",
+        json={
+            "allocations": [
+                {"contract_item_id": str(sozlesme_kalemi), "site_id": str(santiye2), "quantity": 50}
+            ]
+        },
+        headers=admin_headers,
+    )
+    assert ilk.status_code == 200, ilk.text
+
+    # Yalnız B'yi gönder — A gövdede YOK.
+    ikinci = await client.put(
+        f"/projects/{dagitimli_proje}/contract/distribution",
+        json={
+            "allocations": [
+                {"contract_item_id": str(sozlesme_kalemi), "site_id": str(santiye2), "quantity": 60}
+            ]
+        },
+        headers=admin_headers,
+    )
+    assert ikinci.status_code == 200, ikinci.text
+
+    kalem = next(
+        k for g in ikinci.json()["groups"] for k in g["items"] if k["id"] == str(sozlesme_kalemi)
+    )
+    kotalar = {a["site_id"]: Decimal(a["quantity"]) for a in kalem["allocations"]}
+    assert kotalar[str(santiye)] == Decimal("120")  # KORUNDU
+    assert kotalar[str(santiye2)] == Decimal("60")
+    assert Decimal(kalem["remaining_quantity"]) == Decimal("20")  # 200 − (120 + 60)
+
+
+@pytest.mark.asyncio
 async def test_yetkisiz_rol_403(client, site_chief_headers, sozlesmeli_proje):
     yanit = await client.put(
         f"/projects/{sozlesmeli_proje}/contract/distribution",

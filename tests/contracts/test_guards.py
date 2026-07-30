@@ -96,7 +96,14 @@ def test_yayinda_kalemler_bossa_fiyat_kurali_kosmaz():
 
 def test_taslakta_zorunluluk_kurallari_kosmaz_ama_tutarlilik_kosar():
     guards.validate_subcontract(
-        _Sozlesme(project_id=None, subcontractor_id=None, work_category="", contract_no=None,
-                  signature_date=None, start_date=None, end_date=None),
+        _Sozlesme(
+            project_id=None,
+            subcontractor_id=None,
+            work_category="",
+            contract_no=None,
+            signature_date=None,
+            start_date=None,
+            end_date=None,
+        ),
         is_draft=True,
     )

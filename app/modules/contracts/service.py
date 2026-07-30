@@ -81,11 +81,7 @@ def _subcontractor_amount(contract: SubcontractorContract) -> Decimal:
     (task brief kararı). Kalemler zaten `lazy="selectin"` ile yüklü, ek sorgu YOK.
     """
     total = sum(
-        (
-            item.quantity * item.unit_price
-            for item in contract.items
-            if item.unit_price is not None
-        ),
+        (item.quantity * item.unit_price for item in contract.items if item.unit_price is not None),
         Decimal("0"),
     )
     return _quantize_money(total)

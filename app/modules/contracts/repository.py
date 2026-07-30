@@ -176,10 +176,19 @@ async def list_boq_items_for_sites(
 async def list_boq_groups_for_sites(
     session: AsyncSession, site_ids: list[uuid.UUID]
 ) -> list[BoqGroup]:
-    """Verilen şantiyelerin BOQ grupları TEK sorguda (task C8 grup önbelleği)."""
+    """Verilen şantiyelerin BOQ grupları TEK sorguda (task C8 grup önbelleği).
+
+    Sıralama DETERMİNİSTİK olmak ZORUNDA: `BoqGroup`'ta `(site_id, name)`
+    benzersizliği yok, aynı adlı iki grup varsa önbelleğin hangisini seçtiği
+    sıralamaya bağlıdır. `created_at, id` → her zaman EN ESKİ grup.
+    """
     if not site_ids:
         return []
-    stmt = select(BoqGroup).where(BoqGroup.site_id.in_(site_ids))
+    stmt = (
+        select(BoqGroup)
+        .where(BoqGroup.site_id.in_(site_ids))
+        .order_by(BoqGroup.created_at, BoqGroup.id)
+    )
     result = await session.execute(stmt)
     return list(result.scalars().all())
 
