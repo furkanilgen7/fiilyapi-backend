@@ -19,7 +19,7 @@ from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
-from app.modules.contracts import distribution, service, subcontractors
+from app.modules.contracts import distribution, service, subcontractors, subcontracts
 from app.modules.contracts.models import ContractStatus
 from app.modules.contracts.schemas import (
     ContractDistributionResponse,
@@ -34,6 +34,9 @@ from app.modules.contracts.schemas import (
     EmployerContractItemResponse,
     EmployerContractItemsResponse,
     EmployerContractItemUpdate,
+    SubcontractorContractCreate,
+    SubcontractorContractDetail,
+    SubcontractorContractUpdate,
     SubcontractorCreate,
     SubcontractorListResponse,
     SubcontractorResponse,
@@ -338,3 +341,91 @@ async def update_subcontractor_endpoint(
         ip_address=client_ip(request),
     )
     return SubcontractorResponse.model_validate(subcontractor)
+
+
+# --- Taşeron sözleşmesi POST/GET/PATCH (task C10, spec §6.5) ---
+#
+# DELETE, kalem uçları ve `load-from-employer` bu task'ta AÇILMAZ — C11/C12'nin
+# işi. `_subcontractor_contract_created`/`_updated`: C6/C9'un aynı geçici-
+# yardımcı gerekçesi — C13, spec §8'de merkezileştirecek.
+
+
+def _subcontract_label(contract_no: str | None, subcontractor_name: str | None) -> str:
+    return contract_no or subcontractor_name or "taslak"
+
+
+def _subcontractor_contract_created(project_name: str, label: str) -> str:
+    return f"Taşeron sözleşmesi oluşturuldu: {project_name} · {label}"
+
+
+def _subcontractor_contract_updated(project_name: str, label: str) -> str:
+    return f"Taşeron sözleşmesi güncellendi: {project_name} · {label}"
+
+
+@router.post(
+    "/projects/{project_id}/subcontractor-contracts",
+    response_model=SubcontractorContractDetail,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[_FULL],
+)
+async def create_subcontractor_contract_endpoint(
+    request: Request,
+    project_id: uuid.UUID,
+    data: SubcontractorContractCreate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> SubcontractorContractDetail:
+    contract, project = await subcontracts.create_subcontractor_contract(
+        session, user, project_id, data
+    )
+    await record_audit(
+        session,
+        action=AuditAction.create,
+        detail=_subcontractor_contract_created(
+            project.name, _subcontract_label(contract.contract_no, contract.subcontractor_name)
+        ),
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return await subcontracts.to_subcontract_detail(session, contract)
+
+
+@router.get(
+    "/subcontractor-contracts/{contract_id}",
+    response_model=SubcontractorContractDetail,
+    dependencies=[_VIEW],
+)
+async def get_subcontractor_contract_endpoint(
+    contract_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> SubcontractorContractDetail:
+    contract = await subcontracts.get_subcontractor_contract(session, user, contract_id)
+    return await subcontracts.to_subcontract_detail(session, contract)
+
+
+@router.patch(
+    "/subcontractor-contracts/{contract_id}",
+    response_model=SubcontractorContractDetail,
+    dependencies=[_FULL],
+)
+async def update_subcontractor_contract_endpoint(
+    request: Request,
+    contract_id: uuid.UUID,
+    data: SubcontractorContractUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> SubcontractorContractDetail:
+    contract, project = await subcontracts.update_subcontractor_contract(
+        session, user, contract_id, data
+    )
+    await record_audit(
+        session,
+        action=AuditAction.update,
+        detail=_subcontractor_contract_updated(
+            project.name, _subcontract_label(contract.contract_no, contract.subcontractor_name)
+        ),
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return await subcontracts.to_subcontract_detail(session, contract)

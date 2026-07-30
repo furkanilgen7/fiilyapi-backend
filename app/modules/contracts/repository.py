@@ -252,3 +252,48 @@ async def add_subcontractor(session: AsyncSession, subcontractor: Subcontractor)
     await session.flush()
     await session.refresh(subcontractor)
     return subcontractor
+
+
+# --- Taşeron sözleşmesi (task C10, spec §3.5/§6.5) ---
+
+
+async def get_subcontractor_contract(
+    session: AsyncSession, contract_id: uuid.UUID
+) -> SubcontractorContract | None:
+    return await session.get(SubcontractorContract, contract_id)
+
+
+async def get_subcontractor_contract_by_contract_no(
+    session: AsyncSession,
+    contract_no: str,
+    exclude_id: uuid.UUID | None = None,
+) -> SubcontractorContract | None:
+    """`contract_no` çakışmasını `IntegrityError`'a düşmeden ÖNCE yakalar
+
+    (`get_employer_item_by_code` deseninin aynısı) — global kısmi benzersiz
+    indeks (spec §3.5), NULL değerler serbestçe çoğalabilir.
+    """
+    stmt = select(SubcontractorContract).where(SubcontractorContract.contract_no == contract_no)
+    if exclude_id is not None:
+        stmt = stmt.where(SubcontractorContract.id != exclude_id)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def get_employer_item_groups(
+    session: AsyncSession, item_ids: list[uuid.UUID]
+) -> list[tuple[uuid.UUID, uuid.UUID, str]]:
+    """`(employer_item_id, group_id, group_name)` üçlüleri — taşeron kalemi
+
+    grubu `source_contract_item_id` üzerinden TÜRER (spec §3.6), ayrı grup
+    tablosu yoktur.
+    """
+    if not item_ids:
+        return []
+    stmt = (
+        select(EmployerContractItem.id, EmployerContractGroup.id, EmployerContractGroup.name)
+        .join(EmployerContractGroup, EmployerContractItem.group_id == EmployerContractGroup.id)
+        .where(EmployerContractItem.id.in_(item_ids))
+    )
+    result = await session.execute(stmt)
+    return [(row[0], row[1], row[2]) for row in result.all()]
