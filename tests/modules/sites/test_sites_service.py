@@ -302,8 +302,10 @@ async def test_missing_ids_raise_not_found(seeded_db, user_factory):
 # --- yazma ---
 
 
-async def test_create_site_derives_code_from_name(seeded_db, user_factory, project_factory):
-    """Spec §8 acik soru 2, oneri: kod verilmezse ad'dan turetilir."""
+async def test_create_site_generates_code_when_omitted(seeded_db, user_factory, project_factory):
+    """Kod verilmezse SNT-{YYYY}-{NNN} uretilir (spec §3.2; ad-turevi uretici kaldirildi)."""
+    from app.core.timezone import today
+
     project = await project_factory("S-19")
     user = await _patron(seeded_db, user_factory, "s19@t.co")
 
@@ -311,7 +313,7 @@ async def test_create_site_derives_code_from_name(seeded_db, user_factory, proje
         seeded_db, user, project.id, SiteCreate(name="A-Blok Şantiyesi")
     )
 
-    assert site.code == "A-BLOK"
+    assert site.code == f"SNT-{today().year}-001"
     assert site.status is SiteStatus.active
 
 

@@ -1,6 +1,3 @@
-import itertools
-import re
-import unicodedata
 import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,29 +40,8 @@ _PROJECT_COSTS = "project_costs"
 _CONTRACTS = "contracts"
 _BOQ = "boq"
 
-_CODE_MAX_LENGTH = 50
-
-# Ad sonundaki genel santiye sonekleri — UZUN OLAN ONCE denenir.
-# "Şantiyesi"/"Santiyesi" ve "Şantiye"/"Santiye" normalize edilince ikiye iner.
-_SITE_SUFFIXES = ("SANTIYESI", "SANTIYE")
-
-# Turkce harfler NFKD ile ASCII'ye duzgun inmez (ı, ş, ğ) — once elle eslenir.
-_TURKISH_FOLD = str.maketrans(
-    {
-        "ı": "i",
-        "İ": "I",
-        "ş": "s",
-        "Ş": "S",
-        "ğ": "g",
-        "Ğ": "G",
-        "ç": "c",
-        "Ç": "C",
-        "ö": "o",
-        "Ö": "O",
-        "ü": "u",
-        "Ü": "U",
-    }
-)
+# Santiye kodu oneki (spec §3.2, mockup satir 67 yer tutucusu `SNT-2026-003`).
+_SITE_CODE_PREFIX = "SNT"
 
 
 def _metric(pending_module: str) -> MetricPlaceholder:
@@ -76,62 +52,30 @@ def _count(pending_module: str) -> CountPlaceholder:
     return CountPlaceholder(pending_module=pending_module)
 
 
-def _normalize(text: str) -> str:
-    """Turkce metni ASCII buyuk harfe indirir (ş->S, ı->I, ğ->G, ü->U, ö->O, ç->C)."""
-    folded = unicodedata.normalize("NFKD", text.translate(_TURKISH_FOLD))
-    return folded.encode("ascii", "ignore").decode("ascii").upper()
+async def _next_site_code(session: AsyncSession) -> str:
+    """SNT-{YYYY}-{NNN} uretir (spec §3.2): o yilin en buyuk sirasi + 1, 3 hane, 1'den.
 
+    `projects.service._next_project_code` deseninin birebiri:
 
-def _slug(normalized: str) -> str:
-    return re.sub(r"[^A-Z0-9]+", "-", normalized).strip("-")
+    * **Sayimla DEGIL maksimum+1** — silinen kod yeniden kullanilmaz.
+    * **Kapsam SIRKET GENELI**: sorgu `project_id` suzgeci TASIMAZ. Iki farkli
+      projede ayni `SNT-2026-003` kullaniciyi yaniltir; kod evrakta kurumsal
+      kimlik gibi okunur.
+    * Sayisal soneki ayristirilamayan kodlar (canlidaki ad-turevi `A-BLOK`,
+      `MERKEZ`) sessizce ATLANIR — hata uretmez, sayaci kaydirmaz. Bu kodlara
+      hicbir `UPDATE` yazilmaz, yerlerinde kalirlar.
 
-
-def _strip_site_suffix(normalized: str) -> str:
-    """Ad'in SONUNDAKI genel santiye sonekini atar.
-
-    "A-Blok Santiyesi" gibi adlarda sonek koda bilgi katmaz; spec ornegi
-    "A-Blok Şantiyesi" icin A-BLOK verir. Uzun sonek once denenir, yoksa
-    "Santiyesi" -> "Santiye" eslesip geriye "SI" artigi kalir. Sonek yalnizca
-    TAM KELIME olarak atilir: "Buyuksantiye" kirpilmaz.
+    Yaris durumunda `uq_sites_project_code` ihlali mevcut IntegrityError -> 409
+    isleyicisine dusar; otomatik yeniden deneme YAPILMAZ (spec §8.3).
     """
-    for suffix in _SITE_SUFFIXES:
-        if not normalized.endswith(suffix):
-            continue
-        head = normalized[: -len(suffix)]
-        if not head:
-            return ""
-        if not head[-1].isalnum():  # kelime siniri — ortadan kirpma yok
-            return head
-    return normalized
-
-
-def derive_code(name: str) -> str:
-    """Santiye adindan kod turetir (spec §8 acik soru 2, oneri uygulandi).
-
-    Kod ZORUNLUDUR ama kullanicidan istenmez; turetilen kod kullanici
-    tarafindan PATCH ile duzeltilebilir. Sonek atilinca geriye bir sey
-    kalmiyorsa ("Şantiye") ham ad slug'lanir.
-    """
-    normalized = _normalize(name)
-    slug = _slug(_strip_site_suffix(normalized)) or _slug(normalized)
-    return slug[:_CODE_MAX_LENGTH] or "SANTIYE"
-
-
-async def _unique_code(session: AsyncSession, project_id: uuid.UUID, base: str) -> str:
-    """Turetilen kodu proje icinde benzersiz kilar: A-BLOK, A-BLOK-2, A-BLOK-3...
-
-    YALNIZCA turetilen koda uygulanir. Kullanici acikca cakisan bir kod verdiyse
-    sessizce degistirilmez — uq_sites_project_code ihlali 409'a cevrilir.
-    """
-    taken = {site.code for site in await repository.list_sites_for_project(session, project_id)}
-    if base not in taken:
-        return base
-    for counter in itertools.count(2):
-        suffix = f"-{counter}"
-        candidate = base[: _CODE_MAX_LENGTH - len(suffix)] + suffix
-        if candidate not in taken:
-            return candidate
-    raise AssertionError("ulasilamaz")  # pragma: no cover
+    prefix = f"{_SITE_CODE_PREFIX}-{today().year}-"
+    codes = await repository.list_codes_with_prefix(session, prefix)
+    max_seq = 0
+    for code in codes:
+        suffix = code[len(prefix) :]
+        if suffix.isdigit():
+            max_seq = max(max_seq, int(suffix))
+    return f"{prefix}{max_seq + 1:03d}"
 
 
 def _remaining_days(site: Site) -> int | None:
@@ -327,7 +271,7 @@ async def create_site(
     await _visible_project(session, actor, project_id)
     site = Site(
         project_id=project_id,
-        code=data.code or await _unique_code(session, project_id, derive_code(data.name)),
+        code=data.code or await _next_site_code(session),
         name=data.name,
         status=data.status,
         address=data.address,

@@ -75,8 +75,8 @@ class Site(Base):
         nullable=False,
         index=True,
     )
-    # spec §8 acik soru 2 — oneri uygulandi: kod ZORUNLU, verilmezse ad'dan
-    # turetilir (service._derive_code) ve kullanici duzeltebilir.
+    # Kod ZORUNLU, verilmezse SNT-{YYYY}-{NNN} uretilir
+    # (service._next_site_code, spec §3.2) ve kullanici PATCH ile duzeltebilir.
     code: Mapped[str] = mapped_column(String(50), nullable=False)
     name: Mapped[str] = mapped_column(String(150), nullable=False)
     status: Mapped[SiteStatus] = mapped_column(

@@ -19,6 +19,18 @@ async def list_sites_for_project(session: AsyncSession, project_id: uuid.UUID) -
     return list(result.scalars().all())
 
 
+async def list_codes_with_prefix(session: AsyncSession, prefix: str) -> list[str]:
+    """Verilen onekle baslayan TUM santiye kodlari (otomatik kod uretimi, spec §3.2).
+
+    KAPSAM SUZGECI YOKTUR: `project_id` bilincli olarak sorulmaz. `PRJ-` emsalinin
+    (`projects/repository.list_codes_with_prefix`) birebiri — santiye kodu evrakta
+    (irsaliye, puantaj, hakedis) kurumsal kimlik gibi kullanildigi icin sayac
+    sirket genelidir. Kisit ise proje ici tekil kalir (`uq_sites_project_code`).
+    """
+    stmt = select(Site.code).where(Site.code.like(f"{prefix}%"))
+    return list((await session.execute(stmt)).scalars().all())
+
+
 async def get_site(session: AsyncSession, site_id: uuid.UUID) -> Site | None:
     """Santiye + bolumleri + bagli proje (iliskiler lazy="selectin")."""
     return await session.get(Site, site_id)

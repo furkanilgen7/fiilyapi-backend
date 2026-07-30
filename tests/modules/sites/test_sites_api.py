@@ -4,6 +4,7 @@ import uuid
 
 from sqlalchemy import select
 
+from app.core.timezone import today
 from app.modules.audit.models import AuditAction, AuditLog
 from app.modules.sites.models import Section, Site
 from app.modules.users.models import UserProjectAccess
@@ -140,7 +141,8 @@ async def test_create_site_and_audit(client, db_session, user_factory, project_f
 
     assert resp.status_code == 201
     body = resp.json()
-    assert body["code"] == "A-BLOK"
+    # Kod SNT-{YYYY}-{NNN} ureticisinden gelir (spec §3.2), addan TURETILMEZ.
+    assert body["code"] == f"SNT-{today().year}-001"
     assert body["status"] == "active"
     assert body["section_count"] == 0
     assert body["sections"] == []

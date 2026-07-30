@@ -392,18 +392,18 @@ async def _write_inline_sites(
 ) -> None:
     """Satır içi şantiyeleri aynı transaction'da yazar (spec §3.4, §7.7).
 
-    Kod türetmesi P2'nin `sites.service`'inden YENİDEN KULLANILIR (kopya mantık yok).
+    Kod üretimi P2'nin `sites.service`'inden YENİDEN KULLANILIR (kopya mantık yok):
+    tek üretici `_next_site_code` → `SNT-{YYYY}-{NNN}` (spec §3.2). Ad-türevi eski
+    üretici kaldırıldığı için burada da iki farklı kod deseni yan yana yaşamaz.
     Kod çakışması `uq_sites_project_code` → 409 (IntegrityError) ve proje de yazılmaz
     (tek transaction). Ayrıca `sites` izni ARANMAZ: proje oluşturmanın parçasıdır.
     """
     # Yerel import: sites.service, projects.service'i (visible_projects) import
     # ettiği için modül düzeyinde çember olurdu.
-    from app.modules.sites.service import _unique_code, derive_code
+    from app.modules.sites.service import _next_site_code
 
     for site_input in sites_input:
-        code = site_input.code or await _unique_code(
-            session, project.id, derive_code(site_input.name)
-        )
+        code = site_input.code or await _next_site_code(session)
         session.add(
             Site(
                 project_id=project.id,
@@ -413,7 +413,7 @@ async def _write_inline_sites(
                 construction_area_m2=site_input.construction_area_m2,
             )
         )
-        # Sonraki şantiyenin _unique_code'u bu satırı görebilsin diye hemen flush.
+        # Sonraki şantiyenin _next_site_code'u bu satırı görebilsin diye hemen flush.
         await session.flush()
 
 

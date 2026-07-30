@@ -20,7 +20,7 @@ from app.modules.boq.schemas import (
 
 # Gorunurluk suzgeci P2'DEN GELIR (plan T3 notu): site->proje cozumu kopyalanmaz,
 # `sites.service._visible_site` yeniden kullanilir. Ayni desen zaten
-# `projects.service`'in `sites.service._unique_code`/`derive_code`'u yeniden
+# `projects.service`'in `sites.service._next_site_code`'u yeniden
 # kullanmasinda var (bkz. app/modules/projects/service.py).
 from app.modules.sites.models import Site
 from app.modules.sites.service import _visible_site
