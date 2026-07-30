@@ -16,8 +16,11 @@ from app.modules.units.schemas import (
     BlockListResponse,
     BlockResponse,
     BlockUpdate,
+    UnitCreate,
     UnitListResponse,
     UnitOwnerSideFilter,
+    UnitResponse,
+    UnitUpdate,
 )
 from app.modules.users.models import User
 
@@ -99,3 +102,33 @@ async def update_block_endpoint(
     gorunmeyen projenin blogu 404 doner, 403 DEGIL."""
     block = await service.update_block(session, user, block_id, data)
     return await service.block_response(session, block)
+
+
+@router.post(
+    "/projects/{project_id}/units",
+    response_model=UnitResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[_FULL],
+)
+async def create_unit_endpoint(
+    project_id: uuid.UUID,
+    data: UnitCreate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> UnitResponse:
+    """Spec §7.5. Govdedeki `block_id` bu projeye ait olmali (IDOR-9), aksi hâlde 404."""
+    unit = await service.create_unit(session, user, project_id, data)
+    return await service.unit_response(session, unit)
+
+
+@router.patch("/units/{unit_id}", response_model=UnitResponse, dependencies=[_FULL])
+async def update_unit_endpoint(
+    unit_id: uuid.UUID,
+    data: UnitUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> UnitResponse:
+    """Spec §7.6. Kimlik YUKARI cozumlenir (unite → proje → gorunurluk);
+    `block_id` ile ayni proje icinde tasima serbesttir."""
+    unit = await service.update_unit(session, user, unit_id, data)
+    return await service.unit_response(session, unit)

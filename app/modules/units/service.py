@@ -3,7 +3,12 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import DuplicateError, NotFoundError, UnitValidationError
+from app.core.errors import (
+    DuplicateError,
+    NotFoundError,
+    ProjectTypeMismatchError,
+    UnitValidationError,
+)
 from app.modules.projects.models import Project, ProjectType
 
 # Gorunurluk suzgeci P1'DEN GELIR (spec §8): kopya bir erisim mantigi YAZILMAZ.
@@ -22,12 +27,14 @@ from app.modules.units.schemas import (
     CountPlaceholder,
     MetricPlaceholder,
     UnitBlockGroup,
+    UnitCreate,
     UnitKindBreakdown,
     UnitListResponse,
     UnitOwnerSideFilter,
     UnitResponse,
     UnitSideSummary,
     UnitTotals,
+    UnitUpdate,
     UnitValueBasis,
 )
 from app.modules.users.models import User
@@ -397,3 +404,138 @@ async def update_block(
     await session.flush()
     await session.refresh(block)
     return block
+
+
+# --- Unite yazma uclari (spec §7.5, §7.6, §3.3) ---
+
+
+async def _visible_unit(
+    session: AsyncSession, actor: User, unit_id: uuid.UUID
+) -> tuple[Unit, Project]:
+    """Unite → proje → gorunurluk (spec §7.6). `_visible_block` ile ayni gerekce:
+
+    gorunmeyen projenin unitesi 404 doner, 403 DEGIL, ve var olmayan unite ile
+    AYNI mesaji verir (IDOR-4/IDOR-7).
+    """
+    unit = await repository.get_unit(session, unit_id)
+    if unit is None:
+        raise NotFoundError(_UNIT_MISSING)
+    project = await _visible_project(session, actor, unit.project_id, _UNIT_MISSING)
+    return unit, project
+
+
+async def _ensure_unit_no_unique(
+    session: AsyncSession,
+    block_id: uuid.UUID,
+    unit_no: str,
+    exclude_unit_id: uuid.UUID | None = None,
+) -> None:
+    """`uq_units_block_no` — acik SELECT ile ONDEN (spec §4.3). A Blok "1" ile
+    B Blok "1" ayni anda vardir (SY 76/106), bu yuzden kapsam bloktur."""
+    if await repository.get_unit_by_no(session, block_id, unit_no, exclude_unit_id) is not None:
+        raise DuplicateError(_DUPLICATE_UNIT)
+
+
+async def _block_in_project(session: AsyncSession, project: Project, block_id: uuid.UUID) -> Block:
+    """Spec §7.5 / IDOR-9: govdedeki `block_id` baska projenin blogu olabilir.
+
+    Proje sinirini asan blok **404** doner (422 degil): blogun varligi da
+    gizlidir — kullanici o projeyi hic goremiyor olabilir.
+    """
+    block = await repository.get_block(session, block_id)
+    if block is None or block.project_id != project.id:
+        raise NotFoundError(_BLOCK_MISSING)
+    return block
+
+
+def _ensure_owner_side_allowed(project: Project, owner_side: UnitOwnerSide | None) -> None:
+    """Spec §3.3: `owner_side` YALNIZ `kat_karsiligi` projede dolu olabilir.
+
+    DB `CHECK` ile zorlanamaz (`project_type` baska tabloda), bu yuzden tek yazma
+    yolunda servis korkulugudur (P4 `BoqGroupSiteMismatchError` deseni). NULL her
+    tipte serbesttir: paylasim noterden SONRA girilir (KKP 78, spec §5.3).
+    """
+    if owner_side is not None and project.project_type is not ProjectType.kat_karsiligi:
+        raise ProjectTypeMismatchError(_OWNER_SIDE_NOT_ALLOWED)
+
+
+def _ensure_net_le_gross(gross: Decimal | None, net: Decimal | None) -> None:
+    """`ck_units_net_le_gross` DB'de de var; buradaki kontrol IntegrityError'in
+    anlamsiz "Veri butunlugu hatasi" 409'una dusmemek icindir (spec §4.3, FDS 59)."""
+    if gross is not None and net is not None and net > gross:
+        raise UnitValidationError(_NET_GT_GROSS)
+
+
+async def unit_response(session: AsyncSession, unit: Unit) -> UnitResponse:
+    block = await repository.get_block(session, unit.block_id)
+    # `block` None olamaz: `block_id` NOT NULL + FK. Kosul yalnizca tip
+    # daraltmasi icindir, sessiz bir dusus degil.
+    return to_unit(unit, block.name if block is not None else "")
+
+
+async def create_unit(
+    session: AsyncSession, actor: User, project_id: uuid.UUID, data: UnitCreate
+) -> Unit:
+    """Spec §7.5. `taahhut` projede unite tanimlamak SERBEST (§3.3 — kisit icat
+    edilmez); iki fiyat sutunu da her tipte kabul edilir (§4.4)."""
+    project = await _visible_project(session, actor, project_id)
+    block = await _block_in_project(session, project, data.block_id)
+    _ensure_owner_side_allowed(project, data.owner_side)
+    _ensure_net_le_gross(data.gross_area_m2, data.net_area_m2)
+    await _ensure_unit_no_unique(session, block.id, data.unit_no)
+    unit = Unit(
+        project_id=project.id,
+        block_id=block.id,
+        unit_no=data.unit_no,
+        unit_kind=data.unit_kind,
+        layout=data.layout,
+        gross_area_m2=data.gross_area_m2,
+        net_area_m2=data.net_area_m2,
+        list_price=data.list_price,
+        appraisal_value=data.appraisal_value,
+        owner_side=data.owner_side,
+        sort_order=data.sort_order,
+    )
+    session.add(unit)
+    await session.flush()
+    await session.refresh(unit)
+    return unit
+
+
+async def update_unit(
+    session: AsyncSession, actor: User, unit_id: uuid.UUID, data: UnitUpdate
+) -> Unit:
+    """Spec §7.6. `exclude_unset` ayrimi kritiktir: GONDERILMEYEN alan degismez,
+    `null` GONDERILEN alan bosalir (P1/P2/P4 deseni).
+
+    Kurallar birlesmis (mevcut + gonderilen) deger uzerinde yeniden calisir:
+    yalniz `net_area_m2` gonderen bir istek, mevcut `gross_area_m2` ile
+    karsilastirilmazsa DB CHECK'ine duser ve kullanici anlamsiz bir 409 gorur.
+    """
+    unit, project = await _visible_unit(session, actor, unit_id)
+    updates = data.model_dump(exclude_unset=True)
+
+    target_block_id = unit.block_id
+    if "block_id" in updates and updates["block_id"] is not None:
+        target_block_id = (await _block_in_project(session, project, updates["block_id"])).id
+    updates.pop("block_id", None)  # NOT NULL: `null` gonderimi sutunu bosaltamaz
+
+    owner_side = updates["owner_side"] if "owner_side" in updates else unit.owner_side
+    _ensure_owner_side_allowed(project, owner_side)
+    gross = updates["gross_area_m2"] if "gross_area_m2" in updates else unit.gross_area_m2
+    net = updates["net_area_m2"] if "net_area_m2" in updates else unit.net_area_m2
+    _ensure_net_le_gross(gross, net)
+
+    target_unit_no = updates.get("unit_no") or unit.unit_no
+    if target_block_id != unit.block_id or target_unit_no != unit.unit_no:
+        await _ensure_unit_no_unique(session, target_block_id, target_unit_no, unit.id)
+
+    unit.block_id = target_block_id
+    for field, value in updates.items():
+        # NOT NULL sutunlar `null` ile bosaltilamaz; nullable olanlar bosaltilir.
+        if value is None and field in ("unit_no", "unit_kind", "sort_order"):
+            continue
+        setattr(unit, field, value)
+    await session.flush()
+    await session.refresh(unit)
+    return unit
