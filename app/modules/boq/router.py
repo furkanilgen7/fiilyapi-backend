@@ -170,3 +170,31 @@ async def update_boq_item_endpoint(
         ip_address=client_ip(request),
     )
     return service.to_item(item)
+
+
+@router.delete(
+    "/boq/items/{item_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[_FULL],
+)
+async def delete_boq_item_endpoint(
+    request: Request,
+    item_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """Frontend F13 (kalem silme) bu uca baglidir.
+
+    Kapi `_FULL`'dir — PATCH ile AYNI: silme BOQ yazma izninin parcasi sayilir.
+    (`app/core/access.py` §5.0'in "silme yalniz admin" kurali `can_delete`
+    uzerinden taslak yasam dongusu tasiyan kayitlar icindir; `BoqItem`'da
+    `created_by`/`is_draft` yoktur, dolayisiyla o kural uygulanamaz.)
+    """
+    code, description = await service.delete_item(session, user, item_id)
+    await record_audit(
+        session,
+        action=AuditAction.delete,
+        detail=messages.boq_item_deleted(code, description),
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )

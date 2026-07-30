@@ -13,6 +13,7 @@ from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
 from app.modules.auth.schemas import LoginRequest, MeResponse, RefreshRequest, TokenPair
 from app.modules.auth.service import AuthError, authenticate
+from app.modules.roles.repository import get_role_matrix
 from app.modules.users.models import User, UserStatus
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -94,7 +95,14 @@ async def logout(
 
 
 @router.get("/me", response_model=MeResponse)
-async def me(user: Annotated[User, Depends(get_current_user)]) -> MeResponse:
+async def me(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> MeResponse:
+    """Matris mantigi YENIDEN YAZILMAZ: `roles.repository.get_role_matrix`
+    aynen kullanilir — `/roles/{id}/permissions` ucuyla ayni kaynak, tek fark
+    rol kimliginin aktörün kendi rolü olmasi ve ek yetki aranmamasi."""
+    matrix = await get_role_matrix(session, user.role_id)
     return MeResponse(
         id=user.id,
         email=user.email,
@@ -102,4 +110,5 @@ async def me(user: Annotated[User, Depends(get_current_user)]) -> MeResponse:
         title=user.title,
         role_key=user.role.key,
         status=user.status,
+        permissions={module.key: perm.access_level for module, perm in matrix},
     )

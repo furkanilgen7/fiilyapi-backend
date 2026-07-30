@@ -871,3 +871,140 @@ async def test_get_boq_does_not_record_audit(client, db_session, user_factory, p
     assert resp.status_code == 200
     all_rows = (await db_session.execute(select(AuditLog))).scalars().all()
     assert all(row.action != AuditAction.create for row in all_rows)
+
+
+# --- BE-B — DELETE /boq/items/{item_id} (frontend F13 kalem silme) ---
+
+
+async def test_delete_boq_item_happy_path(client, db_session, user_factory, project_factory):
+    project = await project_factory("BOQ-API-39")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    item = await _item(db_session, site, group, code="01.001")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.delete(f"/boq/items/{item.id}", headers=_auth(token))
+
+    assert resp.status_code == 204
+    assert await db_session.get(BoqItem, item.id) is None
+
+
+async def test_delete_boq_item_keeps_group_and_totals_consistent(
+    client, db_session, user_factory, project_factory
+):
+    """Silinen kalemin grubu ayakta kalir, `grand_total` kalan kalemlere gore duser."""
+    project = await project_factory("BOQ-API-40")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    kept = await _item(
+        db_session,
+        site,
+        group,
+        code="01.001",
+        quantity=Decimal("2.000"),
+        unit_price=Decimal("100.00"),
+    )
+    doomed = await _item(
+        db_session,
+        site,
+        group,
+        code="01.002",
+        quantity=Decimal("3.000"),
+        unit_price=Decimal("100.00"),
+    )
+    token = await _login(client, user_factory, "system_admin")
+
+    before = await client.get(f"/sites/{site.id}/boq", headers=_auth(token))
+    assert before.json()["totals"]["grand_total"] == "500.00"
+
+    resp = await client.delete(f"/boq/items/{doomed.id}", headers=_auth(token))
+    assert resp.status_code == 204
+
+    after = await client.get(f"/sites/{site.id}/boq", headers=_auth(token))
+    body = after.json()
+    assert body["totals"]["grand_total"] == "200.00"
+    assert len(body["groups"]) == 1
+    assert body["groups"][0]["id"] == str(group.id)
+    assert body["groups"][0]["group_total"] == "200.00"
+    assert [i["id"] for i in body["groups"][0]["items"]] == [str(kept.id)]
+    assert await db_session.get(BoqGroup, group.id) is not None
+
+
+async def test_delete_boq_item_unauthenticated(client, db_session, project_factory):
+    project = await project_factory("BOQ-API-41")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    item = await _item(db_session, site, group, code="01.001")
+
+    resp = await client.delete(f"/boq/items/{item.id}")
+
+    assert resp.status_code == 401
+
+
+async def test_delete_boq_item_view_only_role_forbidden(
+    client, db_session, user_factory, project_factory
+):
+    """site_chief: boq=view — silme yazma iznine baglidir (PATCH ile ayni kapi)."""
+    project = await project_factory("BOQ-API-42")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    item = await _item(db_session, site, group, code="01.001")
+    token = await _login_with_access(
+        client, db_session, user_factory, "site_chief", "sc@boq-api-42.co"
+    )
+
+    resp = await client.delete(f"/boq/items/{item.id}", headers=_auth(token))
+
+    assert resp.status_code == 403
+    assert await db_session.get(BoqItem, item.id) is not None
+
+
+async def test_delete_boq_item_invisible_returns_404_not_403(
+    client, db_session, user_factory, project_factory
+):
+    """IDOR (spec §5.5): kalem->santiye->proje suzgecinden gecmeyen kayit 404 doner,
+
+    403 DEGIL — ve kayit SILINMEZ.
+    """
+    project = await project_factory("BOQ-API-43")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    item = await _item(db_session, site, group, code="01.001")
+    token = await _login(client, user_factory, "project_manager", "pm@boq-api-43.co")
+
+    resp = await client.delete(f"/boq/items/{item.id}", headers=_auth(token))
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "İş kalemi bulunamadı"
+    assert await db_session.get(BoqItem, item.id) is not None
+
+
+async def test_delete_boq_item_missing_is_indistinguishable_from_invisible(
+    client, db_session, user_factory, project_factory
+):
+    """Var olmayan UUID ile gorunmeyen kayit AYNI yaniti verir (varlik sizdirilmaz)."""
+    project = await project_factory("BOQ-API-44")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    item = await _item(db_session, site, group, code="01.001")
+    token = await _login(client, user_factory, "project_manager", "pm@boq-api-44.co")
+
+    invisible = await client.delete(f"/boq/items/{item.id}", headers=_auth(token))
+    missing = await client.delete(f"/boq/items/{uuid.uuid4()}", headers=_auth(token))
+
+    assert invisible.status_code == missing.status_code == 404
+    assert invisible.json() == missing.json()
+
+
+async def test_delete_boq_item_records_audit(client, db_session, user_factory, project_factory):
+    project = await project_factory("BOQ-API-45")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    item = await _item(db_session, site, group, code="01.020", description="Silinecek tarif")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.delete(f"/boq/items/{item.id}", headers=_auth(token))
+
+    assert resp.status_code == 204
+    details = await _audit_details(db_session, AuditAction.delete)
+    assert any("01.020" in d and "Silinecek tarif" in d for d in details)

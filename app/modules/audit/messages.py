@@ -146,3 +146,7 @@ def units_imported(project_name: str, count: int) -> str:
 
 def unit_allocation_updated(project_name: str, count: int) -> str:
     return f"Ünite paylaşımı güncellendi: {project_name} · {count} ünite"
+
+
+def boq_item_deleted(code: str, description: str) -> str:
+    return f"İş kalemi silindi: {code} — {description}"
