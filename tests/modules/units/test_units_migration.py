@@ -14,6 +14,7 @@ calisan bir pytest-asyncio dongusunun icinden cagrilamaz.
 
 import os
 import subprocess
+import sys
 import uuid
 from pathlib import Path
 
@@ -23,7 +24,11 @@ import pytest
 from app.core.config import settings
 
 BACKEND_DIR = Path(__file__).parents[3]
-ALEMBIC_BIN = BACKEND_DIR / ".venv" / "bin" / "alembic"
+# Alembic `python -m alembic` ile cagrilir: yerelde `.venv/bin/python`, CI'da
+# sistem Python'u — iki ortamda da AYNI yorumlayicinin ortami kullanilir.
+# Sabit `.venv/bin/alembic` yolu CI'da YOKTUR (orada venv kurulmaz) ve testi
+# yalniz CI'da kirardi.
+ALEMBIC_CMD = (sys.executable, "-m", "alembic")
 
 PARENT_REVISION = "e3a8b4a5b93b"
 NEW_TABLES = ("blocks", "units")
@@ -39,7 +44,7 @@ def _asyncpg_dsn(database: str) -> str:
 def _run_alembic(*args: str, database: str) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "DATABASE_URL": _asyncpg_dsn(database)}
     result = subprocess.run(
-        [str(ALEMBIC_BIN), *args],
+        [*ALEMBIC_CMD, *args],
         cwd=BACKEND_DIR,
         env=env,
         capture_output=True,
