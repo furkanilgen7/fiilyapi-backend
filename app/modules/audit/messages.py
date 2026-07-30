@@ -107,3 +107,42 @@ def boq_item_created(code: str, description: str) -> str:
 
 def boq_item_updated(code: str, description: str) -> str:
     return f"İş kalemi güncellendi: {code} — {description}"
+
+
+def block_created(project_name: str, block_name: str) -> str:
+    return f"Yeni blok oluşturuldu: {project_name} · {block_name}"
+
+
+def block_updated(project_name: str, block_name: str) -> str:
+    return f"Blok güncellendi: {project_name} · {block_name}"
+
+
+def block_deleted(project_name: str, block_name: str) -> str:
+    return f"Blok silindi: {project_name} · {block_name}"
+
+
+def unit_created(project_name: str, block_name: str, unit_no: str) -> str:
+    """Unite adlari projeler arasinda tekrar eder ("A Blok · Daire 1" her projede
+    olabilir); proje adi olmadan denetim satiri anlamsizlasir (`section_created`
+    ile ayni gerekce)."""
+    return f"Yeni ünite oluşturuldu: {project_name} · {block_name} · {unit_no}"
+
+
+def unit_updated(project_name: str, block_name: str, unit_no: str) -> str:
+    return f"Ünite güncellendi: {project_name} · {block_name} · {unit_no}"
+
+
+def unit_deleted(project_name: str, block_name: str, unit_no: str) -> str:
+    return f"Ünite silindi: {project_name} · {block_name} · {unit_no}"
+
+
+def units_bulk_created(project_name: str, block_name: str, count: int) -> str:
+    return f"Toplu ünite üretildi: {project_name} · {block_name} · {count} ünite"
+
+
+def units_imported(project_name: str, count: int) -> str:
+    return f"Üniteler Excel'den içe aktarıldı: {project_name} · {count} ünite"
+
+
+def unit_allocation_updated(project_name: str, count: int) -> str:
+    return f"Ünite paylaşımı güncellendi: {project_name} · {count} ünite"

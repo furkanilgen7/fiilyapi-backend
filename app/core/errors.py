@@ -35,6 +35,41 @@ class DuplicateError(DomainError):
     """
 
 
+class UnitValidationError(DomainError):
+    """Blok/ünite iş kuralı ihlali (Alt-Proje 2 P3 spec §4.5, §7.11) — 422.
+
+    `BoqGroupSiteMismatchError` deseninin aynısı: DB `CHECK` ile zorlanamayan ya da
+    zorlansa bile kullanıcıya Türkçe mesaj veremeyecek kurallar (şantiye sayısına
+    bağlı blok ataması, `net > brüt`) tek yazma yolunda servis korkuluğuyla tutulur.
+    """
+
+
+class UnitImportError(DomainError):
+    """Excel içe aktarmada SATIR BAZLI hatalar (Alt-Proje 2 P3 spec §7.8) — 422.
+
+    Diğer alan hatalarından tek farkı gövdesidir: tek bir `detail` metni yetmez,
+    kullanıcının dosyayı düzeltebilmesi için hangi satırda ne olduğu listelenir.
+    Hep-ya-hiç kuralı bozulmaz — bu istisna atıldığında HİÇBİR satır yazılmamıştır.
+    """
+
+    def __init__(self, message: str, errors: list[dict], truncated: str | None = None) -> None:
+        super().__init__(message)
+        self.errors = errors
+        self.truncated = truncated
+
+
+class RelatedRecordsExistError(DomainError):
+    """Silinmek istenen kayda bağlı alt kayıtlar var (Alt-Proje 2 P3 spec §7.9) — 409.
+
+    `DeleteNotAllowedError` (403) YETKİ engelidir; bu ise ÇAKIŞMA'dır: kullanıcının
+    yetkisi vardır ama kaydın durumu silmeye elverişli değildir. İkisini tek sınıfta
+    toplamak, "yetkin yok" ile "önce alt kayıtları sil" mesajlarını aynı koda düşürür.
+
+    Cascade'e KAYILMAZ: ünitesi olan blok silinirse 24 daire tek istekte gider ve
+    geri alınamaz. DB tarafındaki `ON DELETE RESTRICT` (spec §4.2) ikinci katmandır.
+    """
+
+
 class BoqGroupSiteMismatchError(DomainError):
     """Poz kaleminin bağlanmak istediği grup, hedef şantiyeye ait değil
 
