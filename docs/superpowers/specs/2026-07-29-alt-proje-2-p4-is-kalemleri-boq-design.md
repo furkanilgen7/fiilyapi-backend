@@ -166,12 +166,12 @@ Tümü proje görünürlük süzgecinden geçer (P2 §5.2 deseni:
 
 | Yöntem | Yol | İzin | İş |
 |---|---|---|---|
-| GET | `/sites/{site_id}/boq` | `sites:view` | gruplar + kalemler + toplamlar |
-| POST | `/sites/{site_id}/boq/groups` | `sites:full` | grup oluştur (201) |
-| PATCH | `/boq/groups/{group_id}` | `sites:full` | grup güncelle (`name`, `sort_order`) |
-| POST | `/sites/{site_id}/boq/items` | `sites:full` | "+ İş Kalemi" (satır 67) (201) |
-| PATCH | `/boq/items/{item_id}` | `sites:full` | kalem güncelle |
-| GET | `/sites/{site_id}/boq/export` | `sites:view` | "Excel İndir" (satır 66) — xlsx |
+| GET | `/sites/{site_id}/boq` | `boq:view` | gruplar + kalemler + toplamlar |
+| POST | `/sites/{site_id}/boq/groups` | `boq:full` | grup oluştur (201) |
+| PATCH | `/boq/groups/{group_id}` | `boq:full` | grup güncelle (`name`, `sort_order`) |
+| POST | `/sites/{site_id}/boq/items` | `boq:full` | "+ İş Kalemi" (satır 67) (201) |
+| PATCH | `/boq/items/{item_id}` | `boq:full` | kalem güncelle |
+| GET | `/sites/{site_id}/boq/export` | `boq:view` | "Excel İndir" (satır 66) — xlsx |
 
 **Silme ucu yok** — P1/P2 gerekçesi (silme kuralı ana spec §10'da tek seferde).
 BOQ'da yanlış giriş ihtiyacı gerçek olduğundan §8 soru 6 olarak kullanıcıya sorulur.
