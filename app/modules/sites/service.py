@@ -1,4 +1,5 @@
 import uuid
+from types import SimpleNamespace
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -456,12 +457,70 @@ async def create_site(
     return site
 
 
+# `guards.validate_site`in okudugu alanlar (`_SiteLike`). PATCH bunlarin BIRLESIK
+# degerini kurar: gonderilen alan patch'ten, gonderilmeyen MEVCUT SATIRDAN gelir.
+_VALIDATED_FIELDS = (
+    "name",
+    "site_manager_user_id",
+    "site_manager_name",
+    "safety_officer_user_id",
+    "safety_officer_is_outsourced",
+    "city",
+    "construction_area_m2",
+    "start_date",
+    "end_date",
+)
+
+
+def _merged_for_validation(site: Site, changes: dict) -> SimpleNamespace:
+    """Mevcut satir + patch = dogrulamanin gordugu kayit (§5.3).
+
+    Yalniz patch'i dogrulamak yanlis olurdu: `end_date` gonderilip `start_date`
+    satirda duruyorsa ters tarih araligi FARK EDILMEDEN gecerdi. Yalniz satiri
+    dogrulamak da yanlis olurdu: yayina gecirirken eksik alani AYNI istekte
+    gonderen kullanici haksiz yere reddedilirdi.
+
+    `sections` bilincli olarak BOSTUR: bolumler PATCH govdesinde YOKTUR (§7.3),
+    mevcut bolumleri yeniden dogrulamak ise bu istegin isi degildir.
+    """
+    merged = {field: changes.get(field, getattr(site, field)) for field in _VALIDATED_FIELDS}
+    return SimpleNamespace(**merged, sections=[])
+
+
 async def update_site(
     session: AsyncSession, actor: User, site_id: uuid.UUID, data: SiteUpdate
 ) -> Site:
+    """PATCH GEVSEK, YAYIN SIKI (§5.3, §11.3/3).
+
+    Zorunluluk dogrulamasi burada KOSMAZ — kossaydi canlidaki sefsiz/il bilgisi
+    olmayan eski santiyeler duzenlenemez hale gelirdi ve kullanici yalnizca adi
+    degistirmek isterken "Şantiye şefi seçiniz." duvarina carpardi. Tek istisna
+    `is_draft: true -> false` gecisidir: orada BIRLESIK kayit uzerinde tum
+    kurallar kosar ve gecmezse satir TASLAK KALIR.
+    """
     site, _ = await _visible_site(session, actor, site_id)
-    for field, value in data.model_dump(exclude_unset=True).items():
+    # `facilities` DISARIDA BIRAKILIR: gruplu sozlesmenin duz kolon karsiligi yok,
+    # duz `setattr` ORM nesnesine BASIBOS bir oznitelik yazar ve DB'ye hicbir sey
+    # gitmez — hata da vermez. Sessiz veri kaybi sinifi; asagida acikca eslenir.
+    changes = data.model_dump(exclude_unset=True, exclude={"facilities"})
+    # Yayina gecis YALNIZCA taslak bir satir icin tanimlidir; `false -> false`
+    # bir gecis degildir ve zorunluluk kurallarini tetiklemez.
+    is_publishing = site.is_draft and changes.get("is_draft") is False
+    guards.validate_site(_merged_for_validation(site, changes), is_draft=not is_publishing)
+    # Kullanici cozumu YAZMADAN ONCE: gecersiz kullanici hicbir alani degistirmez.
+    if changes.get("site_manager_user_id") is not None:
+        changes["site_manager_name"] = await _resolve_user_name(
+            session, changes["site_manager_user_id"]
+        )
+    if "safety_officer_user_id" in changes or "safety_officer_is_outsourced" in changes:
+        merged = _merged_for_validation(site, changes)
+        changes["safety_officer_name"] = await _resolve_safety_officer(
+            session, merged.safety_officer_user_id, merged.safety_officer_is_outsourced
+        )
+    for field, value in changes.items():
         setattr(site, field, value)
+    if data.facilities is not None:
+        _apply_facilities(site, data.facilities)
     await session.flush()
     await session.refresh(site)
     return site
@@ -471,12 +530,18 @@ async def create_section(
     session: AsyncSession, actor: User, site_id: uuid.UUID, data: SectionCreate
 ) -> Section:
     site, _ = await _visible_site(session, actor, site_id)
+    # FK verilmisse ad govdedeki serbest metnin UZERINE yazilir (create_site ile
+    # ayni kural): ad FK'nin turevidir, ikinci bir gercek kaynak degildir.
+    manager_name = data.manager_name
+    if data.manager_user_id is not None:
+        manager_name = await _resolve_user_name(session, data.manager_user_id)
     section = Section(
         site_id=site.id,
         code=data.code,
         name=data.name,
         status=data.status,
-        manager_name=data.manager_name,
+        manager_user_id=data.manager_user_id,
+        manager_name=manager_name,
         start_date=data.start_date,
         end_date=data.end_date,
         sort_order=data.sort_order,
@@ -491,7 +556,10 @@ async def update_section(
     session: AsyncSession, actor: User, section_id: uuid.UUID, data: SectionUpdate
 ) -> Section:
     section, _ = await _visible_section(session, actor, section_id)
-    for field, value in data.model_dump(exclude_unset=True).items():
+    changes = data.model_dump(exclude_unset=True)
+    if changes.get("manager_user_id") is not None:
+        changes["manager_name"] = await _resolve_user_name(session, changes["manager_user_id"])
+    for field, value in changes.items():
         setattr(section, field, value)
     await session.flush()
     await session.refresh(section)

@@ -291,6 +291,9 @@ class SectionCreate(BaseModel):
     name: str = Field(min_length=1, max_length=150)
     # Varsayilan `planned` (spec §2.3): yeni bolum kural olarak planlanmis dogar.
     status: SectionStatus = SectionStatus.planned
+    # §7 tablosu 5. satir: FK verilirse servis `manager_name`i `users.full_name`
+    # ile DOLDURUR — iki alan ayri ayri gonderilmez, ad FK'nin turevidir.
+    manager_user_id: uuid.UUID | None = None
     manager_name: str | None = Field(default=None, max_length=200)
     start_date: date | None = None
     end_date: date | None = None
@@ -303,6 +306,9 @@ class SectionUpdate(BaseModel):
     code: str | None = Field(default=None, min_length=1, max_length=50)
     name: str | None = Field(default=None, min_length=1, max_length=150)
     status: SectionStatus | None = None
+    # §7 tablosu 6. satir. FK degisince ad anlik goruntusu de guncellenir; yoksa
+    # eski ad yerinde kalir ve kaydin kendisi hakkinda YALAN SOYLER.
+    manager_user_id: uuid.UUID | None = None
     manager_name: str | None = Field(default=None, max_length=200)
     start_date: date | None = None
     end_date: date | None = None
