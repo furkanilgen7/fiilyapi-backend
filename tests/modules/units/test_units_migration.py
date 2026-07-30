@@ -31,6 +31,9 @@ BACKEND_DIR = Path(__file__).parents[3]
 ALEMBIC_CMD = (sys.executable, "-m", "alembic")
 
 PARENT_REVISION = "e3a8b4a5b93b"
+# Bu revizyona ACIKCA cikilir; `head` KULLANILMAZ. Sonraki dilimler revizyon
+# ekledikce `head`/`-1` bu revizyonu degil onlari olcerdi.
+UNITS_REVISION = "a4c7f1d2e8b3"
 NEW_TABLES = ("blocks", "units")
 NEW_ENUM_TYPES = ("unit_kind", "unit_owner_side")
 
@@ -81,20 +84,18 @@ async def test_upgrade_downgrade_upgrade_round_trip():
         await admin.close()
 
     try:
-        _run_alembic("upgrade", "head", database=database)
+        _run_alembic("upgrade", UNITS_REVISION, database=database)
         conn = await asyncpg.connect(_asyncpg_dsn(database))
         try:
             for table in NEW_TABLES:
                 assert await _table_exists(conn, table), f"{table} upgrade sonrasi yok"
             for enum_type in NEW_ENUM_TYPES:
                 assert await _type_exists(conn, enum_type), f"{enum_type} upgrade sonrasi yok"
-            head_revision = await _current_revision(conn)
-            assert head_revision is not None
-            assert head_revision != PARENT_REVISION
+            assert await _current_revision(conn) == UNITS_REVISION
         finally:
             await conn.close()
 
-        _run_alembic("downgrade", "-1", database=database)
+        _run_alembic("downgrade", PARENT_REVISION, database=database)
         conn = await asyncpg.connect(_asyncpg_dsn(database))
         try:
             for table in NEW_TABLES:
@@ -109,7 +110,7 @@ async def test_upgrade_downgrade_upgrade_round_trip():
         finally:
             await conn.close()
 
-        _run_alembic("upgrade", "head", database=database)
+        _run_alembic("upgrade", UNITS_REVISION, database=database)
         conn = await asyncpg.connect(_asyncpg_dsn(database))
         try:
             for table in NEW_TABLES:
@@ -118,7 +119,7 @@ async def test_upgrade_downgrade_upgrade_round_trip():
                 assert await _type_exists(conn, enum_type), (
                     f"{enum_type} ikinci upgrade sonrasi yok"
                 )
-            assert await _current_revision(conn) == head_revision
+            assert await _current_revision(conn) == UNITS_REVISION
         finally:
             await conn.close()
     finally:

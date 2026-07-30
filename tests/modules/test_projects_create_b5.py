@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
+from app.core.timezone import today
 from app.modules.projects.models import Project
 from app.modules.projects.schemas import (
     ProjectBudgetInput,
@@ -70,9 +71,11 @@ async def test_inline_sites_written_same_transaction(db_session):
         ),
     )
     assert len(project.sites) == 2
-    # Kod P2 türeticisiyle (derive_code) üretildi — kopya mantık yok.
-    assert sorted(s.code for s in project.sites) == ["A-BLOK", "B-BLOK"]
-    a_blok = next(s for s in project.sites if s.code == "A-BLOK")
+    # Kod P2 üreticisiyle (_next_site_code) üretildi — kopya mantık yok.
+    # T3'te ad-türevi üretici kaldırıldı: artık SNT-{YYYY}-{NNN} (spec §3.2).
+    prefix = f"SNT-{today().year}-"
+    assert sorted(s.code for s in project.sites) == [f"{prefix}001", f"{prefix}002"]
+    a_blok = next(s for s in project.sites if s.name == "A-Blok Şantiyesi")
     assert a_blok.construction_area_m2 == Decimal("1200.00")
 
 

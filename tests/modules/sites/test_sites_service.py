@@ -302,16 +302,20 @@ async def test_missing_ids_raise_not_found(seeded_db, user_factory):
 # --- yazma ---
 
 
-async def test_create_site_derives_code_from_name(seeded_db, user_factory, project_factory):
-    """Spec §8 acik soru 2, oneri: kod verilmezse ad'dan turetilir."""
+async def test_create_site_generates_code_when_omitted(seeded_db, user_factory, project_factory):
+    """Kod verilmezse SNT-{YYYY}-{NNN} uretilir (spec §3.2; ad-turevi uretici kaldirildi)."""
+    from app.core.timezone import today
+
     project = await project_factory("S-19")
     user = await _patron(seeded_db, user_factory, "s19@t.co")
 
+    # `is_draft=True` T6'da eklendi: taslak-disi POST zorunluluk kurallarini kosar
+    # (spec §5.1/7-10). Bu test KOD URETICISINI sinar, form zorunlulugunu degil.
     site = await service.create_site(
-        seeded_db, user, project.id, SiteCreate(name="A-Blok Şantiyesi")
+        seeded_db, user, project.id, SiteCreate(name="A-Blok Şantiyesi", is_draft=True)
     )
 
-    assert site.code == "A-BLOK"
+    assert site.code == f"SNT-{today().year}-001"
     assert site.status is SiteStatus.active
 
 
@@ -320,7 +324,10 @@ async def test_create_site_keeps_explicit_code(seeded_db, user_factory, project_
     user = await _patron(seeded_db, user_factory, "s20@t.co")
 
     site = await service.create_site(
-        seeded_db, user, project.id, SiteCreate(name="A-Blok Şantiyesi", code="A-BLOK")
+        seeded_db,
+        user,
+        project.id,
+        SiteCreate(name="A-Blok Şantiyesi", code="A-BLOK", is_draft=True),
     )
 
     assert site.code == "A-BLOK"
@@ -341,7 +348,7 @@ async def test_update_site_changes_fields(seeded_db, user_factory, project_facto
     site = await _site(seeded_db, project, name="Eski Ad")
     user = await _patron(seeded_db, user_factory, "s22@t.co")
 
-    updated = await service.update_site(
+    updated, _ = await service.update_site(
         seeded_db, user, site.id, SiteUpdate(name="Yeni Ad", status=SiteStatus.on_hold)
     )
 

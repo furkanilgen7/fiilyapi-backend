@@ -26,6 +26,17 @@ class ProjectValidationError(DomainError):
     """
 
 
+class SiteValidationError(DomainError):
+    """Şantiye formu iş kuralı ihlali (spec §5.1, §7.2) — 422.
+
+    `ProjectValidationError` deseninin aynısı ve aynı ayrımı taşır: Pydantic'in
+    alan doğrulamasının ötesinde, TASLAK-FARKINDALIKLI ve alanlar-arası kurallar
+    için. Kural: tutarlılık kuralları her zaman, zorunluluk kuralları yalnız
+    taslak-dışında koşar — böylece yarım kalmış taslak geçersiz değil yalnız
+    eksik veri saklar. Mesaj Türkçe ve doğrudan kullanıcıya gösterilir.
+    """
+
+
 class DuplicateError(DomainError):
     """Benzersiz olması gereken bir değer zaten kayıtlı (spec §3.2) — router 409'a çevirir.
 

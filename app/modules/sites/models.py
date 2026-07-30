@@ -4,6 +4,8 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Enum,
@@ -26,8 +28,13 @@ from app.modules.projects.models import Project
 class SiteStatus(str, enum.Enum):
     """project_status ile ayni ucludur ama AYRI enum'dur (spec §2.3): sirf bugun
     ayni olduklari icin paylasilan bir enum'a baglamak, santiyeye ileride
-    `suspended` gibi bir durum eklemeyi imkansiz kilar."""
+    `suspended` gibi bir durum eklemeyi imkansiz kilar.
 
+    Sira mockup satir 71'den gelir: Hazirlik · Aktif (secili) · Beklemede.
+    `completed` UI'da gorunmez ama KALIR — `SiteCounts.completed`, `_remaining_days`
+    ve P2 liste sekmesi ona baglidir (spec §3.1)."""
+
+    preparation = "preparation"
     active = "active"
     on_hold = "on_hold"
     completed = "completed"
@@ -48,7 +55,18 @@ class Site(Base):
     """
 
     __tablename__ = "sites"
-    __table_args__ = (UniqueConstraint("project_id", "code", name="uq_sites_project_code"),)
+    __table_args__ = (
+        # Kisit PROJE ICI tekil KALIR (spec §3.2). Kod uretimi sirket geneli tekildir
+        # ama kisiti global `UNIQUE`'e cevirmek mevcut ad-turevi kodlari (`A-BLOK`
+        # iki projede birden olabilir) patlatir.
+        UniqueConstraint("project_id", "code", name="uq_sites_project_code"),
+        # ISG uzmani YA sistem kullanicisidir YA dis kaynak (OSGB) — ikisi birden
+        # olamaz (spec §3.3). Ucuncu gecerli dal: hicbiri (ISG hicbir kosulda zorunlu degil).
+        CheckConstraint(
+            "NOT (safety_officer_is_outsourced AND safety_officer_user_id IS NOT NULL)",
+            name="ck_sites_safety_officer",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(
@@ -57,8 +75,8 @@ class Site(Base):
         nullable=False,
         index=True,
     )
-    # spec §8 acik soru 2 — oneri uygulandi: kod ZORUNLU, verilmezse ad'dan
-    # turetilir (service._derive_code) ve kullanici duzeltebilir.
+    # Kod ZORUNLU, verilmezse SNT-{YYYY}-{NNN} uretilir
+    # (service._next_site_code, spec §3.2) ve kullanici PATCH ile duzeltebilir.
     code: Mapped[str] = mapped_column(String(50), nullable=False)
     name: Mapped[str] = mapped_column(String(150), nullable=False)
     status: Mapped[SiteStatus] = mapped_column(
@@ -76,6 +94,90 @@ class Site(Base):
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     delivery_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+    # ----------------------------------------------------------------- #
+    # Santiye formu genislemesi (spec §3.0) — 22 kolon, mockup sirasiyla.
+    #
+    # HICBIRI "NOT NULL + varsayilansiz" DEGILDIR. Gerekce TASLAK destegidir:
+    # "Taslak Kaydet" yarim doldurulmus formu kaydeder, yani mockup'ta zorunlu (*)
+    # isaretli alanlar (sef, il/ilce, insaat alani, tarihler) bile DB'de bos
+    # durabilmelidir. Zorunluluk YALNIZ uygulama katmaninda, YALNIZ taslak-disi
+    # POST'ta uygulanir (spec §5.1). DB'de zorunluluk = taslak yok demektir.
+    # ----------------------------------------------------------------- #
+
+    # Santiye sefi (mockup 69): FK + ad anlik goruntusu. FK `SET NULL` cunku
+    # kullanici silinse de `site_manager_name` evrakta referans olarak KALMALI.
+    site_manager_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    # ISG uzmani (mockup 70): uc kolonlu ayrim — sistem kullanicisi / OSGB / hicbiri.
+    # OSGB firma adi alani ICAT EDILMEZ; mockup'ta boyle bir input yok (spec §3.3).
+    safety_officer_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    safety_officer_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    safety_officer_is_outsourced: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+
+    # Konum & alan (mockup 80-86)
+    neighborhood: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    parcel: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # GPS TEK metin kolonudur, DOGRULAMA YOK (spec §3.5): bugun hicbir tuketicisi
+    # yok. `latitude`/`longitude` Numeric ikilisi bilincli olarak ACILMAZ.
+    gps_coordinates: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    land_area_m2: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    # "2 bodrum + 10 normal" gibi serbest metin — sayi DEGIL (mockup 86).
+    floor_info: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    # Takvim & butce (mockup 97). `budget` PLANLANAN butcedir, sozlesme bedeli
+    # degil (spec §3.7). Nullable: "girilmedi" ile "sifir butce" ayrimi korunur.
+    # Sure (Gun) TUREVDIR, saklanmaz (spec §3.6).
+    budget: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
+
+    # Depo & santiye altyapisi (mockup 153-165) — 8 ayri Boolean kolon (spec §4).
+    # Varsayilan `false`: mockup'taki on-isaretler ornek veridir, UYGULANMAZ (§14.2).
+    has_closed_warehouse: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    has_open_storage: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    has_cold_storage: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    has_site_office: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    has_canteen: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    has_changing_room_wc: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    has_dormitory: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    has_infirmary: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+
+    # Abonelikler ve planlanan isci sayisi (mockup 170-172)
+    electricity_subscription_no: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    water_subscription_no: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    planned_worker_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Taslak (mockup 226 "Taslak Kaydet"). Mevcut satirlar `false` = yayinda sayilir.
+    is_draft: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -132,6 +234,16 @@ class Section(Base):
         nullable=False,
         default=SectionStatus.planned,
         server_default="planned",
+    )
+    # Bolum sorumlusu (mockup 111): FK + `manager_name` anlik goruntusu. `SET NULL`
+    # cunku kullanici silinse de ad kalmali. `estimated_amount` EKLENMEZ (spec §3.4):
+    # bolum bedeli BOQ kalemlerinin toplamidir, elle girilen ikinci bir kaynak
+    # kacinilmaz olarak ayrisir.
+    manager_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
     manager_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)

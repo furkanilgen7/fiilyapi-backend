@@ -34,6 +34,35 @@ router = APIRouter(tags=["sites"], responses=COMMON_ERROR_RESPONSES)
 
 _VIEW = require_permission("sites", AccessLevel.view)
 _FULL = require_permission("sites", AccessLevel.full)
+# KULLANICI KARARI 2026-07-30 ("silme = sistem yoneticisi"): SILME uclari yazma
+# uclarindan BIR SEVIYE YUKARIDADIR. Neden `_FULL` DEGIL: `app/core/access.py`
+# "full yazmayi kapsar, SILMEYI KAPSAMAZ" der; `units`/`blocks`/`boq` DELETE
+# uclariyla birebir ayni desen (`units/router.py:181,206`).
+#
+# BILINEN SONUC (kabul edildi): seed matrisinde `sites:admin` yalniz
+# `system_admin`'dedir — proje muduru dahil kimse santiye/bolum silemez.
+_ADMIN = require_permission("sites", AccessLevel.admin)
+
+
+async def _audit(
+    request: Request,
+    session: AsyncSession,
+    user: User,
+    action: AuditAction,
+    detail: str,
+) -> None:
+    """Denetim satiri (B5 deseni, `units/router.py` ile ayni imza).
+
+    Metin PARAMETREDIR, burada kurulmaz: silme ve yayina alma metinleri servis
+    katmaninda, satir yok olmadan / eski durum kaybolmadan ONCE kurulur.
+    """
+    await record_audit(
+        session,
+        action=action,
+        detail=detail,
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
 
 
 async def _detail_of(session: AsyncSession, site: Site) -> SiteDetailResponse:
@@ -65,13 +94,24 @@ async def create_site_endpoint(
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> SiteDetailResponse:
     site = await service.create_site(session, current_user, project_id, data)
-    await record_audit(
-        session,
-        action=AuditAction.create,
-        detail=messages.site_created(site.name),
-        actor_user_id=current_user.id,
-        ip_address=client_ip(request),
+    # Taslak ve yayin AYRI metinlerdir (spec §10): denetim ekraninda "gercekten
+    # santiye acildi mi" sorusu metinden cevaplanabilmelidir.
+    created = (
+        messages.site_draft_created(site.name)
+        if data.is_draft
+        else messages.site_created(site.name)
     )
+    await _audit(request, session, current_user, AuditAction.create, created)
+    # Bolumler icin TEK OZET satir (`units_bulk_created` deseni): bolum basina
+    # satir yazilsaydi 5 bolumlu bir form 6 denetim satiri uretirdi.
+    if data.sections:
+        await _audit(
+            request,
+            session,
+            current_user,
+            AuditAction.create,
+            messages.site_sections_created(site.name, len(data.sections)),
+        )
     return await _detail_of(session, site)
 
 
@@ -92,15 +132,33 @@ async def update_site_endpoint(
     current_user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> SiteDetailResponse:
-    site = await service.update_site(session, current_user, site_id, data)
-    await record_audit(
-        session,
-        action=AuditAction.update,
-        detail=messages.site_updated(site.name),
-        actor_user_id=current_user.id,
-        ip_address=client_ip(request),
-    )
+    # Metin SERVISTEN gelir: `is_draft: true -> false` gecisi ("yayına alındı")
+    # duz guncellemeden ayirt edilebilsin diye — onceki `is_draft` degeri yalniz
+    # orada gorunur.
+    site, detail = await service.update_site(session, current_user, site_id, data)
+    await _audit(request, session, current_user, AuditAction.update, detail)
     return await _detail_of(session, site)
+
+
+@router.delete("/sites/{site_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[_ADMIN])
+async def delete_site_endpoint(
+    request: Request,
+    site_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """Spec §7.1. CASCADE KORKULUGU servistedir — bolum/poz/blok varsa 409.
+
+    Yetki kapisi korkuluktan ONCE calisir: yetkisiz aktor 403 alir ve santiyenin
+    bagli kayit tasiyip tasimadigini OGRENEMEZ. Gorunmeyen santiye 404 doner ve
+    govdesi var olmayan UUID'ninkiyle BIREBIR AYNIDIR.
+
+    Yanit `204 No Content`, GOVDESIZ. Denetim metni servis icinde, satir yok
+    olmadan ONCE kurulur; engellenen silme (409) istisna attigi icin buraya hic
+    gelmez ve gunluge satir dusmez.
+    """
+    detail = await service.delete_site(session, current_user, site_id)
+    await _audit(request, session, current_user, AuditAction.delete, detail)
 
 
 @router.get("/sites/{site_id}/sections", response_model=SectionListResponse, dependencies=[_VIEW])
@@ -133,14 +191,35 @@ async def create_section_endpoint(
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> SectionResponse:
     section = await service.create_section(session, current_user, site_id, data)
-    await record_audit(
+    await _audit(
+        request,
         session,
-        action=AuditAction.create,
-        detail=messages.section_created(await _owning_site_name(session, section), section.name),
-        actor_user_id=current_user.id,
-        ip_address=client_ip(request),
+        current_user,
+        AuditAction.create,
+        messages.section_created(await _owning_site_name(session, section), section.name),
     )
     return service.to_section(section)
+
+
+@router.delete(
+    "/sections/{section_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[_ADMIN]
+)
+async def delete_section_endpoint(
+    request: Request,
+    section_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """Spec §7.1. Bolum silme KOSULSUZDUR: `sections.id`'yi hedefleyen FK yok.
+
+    Kapi `_ADMIN`'dir — bolum santiyenin ic kirilimi oldugu icin `sites`
+    modulunun seviyeleri kullanilir, AYRI izin modulu acilmaz.
+
+    Yanit `204 No Content`, GOVDESIZ. Denetim metni servis icinde, satir yok
+    olmadan ONCE kurulur.
+    """
+    detail = await service.delete_section(session, current_user, section_id)
+    await _audit(request, session, current_user, AuditAction.delete, detail)
 
 
 @router.patch("/sections/{section_id}", response_model=SectionResponse, dependencies=[_FULL])
@@ -152,11 +231,11 @@ async def update_section_endpoint(
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> SectionResponse:
     section = await service.update_section(session, current_user, section_id, data)
-    await record_audit(
+    await _audit(
+        request,
         session,
-        action=AuditAction.update,
-        detail=messages.section_updated(await _owning_site_name(session, section), section.name),
-        actor_user_id=current_user.id,
-        ip_address=client_ip(request),
+        current_user,
+        AuditAction.update,
+        messages.section_updated(await _owning_site_name(session, section), section.name),
     )
     return service.to_section(section)
