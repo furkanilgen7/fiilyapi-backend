@@ -32,6 +32,10 @@ BACKEND_DIR = Path(__file__).parents[3]
 ALEMBIC_CMD = (sys.executable, "-m", "alembic")
 
 PARENT_REVISION = "a4c7f1d2e8b3"
+# Bu revizyona ACIKCA cikilir; `head` KULLANILMAZ. Sonraki dilimler yeni revizyon
+# ekledikce `downgrade -1` bu revizyonu degil onlari geri alirdi ve test sessizce
+# yanlis seyi olcerdi.
+ENUM_REVISION = "f1b2c3d4e5a6"
 EXPECTED_LABELS = ("preparation", "active", "on_hold", "completed")
 OLD_LABELS = ("active", "on_hold", "completed")
 
@@ -166,17 +170,15 @@ async def test_pg_type_lists_four_labels(db_session):
 async def test_upgrade_downgrade_upgrade_round_trip():
     database = await _create_scratch_database()
     try:
-        _run_alembic("upgrade", "head", database=database)
+        _run_alembic("upgrade", ENUM_REVISION, database=database)
         conn = await asyncpg.connect(_asyncpg_dsn(database))
         try:
             assert await _enum_labels(conn, "site_status") == list(EXPECTED_LABELS)
-            head_revision = await _current_revision(conn)
-            assert head_revision is not None
-            assert head_revision != PARENT_REVISION
+            assert await _current_revision(conn) == ENUM_REVISION
         finally:
             await conn.close()
 
-        _run_alembic("downgrade", "-1", database=database)
+        _run_alembic("downgrade", PARENT_REVISION, database=database)
         conn = await asyncpg.connect(_asyncpg_dsn(database))
         try:
             labels = await _enum_labels(conn, "site_status")
@@ -194,11 +196,11 @@ async def test_upgrade_downgrade_upgrade_round_trip():
         finally:
             await conn.close()
 
-        _run_alembic("upgrade", "head", database=database)
+        _run_alembic("upgrade", ENUM_REVISION, database=database)
         conn = await asyncpg.connect(_asyncpg_dsn(database))
         try:
             assert await _enum_labels(conn, "site_status") == list(EXPECTED_LABELS)
-            assert await _current_revision(conn) == head_revision
+            assert await _current_revision(conn) == ENUM_REVISION
         finally:
             await conn.close()
     finally:
@@ -209,7 +211,7 @@ async def test_downgrade_moves_preparation_rows_to_active():
     """Spec §3.1 sira kaniti: satir KAYBOLMAZ, `active`'e tasinir."""
     database = await _create_scratch_database()
     try:
-        _run_alembic("upgrade", "head", database=database)
+        _run_alembic("upgrade", ENUM_REVISION, database=database)
         conn = await asyncpg.connect(_asyncpg_dsn(database))
         try:
             project_id = uuid.uuid4()
@@ -228,7 +230,7 @@ async def test_downgrade_moves_preparation_rows_to_active():
         finally:
             await conn.close()
 
-        _run_alembic("downgrade", "-1", database=database)
+        _run_alembic("downgrade", PARENT_REVISION, database=database)
         conn = await asyncpg.connect(_asyncpg_dsn(database))
         try:
             status = await conn.fetchval("SELECT status::text FROM sites WHERE id = $1", site_id)
