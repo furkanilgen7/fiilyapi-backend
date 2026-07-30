@@ -21,6 +21,7 @@ from decimal import Decimal
 from sqlalchemy import func, select
 
 from app.core.access import AccessLevel
+from app.modules.audit.models import AuditAction, AuditLog
 from app.modules.boq.models import BoqGroup, BoqItem
 from app.modules.roles.models import Module, Role, RolePermission
 from app.modules.sites.models import Section, Site
@@ -480,3 +481,128 @@ async def test_delete_section_returns_empty_body(client, db_session, user_factor
 
     assert resp.status_code == 204
     assert resp.content == b""
+
+
+# --- T14: S7 ve S9'un poz/blok varyantlari ---
+#
+# S7 ve S9 SECTION engelinde kanitlanmisti; korkuluk UC AYRI dala sahiptir ve her
+# dal kendi 409'unu kendi noktasinda atar. Yalniz ilk dali sinamak, poz veya blok
+# dalinin `session.delete`ten SONRA calismasi hâlinde sessiz veri kaybini
+# gormezden gelmek olurdu.
+
+
+async def test_failed_delete_on_boq_blocker_writes_no_audit(
+    client, db_session, user_factory, project_factory
+):
+    """S7 — poz dalinda reddedilen silme de gunluge satir DUSURMEZ."""
+    project = await project_factory("F-1")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    await _item(db_session, site, group)
+    token = await _login(client, user_factory)
+
+    resp = await client.delete(f"/sites/{site.id}", headers=_auth(token))
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == BOQ_BLOCKER
+    rows = (
+        await db_session.execute(
+            select(func.count()).select_from(AuditLog).where(AuditLog.action == AuditAction.delete)
+        )
+    ).scalar_one()
+    assert rows == 0
+
+
+async def test_failed_delete_on_block_blocker_writes_no_audit(
+    client, db_session, user_factory, project_factory
+):
+    """S7 — blok dalinda reddedilen silme de gunluge satir DUSURMEZ."""
+    project = await project_factory("F-2")
+    site = await _site(db_session, project)
+    await _block(db_session, project, site)
+    token = await _login(client, user_factory)
+
+    resp = await client.delete(f"/sites/{site.id}", headers=_auth(token))
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == BLOCK_BLOCKER
+    rows = (
+        await db_session.execute(
+            select(func.count()).select_from(AuditLog).where(AuditLog.action == AuditAction.delete)
+        )
+    ).scalar_one()
+    assert rows == 0
+
+
+async def test_delete_after_removing_boq_returns_204(
+    client, db_session, user_factory, project_factory
+):
+    """S9 (poz varyanti) — poz korkulugu KALICI KILIT uretmiyor."""
+    project = await project_factory("F-3")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    item = await _item(db_session, site, group)
+    token = await _login(client, user_factory)
+
+    blocked = await client.delete(f"/sites/{site.id}", headers=_auth(token))
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"] == BOQ_BLOCKER
+
+    await db_session.delete(item)
+    await db_session.delete(group)
+    await db_session.flush()
+
+    resp = await client.delete(f"/sites/{site.id}", headers=_auth(token))
+
+    assert resp.status_code == 204, resp.text
+    assert (await _counts(db_session, site.id))["sites"] == 0
+
+
+async def test_delete_after_removing_blocks_returns_204(
+    client, db_session, user_factory, project_factory
+):
+    """S9 (blok varyanti) — blok korkulugu KALICI KILIT uretmiyor."""
+    project = await project_factory("F-4")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+    token = await _login(client, user_factory)
+
+    blocked = await client.delete(f"/sites/{site.id}", headers=_auth(token))
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"] == BLOCK_BLOCKER
+
+    await db_session.delete(block)
+    await db_session.flush()
+
+    resp = await client.delete(f"/sites/{site.id}", headers=_auth(token))
+
+    assert resp.status_code == 204, resp.text
+    assert (await _counts(db_session, site.id))["sites"] == 0
+
+
+async def test_delete_section_leaves_sibling_boq_and_blocks_intact(
+    client, db_session, user_factory, project_factory
+):
+    """S8 tamamlayicisi — bolum silmek santiyenin DIGER alt kayitlarina dokunmaz.
+
+    `sections.id`'yi hedefleyen FK yok, ama poz/blok satirlari SANTIYEYE baglidir;
+    bolum silme yolunun yanlislikla santiye kimligiyle calismadigi olculmelidir.
+    """
+    project = await project_factory("F-5")
+    site = await _site(db_session, project)
+    section = await _section(db_session, site)
+    group = await _group(db_session, site)
+    await _item(db_session, site, group)
+    await _block(db_session, project, site)
+    token = await _login(client, user_factory)
+    before = await _counts(db_session, site.id)
+
+    resp = await client.delete(f"/sections/{section.id}", headers=_auth(token))
+
+    assert resp.status_code == 204
+    after = await _counts(db_session, site.id)
+    assert after["sections"] == before["sections"] - 1
+    assert after["sites"] == before["sites"] == 1
+    assert after["boq_groups"] == before["boq_groups"] == 1
+    assert after["boq_items"] == before["boq_items"] == 1
+    assert after["blocks"] == before["blocks"] == 1
