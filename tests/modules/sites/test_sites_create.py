@@ -422,6 +422,32 @@ async def test_unknown_manager_user_returns_422(client, db_session, user_factory
     assert await _count(db_session, Site) == before
 
 
+async def test_on_leave_user_can_be_site_manager(client, db_session, user_factory, project_factory):
+    """IZINLI personel ATANABILIR (karar 2026-07-30).
+
+    Izin GECICI bir durumdur; yillik izindeki sef hâlâ o santiyenin sefidir.
+    Reddedilseydi sef tatildeyken santiye ACILAMAZDI.
+    """
+    project = await project_factory("T6-13b")
+    on_leave = await user_factory(
+        email=f"izinli-{uuid.uuid4().hex[:6]}@t.co",
+        password="parola1234",
+        role_key="site_chief",
+        status="on_leave",
+        full_name="İzinli Şef",
+    )
+    token = await _login(client, db_session, user_factory)
+
+    resp = await client.post(
+        f"/projects/{project.id}/sites",
+        json=_publishable_body(site_manager_user_id=str(on_leave.id)),
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["site_manager_name"] == "İzinli Şef"
+
+
 async def test_inactive_user_returns_422(client, db_session, user_factory, project_factory):
     """Pasif kullanici santiye sefi olarak ATANAMAZ (§9)."""
     project = await project_factory("T6-14")

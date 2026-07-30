@@ -94,3 +94,46 @@ async def test_get_section_resolves_owning_site(db_session, project_factory):
 
 async def test_get_section_missing_returns_none(db_session):
     assert await repository.get_section(db_session, uuid.uuid4()) is None
+
+
+# --- Atanabilir kullanici (karar 2026-07-30) ---
+#
+# IZINLI (`on_leave`) personel ATANABILIR. Izin GECICI bir durumdur: yillik
+# izindeki sef hâlâ o santiyenin sefidir. Reddedilirse sef tatildeyken santiye
+# ACILAMAZ. Yalniz gercekten kullanilamaz durum (`passive`) reddedilir.
+
+
+async def test_assignable_user_accepts_active(db_session, user_factory):
+    user = await user_factory(
+        email=f"aktif-{uuid.uuid4().hex[:6]}@t.co", password="parola1234", role_key="site_chief"
+    )
+
+    assert (await repository.get_assignable_user(db_session, user.id)).id == user.id
+
+
+async def test_assignable_user_accepts_on_leave(db_session, user_factory):
+    """Izin gecicidir: izindeki sef hâlâ atanabilir (karar 2026-07-30)."""
+    user = await user_factory(
+        email=f"izinli-{uuid.uuid4().hex[:6]}@t.co",
+        password="parola1234",
+        role_key="site_chief",
+        status="on_leave",
+    )
+
+    assert (await repository.get_assignable_user(db_session, user.id)).id == user.id
+
+
+async def test_assignable_user_rejects_passive(db_session, user_factory):
+    """Pasif kullanici ATANAMAZ: gecici degil, kalici bir kullanilamazlik."""
+    user = await user_factory(
+        email=f"pasif-{uuid.uuid4().hex[:6]}@t.co",
+        password="parola1234",
+        role_key="site_chief",
+        status="passive",
+    )
+
+    assert await repository.get_assignable_user(db_session, user.id) is None
+
+
+async def test_assignable_user_missing_returns_none(db_session, seeded_db):
+    assert await repository.get_assignable_user(db_session, uuid.uuid4()) is None

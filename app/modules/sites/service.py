@@ -323,8 +323,11 @@ async def _resolve_user_name(session: AsyncSession, user_id: uuid.UUID) -> str:
     Yok ya da pasifse 422 — 404 DEGIL: istenen kaynak santiyedir, kullanici
     burada bir ALAN DEGERIDIR. 404 donmek "bu UUID'li kullanici yok" bilgisini
     santiye ucundan sizdirmak olurdu.
+
+    IZINLI (`on_leave`) personel ATANABILIR: gerekcesi
+    `repository.get_assignable_user` docstring'inde (karar 2026-07-30).
     """
-    user = await repository.get_active_user(session, user_id)
+    user = await repository.get_assignable_user(session, user_id)
     if user is None:
         raise SiteValidationError(guards.USER_NOT_FOUND)
     return user.full_name

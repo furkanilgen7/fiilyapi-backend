@@ -72,15 +72,31 @@ async def get_site_by_code(
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
-async def get_active_user(session: AsyncSession, user_id: uuid.UUID) -> User | None:
-    """Sef / ISG / bolum sorumlusu FK'leri icin: kullanici VAR MI ve AKTIF MI (spec §9).
+# Sef / ISG / bolum sorumlusu olarak ATANABILIR kullanici durumlari
+# (karar 2026-07-30). `passive` bilincli olarak DISARIDA: kalici bir
+# kullanilamazliktir, gecici degil.
+_ASSIGNABLE_USER_STATUSES = (UserStatus.active, UserStatus.on_leave)
 
-    "Bu kullanicIyI gorme yetkin var mi" ARANMAZ: kullanici listesi `sites:full`
+
+async def get_assignable_user(session: AsyncSession, user_id: uuid.UUID) -> User | None:
+    """Sef / ISG / bolum sorumlusu FK'leri icin: kullanici VAR MI ve ATANABILIR MI (spec §9).
+
+    "Bu kullaniciyi gorme yetkin var mi" ARANMAZ: kullanici listesi `sites:full`
     sahibi icin zaten `GET /users` ile erisilebilir; burada ikinci bir gorunurluk
     kurali icat etmek iki ayri yetki mantigi uretir ve zamanla ayrisir.
 
-    Pasif/izinli kullanici da REDDEDILIR: santiye sefi atamasi ileriye donuk bir
-    sorumluluk bildirimidir, gecmis bir kayit degil.
+    **`deps.py`'deki aktif-only kuralindan BILINCLI OLARAK AYRILIR** (karar
+    2026-07-30). Iki soru ayni degildir:
+
+    * `app/core/deps.py:36` **OTURUM ACMA YETKISI** sorar — "bu kullanici su an
+      sisteme istek atabilir mi?". Izinli personel atamaz, dolayisiyla orada
+      `active` disindaki her durum reddedilir ve reddedilmeye devam eder.
+    * Burasi **VERI ATAMASI** sorar — "bu kisi bu santiyenin sefi mi?". Izin
+      GECICI bir durumdur; yillik izindeki sef hâlâ o santiyenin sefidir.
+      `on_leave` reddedilseydi sef tatildeyken santiye ACILAMAZDI.
+
+    Bu yuzden yalniz gercekten kullanilamaz durum (`passive`) reddedilir; spec
+    §7.2'nin "yok veya pasif" ifadesiyle birebir ortusur.
     """
-    stmt = select(User).where(User.id == user_id, User.status == UserStatus.active)
+    stmt = select(User).where(User.id == user_id, User.status.in_(_ASSIGNABLE_USER_STATUSES))
     return (await session.execute(stmt)).scalar_one_or_none()
