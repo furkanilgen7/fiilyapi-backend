@@ -172,9 +172,29 @@ Tümü proje görünürlük süzgecinden geçer (P2 §5.2 deseni:
 | POST | `/sites/{site_id}/boq/items` | `boq:full` | "+ İş Kalemi" (satır 67) (201) |
 | PATCH | `/boq/items/{item_id}` | `boq:full` | kalem güncelle |
 | GET | `/sites/{site_id}/boq/export` | `boq:view` | "Excel İndir" (satır 66) — xlsx |
+| DELETE | `/boq/items/{item_id}` | **`boq:admin`** | kalem sil (204) — *kullanıcı kararı 2026-07-30, aşağıya bak* |
 
-**Silme ucu yok** — P1/P2 gerekçesi (silme kuralı ana spec §10'da tek seferde).
-BOQ'da yanlış giriş ihtiyacı gerçek olduğundan §8 soru 6 olarak kullanıcıya sorulur.
+**Silme ucu — §8 soru 6 KAPANDI (kullanıcı kararı 2026-07-30).**
+Rev. 1'de "silme ucu yok" yazıyordu. Kullanıcı önce `DELETE /boq/items/{item_id}` açılmasına
+karar verdi (frontend F13 kalem silme bu uca bağlı), ardından **aynı gün** izin seviyesini
+`boq:full`'dan **`boq:admin`**'e çekti.
+
+Gerekçe: `app/core/access.py`'deki kural — *"full silmeyi KAPSAMAZ — silme yalnızca admin
+seviyesindedir"*. Uç böylece mevcut `users` / `roles` / şirket logosu DELETE uçlarıyla aynı
+hizaya gelir.
+
+*Bilinen sonuç, kabul edildi:* seed matrisinde `boq:admin` **yalnız `system_admin`**
+satırındadır → proje müdürü dahil kimse kalem silemez, silme talebi sistem yöneticisine
+gider. **Beklenen davranıştır**, hata değil. Seed matrisi değiştirilmedi.
+
+Davranış (değişmedi): görünmeyen kalem **404** "İş kalemi bulunamadı" (403 **değil**) ve var
+olmayan UUID ile ayırt edilemez; kayıt silinmez; denetim günlüğüne `AuditAction.delete`
+yazılır. Görünürlük `projects` izninden geldiği için — `boq`'tan değil — bu 404 dalı
+`boq:admin` + `projects:full` aktörle **hâlâ ulaşılabilirdir** ve test edilir
+(`test_delete_boq_item_invisible_returns_404_not_403`).
+
+**Grup silme (`DELETE /boq/groups/{id}`) hâlâ YOKTUR** — açılırsa aynı `boq:admin` kapısını
+ve bağlı kalem korkuluğunu almalıdır.
 
 ### 5.1 `GET /sites/{site_id}/boq` yanıtı
 
@@ -300,9 +320,9 @@ GENEL TOPLAM, Gerç. % hücreleri boş. Denetim: create/update kayıtları.
 4. **Birim alanı:** serbest metin mi (öneri), sabit liste mi?
 5. **Poz No formatı:** "01.001" deseni zorlansın mı? Öneri: serbest, yalnız
    şantiye içi benzersizlik.
-6. **Silme:** P1/P2 deseniyle silme ucu yok. BOQ'da yanlış girişin tek çaresi
-   PATCH olur; hakediş bağı gelmeden silme aslında güvenli — bu dilimde
-   `sites:admin` ile DELETE açılsın mı? Öneri: açılmasın (desen korunur).
+6. ~~**Silme:** P1/P2 deseniyle silme ucu yok…~~ **KAPANDI (kullanıcı kararı 2026-07-30):**
+   `DELETE /boq/items/{item_id}` açıldı ve kapısı **`boq:admin`**'dir (`full` yetmez).
+   Ayrıntı ve gerekçe §5 uç tablosunun altındadır. Grup silme ucu açılmadı.
 7. **"+ İş Kalemi" formu:** Ekran 13'te form/modal mockup'ı yok
    (`Formlar.dc.html` taranmadı — BELİRSİZ). Form alanları tablo sütunlarından
    türetildi (§5.2); ayrı form mockup'ı varsa uygulamadan önce o kanon alınır.

@@ -698,18 +698,19 @@ altında, kimliği yukarı çözümleyen tekil uçlar `/units/...` ve `/blocks/.
 > frontend'in `src/app/api/backend/[...path]/route.ts` `ALLOWED_ROOTS` listesine eklenmezse
 > ilgili modül **yalnız canlıda 404** verir (`GOREV-SIRASI.md` §3). Frontend dilimi ikisini de içermeli.
 
-**İzin (tüm uçlar):** okuma `projects` · `view`, yazma `projects` · `full` (§8).
+**İzin (tüm uçlar):** okuma `projects` · `view`, yazma `projects` · `full`,
+**silme `projects` · `admin`** (§8, kullanıcı kararı 2026-07-30).
 
 | # | Uç | Yöntem | İzin | Bölüm |
 |---|---|---|---|---|
 | 1 | `/projects/{project_id}/blocks` | GET | view | §7.1 |
 | 2 | `/projects/{project_id}/blocks` | POST | full | §7.2 |
 | 3 | `/blocks/{block_id}` | PATCH | full | §7.3 |
-| 4 | `/blocks/{block_id}` | DELETE | full | §7.9 |
+| 4 | `/blocks/{block_id}` | DELETE | **admin** | §7.9 |
 | 5 | `/projects/{project_id}/units` | GET | view | §7.4 |
 | 6 | `/projects/{project_id}/units` | POST | full | §7.5 |
 | 7 | `/units/{unit_id}` | PATCH | full | §7.6 |
-| 8 | `/units/{unit_id}` | DELETE | full | §7.9 |
+| 8 | `/units/{unit_id}` | DELETE | **admin** | §7.9 |
 | 9 | `/projects/{project_id}/units/bulk` | POST | full | §7.7 |
 | 10 | `/projects/{project_id}/units/import` | POST | full | §7.8 |
 | 11 | `/projects/{project_id}/units/allocation` | PATCH | full | §7.10 |
@@ -837,6 +838,24 @@ Denetim günlüğü: **istek başına tek satır** (§9).
 
 Rev. 1'de "DELETE yok" yazıyordu; kullanıcı 2026-07-30'da DELETE açılmasına karar verdi.
 
+**İzin — kullanıcı kararı 2026-07-30 (rev. 3):** her iki uç da
+`require_permission("projects", AccessLevel.admin)` ister; `full` **yetmez**.
+Gerekçe `app/core/access.py`'deki kuraldır: *"full silmeyi KAPSAMAZ — silme yalnızca
+admin seviyesindedir"*. Böylece bu uçlar mevcut `users` / `roles` / şirket logosu DELETE
+uçlarıyla aynı hizaya gelir.
+
+*Bilinen sonuç, kabul edildi:* seed matrisinde `projects:admin` **yalnız `system_admin`**
+satırındadır → proje müdürü dahil kimse blok/ünite silemez, silme talebi sistem
+yöneticisine gider. Bu **beklenen davranıştır**, hata değil. Seed matrisi değiştirilmedi.
+
+*Görünürlük etkileşimi (§11.4-6):* `visible_projects` (§8) `projects:admin` için
+görünürlük süzgecini **zaten atlar**. Dolayısıyla silme ucunda "görünmeyen kayıt → 404"
+dalının HTTP üzerinden ulaşılabilir bir senaryosu **kalmamıştır**: kapıyı geçen aktör her
+projeyi görür, geçemeyen aktör kayda hiç ulaşmadan **403** alır. 404 kuralı `guards`
+katmanında ve PATCH uçlarında (hâlâ `full`) aynen yürürlüktedir. 403 sızıntı **değildir**:
+var olmayan bir UUID için de birebir aynı yanıt döner, yani kaydın varlığı hakkında hiçbir
+şey söylemez (test: `test_delete_unit_invisible_returns_403_indistinguishable_from_unknown`).
+
 **`DELETE /units/{unit_id}`** → `204 No Content`.
 Kimlik yukarı çözümlenir; görünmeyen proje / olmayan ünite → **404**.
 Bağlı kayıt yok (P3'te üniteye bağlanan hiçbir tablo yok — §1.3), bu yüzden **koşulsuz silinir**.
@@ -898,7 +917,10 @@ yazmadan önce). Listede tekrarlanan `unit_id` → `422` ("Aynı ünite listede 
 kullanılır.**
 
 - `GET` uçları → `require_permission("projects", AccessLevel.view)`
-- `POST` / `PATCH` / `DELETE` uçları → `require_permission("projects", AccessLevel.full)`
+- `POST` / `PATCH` uçları → `require_permission("projects", AccessLevel.full)`
+- **`DELETE` uçları → `require_permission("projects", AccessLevel.admin)`**
+  *(kullanıcı kararı 2026-07-30; rev. 2'de `full` yazıyordu — gerekçe ve kabul edilen
+  sonuç §7.9'da)*
 
 Görünürlük süzgeci **yeniden yazılmaz**: `app.modules.projects.service.visible_projects`
 import edilir (P2'nin `app/modules/sites/service.py:16` deseni). Kopya süzgeç = zamanla
@@ -1128,14 +1150,16 @@ Kapılar: `.venv/bin/pytest` + `.venv/bin/ruff check` + `.venv/bin/ruff format -
 | 3 | `POST /projects/{gizli}/units` · `.../blocks` · `.../units/bulk` · `.../units/import` | **404** (403 **değil**) |
 | 4 | `PATCH /units/{id}` — ünite görünmeyen projeye ait | **404** "Ünite bulunamadı" |
 | 5 | `PATCH /blocks/{id}` — blok görünmeyen projeye ait | **404** "Blok bulunamadı" |
-| 6 | `DELETE /units/{id}` / `DELETE /blocks/{id}` — görünmeyen projeye ait | **404** |
-| 7 | `PATCH`/`DELETE` — var olmayan UUID | **404**, aynı mesaj (ayırt edilemez) |
+| 6 | `DELETE /units/{id}` / `DELETE /blocks/{id}` — `projects:full` aktör, görünmeyen projeye ait kayıt | **403** *(rev. 3, 2026-07-30: kapı `admin`e çekildi ve görünürlükten önce çalışır; 403 var olmayan UUID ile **birebir aynı** olduğu için varlık sızmaz — kayıt yerinde durur, sayımla doğrulanır)* |
+| 7 | `PATCH` — var olmayan UUID | **404**, aynı mesaj (ayırt edilemez). `DELETE` için: `admin` aktör görünürlük süzgecini atladığından "görünmeyen kayıt" senaryosu **kurulamaz**; var olmayan UUID yine **404** aynı mesaj |
 | 8 | `PATCH /projects/{A}/units/allocation` — listede **B projesinin** ünitesi | **404**, A'nın hiçbir satırı **değişmez** (atomiklik doğrulanır) |
 | 9 | `POST /projects/{A}/units` — `block_id` B projesine ait | **404** |
 | 10 | Excel'de `Blok` sütunu başka projenin bloğuyla aynı adı taşıyor | yeni blok **A projesinde** açılır, B'ye dokunulmaz |
 | 11 | Token yok | **401** |
 | 12 | `projects` izni `none` | **403** |
 | 13 | `projects` izni `view` iken `POST`/`PATCH`/`DELETE`/`bulk`/`import`/`allocation` | **403** |
+| 13b | `projects` izni **`full`** iken `DELETE /units/{id}` · `DELETE /blocks/{id}` | **403** *(rev. 3: silme `admin` ister; aynı aktör PATCH yapabilir — test ön koşul olarak doğrular)* |
+| 13c | `projects` izni **`admin`** iken `DELETE /units/{id}` · `DELETE /blocks/{id}` | **204** *(kapı seviyededir, rol adında değil)* |
 | 14 | `projects=admin` rolü — görünürlük süzgecini atlar (P1 kilitlenme koruması) | **200** |
 
 Her negatif senaryoda yanıt gövdesinin **kayıt varlığını sızdırmadığı** ayrıca doğrulanır.
@@ -1160,8 +1184,9 @@ Her negatif senaryoda yanıt gövdesinin **kayıt varlığını sızdırmadığ�
 | 3 | `taahhut` projede ünite | **Serbest** — kısıt icat edilmez | §3.3 |
 | 4 | Fiyat sütunu | **İKİ AYRI SÜTUN**: `list_price` (KY 274 "Liste Fiyatı") + `appraisal_value` (KKP 89 "Rayiç Değer"); ikisi de nullable | §4.4 |
 | 5 | `net_area_m2 <= gross_area_m2` | **DB CHECK olarak konur** (`ck_units_net_le_gross`) | §4.3 |
-| 6 | İzin | **Yeni izin modülü AÇILMAZ** — okuma `projects:view`, yazma `projects:full`. Modül sayısı 17'de kalır | §8 |
+| 6 | İzin | **Yeni izin modülü AÇILMAZ** — okuma `projects:view`, yazma `projects:full`, **silme `projects:admin`**. Modül sayısı 17'de kalır | §8 |
 | 7 | DELETE uçları | **Ünite DELETE + blok DELETE açılır.** Ünitesi olan blok → 409 + Türkçe mesaj; cascade yok. Denetim günlüğüne yazılır | §7.9 |
+| 7b | DELETE izin seviyesi *(kullanıcı kararı 2026-07-30, rev. 3)* | **`projects:admin`** — `full` yetmez. Gerekçe: `app/core/access.py` "full silmeyi KAPSAMAZ — silme yalnızca admin seviyesindedir"; `users`/`roles`/şirket logosu DELETE uçlarıyla tutarlılık. **Kabul edilen sonuç:** seed'de `projects:admin` yalnız `system_admin`'de → proje müdürü dahil kimse silemez, talep sistem yöneticisine gider | §7.9, §8 |
 | 8 | Teslim takibi kilometre taşları (KKP 176–193) | **P3 kapsamı dışı → P11 (Gantt)** | §1.2 |
 | 9 | Sözleşme yükümlülük maddeleri (KK 194–199) + "(ipotek)" teminat türü (KK 191) | **P3 kapsamı dışı → P5 (Sözleşmeler).** Ekranda alanlar boş kalır; `project_land_share` dokunulmaz | §1.2, §3.1 |
 | 10 | Paylaşım Excel **dışa** aktarımı (KKP 24) | **P3 kapsamı dışı → P5 / raporlar** | §1.2 |

@@ -5,10 +5,33 @@ from decimal import Decimal
 
 from sqlalchemy import select
 
+from app.core.access import AccessLevel
 from app.modules.audit.models import AuditAction, AuditLog
 from app.modules.boq.models import BoqGroup, BoqItem
+from app.modules.roles.models import Module, Role, RolePermission
 from app.modules.sites.models import Site
 from app.modules.users.models import UserProjectAccess
+
+
+async def _set_permission(session, role_key: str, module_key: str, level: AccessLevel) -> None:
+    """Bir rolun modul iznini dogrudan ayarlar (`test_projects_api` deseni).
+
+    Yetki kapisi testleri seed degerine BAGIMLI olmamali: matris degistiginde
+    test sessizce anlamsizlasmasin diye ilgili hucre testte acikca kurulur.
+    """
+    role_id = (await session.execute(select(Role.id).where(Role.key == role_key))).scalar_one()
+    module_id = (
+        await session.execute(select(Module.id).where(Module.key == module_key))
+    ).scalar_one()
+    permission = (
+        await session.execute(
+            select(RolePermission).where(
+                RolePermission.role_id == role_id, RolePermission.module_id == module_id
+            )
+        )
+    ).scalar_one()
+    permission.access_level = level
+    await session.flush()
 
 
 async def _login(client, user_factory, role_key: str, email: str | None = None) -> str:
@@ -959,17 +982,70 @@ async def test_delete_boq_item_view_only_role_forbidden(
     assert await db_session.get(BoqItem, item.id) is not None
 
 
+async def test_delete_boq_item_full_level_role_forbidden(
+    client, db_session, user_factory, project_factory
+):
+    """KULLANICI KARARI 2026-07-30: silme `boq:admin` ister, `full` YETMEZ.
+
+    `full` seviyeli rol projeyi GORUR ve PATCH ile kalemi duzenleyebilir; buna
+    karsin silemez (`app/core/access.py`: "full silmeyi KAPSAMAZ"). Kayit
+    yerinde durur — 403 sonrasi hicbir yan etki olmamalidir.
+    """
+    project = await project_factory("BOQ-API-42B")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    item = await _item(db_session, site, group, code="01.001")
+    await _set_permission(db_session, "patron", "boq", AccessLevel.full)
+    token = await _login_with_access(
+        client, db_session, user_factory, "patron", "pat@boq-api-42b.co"
+    )
+
+    patch = await client.patch(
+        f"/boq/items/{item.id}", json={"description": "Yeni tarif"}, headers=_auth(token)
+    )
+    resp = await client.delete(f"/boq/items/{item.id}", headers=_auth(token))
+
+    assert patch.status_code == 200, "on kosul: bu rol kalemi DUZENLEYEBILMELI"
+    assert resp.status_code == 403
+    assert await db_session.get(BoqItem, item.id) is not None
+
+
+async def test_delete_boq_item_admin_level_role_allowed(
+    client, db_session, user_factory, project_factory
+):
+    """`boq:admin` seviyesi siler — kapi `admin`de, rol adinda DEGIL."""
+    project = await project_factory("BOQ-API-42C")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    item = await _item(db_session, site, group, code="01.001")
+    await _set_permission(db_session, "project_manager", "boq", AccessLevel.admin)
+    token = await _login_with_access(
+        client, db_session, user_factory, "project_manager", "pm@boq-api-42c.co"
+    )
+
+    resp = await client.delete(f"/boq/items/{item.id}", headers=_auth(token))
+
+    assert resp.status_code == 204
+    assert await db_session.get(BoqItem, item.id) is None
+
+
 async def test_delete_boq_item_invisible_returns_404_not_403(
     client, db_session, user_factory, project_factory
 ):
     """IDOR (spec §5.5): kalem->santiye->proje suzgecinden gecmeyen kayit 404 doner,
 
     403 DEGIL — ve kayit SILINMEZ.
+
+    Aktorun `boq` izni testte acikca `admin`e cekilir (2026-07-30 karari): aksi
+    hâlde 403 yetki kapisindan doner ve bu test gorunurluk suzgecini HIC sinamaz.
+    Gorunurluk `projects` izninden gelir, `boq`dan degil — project_manager'in
+    `projects` seviyesi `full` kaldigi icin erisim satiri olmadan projeyi goremez.
     """
     project = await project_factory("BOQ-API-43")
     site = await _site(db_session, project)
     group = await _group(db_session, site)
     item = await _item(db_session, site, group, code="01.001")
+    await _set_permission(db_session, "project_manager", "boq", AccessLevel.admin)
     token = await _login(client, user_factory, "project_manager", "pm@boq-api-43.co")
 
     resp = await client.delete(f"/boq/items/{item.id}", headers=_auth(token))
@@ -987,6 +1063,7 @@ async def test_delete_boq_item_missing_is_indistinguishable_from_invisible(
     site = await _site(db_session, project)
     group = await _group(db_session, site)
     item = await _item(db_session, site, group, code="01.001")
+    await _set_permission(db_session, "project_manager", "boq", AccessLevel.admin)
     token = await _login(client, user_factory, "project_manager", "pm@boq-api-44.co")
 
     invisible = await client.delete(f"/boq/items/{item.id}", headers=_auth(token))

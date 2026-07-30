@@ -39,6 +39,9 @@ router = APIRouter(tags=["boq"], responses=COMMON_ERROR_RESPONSES)
 
 _VIEW = require_permission("boq", AccessLevel.view)
 _FULL = require_permission("boq", AccessLevel.full)
+# KULLANICI KARARI 2026-07-30: silme YALNIZ sistem yoneticisindedir. `full`
+# yazmayi kapsar, SILMEYI KAPSAMAZ (`app/core/access.py` §5.0).
+_ADMIN = require_permission("boq", AccessLevel.admin)
 
 
 @router.get("/sites/{site_id}/boq", response_model=BoqListResponse, dependencies=[_VIEW])
@@ -175,7 +178,7 @@ async def update_boq_item_endpoint(
 @router.delete(
     "/boq/items/{item_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[_FULL],
+    dependencies=[_ADMIN],
 )
 async def delete_boq_item_endpoint(
     request: Request,
@@ -185,10 +188,14 @@ async def delete_boq_item_endpoint(
 ) -> None:
     """Frontend F13 (kalem silme) bu uca baglidir.
 
-    Kapi `_FULL`'dir — PATCH ile AYNI: silme BOQ yazma izninin parcasi sayilir.
-    (`app/core/access.py` §5.0'in "silme yalniz admin" kurali `can_delete`
-    uzerinden taslak yasam dongusu tasiyan kayitlar icindir; `BoqItem`'da
-    `created_by`/`is_draft` yoktur, dolayisiyla o kural uygulanamaz.)
+    KULLANICI KARARI 2026-07-30: kapi `_ADMIN`'dir, PATCH'ten (`_FULL`) BIR
+    SEVIYE YUKARI. Gerekce `app/core/access.py`'deki kuraldir: "full silmeyi
+    KAPSAMAZ — silme yalnizca admin seviyesindedir". Boylece uc, mevcut
+    `users`/`roles`/sirket logosu DELETE uclariyla tutarli hâle gelir.
+
+    BILINEN SONUC (kabul edildi): seed matrisinde `boq:admin` yalniz
+    `system_admin`'dedir; proje muduru dahil kimse kalem SILEMEZ, silme talebi
+    sistem yoneticisine gider. Bu BEKLENEN davranistir, hata degil.
     """
     code, description = await service.delete_item(session, user, item_id)
     await record_audit(
