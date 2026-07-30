@@ -44,6 +44,20 @@ class UnitValidationError(DomainError):
     """
 
 
+class UnitImportError(DomainError):
+    """Excel içe aktarmada SATIR BAZLI hatalar (Alt-Proje 2 P3 spec §7.8) — 422.
+
+    Diğer alan hatalarından tek farkı gövdesidir: tek bir `detail` metni yetmez,
+    kullanıcının dosyayı düzeltebilmesi için hangi satırda ne olduğu listelenir.
+    Hep-ya-hiç kuralı bozulmaz — bu istisna atıldığında HİÇBİR satır yazılmamıştır.
+    """
+
+    def __init__(self, message: str, errors: list[dict], truncated: str | None = None) -> None:
+        super().__init__(message)
+        self.errors = errors
+        self.truncated = truncated
+
+
 class RelatedRecordsExistError(DomainError):
     """Silinmek istenen kayda bağlı alt kayıtlar var (Alt-Proje 2 P3 spec §7.9) — 409.
 

@@ -1,15 +1,16 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel
 from app.core.db import get_db
 from app.core.deps import get_current_user
+from app.core.errors import UnitValidationError
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
-from app.modules.units import service
+from app.modules.units import importer, service
 from app.modules.units.models import UnitKind
 from app.modules.units.schemas import (
     BlockCreate,
@@ -18,6 +19,7 @@ from app.modules.units.schemas import (
     BlockUpdate,
     UnitBulkCreate,
     UnitCreate,
+    UnitImportResult,
     UnitListResponse,
     UnitOwnerSideFilter,
     UnitResponse,
@@ -173,3 +175,30 @@ async def bulk_create_units_endpoint(
     HICBIRI yazilmaz (409). Yanit guncel tam listedir — ekran tabloyu yeniden
     cizer, ikinci bir GET'e gerek kalmaz."""
     return await service.bulk_create_units(session, user, project_id, data)
+
+
+@router.post(
+    "/projects/{project_id}/units/import",
+    response_model=UnitImportResult,
+    dependencies=[_FULL],
+)
+async def import_units_endpoint(
+    project_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    file: Annotated[UploadFile, File()],
+) -> UnitImportResult:
+    """Spec §7.8. BELGE SAKLAMA ALTYAPISI GEREKMEZ ve kurulmayacaktir: dosya
+    bellekte okunur, uniteler yaratilir, dosya ATILIR. Diske, S3'e, veritabanina
+    hicbir sey yazilmaz — P3'e sigmasinin tek sebebi budur.
+
+    Boyut IKI KEZ olculur: once istemcinin bildirdigi `size` ile (henuz govde
+    bellege alinmadan), sonra GERCEKTEN okunan `bytes` uzunluguyla
+    (`parse_units_file`) — istemci basligina guvenilmez.
+    """
+    try:
+        importer.ensure_xlsx(file.filename)
+        importer.ensure_size(file.size)
+    except importer.ImportFileError as exc:
+        raise UnitValidationError(str(exc)) from exc
+    return await service.import_units(session, user, project_id, await file.read())

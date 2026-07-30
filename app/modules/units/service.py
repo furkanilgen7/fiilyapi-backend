@@ -8,6 +8,7 @@ from app.core.errors import (
     NotFoundError,
     ProjectTypeMismatchError,
     RelatedRecordsExistError,
+    UnitImportError,
     UnitValidationError,
 )
 from app.modules.projects.models import Project, ProjectType
@@ -20,6 +21,15 @@ from app.modules.sites import repository as sites_repository
 from app.modules.sites.models import Site
 from app.modules.units import repository
 from app.modules.units.bulk import generate_unit_numbers
+from app.modules.units.importer import (
+    IMPORT_ROW_ERRORS,
+    MAX_REPORTED_ERRORS,
+    ImportFileError,
+    ImportRow,
+    RowError,
+    normalize_header,
+    parse_units_file,
+)
 from app.modules.units.models import Block, Unit, UnitKind, UnitOwnerSide
 from app.modules.units.schemas import (
     BlockCreate,
@@ -31,6 +41,8 @@ from app.modules.units.schemas import (
     UnitBlockGroup,
     UnitBulkCreate,
     UnitCreate,
+    UnitImportResult,
+    UnitImportRowError,
     UnitKindBreakdown,
     UnitListResponse,
     UnitOwnerSideFilter,
@@ -651,3 +663,141 @@ async def bulk_create_units(
     )
     await session.flush()
     return await list_units(session, actor, project_id)
+
+
+# --- Excel ice aktarma (spec §6.4, §7.8) — HEP-YA-HIC + SATIR BAZLI RAPOR ---
+
+
+def _row_error(error: RowError) -> UnitImportRowError:
+    return UnitImportRowError(row=error.row, column=error.column, message=error.message)
+
+
+def _raise_row_errors(errors: list[RowError]) -> None:
+    """Spec §7.8: HICBIR satir yazilmaz, ama kullanici tum hatalari TEK seferde gorur.
+
+    "Ilk hatada dur" 48 satirlik bir dosyayi 48 kez yuklemeye zorlardi; yarim
+    yazma ise dosyayi duzeltip yeniden yuklemeyi imkânsiz kilardi (basarili
+    satirlar artik cakisir). Ikisi birlikte uygulanir.
+    """
+    if not errors:
+        return
+    ordered = sorted(errors, key=lambda error: error.row)
+    remaining = len(ordered) - MAX_REPORTED_ERRORS
+    raise UnitImportError(
+        IMPORT_ROW_ERRORS.format(count=len({error.row for error in ordered})),
+        [_row_error(error).model_dump() for error in ordered[:MAX_REPORTED_ERRORS]],
+        f"Ve {remaining} hata daha" if remaining > 0 else None,
+    )
+
+
+def _domain_row_errors(
+    project: Project, rows: list[ImportRow], taken: dict[str, set[str]]
+) -> list[RowError]:
+    """Tekil `POST` ile AYNI alan kurallari, satir satir uygulanir.
+
+    Bu kurallar bilerek `importer.py`'de DEGIL: `net > brut` ve `owner_side`
+    korkulugu tek yazma yolunun kurallaridir (`_ensure_net_le_gross`,
+    `_ensure_owner_side_allowed`) ve ice aktarma onlari KOPYALAMAZ, CAGIRIR.
+    """
+    errors: list[RowError] = []
+    for row in rows:
+        try:
+            _ensure_net_le_gross(row.gross_area_m2, row.net_area_m2)
+        except UnitValidationError as exc:
+            errors.append(RowError(row.row, "Net m²", str(exc)))
+        try:
+            _ensure_owner_side_allowed(project, row.owner_side)
+        except ProjectTypeMismatchError as exc:
+            errors.append(RowError(row.row, "Pay", str(exc)))
+        if row.unit_no in taken.get(normalize_header(row.block_name), set()):
+            errors.append(RowError(row.row, "Ünite No", _DUPLICATE_UNIT))
+    return errors
+
+
+async def import_units(
+    session: AsyncSession, actor: User, project_id: uuid.UUID, content: bytes
+) -> UnitImportResult:
+    """Spec §7.8. Dosya BELLEKTE islenir ve ATILIR — diske/S3'e/DB'ye yazilmaz.
+
+    Sira KATIDIR (bulk ile ayni gerekce): her dogrulama ilk `session.add`'DEN
+    ONCE biter, boylece reddedilen bir dosya tek satir bile — tek BLOK bile —
+    yazmaz:
+
+    1. proje gorunurlugu (404)
+    2. dosya duzeyi kontroller (tip/boyut/satir sayisi/eksik baslik) → 422
+    3. satir cozumleme hatalari (saf, DB'siz)
+    4. alan kurallari + blokta mevcut `unit_no` (tek `SELECT`'ten gelen kume)
+    5. yeni blok adlari icin §4.5 santiye kurali
+    6. bloklar ve uniteler tek `add_all` + tek `flush`
+
+    Blok adi NORMALLESTIRILEREK eslesir (`normalize_header`): dosyada "a blok"
+    yazan kullanici mevcut "A Blok"a yazar. Aksi hâlde `uq_blocks_project_name`
+    ihlaline dusup anlamsiz bir 409 alirdi.
+    """
+    project = await _visible_project(session, actor, project_id)
+    try:
+        rows, parse_errors = parse_units_file(content)
+    except ImportFileError as exc:
+        # Dosyanin TAMAMINI reddeden hata: satir listesi yok, tek Turkce mesaj.
+        raise UnitValidationError(str(exc)) from exc
+    _raise_row_errors(parse_errors)
+
+    blocks = {
+        normalize_header(block.name): block
+        for block, _ in await repository.list_blocks_for_project(session, project.id)
+    }
+    units = await repository.list_units_for_project(session, project.id)
+    by_block_id = {block.id: key for key, block in blocks.items()}
+    taken: dict[str, set[str]] = {key: set() for key in blocks}
+    for unit in units:
+        taken[by_block_id[unit.block_id]].add(unit.unit_no)
+
+    _raise_row_errors(_domain_row_errors(project, rows, taken))
+
+    new_names = [row.block_name for row in rows if normalize_header(row.block_name) not in blocks]
+    created_blocks: list[Block] = []
+    if new_names:
+        # Santiye TEK KEZ cozulur: dosyada santiye sutunu yoktur, dolayisiyla tum
+        # yeni bloklar ayni §4.5 kuralina tabidir (cok santiyeli projede 422).
+        site = await _resolve_site(session, project.id, None)
+        for name in new_names:
+            key = normalize_header(name)
+            if key in blocks:
+                continue
+            block = Block(project_id=project.id, site_id=site.id, name=name)
+            session.add(block)
+            blocks[key] = block
+            created_blocks.append(block)
+        await session.flush()
+
+    # Yeni satirlar blok icinde MEVCUTLARIN ARDINA eklenir (bulk ile ayni gerekce):
+    # sifirdan baslasaydi yari dolu bir blokta eski ve yeni uniteler ic ice
+    # gecerdi — `unit_no` metin oldugu icin ikincil sira "10 < 2" verir.
+    next_sort: dict[str, int] = {}
+    for unit in units:
+        key = by_block_id[unit.block_id]
+        next_sort[key] = max(next_sort.get(key, 0), int(unit.sort_order) + 1)
+
+    new_units: list[Unit] = []
+    for row in rows:
+        key = normalize_header(row.block_name)
+        offset = next_sort.get(key, 0)
+        next_sort[key] = offset + 1
+        new_units.append(
+            Unit(
+                project_id=project.id,
+                block_id=blocks[key].id,
+                unit_no=row.unit_no,
+                unit_kind=row.unit_kind,
+                layout=row.layout,
+                gross_area_m2=row.gross_area_m2,
+                net_area_m2=row.net_area_m2,
+                list_price=row.list_price,
+                appraisal_value=row.appraisal_value,
+                owner_side=row.owner_side,
+                sort_order=offset,
+            )
+        )
+    session.add_all(new_units)
+    await session.flush()
+    return UnitImportResult(created=len(rows), blocks_created=len(created_blocks), errors=[])

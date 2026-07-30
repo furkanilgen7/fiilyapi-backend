@@ -12,6 +12,7 @@ from app.core.errors import (
     ProjectTypeMismatchError,
     ProjectValidationError,
     RelatedRecordsExistError,
+    UnitImportError,
     UnitValidationError,
 )
 
@@ -68,6 +69,16 @@ async def _unit_validation_handler(request: Request, exc: UnitValidationError) -
     )
 
 
+async def _unit_import_handler(request: Request, exc: UnitImportError) -> JSONResponse:
+    """Spec §7.8: gövde satır bazlı raporu taşır. `truncated`, listelenmeyen hataların
+    özetidir (spec metnin nereye yazılacağını söylemiyor; ayrı alan seçildi ki
+    `errors` uzunluğu ilan edilen 50 sınırında kalsın)."""
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": str(exc), "errors": exc.errors, "truncated": exc.truncated},
+    )
+
+
 async def _domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
     return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
 
@@ -94,5 +105,6 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(RelatedRecordsExistError, _related_records_exist_handler)
     app.add_exception_handler(BoqGroupSiteMismatchError, _boq_group_site_mismatch_handler)
     app.add_exception_handler(UnitValidationError, _unit_validation_handler)
+    app.add_exception_handler(UnitImportError, _unit_import_handler)
     app.add_exception_handler(DomainError, _domain_error_handler)
     app.add_exception_handler(IntegrityError, _integrity_error_handler)
