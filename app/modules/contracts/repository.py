@@ -17,6 +17,7 @@ from app.modules.contracts.models import (
     ContractStatus,
     EmployerContractGroup,
     EmployerContractItem,
+    Subcontractor,
     SubcontractorContract,
 )
 from app.modules.projects.models import Project, ProjectContract
@@ -210,3 +211,44 @@ async def sum_distributed_quantities(
     )
     result = await session.execute(stmt)
     return {row[0]: row[1] for row in result.all()}
+
+
+# --- Taşeron kartoteksi (task C9, spec §3.4/§6.4) ---
+#
+# `projects/repository.py`'deki `list_employers`/`get_employer_by_tax_number`/
+# `add_employer` desenlerinin birebiri.
+
+
+async def list_subcontractors(
+    session: AsyncSession, q: str | None, active_only: bool
+) -> list[Subcontractor]:
+    """Ada göre ILIKE süzgeci + aktiflik; sıralama DB'de (ORDER BY name)."""
+    stmt = select(Subcontractor)
+    if active_only:
+        stmt = stmt.where(Subcontractor.is_active.is_(True))
+    if q:
+        stmt = stmt.where(Subcontractor.name.ilike(f"%{q}%"))
+    stmt = stmt.order_by(Subcontractor.name)
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def get_subcontractor(
+    session: AsyncSession, subcontractor_id: uuid.UUID
+) -> Subcontractor | None:
+    return await session.get(Subcontractor, subcontractor_id)
+
+
+async def get_subcontractor_by_tax_number(
+    session: AsyncSession, tax_number: str, exclude_id: uuid.UUID | None = None
+) -> Subcontractor | None:
+    stmt = select(Subcontractor).where(Subcontractor.tax_number == tax_number)
+    if exclude_id is not None:
+        stmt = stmt.where(Subcontractor.id != exclude_id)
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def add_subcontractor(session: AsyncSession, subcontractor: Subcontractor) -> Subcontractor:
+    session.add(subcontractor)
+    await session.flush()
+    await session.refresh(subcontractor)
+    return subcontractor

@@ -19,7 +19,7 @@ from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
-from app.modules.contracts import distribution, service
+from app.modules.contracts import distribution, service, subcontractors
 from app.modules.contracts.models import ContractStatus
 from app.modules.contracts.schemas import (
     ContractDistributionResponse,
@@ -34,6 +34,10 @@ from app.modules.contracts.schemas import (
     EmployerContractItemResponse,
     EmployerContractItemsResponse,
     EmployerContractItemUpdate,
+    SubcontractorCreate,
+    SubcontractorListResponse,
+    SubcontractorResponse,
+    SubcontractorUpdate,
 )
 from app.modules.users.models import User
 
@@ -91,6 +95,21 @@ def _contract_distribution_saved(project_name: str) -> str:
     """Task C8 — spec §8'de `contract_distribution_saved` olarak merkezileşecek.
     `audit/messages.py`'de HENÜZ YOK; C6'nın geçici yardımcı deseni izlenir."""
     return f"Poz dağılımı kaydedildi: {project_name}"
+
+
+# --- Taşeron kartoteksi (task C9, spec §3.4/§6.4) ---
+#
+# `employer_created`'in aynı geçici-yardımcı gerekçesi: C13, spec §8'de
+# `subcontractor_created`/`subcontractor_updated` olarak merkezileştirecek —
+# bugün `audit/messages.py`'de YOK.
+
+
+def _subcontractor_created(name: str) -> str:
+    return f"Taşeron oluşturuldu: {name}"
+
+
+def _subcontractor_updated(name: str) -> str:
+    return f"Taşeron güncellendi: {name}"
 
 
 @router.get(
@@ -251,3 +270,71 @@ async def update_employer_contract_item_endpoint(
         ip_address=client_ip(request),
     )
     return await service.to_item_response_single(session, item)
+
+
+# --- Taşeron kartoteksi (task C9, spec §6.4) ---
+#
+# `employers_router` (`app/modules/projects/router.py`) deseninin birebiri.
+# DELETE bu task'ta AÇILMAZ — C12'nin işi (409 `SUBCONTRACTOR_HAS_CONTRACTS`).
+# `visible_projects` süzgeci BİLİNÇLİ OLARAK yok: kartoteks proje-bağımsızdır
+# (`Employer` de aynı şekilde geçmiyor).
+
+
+@router.get(
+    "/subcontractors",
+    response_model=SubcontractorListResponse,
+    dependencies=[_VIEW],
+)
+async def list_subcontractors_endpoint(
+    session: Annotated[AsyncSession, Depends(get_db)],
+    q: str | None = None,
+    active_only: bool = True,
+) -> SubcontractorListResponse:
+    items = await subcontractors.list_subcontractors(session, q, active_only)
+    return SubcontractorListResponse(items=[SubcontractorResponse.model_validate(s) for s in items])
+
+
+@router.post(
+    "/subcontractors",
+    response_model=SubcontractorResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[_FULL],
+)
+async def create_subcontractor_endpoint(
+    request: Request,
+    data: SubcontractorCreate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> SubcontractorResponse:
+    subcontractor = await subcontractors.create_subcontractor(session, data)
+    await record_audit(
+        session,
+        action=AuditAction.create,
+        detail=_subcontractor_created(subcontractor.name),
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return SubcontractorResponse.model_validate(subcontractor)
+
+
+@router.patch(
+    "/subcontractors/{subcontractor_id}",
+    response_model=SubcontractorResponse,
+    dependencies=[_FULL],
+)
+async def update_subcontractor_endpoint(
+    request: Request,
+    subcontractor_id: uuid.UUID,
+    data: SubcontractorUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> SubcontractorResponse:
+    subcontractor = await subcontractors.update_subcontractor(session, subcontractor_id, data)
+    await record_audit(
+        session,
+        action=AuditAction.update,
+        detail=_subcontractor_updated(subcontractor.name),
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return SubcontractorResponse.model_validate(subcontractor)
