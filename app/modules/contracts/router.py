@@ -19,9 +19,10 @@ from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
-from app.modules.contracts import service
+from app.modules.contracts import distribution, service
 from app.modules.contracts.models import ContractStatus
 from app.modules.contracts.schemas import (
+    ContractDistributionResponse,
     ContractListResponse,
     ContractType,
     EmployerContractDetail,
@@ -109,6 +110,19 @@ async def get_employer_contract_items_endpoint(
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> EmployerContractItemsResponse:
     return await service.get_employer_contract_items(session, user, project_id)
+
+
+@router.get(
+    "/projects/{project_id}/contract/distribution",
+    response_model=ContractDistributionResponse,
+    dependencies=[_VIEW],
+)
+async def get_contract_distribution_endpoint(
+    project_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> ContractDistributionResponse:
+    return await distribution.build_distribution(session, user, project_id)
 
 
 @router.post(
