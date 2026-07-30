@@ -309,8 +309,10 @@ async def test_create_site_generates_code_when_omitted(seeded_db, user_factory, 
     project = await project_factory("S-19")
     user = await _patron(seeded_db, user_factory, "s19@t.co")
 
+    # `is_draft=True` T6'da eklendi: taslak-disi POST zorunluluk kurallarini kosar
+    # (spec §5.1/7-10). Bu test KOD URETICISINI sinar, form zorunlulugunu degil.
     site = await service.create_site(
-        seeded_db, user, project.id, SiteCreate(name="A-Blok Şantiyesi")
+        seeded_db, user, project.id, SiteCreate(name="A-Blok Şantiyesi", is_draft=True)
     )
 
     assert site.code == f"SNT-{today().year}-001"
@@ -322,7 +324,10 @@ async def test_create_site_keeps_explicit_code(seeded_db, user_factory, project_
     user = await _patron(seeded_db, user_factory, "s20@t.co")
 
     site = await service.create_site(
-        seeded_db, user, project.id, SiteCreate(name="A-Blok Şantiyesi", code="A-BLOK")
+        seeded_db,
+        user,
+        project.id,
+        SiteCreate(name="A-Blok Şantiyesi", code="A-BLOK", is_draft=True),
     )
 
     assert site.code == "A-BLOK"

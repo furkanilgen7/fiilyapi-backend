@@ -2,7 +2,7 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import NotFoundError
+from app.core.errors import DuplicateError, NotFoundError, SiteValidationError
 from app.core.timezone import today
 from app.modules.projects.models import Project
 
@@ -25,9 +25,11 @@ from app.modules.sites.schemas import (
     SiteCreate,
     SiteDetailResponse,
     SiteFacilities,
+    SiteFacilitiesInput,
     SiteListResponse,
     SiteListTotals,
     SiteProjectSummary,
+    SiteSectionInput,
     SiteUpdate,
 )
 from app.modules.users.models import User
@@ -43,6 +45,13 @@ _BOQ = "boq"
 
 # Santiye kodu oneki (spec §3.2, mockup satir 67 yer tutucusu `SNT-2026-003`).
 _SITE_CODE_PREFIX = "SNT"
+
+# ISG "Dış Kaynak — OSGB" secilince `safety_officer_name`e yazilan SABIT etiket
+# (spec §3.3). Bu bir HATA METNI degil bir VERI DEGERIDIR, bu yuzden `guards.py`de
+# degil burada durur. OSGB FIRMA ADI alani ICAT EDILMEZ: mockup'ta boyle bir input
+# yoktur; OSGB sozlesmesi gercek bir kartoteks ihtiyacina donusurse Alt-Proje 3
+# (firmalar) isidir.
+_OUTSOURCED_SAFETY_OFFICER_LABEL = "Dış Kaynak — OSGB"
 
 
 def _metric(pending_module: str) -> MetricPlaceholder:
@@ -307,23 +316,141 @@ async def list_sections_for_site(
 # --- Yazma uclari ---
 
 
+async def _resolve_user_name(session: AsyncSession, user_id: uuid.UUID) -> str:
+    """Verilen kullanicinin `full_name` anlik goruntusunu doner (spec §9).
+
+    Yok ya da pasifse 422 — 404 DEGIL: istenen kaynak santiyedir, kullanici
+    burada bir ALAN DEGERIDIR. 404 donmek "bu UUID'li kullanici yok" bilgisini
+    santiye ucundan sizdirmak olurdu.
+    """
+    user = await repository.get_active_user(session, user_id)
+    if user is None:
+        raise SiteValidationError(guards.USER_NOT_FOUND)
+    return user.full_name
+
+
+def _apply_facilities(site: Site, facilities: SiteFacilitiesInput) -> None:
+    """GRUPLU API sozlesmesini SEKIZ duz Boolean kolona yazar (spec §4.1).
+
+    Donusum SERVIS katmanindadir (`_facilities` okuma yonunun aynasi): sema
+    kendi basina DB bilmez, model kendi basina API sozlesmesini bilmez.
+    """
+    site.has_closed_warehouse = facilities.closed_warehouse
+    site.has_open_storage = facilities.open_storage
+    site.has_cold_storage = facilities.cold_storage
+    site.has_site_office = facilities.site_office
+    site.has_canteen = facilities.canteen
+    site.has_changing_room_wc = facilities.changing_room_wc
+    site.has_dormitory = facilities.dormitory
+    site.has_infirmary = facilities.infirmary
+
+
+async def _resolve_safety_officer(
+    session: AsyncSession, user_id: uuid.UUID | None, is_outsourced: bool
+) -> str | None:
+    """ISG uzmani adinin anlik goruntusu (spec §3.3).
+
+    Uc gecerli dal vardir: sistem kullanicisi · dis kaynak (OSGB) · HICBIRI.
+    Karsilikli dislama `guards.validate_site`te (ve DB `CHECK`'inde) tutulur,
+    burada TEKRARLANMAZ.
+    """
+    if user_id is not None:
+        return await _resolve_user_name(session, user_id)
+    if is_outsourced:
+        return _OUTSOURCED_SAFETY_OFFICER_LABEL
+    return None
+
+
+async def _write_sections(
+    session: AsyncSession, site: Site, sections: list[SiteSectionInput]
+) -> None:
+    """Form ici bolum satirlarini yazar. `sort_order` DIZI SIRASINDAN atanir (§6.1).
+
+    Dogrulama BURADA yapilmaz: `guards.validate_site` tum satirlari HICBIR SEY
+    yazilmadan once, tek seferde denetledi (§8.2). Bu ayrim atomikligin ta
+    kendisidir — satir yazarken dogrulamak, ilk hatada onceki satirlari session'a
+    girmis halde birakirdi.
+    """
+    for index, row in enumerate(sections):
+        manager_name = (
+            await _resolve_user_name(session, row.manager_user_id)
+            if row.manager_user_id is not None
+            else None
+        )
+        session.add(
+            Section(
+                site_id=site.id,
+                code=row.code,
+                name=row.name,
+                manager_user_id=row.manager_user_id,
+                manager_name=manager_name,
+                start_date=row.start_date,
+                end_date=row.end_date,
+                sort_order=index,
+            )
+        )
+
+
 async def create_site(
     session: AsyncSession, actor: User, project_id: uuid.UUID, data: SiteCreate
 ) -> Site:
+    """Spec §8.1'in dokuz adimi, O SIRAYLA.
+
+    ATOMIKLIK (§8.2): `get_db` istek basina TEK transaction acar; herhangi bir
+    adimda istisna -> rollback -> HICBIR satir yazilmaz. Kismi basari mumkun
+    degildir: santiye yazilip bolum patlarsa santiye de geri alinir. Bunun sarti
+    dogrulamanin ve kullanici cozumunun YAZMADAN ONCE bitmis olmasidir; bu yuzden
+    1-4 arasi adimlarda `session.add` YOKTUR.
+    """
+    # 1. Gorunur proje suzgeci -> yoksa 404 (govde ayirt edici DEGIL).
     await _visible_project(session, actor, project_id)
+    # 2. Taslak-farkindalikli dogrulama (santiye + TUM bolum satirlari) -> 422.
+    guards.validate_site(data, is_draft=data.is_draft)
+    # 3. Sef/ISG kullanici cozumu -> 422. FK doluysa ad anlik goruntusu govdedeki
+    #    serbest metnin UZERINE yazilir (`projects.employer_name` deseni).
+    site_manager_name = data.site_manager_name
+    if data.site_manager_user_id is not None:
+        site_manager_name = await _resolve_user_name(session, data.site_manager_user_id)
+    safety_officer_name = await _resolve_safety_officer(
+        session, data.safety_officer_user_id, data.safety_officer_is_outsourced
+    )
+    # 4. Kod uretimi (bossa) + cakisma on-kontrolu -> 409 alanina ozel Turkce mesajla.
+    code = data.code or await _next_site_code(session)
+    if await repository.get_site_by_code(session, project_id, code) is not None:
+        raise DuplicateError(guards.DUPLICATE_SITE_CODE)
+    # 5. Santiye satiri.
     site = Site(
         project_id=project_id,
-        code=data.code or await _next_site_code(session),
+        code=code,
         name=data.name,
         status=data.status,
-        address=data.address,
+        site_manager_user_id=data.site_manager_user_id,
+        site_manager_name=site_manager_name,
+        safety_officer_user_id=data.safety_officer_user_id,
+        safety_officer_name=safety_officer_name,
+        safety_officer_is_outsourced=data.safety_officer_is_outsourced,
         city=data.city,
-        site_manager_name=data.site_manager_name,
+        neighborhood=data.neighborhood,
+        parcel=data.parcel,
+        address=data.address,
+        gps_coordinates=data.gps_coordinates,
+        land_area_m2=data.land_area_m2,
+        construction_area_m2=data.construction_area_m2,
+        floor_info=data.floor_info,
         start_date=data.start_date,
         end_date=data.end_date,
         delivery_date=data.delivery_date,
+        budget=data.budget,
+        electricity_subscription_no=data.electricity_subscription_no,
+        water_subscription_no=data.water_subscription_no,
+        planned_worker_count=data.planned_worker_count,
+        is_draft=data.is_draft,
     )
+    _apply_facilities(site, data.facilities)
     session.add(site)
+    await session.flush()
+    # 6-7. Bolumler + tek flush (benzersizlik ihlali -> 409 emniyet agi).
+    await _write_sections(session, site, data.sections)
     await session.flush()
     await session.refresh(site)
     return site

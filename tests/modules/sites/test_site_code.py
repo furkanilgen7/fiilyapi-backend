@@ -13,6 +13,7 @@ dokunulmaz; `LIKE 'SNT-{yil}-%'` suzgeci onlari zaten gormez.
 import pytest
 from sqlalchemy import select
 
+from app.core.errors import DuplicateError
 from app.core.timezone import today
 from app.modules.projects.schemas import ProjectCreate, ProjectSiteInput
 from app.modules.projects.service import create_project
@@ -89,8 +90,15 @@ async def test_next_site_code_is_global_across_projects(seeded_db, user_factory,
     second_project = await project_factory("K-5")
     user = await _patron(seeded_db, user_factory, "k4@t.co")
 
-    first = await service.create_site(seeded_db, user, first_project.id, SiteCreate(name="A"))
-    second = await service.create_site(seeded_db, user, second_project.id, SiteCreate(name="B"))
+    # `is_draft=True` T6'da EKLENDI: taslak-disi POST artik sef/il/insaat alani/tarih
+    # zorunlulugunu kosar (spec §5.1/7-10). Bu test KOD URETICISINI sinar, form
+    # zorunlulugunu degil — gerekli alanlari doldurmak testin konusunu bulandirirdi.
+    first = await service.create_site(
+        seeded_db, user, first_project.id, SiteCreate(name="A", is_draft=True)
+    )
+    second = await service.create_site(
+        seeded_db, user, second_project.id, SiteCreate(name="B", is_draft=True)
+    )
 
     assert first.code == f"{_prefix()}001"
     assert second.code == f"{_prefix()}002"
@@ -110,7 +118,7 @@ async def test_explicit_code_is_not_overwritten(seeded_db, user_factory, project
     user = await _patron(seeded_db, user_factory, "k7@t.co")
 
     site = await service.create_site(
-        seeded_db, user, project.id, SiteCreate(name="Ozel", code="OZEL-1")
+        seeded_db, user, project.id, SiteCreate(name="Ozel", code="OZEL-1", is_draft=True)
     )
 
     assert site.code == "OZEL-1"
@@ -147,7 +155,7 @@ async def test_existing_site_codes_untouched(seeded_db, user_factory, project_fa
     await seeded_db.flush()
     user = await _patron(seeded_db, user_factory, "k8@t.co")
 
-    await service.create_site(seeded_db, user, project.id, SiteCreate(name="Yeni"))
+    await service.create_site(seeded_db, user, project.id, SiteCreate(name="Yeni", is_draft=True))
 
     codes = (
         (await seeded_db.execute(select(Site.code).where(Site.project_id == project.id)))
@@ -158,15 +166,21 @@ async def test_existing_site_codes_untouched(seeded_db, user_factory, project_fa
 
 
 async def test_explicit_duplicate_code_still_conflicts(seeded_db, user_factory, project_factory):
-    """Cakismada otomatik yeniden deneme YOK (§8.3): IntegrityError -> 409."""
-    from sqlalchemy.exc import IntegrityError
+    """Cakismada otomatik yeniden deneme YOK (§8.3) — istek 409 ile reddedilir.
 
+    T6'da istisna TIPI degisti: `IntegrityError` -> `DuplicateError`. Servis artik
+    cakismaya acik bir SELECT ile ONCEDEN bakar (spec §7.2, `boq` emsali) ki
+    kullanici genel "Veri bütünlüğü hatası" yerine alanina ozel Turkce mesaji
+    gorsun. Ikisi de 409'a duser; `uq_sites_project_code` -> IntegrityError yolu
+    YARIS DURUMU emniyet agi olarak yerinde KALIR. Erken yakalama ayrica
+    atomikligin sartidir: bolumler session'a girmeden istek reddedilir.
+    """
     project = await project_factory("K-9")
     seeded_db.add(Site(project_id=project.id, code="A-BLOK", name="Var olan"))
     await seeded_db.flush()
     user = await _patron(seeded_db, user_factory, "k9@t.co")
 
-    with pytest.raises(IntegrityError):
+    with pytest.raises(DuplicateError):
         await service.create_site(
-            seeded_db, user, project.id, SiteCreate(name="Kopya", code="A-BLOK")
+            seeded_db, user, project.id, SiteCreate(name="Kopya", code="A-BLOK", is_draft=True)
         )

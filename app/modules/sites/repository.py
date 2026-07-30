@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.sites.models import Section, Site
+from app.modules.users.models import User, UserStatus
 
 
 async def list_sites_for_project(session: AsyncSession, project_id: uuid.UUID) -> list[Site]:
@@ -45,3 +46,41 @@ async def list_sections(session: AsyncSession, site_id: uuid.UUID) -> list[Secti
 
 async def get_section(session: AsyncSession, section_id: uuid.UUID) -> Section | None:
     return await session.get(Section, section_id)
+
+
+async def get_site_by_code(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    code: str,
+    exclude_site_id: uuid.UUID | None = None,
+) -> Site | None:
+    """(project_id, code) cakismasini IntegrityError'a DUSMEDEN once yakalar.
+
+    `boq/repository.get_item_by_code` deseninin birebiri (spec §7.2): servis once
+    acik bir SELECT ile bakar ki kullaniciya alanina ozel Turkce mesaj verilsin
+    ("Bu şantiye kodu bu projede zaten kullanılıyor"), genel "Veri bütünlüğü
+    hatası" degil. `uq_sites_project_code` -> IntegrityError -> 409 handler'i
+    YARIS DURUMU emniyet agi olarak KALIR (spec §8.3).
+
+    Cakisma yakalanmazsa istisna FLUSH aninda, yani santiye satiri eklendikten
+    SONRA atilir; oradan geri donmek transaction'a birakilir. Erken yakalamak
+    atomikligi kolaylastirir: hicbir satir session'a girmeden reddedilir.
+    """
+    stmt = select(Site).where(Site.project_id == project_id, Site.code == code)
+    if exclude_site_id is not None:
+        stmt = stmt.where(Site.id != exclude_site_id)
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def get_active_user(session: AsyncSession, user_id: uuid.UUID) -> User | None:
+    """Sef / ISG / bolum sorumlusu FK'leri icin: kullanici VAR MI ve AKTIF MI (spec §9).
+
+    "Bu kullanicIyI gorme yetkin var mi" ARANMAZ: kullanici listesi `sites:full`
+    sahibi icin zaten `GET /users` ile erisilebilir; burada ikinci bir gorunurluk
+    kurali icat etmek iki ayri yetki mantigi uretir ve zamanla ayrisir.
+
+    Pasif/izinli kullanici da REDDEDILIR: santiye sefi atamasi ileriye donuk bir
+    sorumluluk bildirimidir, gecmis bir kayit degil.
+    """
+    stmt = select(User).where(User.id == user_id, User.status == UserStatus.active)
+    return (await session.execute(stmt)).scalar_one_or_none()

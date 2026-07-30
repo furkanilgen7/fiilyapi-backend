@@ -136,7 +136,10 @@ async def test_create_site_and_audit(client, db_session, user_factory, project_f
 
     resp = await client.post(
         f"/projects/{project.id}/sites",
-        json={"name": "A-Blok Şantiyesi", "address": "Kuyubaşı Mah."},
+        # `is_draft` T6'da eklendi: taslak-disi POST artik sef/il/insaat alani/tarih
+        # zorunlulugunu kosar (spec §5.1/7-10). Bu test KOD + DENETIM GUNLUGUNU
+        # sinar; taslak yolu ikisini de aynen kullanir.
+        json={"name": "A-Blok Şantiyesi", "address": "Kuyubaşı Mah.", "is_draft": True},
         headers=_auth(token),
     )
 
@@ -160,7 +163,7 @@ async def test_create_site_duplicate_code_returns_409(
 
     resp = await client.post(
         f"/projects/{project.id}/sites",
-        json={"name": "Kopya", "code": "A-BLOK"},
+        json={"name": "Kopya", "code": "A-BLOK", "is_draft": True},
         headers=_auth(token),
     )
 
