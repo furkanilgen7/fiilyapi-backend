@@ -376,22 +376,41 @@ async def _resolve_safety_officer(
     return None
 
 
-async def _write_sections(
-    session: AsyncSession, site: Site, sections: list[SiteSectionInput]
+async def _resolve_section_manager_names(
+    session: AsyncSession, sections: list[SiteSectionInput]
+) -> list[str | None]:
+    """Bolum seflerinin ad anlik goruntulerini HICBIR SEY YAZILMADAN ONCE cozer.
+
+    Bu cagri 422 (`Seçilen kullanıcı bulunamadı`) uretebilir, dolayisiyla adim 3'e
+    (kullanici cozumu) aittir, adim 6'ya (yazma) DEGIL. Yazma dongusunun icinde
+    kalsaydi santiye satiri ve onceki bolumler session'a girmis olurdu ve kismi
+    yazimin geri alinmasi TEK BASINA istek transaction'ina kalirdi; §8.2'nin
+    "dogrulama yazmadan ONCE, tek seferde" kurali servis katmaninda da gecerlidir.
+    """
+    return [
+        await _resolve_user_name(session, row.manager_user_id)
+        if row.manager_user_id is not None
+        else None
+        for row in sections
+    ]
+
+
+def _write_sections(
+    session: AsyncSession,
+    site: Site,
+    sections: list[SiteSectionInput],
+    manager_names: list[str | None],
 ) -> None:
     """Form ici bolum satirlarini yazar. `sort_order` DIZI SIRASINDAN atanir (§6.1).
 
-    Dogrulama BURADA yapilmaz: `guards.validate_site` tum satirlari HICBIR SEY
-    yazilmadan once, tek seferde denetledi (§8.2). Bu ayrim atomikligin ta
-    kendisidir — satir yazarken dogrulamak, ilk hatada onceki satirlari session'a
-    girmis halde birakirdi.
+    Dogrulama ve kullanici cozumu BURADA yapilmaz: `guards.validate_site` tum
+    satirlari, `_resolve_section_manager_names` ise tum sefleri HICBIR SEY
+    yazilmadan once denetledi (§8.2). Bu ayrim atomikligin ta kendisidir — satir
+    yazarken dogrulamak, ilk hatada onceki satirlari session'a girmis halde
+    birakirdi. Bu yuzden fonksiyon `async` bile DEGILDIR: icinde bekleyen tek bir
+    G/C islemi kalmamistir.
     """
-    for index, row in enumerate(sections):
-        manager_name = (
-            await _resolve_user_name(session, row.manager_user_id)
-            if row.manager_user_id is not None
-            else None
-        )
+    for index, (row, manager_name) in enumerate(zip(sections, manager_names, strict=True)):
         session.add(
             Section(
                 site_id=site.id,
@@ -429,6 +448,9 @@ async def create_site(
     safety_officer_name = await _resolve_safety_officer(
         session, data.safety_officer_user_id, data.safety_officer_is_outsourced
     )
+    #    Bolum sefleri de BURADA cozulur (yazma dongusunde DEGIL): 422 ureten her
+    #    adim, ilk `session.add`den once bitmis olmalidir.
+    section_manager_names = await _resolve_section_manager_names(session, data.sections)
     # 4. Kod uretimi (bossa) + cakisma on-kontrolu -> 409 alanina ozel Turkce mesajla.
     code = data.code or await _next_site_code(session)
     if await repository.get_site_by_code(session, project_id, code) is not None:
@@ -465,7 +487,7 @@ async def create_site(
     session.add(site)
     await session.flush()
     # 6-7. Bolumler + tek flush (benzersizlik ihlali -> 409 emniyet agi).
-    await _write_sections(session, site, data.sections)
+    _write_sections(session, site, data.sections, section_manager_names)
     await session.flush()
     await session.refresh(site)
     return site
