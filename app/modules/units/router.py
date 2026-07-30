@@ -45,6 +45,9 @@ router = APIRouter(tags=["units"], responses=COMMON_ERROR_RESPONSES)
 _VIEW = require_permission("projects", AccessLevel.view)
 # Yazma uclari `full` ister (spec §8): `view` yetmez (IDOR-13).
 _FULL = require_permission("projects", AccessLevel.full)
+# KULLANICI KARARI 2026-07-30: SILME uclari bir seviye yukaridadir. `full`
+# yazmayi kapsar, SILMEYI KAPSAMAZ (`app/core/access.py` §5.0).
+_ADMIN = require_permission("projects", AccessLevel.admin)
 
 
 async def _audit(
@@ -175,7 +178,7 @@ async def update_unit_endpoint(
     return await service.unit_response(session, unit)
 
 
-@router.delete("/units/{unit_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[_FULL])
+@router.delete("/units/{unit_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[_ADMIN])
 async def delete_unit_endpoint(
     request: Request,
     unit_id: uuid.UUID,
@@ -183,12 +186,24 @@ async def delete_unit_endpoint(
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> None:
     """Spec §7.9. Unite silme kosulsuzdur (P3'te uniteye bagli tablo yok, §1.3).
-    Gorunmeyen projenin unitesi 404 doner, 403 DEGIL."""
+
+    KULLANICI KARARI 2026-07-30: kapi `_ADMIN`'dir, PATCH'ten (`_FULL`) BIR
+    SEVIYE YUKARI — `app/core/access.py`: "full silmeyi KAPSAMAZ — silme
+    yalnizca admin seviyesindedir". `users`/`roles`/sirket logosu DELETE
+    uclariyla tutarlilik saglanir.
+
+    BILINEN SONUC (kabul edildi): seed matrisinde `projects:admin` yalniz
+    `system_admin`'dedir; proje muduru dahil kimse silemez.
+
+    Gorunurluk kurali DEGISMEDI (gorunmeyen projenin unitesi 404, 403 degil)
+    fakat `projects:admin` gorunurluk suzgecini zaten atladigindan (spec §5.2)
+    bu dalin HTTP uzerinden ULASILABILIR bir senaryosu kalmamistir; kural
+    `guards.visible_unit`'te ve PATCH ucunda (hâlâ `full`) yerinde durur."""
     detail = await service.delete_unit(session, user, unit_id)
     await _audit(request, session, user, AuditAction.delete, detail)
 
 
-@router.delete("/blocks/{block_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[_FULL])
+@router.delete("/blocks/{block_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[_ADMIN])
 async def delete_block_endpoint(
     request: Request,
     block_id: uuid.UUID,
@@ -196,7 +211,12 @@ async def delete_block_endpoint(
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> None:
     """Spec §7.9. CASCADE YOK: unitesi olan blok 409 ile reddedilir — 24 daireyi
-    tek istekte silmek geri alinamaz veri kaybidir."""
+    tek istekte silmek geri alinamaz veri kaybidir.
+
+    KULLANICI KARARI 2026-07-30: kapi `_ADMIN`'dir (bkz. `delete_unit_endpoint`
+    gerekcesi) — `app/core/access.py`: "full silmeyi KAPSAMAZ". Yetki kapisi
+    409 korkulugundan ONCE calisir: yetkisiz aktor 403 alir, blogun unite
+    tasiyip tasimadigini OGRENEMEZ."""
     detail = await service.delete_block(session, user, block_id)
     await _audit(request, session, user, AuditAction.delete, detail)
 

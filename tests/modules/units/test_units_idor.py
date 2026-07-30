@@ -211,19 +211,25 @@ async def test_idor_patch_block_invisible_404(client, db_session, user_factory, 
 
 
 @pytest.mark.parametrize("kind", ["unit", "block"])
-async def test_idor_delete_unit_and_block_invisible_404(
+async def test_idor_delete_unit_and_block_full_level_403_leaks_nothing(
     client, db_session, user_factory, project_factory, kind
 ):
-    """§11.4-6. Silme, gorunurlugu atlarsa VERI KAYBI uretir — 404 sart, ve
-    kayit GERCEKTEN silinmemis olmalidir (sayimla dogrulanir)."""
+    """§11.4-6, KULLANICI KARARI 2026-07-30 ile guncellendi.
+
+    Silme artik `projects:admin` ister. `full` seviyeli `patron` yetki kapisinda
+    durdugu icin yanit 404 DEGIL 403'tur — ve bu bir gerileme DEGILDIR: 403
+    tamamen kayittan BAGIMSIZDIR (var olmayan UUID icin de birebir aynidir,
+    `test_units_api::test_delete_unit_invisible_returns_403_...`), dolayisiyla
+    varlik yine sizmaz. Silme, gorunurlugu atlarsa VERI KAYBI uretir; asil kanit
+    kaydin GERCEKTEN durmasidir ve sayimla dogrulanir.
+    """
     project, block, unit = await _fixture_project_with_unit(db_session, project_factory, "IDOR-6")
     token = await _login(client, user_factory, "patron")
     target = f"/units/{unit.id}" if kind == "unit" else f"/blocks/{block.id}"
 
     resp = await client.delete(target, headers=_auth(token))
 
-    assert resp.status_code == 404
-    assert resp.json()["detail"] == (_UNIT_MISSING if kind == "unit" else _BLOCK_MISSING)
+    assert resp.status_code == 403
     _assert_no_leak(resp, str(unit.id), str(block.id), block.name)
     assert await _block_count(db_session, project.id) == 1
     assert len(await _assigned_sides(db_session, project.id)) == 1
@@ -237,8 +243,12 @@ async def test_idor_delete_unit_and_block_invisible_404(
     [
         ("patch", "units", {"unit_no": "7"}, _UNIT_MISSING),
         ("patch", "blocks", {"name": "Z"}, _BLOCK_MISSING),
-        ("delete", "units", None, _UNIT_MISSING),
-        ("delete", "blocks", None, _BLOCK_MISSING),
+        # DELETE satirlari 2026-07-30 karariyla DUSTU: silme `projects:admin`
+        # ister ve `admin` gorunurluk suzgecini zaten atlar (`visible_projects`),
+        # yani "gorunmeyen kayit" senaryosu silme ucunda ARTIK KURULAMAZ. Kapiyi
+        # gecemeyen aktorun 403'u ise kayittan bagimsizdir (yukaridaki §11.4-6
+        # testi). Gorunmez→404 esitligi PATCH satirlarinda aynen durur; silme
+        # ucunda var olmayan UUID'nin 404 mesaji `test_units_api`de kilitlidir.
     ],
 )
 async def test_idor_unknown_uuid_same_message_as_invisible(
@@ -498,18 +508,24 @@ async def test_idor_error_bodies_do_not_leak_record_existence(
             f"/projects/{project.id}/blocks", json={"name": "Z"}, headers=_auth(token)
         ),
         await client.patch(f"/blocks/{block.id}", json={"name": "Z"}, headers=_auth(token)),
-        await client.delete(f"/blocks/{block.id}", headers=_auth(token)),
         await client.patch(f"/units/{unit.id}", json={"unit_no": "9"}, headers=_auth(token)),
-        await client.delete(f"/units/{unit.id}", headers=_auth(token)),
         await client.patch(
             f"/projects/{project.id}/units/allocation",
             json={"items": [{"unit_id": str(unit.id), "owner_side": "contractor"}]},
             headers=_auth(token),
         ),
     ]
+    # Silme uclari 2026-07-30 karariyla `projects:admin` ister: `patron` icin
+    # yanit 404 degil 403'tur. Sizinti olcutu DEGISMEZ — ayni `_assert_no_leak`
+    # suzgecinden gecerler, yalnizca beklenen kod farklidir.
+    delete_responses = [
+        await client.delete(f"/blocks/{block.id}", headers=_auth(token)),
+        await client.delete(f"/units/{unit.id}", headers=_auth(token)),
+    ]
 
     assert [r.status_code for r in responses] == [404] * len(responses)
-    for resp in responses:
+    assert [r.status_code for r in delete_responses] == [403, 403]
+    for resp in responses + delete_responses:
         _assert_no_leak(resp, *secrets)
         # Adet sizintisi: govdede rakam GECMEZ (mesajlar sabit Turkce metinlerdir).
         assert not any(char.isdigit() for char in resp.json()["detail"])

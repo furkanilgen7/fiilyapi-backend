@@ -11,9 +11,32 @@ from decimal import Decimal
 
 from sqlalchemy import func, select
 
+from app.core.access import AccessLevel
+from app.modules.roles.models import Module, Role, RolePermission
 from app.modules.sites.models import Site
 from app.modules.units.models import Block, Unit, UnitKind, UnitOwnerSide
 from app.modules.users.models import UserProjectAccess
+
+
+async def _set_permission(session, role_key: str, module_key: str, level: AccessLevel) -> None:
+    """Bir rolun modul iznini dogrudan ayarlar (`test_projects_api` deseni).
+
+    Yetki kapisi testleri seed degerine BAGIMLI olmamali: matris degistiginde
+    test sessizce anlamsizlasmasin diye ilgili hucre testte acikca kurulur.
+    """
+    role_id = (await session.execute(select(Role.id).where(Role.key == role_key))).scalar_one()
+    module_id = (
+        await session.execute(select(Module.id).where(Module.key == module_key))
+    ).scalar_one()
+    permission = (
+        await session.execute(
+            select(RolePermission).where(
+                RolePermission.role_id == role_id, RolePermission.module_id == module_id
+            )
+        )
+    ).scalar_one()
+    permission.access_level = level
+    await session.flush()
 
 
 async def _login(client, user_factory, role_key: str, email: str | None = None) -> str:
@@ -1048,8 +1071,17 @@ async def test_delete_unit_twice_returns_404(client, db_session, user_factory, p
     assert second.json()["detail"] == "Ünite bulunamadı"
 
 
-async def test_delete_unit_invisible_returns_404(client, db_session, user_factory, project_factory):
-    """IDOR-6: gorunmeyen projenin unitesi SILINEMEZ ve varligi sizmaz."""
+async def test_delete_unit_invisible_returns_403_indistinguishable_from_unknown(
+    client, db_session, user_factory, project_factory
+):
+    """IDOR-6 (2026-07-30 karari sonrasi): silme `projects:admin` ister.
+
+    `full` seviyeli `patron` artik YETKI KAPISINDA durur (403) ve gorunurluk
+    suzgecine hic ulasmaz. Sizinti YOKTUR: ayni rol var olmayan bir UUID icin de
+    birebir ayni 403'u alir, yani 403 kaydin varligi hakkinda hicbir sey soylemez.
+    Gorunmeyen kaydin **404** dondugu davranis `guards.visible_unit` uzerinde
+    aynen durur ve PATCH ucunda (hâlâ `full`) sinanir — bkz. `test_units_idor`.
+    """
     project = await project_factory("B7-3")
     site = await _site(db_session, project)
     block = await _block(db_session, project, site)
@@ -1057,9 +1089,10 @@ async def test_delete_unit_invisible_returns_404(client, db_session, user_factor
     token = await _login(client, user_factory, "patron")
 
     resp = await client.delete(f"/units/{unit.id}", headers=_auth(token))
+    unknown = await client.delete(f"/units/{uuid.uuid4()}", headers=_auth(token))
 
-    assert resp.status_code == 404
-    assert resp.json()["detail"] == "Ünite bulunamadı"
+    assert resp.status_code == unknown.status_code == 403
+    assert resp.json() == unknown.json()
     assert await _count_units_in_block(db_session, block.id) == 1
 
 
@@ -1073,10 +1106,10 @@ async def test_delete_unit_unknown_uuid_returns_404_same_message(client, user_fa
     assert resp.json()["detail"] == "Ünite bulunamadı"
 
 
-async def test_delete_unit_requires_full_permission(
+async def test_delete_unit_view_permission_forbidden(
     client, db_session, user_factory, project_factory
 ):
-    """Spec §8: silme `projects` · `full` ister; `view` SILEMEZ (IDOR-13)."""
+    """Spec §8: silme yazma iznine baglidir; `view` SILEMEZ (IDOR-13)."""
     project = await project_factory("B7-4")
     site = await _site(db_session, project)
     block = await _block(db_session, project, site)
@@ -1087,6 +1120,45 @@ async def test_delete_unit_requires_full_permission(
 
     assert resp.status_code == 403
     assert await _count_units_in_block(db_session, block.id) == 1
+
+
+async def test_delete_unit_full_permission_forbidden(
+    client, db_session, user_factory, project_factory
+):
+    """KULLANICI KARARI 2026-07-30: silme `projects:admin` ister, `full` YETMEZ.
+
+    `full` seviyeli rol uniteyi PATCH ile duzenleyebilir ama silemez
+    (`app/core/access.py`: "full silmeyi KAPSAMAZ — silme yalnizca admin").
+    """
+    project = await project_factory("B7-4B")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+    unit = await _unit(db_session, project, block, "1")
+    token = await _login_with_access(client, db_session, user_factory, "patron")
+
+    patch = await client.patch(f"/units/{unit.id}", json={"unit_no": "9"}, headers=_auth(token))
+    resp = await client.delete(f"/units/{unit.id}", headers=_auth(token))
+
+    assert patch.status_code == 200, "on kosul: bu rol uniteyi DUZENLEYEBILMELI"
+    assert resp.status_code == 403
+    assert await _count_units_in_block(db_session, block.id) == 1
+
+
+async def test_delete_unit_admin_permission_allowed(
+    client, db_session, user_factory, project_factory
+):
+    """`projects:admin` siler — kapi seviyede, rol adinda DEGIL."""
+    project = await project_factory("B7-4C")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+    unit = await _unit(db_session, project, block, "1")
+    await _set_permission(db_session, "project_manager", "projects", AccessLevel.admin)
+    token = await _login_with_access(client, db_session, user_factory, "project_manager")
+
+    resp = await client.delete(f"/units/{unit.id}", headers=_auth(token))
+
+    assert resp.status_code == 204
+    assert await _count_units_in_block(db_session, block.id) == 0
 
 
 # --- B7: DELETE /blocks/{id} (spec §7.9) ---
@@ -1181,19 +1253,25 @@ async def test_delete_block_after_units_removed_returns_204(
     assert await _block_exists(db_session, block.id) is False
 
 
-async def test_delete_block_invisible_returns_404(
+async def test_delete_block_invisible_returns_403_indistinguishable_from_unknown(
     client, db_session, user_factory, project_factory
 ):
-    """IDOR-6: gorunmeyen projenin blogu SILINEMEZ ve varligi sizmaz."""
+    """IDOR-6 (2026-07-30 karari sonrasi): silme `projects:admin` ister.
+
+    `full` seviyeli `patron` yetki kapisinda durur; 403 var olmayan UUID icin de
+    birebir aynidir, dolayisiyla kaydin varligi sizmaz. Gorunurluk suzgecinin
+    **404** davranisi degismedi — PATCH ucunda (hâlâ `full`) sinanir.
+    """
     project = await project_factory("B7-10")
     site = await _site(db_session, project)
     block = await _block(db_session, project, site)
     token = await _login(client, user_factory, "patron")
 
     resp = await client.delete(f"/blocks/{block.id}", headers=_auth(token))
+    unknown = await client.delete(f"/blocks/{uuid.uuid4()}", headers=_auth(token))
 
-    assert resp.status_code == 404
-    assert resp.json()["detail"] == "Blok bulunamadı"
+    assert resp.status_code == unknown.status_code == 403
+    assert resp.json() == unknown.json()
     assert await _block_exists(db_session, block.id) is True
 
 
@@ -1207,7 +1285,7 @@ async def test_delete_block_unknown_uuid_returns_404_same_message(client, user_f
     assert resp.json()["detail"] == "Blok bulunamadı"
 
 
-async def test_delete_block_requires_full_permission(
+async def test_delete_block_view_permission_forbidden(
     client, db_session, user_factory, project_factory
 ):
     project = await project_factory("B7-11")
@@ -1219,3 +1297,36 @@ async def test_delete_block_requires_full_permission(
 
     assert resp.status_code == 403
     assert await _block_exists(db_session, block.id) is True
+
+
+async def test_delete_block_full_permission_forbidden(
+    client, db_session, user_factory, project_factory
+):
+    """KULLANICI KARARI 2026-07-30: silme `projects:admin` ister, `full` YETMEZ."""
+    project = await project_factory("B7-11B")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+    token = await _login_with_access(client, db_session, user_factory, "patron")
+
+    patch = await client.patch(f"/blocks/{block.id}", json={"name": "Z Blok"}, headers=_auth(token))
+    resp = await client.delete(f"/blocks/{block.id}", headers=_auth(token))
+
+    assert patch.status_code == 200, "on kosul: bu rol blogu DUZENLEYEBILMELI"
+    assert resp.status_code == 403
+    assert await _block_exists(db_session, block.id) is True
+
+
+async def test_delete_block_admin_permission_allowed(
+    client, db_session, user_factory, project_factory
+):
+    """`projects:admin` siler — kapi seviyede, rol adinda DEGIL."""
+    project = await project_factory("B7-11C")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+    await _set_permission(db_session, "project_manager", "projects", AccessLevel.admin)
+    token = await _login_with_access(client, db_session, user_factory, "project_manager")
+
+    resp = await client.delete(f"/blocks/{block.id}", headers=_auth(token))
+
+    assert resp.status_code == 204
+    assert await _block_exists(db_session, block.id) is False
