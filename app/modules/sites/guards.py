@@ -62,6 +62,18 @@ SAFETY_OFFICER_CONFLICT = "İSG uzmanı ya sistem kullanıcısı ya dış kaynak
 SECTION_END_BEFORE_START = "{n}. bölüm: bitiş tarihi başlangıçtan önce olamaz."
 SECTION_NAME_REQUIRED = "{n}. bölüm: bölüm adı zorunludur."
 
+# 409 — silme korkuluklari (spec §7.1/§7.2). Yeni istisna sinifi ACILMAZ: mevcut
+# `RelatedRecordsExistError`. `DeleteNotAllowedError` KULLANILMAZ — o YETKI
+# engelidir (403), bu ise kaydin DURUMUNDAN dogan bir cakismadir (409).
+#
+# Metinlerde ADET VERILMEZ (`BLOCK_HAS_UNITS` dersi): kullanici sayiyi zaten GET
+# ile goruyor, hata govdesi gorunurluk disi bilgi tasimaz. Metinler EYLEME
+# DONUKTUR ("once ... silin"), cunku korkulugun tek amaci kullaniciyi silmeden
+# vazgecirmek degil, dogru siraya yonlendirmektir.
+SITE_HAS_SECTIONS = "Bu şantiyede bölüm var, önce bölümleri silin"
+SITE_HAS_BOQ = "Bu şantiyede iş kalemi var, önce iş kalemlerini silin"
+SITE_HAS_BLOCKS = "Bu şantiyede blok var, önce blokları silin"
+
 # GPS BICIM HATASI SABITI YOKTUR (§3.5 revize karari): sunucu GPS metnini
 # dogrulamaz, dolayisiyla boyle bir hata uretmez.
 

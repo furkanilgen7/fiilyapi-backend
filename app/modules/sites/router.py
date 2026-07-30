@@ -34,6 +34,14 @@ router = APIRouter(tags=["sites"], responses=COMMON_ERROR_RESPONSES)
 
 _VIEW = require_permission("sites", AccessLevel.view)
 _FULL = require_permission("sites", AccessLevel.full)
+# KULLANICI KARARI 2026-07-30 ("silme = sistem yoneticisi"): SILME uclari yazma
+# uclarindan BIR SEVIYE YUKARIDADIR. Neden `_FULL` DEGIL: `app/core/access.py`
+# "full yazmayi kapsar, SILMEYI KAPSAMAZ" der; `units`/`blocks`/`boq` DELETE
+# uclariyla birebir ayni desen (`units/router.py:181,206`).
+#
+# BILINEN SONUC (kabul edildi): seed matrisinde `sites:admin` yalniz
+# `system_admin`'dedir — proje muduru dahil kimse santiye/bolum silemez.
+_ADMIN = require_permission("sites", AccessLevel.admin)
 
 
 async def _detail_of(session: AsyncSession, site: Site) -> SiteDetailResponse:
@@ -101,6 +109,24 @@ async def update_site_endpoint(
         ip_address=client_ip(request),
     )
     return await _detail_of(session, site)
+
+
+@router.delete("/sites/{site_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[_ADMIN])
+async def delete_site_endpoint(
+    site_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """Spec §7.1. CASCADE KORKULUGU servistedir — bolum/poz/blok varsa 409.
+
+    Yetki kapisi korkuluktan ONCE calisir: yetkisiz aktor 403 alir ve santiyenin
+    bagli kayit tasiyip tasimadigini OGRENEMEZ. Gorunmeyen santiye 404 doner ve
+    govdesi var olmayan UUID'ninkiyle BIREBIR AYNIDIR.
+
+    Yanit `204 No Content`, GOVDESIZ. Denetim cagrisi T12'de eklenir; servis
+    silinen kaydin ad anlik goruntusunu silmeden ONCE alir.
+    """
+    await service.delete_site(session, current_user, site_id)
 
 
 @router.get("/sites/{site_id}/sections", response_model=SectionListResponse, dependencies=[_VIEW])

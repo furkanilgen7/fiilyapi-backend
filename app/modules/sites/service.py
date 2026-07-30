@@ -3,7 +3,12 @@ from types import SimpleNamespace
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import DuplicateError, NotFoundError, SiteValidationError
+from app.core.errors import (
+    DuplicateError,
+    NotFoundError,
+    RelatedRecordsExistError,
+    SiteValidationError,
+)
 from app.core.timezone import today
 from app.modules.projects.models import Project
 
@@ -579,3 +584,44 @@ async def update_section(
     await session.flush()
     await session.refresh(section)
     return section
+
+
+# --- Silme uclari (spec §7.1) ---
+
+
+async def delete_site(session: AsyncSession, actor: User, site_id: uuid.UUID) -> tuple[str, str]:
+    """Spec §7.1. **CASCADE'i ENGELLEMEK bu fonksiyonun TEK isidir.**
+
+    `sites.id`'yi hedefleyen DORT FK'nin da `ON DELETE CASCADE` oldugu koddan
+    dogrulandi (`sections`, `boq_groups`, `boq_items`, `blocks`). Yani DB
+    KENDILIGINDEN KORUMAZ: asagidaki uc kontrol kaldirilirsa tek bir istek
+    bolumleri, poz gruplarini, poz kalemlerini ve bloklari SESSIZCE yok eder ve
+    bu GERI ALINAMAZ. `delete_block` (`units/service.py:307`) deseninin
+    birebiridir, tek farkla: orada DB'de `RESTRICT` ikinci katman olarak vardi,
+    BURADA YOKTUR — servis korkulugu TEK savunmadir.
+
+    Sira sabittir ve ILK ENGELDE DURUR: bolum -> poz -> blok. Kullaniciya tek,
+    eyleme donuk mesaj verilir; uc engeli birden listelemek onu ayni formda uc
+    kez geri gonderirdi.
+
+    Taslak santiye icin AYRICALIK YOKTUR: bolumlu bir taslak da 409 doner.
+    "Taslak zaten yarim, gitsin" kisayolu taslak/yayin ayrimini silme
+    guvenliginin onune gecirirdi.
+
+    Donen deger: silinen kaydin `(proje adi, santiye adi)` anlik goruntusu.
+    Metin SILMEDEN ONCE kurulur (`units/service.py:327` dersi) — satir gittikten
+    sonra bu iki alan hicbir sorguyla geri getirilemez ve denetim satiri bos adla
+    yazilirdi, yani silinen kaydin NE OLDUGU tamamen kaybolurdu. T12'nin denetim
+    cagrisi bu anlik goruntuyu kullanir.
+    """
+    site, project = await _visible_site(session, actor, site_id)
+    if await repository.site_has_sections(session, site.id):
+        raise RelatedRecordsExistError(guards.SITE_HAS_SECTIONS)
+    if await repository.site_has_boq(session, site.id):
+        raise RelatedRecordsExistError(guards.SITE_HAS_BOQ)
+    if await repository.site_has_blocks(session, site.id):
+        raise RelatedRecordsExistError(guards.SITE_HAS_BLOCKS)
+    snapshot = (project.name, site.name)
+    await session.delete(site)
+    await session.flush()
+    return snapshot
