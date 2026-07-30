@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.sites.models import Site
@@ -120,3 +120,17 @@ async def existing_unit_nos(
         select(Unit.unit_no).where(Unit.block_id == block_id, Unit.unit_no.in_(unit_nos))
     )
     return set(result.scalars().all())
+
+
+async def max_sort_order(session: AsyncSession, block_id: uuid.UUID) -> int:
+    """Blokta kullanilan en buyuk `sort_order`; blok bossa **-1**.
+
+    Toplu uretim, yeni satirlari mevcutlarin ARDINA ekler. Sifirdan baslasaydi
+    yari dolu bir blokta eski ve yeni uniteler ic ice gecerdi (`unit_no` metin
+    oldugu icin ikincil sira "10 < 2" verir — spec §4.2).
+    """
+    result = await session.execute(
+        select(func.max(Unit.sort_order)).where(Unit.block_id == block_id)
+    )
+    highest = result.scalar_one()
+    return -1 if highest is None else int(highest)

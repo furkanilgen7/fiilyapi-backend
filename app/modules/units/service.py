@@ -19,6 +19,7 @@ from app.modules.projects.service import visible_projects
 from app.modules.sites import repository as sites_repository
 from app.modules.sites.models import Site
 from app.modules.units import repository
+from app.modules.units.bulk import generate_unit_numbers
 from app.modules.units.models import Block, Unit, UnitKind, UnitOwnerSide
 from app.modules.units.schemas import (
     BlockCreate,
@@ -28,6 +29,7 @@ from app.modules.units.schemas import (
     CountPlaceholder,
     MetricPlaceholder,
     UnitBlockGroup,
+    UnitBulkCreate,
     UnitCreate,
     UnitKindBreakdown,
     UnitListResponse,
@@ -55,6 +57,7 @@ _SITE_MISSING = "Şantiye bulunamadı"
 _DUPLICATE_BLOCK = "Bu blok adı bu projede zaten kullanılıyor"
 _DUPLICATE_UNIT = "Bu ünite numarası bu blokta zaten kullanılıyor"
 _BLOCK_HAS_UNITS = "Bu blokta ünite var, önce üniteleri silin"
+_BULK_NUMBERS_TAKEN = "Üretilecek ünite numaralarından bazıları blokta zaten var"
 _NO_SITE_FOR_BLOCK = "Blok tanımlamadan önce projeye şantiye eklenmelidir"
 _SITE_REQUIRED = "Birden fazla şantiye var, blok için şantiye seçilmelidir"
 _OWNER_SIDE_NOT_ALLOWED = "Ünite payı yalnızca kat karşılığı projelerde belirlenebilir"
@@ -68,6 +71,11 @@ _PROJECT_COSTS = "project_costs"
 
 _MONEY = Decimal("0.01")
 _HUNDRED = Decimal("100")
+
+# Toplu uretim cakismasinda hata mesajinda listelenecek numara adedi (spec §7.7).
+# 500 numarayi tek satira dizmek mesaji okunamaz kilar; ilk 20 kullaniciya
+# hangi araligi duzeltecegini gostermeye yeter.
+_MAX_CONFLICT_NUMBERS = 20
 
 # Taraf ozetlerinin SABIT sirasi (spec §5.3): ucu de her zaman doner, unite
 # olmasa bile. Ekran "henuz paylasilmadi" durumunu `None` grubundan basar.
@@ -580,3 +588,66 @@ async def delete_block(session: AsyncSession, actor: User, block_id: uuid.UUID) 
         raise RelatedRecordsExistError(_BLOCK_HAS_UNITS)
     await session.delete(block)
     await session.flush()
+
+
+# --- Toplu uretim (spec §6.3, §7.7) — ATOMIKLIK SINIFI ---
+
+
+async def bulk_create_units(
+    session: AsyncSession, actor: User, project_id: uuid.UUID, data: UnitBulkCreate
+) -> UnitListResponse:
+    """Spec §7.7. HEP-YA-HIC: kismi yazma OLMAZ.
+
+    Sira KATIDIR ve degistirilemez — her dogrulama ilk `session.add`'DEN ONCE
+    biter, boylece reddedilen istek tek satir bile yazmaz:
+
+    1. proje gorunurlugu (404) ve blogun bu projeye ait olmasi (404, IDOR-9)
+    2. ortak varsayilanlarin alan kurallari (`net > brut` → 422); tekil POST ile
+       AYNI kural, cunku ayni sutunlara yaziyoruz
+    3. uretilecek numaralarin tamami (saf fonksiyon, DB'ye dokunmaz)
+    4. blokta mevcut numaralarla kesisim — TEK `SELECT` (`existing_unit_nos`);
+       kesisim bossa DEGILSE hicbir `INSERT` yapilmadan 409
+
+    Ardindan tum satirlar tek `add_all` + tek `flush` ile yazilir. `get_db`
+    istek basina tek transaction acar; bir istisna cikarsa rollback eder —
+    dolayisiyla 4. adimdan sonra olusabilecek bir yaris durumu (ayni anda ayni
+    numarayi yazan ikinci istek) `uq_units_block_no` ihlaline duser ve
+    `IntegrityError → 409` handler'i TUM parti geri alinmis hâlde yanit verir.
+
+    `owner_side` UYGULANMAZ: `UnitBulkCreate` semasinda boyle bir alan YOKTUR
+    (spec §6.3) — uretilen tum uniteler pay atanmamis baslar (§5.3), bu da §3.3
+    korkulugunu her proje tipinde yapisal olarak saglar.
+    """
+    project = await _visible_project(session, actor, project_id)
+    block = await _block_in_project(session, project, data.block_id)
+    _ensure_net_le_gross(data.gross_area_m2, data.net_area_m2)
+
+    numbers = generate_unit_numbers(data)
+    taken = await repository.existing_unit_nos(session, block.id, numbers)
+    if taken:
+        # Uretim sirasi KORUNUR (kume sirasi degil): kullanici hangi araligin
+        # cakistigini ancak sirali listede gorebilir.
+        conflicting = [number for number in numbers if number in taken]
+        listed = ", ".join(conflicting[:_MAX_CONFLICT_NUMBERS])
+        raise DuplicateError(f"{_BULK_NUMBERS_TAKEN}: {listed}")
+
+    next_sort_order = await repository.max_sort_order(session, block.id) + 1
+    session.add_all(
+        [
+            Unit(
+                project_id=project.id,
+                block_id=block.id,
+                unit_no=number,
+                unit_kind=data.unit_kind,
+                layout=data.layout,
+                gross_area_m2=data.gross_area_m2,
+                net_area_m2=data.net_area_m2,
+                list_price=data.list_price,
+                appraisal_value=data.appraisal_value,
+                sort_order=next_sort_order + offset,
+            )
+            for offset, number in enumerate(numbers)
+        ]
+    )
+    await session.flush()
+    return await list_units(session, actor, project_id)

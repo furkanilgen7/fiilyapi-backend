@@ -16,6 +16,7 @@ from app.modules.units.schemas import (
     BlockListResponse,
     BlockResponse,
     BlockUpdate,
+    UnitBulkCreate,
     UnitCreate,
     UnitListResponse,
     UnitOwnerSideFilter,
@@ -154,3 +155,21 @@ async def delete_block_endpoint(
     """Spec §7.9. CASCADE YOK: unitesi olan blok 409 ile reddedilir — 24 daireyi
     tek istekte silmek geri alinamaz veri kaybidir."""
     await service.delete_block(session, user, block_id)
+
+
+@router.post(
+    "/projects/{project_id}/units/bulk",
+    response_model=UnitListResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[_FULL],
+)
+async def bulk_create_units_endpoint(
+    project_id: uuid.UUID,
+    data: UnitBulkCreate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> UnitListResponse:
+    """Spec §7.7. HEP-YA-HIC: uretilen numaralardan biri bile blokta varsa
+    HICBIRI yazilmaz (409). Yanit guncel tam listedir — ekran tabloyu yeniden
+    cizer, ikinci bir GET'e gerek kalmaz."""
+    return await service.bulk_create_units(session, user, project_id, data)
