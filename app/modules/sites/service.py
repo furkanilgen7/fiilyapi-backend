@@ -510,6 +510,18 @@ async def update_site(
     # bir gecis degildir ve zorunluluk kurallarini tetiklemez.
     is_publishing = site.is_draft and changes.get("is_draft") is False
     guards.validate_site(_merged_for_validation(site, changes), is_draft=not is_publishing)
+    # Kod cakismasi ON KONTROLU — POST'takiyle AYNI Turkce mesaj (karar 2026-07-30).
+    # Onceden bu dal `uq_sites_project_code` -> IntegrityError'a dusuyor ve genel
+    # "Veri bütünlüğü hatası" doniyordu; kullanici hangi ALANIN sorunlu oldugunu
+    # goremiyordu. `exclude_site_id` sarttir: kendi kodunu yeniden gondermek
+    # cakisma DEGILDIR, aksi hâlde formun tum alanlarini birlikte gonderen her
+    # PATCH 409 verirdi. Kisit YARIS DURUMU emniyet agi olarak KALIR (§8.3).
+    if "code" in changes and changes["code"] != site.code:
+        clash = await repository.get_site_by_code(
+            session, site.project_id, changes["code"], exclude_site_id=site.id
+        )
+        if clash is not None:
+            raise DuplicateError(guards.DUPLICATE_SITE_CODE)
     # Kullanici cozumu YAZMADAN ONCE: gecersiz kullanici hicbir alani degistirmez.
     if changes.get("site_manager_user_id") is not None:
         changes["site_manager_name"] = await _resolve_user_name(

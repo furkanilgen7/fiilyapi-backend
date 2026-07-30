@@ -403,6 +403,68 @@ async def test_patch_unknown_manager_user_returns_422(
     assert (await _reload(db_session, site)).name == "Değişmedi"
 
 
+# --- Kod cakismasi (karar 2026-07-30) ---
+#
+# PATCH'te kod cakismasi POST ile AYNI Turkce mesaji verir. Onceden yalniz
+# `uq_sites_project_code` -> IntegrityError -> genel "Veri bütünlüğü hatası"
+# donuyordu; kullanici hangi ALANIN sorunlu oldugunu goremiyordu. On kontrol
+# eklendi, kisit YARIS DURUMU emniyet agi olarak KALIR (§8.3).
+
+
+async def test_patch_duplicate_code_returns_409_with_field_message(
+    client, db_session, user_factory, project_factory
+):
+    project = await project_factory("T7-18")
+    await _site(db_session, project, code="SNT-2026-001")
+    target = await _site(db_session, project, code="SNT-2026-002")
+    token = await _login(client, db_session, user_factory)
+
+    resp = await client.patch(
+        f"/sites/{target.id}", json={"code": "SNT-2026-001"}, headers=_auth(token)
+    )
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == "Bu şantiye kodu bu projede zaten kullanılıyor"
+    assert (await _reload(db_session, target)).code == "SNT-2026-002"
+
+
+async def test_patch_same_code_on_itself_is_not_a_conflict(
+    client, db_session, user_factory, project_factory
+):
+    """Kendi kodunu yeniden gondermek CAKISMA DEGILDIR — aksi hâlde formun tum
+    alanlari birlikte gonderildiginde her PATCH 409 verirdi."""
+    project = await project_factory("T7-19")
+    site = await _site(db_session, project, code="SNT-2026-003")
+    token = await _login(client, db_session, user_factory)
+
+    resp = await client.patch(
+        f"/sites/{site.id}",
+        json={"code": "SNT-2026-003", "name": "Yeni Ad"},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["name"] == "Yeni Ad"
+
+
+async def test_patch_code_conflict_is_scoped_to_project(
+    client, db_session, user_factory, project_factory
+):
+    """Kisit PROJE ICI tekildir (§0.3/2): baska projedeki ayni kod engel DEGILDIR."""
+    project = await project_factory("T7-20")
+    other = await project_factory("T7-21")
+    await _site(db_session, other, code="SNT-2026-004")
+    site = await _site(db_session, project, code="SNT-2026-005")
+    token = await _login(client, db_session, user_factory)
+
+    resp = await client.patch(
+        f"/sites/{site.id}", json={"code": "SNT-2026-004"}, headers=_auth(token)
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["code"] == "SNT-2026-004"
+
+
 # --- Izin / gorunurluk ---
 
 
