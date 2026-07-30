@@ -3,18 +3,22 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import NotFoundError
+from app.core.errors import DuplicateError, NotFoundError, UnitValidationError
 from app.modules.projects.models import Project, ProjectType
 
 # Gorunurluk suzgeci P1'DEN GELIR (spec §8): kopya bir erisim mantigi YAZILMAZ.
 # Iki ayri suzgec zamanla ayrisir ve ayrisan taraf sessiz bir yetki sizintisi
 # olur. Ayni desen P2 `sites/service.py:15` ve P4 `boq/service.py`'de de var.
 from app.modules.projects.service import visible_projects
+from app.modules.sites import repository as sites_repository
+from app.modules.sites.models import Site
 from app.modules.units import repository
 from app.modules.units.models import Block, Unit, UnitKind, UnitOwnerSide
 from app.modules.units.schemas import (
+    BlockCreate,
     BlockListResponse,
     BlockResponse,
+    BlockUpdate,
     CountPlaceholder,
     MetricPlaceholder,
     UnitBlockGroup,
@@ -32,6 +36,20 @@ from app.modules.users.models import User
 # proje ile var olmayan proje ayni mesaji doner, aksi hâlde elinde UUID olan
 # kullanici kaydin var oldugunu ve baskasina ait oldugunu ayirt edebilirdi.
 _PROJECT_MISSING = "Proje bulunamadı"
+
+# Spec §7.11 tablosundan BIREBIR alinmistir — yeniden yazilmaz. Mesaj sabitleri
+# `boq/service.py` deseniyle modul duzeyindedir (ayri `errors.py` acilmaz: mevcut
+# desen alan HATA SINIFLARINI `app/core/errors.py`'de, METINLERI servis modulunde
+# tutar). Bu dilimde kullanilmayanlar (B7-B10) ilgili task'ta eklenecektir.
+_BLOCK_MISSING = "Blok bulunamadı"
+_UNIT_MISSING = "Ünite bulunamadı"
+_SITE_MISSING = "Şantiye bulunamadı"
+_DUPLICATE_BLOCK = "Bu blok adı bu projede zaten kullanılıyor"
+_DUPLICATE_UNIT = "Bu ünite numarası bu blokta zaten kullanılıyor"
+_NO_SITE_FOR_BLOCK = "Blok tanımlamadan önce projeye şantiye eklenmelidir"
+_SITE_REQUIRED = "Birden fazla şantiye var, blok için şantiye seçilmelidir"
+_OWNER_SIDE_NOT_ALLOWED = "Ünite payı yalnızca kat karşılığı projelerde belirlenebilir"
+_NET_GT_GROSS = "Net alan brüt alandan büyük olamaz"
 
 # Spec §6.1: bu dilimde YAZILMAYAN turev alanlarin bagli oldugu modul anahtarlari.
 # Kullaniciya gosterilecek metin degil, B6 yer tutucu sozlesmesindeki anahtardir.
@@ -266,3 +284,116 @@ async def list_units(
         for block, site_name in selected
     ]
     return UnitListResponse(totals=_totals(units, basis), blocks=groups)
+
+
+# --- Yazma yolu: ortak yardimcilar (spec §7.2, §7.3, §7.5, §7.6) ---
+
+
+async def _visible_block(
+    session: AsyncSession, actor: User, block_id: uuid.UUID
+) -> tuple[Block, Project]:
+    """Blok → proje → gorunurluk (spec §7.3).
+
+    Gorunmeyen projenin blogu **404** doner, 403 DEGIL; ustelik var olmayan blok
+    ile AYNI mesaji verir (IDOR-5/IDOR-7) — aksi hâlde elinde UUID olan kullanici
+    kaydin var oldugunu ve baskasina ait oldugunu ayirt edebilirdi.
+    """
+    block = await repository.get_block(session, block_id)
+    if block is None:
+        raise NotFoundError(_BLOCK_MISSING)
+    project = await _visible_project(session, actor, block.project_id, _BLOCK_MISSING)
+    return block, project
+
+
+async def _resolve_site(
+    session: AsyncSession, project_id: uuid.UUID, site_id: uuid.UUID | None
+) -> Site:
+    """Spec §4.5 tablosunun BES satiri da burada karsilanir.
+
+    | santiye sayisi | `site_id` | davranis |
+    |---|---|---|
+    | 1 | yok | otomatik atanir — mockup'ta secici YOK (KY 38 / KK 39) |
+    | 1 | var | dogrulanir; projeye ait degilse 404 |
+    | 0 | — | 422 |
+    | >=2 | yok | 422 — otomatik atama yanlis veri uretirdi |
+    | >=2 | var | dogrulanir |
+
+    Sifir santiye kontrolu `site_id` kontrolunden ONCE gelir: spec tablosunun 3.
+    satiri `site_id` sutununu "—" (fark etmez) olarak isaretler ve o durumda
+    "once santiye ekleyin" mesaji kullaniciya yol gosterir.
+    """
+    sites = await sites_repository.list_sites_for_project(session, project_id)
+    if not sites:
+        raise UnitValidationError(_NO_SITE_FOR_BLOCK)
+    if site_id is not None:
+        site = next((s for s in sites if s.id == site_id), None)
+        if site is None:
+            raise NotFoundError(_SITE_MISSING)
+        return site
+    if len(sites) > 1:
+        raise UnitValidationError(_SITE_REQUIRED)
+    return sites[0]
+
+
+async def _ensure_block_name_unique(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    name: str,
+    exclude_block_id: uuid.UUID | None = None,
+) -> None:
+    """`uq_blocks_project_name` — acik SELECT ile ONDEN (spec §4.3, P4 deseni)."""
+    if await repository.get_block_by_name(session, project_id, name, exclude_block_id) is not None:
+        raise DuplicateError(_DUPLICATE_BLOCK)
+
+
+async def block_response(session: AsyncSession, block: Block) -> BlockResponse:
+    site = await sites_repository.get_site(session, block.site_id)
+    units = await repository.list_units_for_block(session, block.id)
+    # `site` None olamaz: `site_id` NOT NULL + FK. `getattr` yalnizca tip
+    # daraltmasi icindir, sessiz bir dusus degil.
+    return to_block(block, site.name if site is not None else "", units)
+
+
+# --- Blok yazma uclari (spec §7.2, §7.3) ---
+
+
+async def create_block(
+    session: AsyncSession, actor: User, project_id: uuid.UUID, data: BlockCreate
+) -> Block:
+    project = await _visible_project(session, actor, project_id)
+    site = await _resolve_site(session, project.id, data.site_id)
+    await _ensure_block_name_unique(session, project.id, data.name)
+    block = Block(
+        project_id=project.id, site_id=site.id, name=data.name, sort_order=data.sort_order
+    )
+    session.add(block)
+    await session.flush()
+    await session.refresh(block)
+    return block
+
+
+async def update_block(
+    session: AsyncSession, actor: User, block_id: uuid.UUID, data: BlockUpdate
+) -> Block:
+    """Spec §7.3. `site_id` degistirilebilir (blok yanlis santiyeye acilmissa);
+
+    yeni santiye AYNI projede olmali, degilse **404** (spec §4.5 son paragrafi ve
+    plan B5 test 13). Spec §7.3'un hata listesinde bu durum icin "422" yaziyor —
+    §4.5 ve plan 404 dedigi icin 404 uygulanmistir.
+    """
+    block, project = await _visible_block(session, actor, block_id)
+    updates = data.model_dump(exclude_unset=True)
+    if updates.get("site_id") is not None:
+        site = await _resolve_site(session, project.id, updates["site_id"])
+        updates["site_id"] = site.id
+    else:
+        # `site_id: null` gonderimi sutunu bosaltamaz (NOT NULL) — yok sayilir.
+        updates.pop("site_id", None)
+    if updates.get("name") is not None:
+        await _ensure_block_name_unique(session, project.id, updates["name"], block.id)
+    for field, value in updates.items():
+        if value is not None:
+            setattr(block, field, value)
+    await session.flush()
+    await session.refresh(block)
+    return block

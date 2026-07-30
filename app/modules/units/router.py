@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel
@@ -11,7 +11,14 @@ from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
 from app.modules.units import service
 from app.modules.units.models import UnitKind
-from app.modules.units.schemas import BlockListResponse, UnitListResponse, UnitOwnerSideFilter
+from app.modules.units.schemas import (
+    BlockCreate,
+    BlockListResponse,
+    BlockResponse,
+    BlockUpdate,
+    UnitListResponse,
+    UnitOwnerSideFilter,
+)
 from app.modules.users.models import User
 
 # Uclar iki ayri kok altina dagilir (P4 deseni): proje baglamli uclar
@@ -26,6 +33,8 @@ router = APIRouter(tags=["units"], responses=COMMON_ERROR_RESPONSES)
 # Spec §8: YENI IZIN MODULU ACILMAZ — blok ve unite projenin alt kayitlaridir,
 # `projects` modulunun seviyeleri kullanilir. Modul sayisi 17'de kalir.
 _VIEW = require_permission("projects", AccessLevel.view)
+# Yazma uclari `full` ister (spec §8): `view` yetmez (IDOR-13).
+_FULL = require_permission("projects", AccessLevel.full)
 
 
 @router.get("/projects/{project_id}/blocks", response_model=BlockListResponse, dependencies=[_VIEW])
@@ -59,3 +68,34 @@ async def list_units_endpoint(
         kind=kind,
         owner_side=owner_side,
     )
+
+
+@router.post(
+    "/projects/{project_id}/blocks",
+    response_model=BlockResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[_FULL],
+)
+async def create_block_endpoint(
+    project_id: uuid.UUID,
+    data: BlockCreate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> BlockResponse:
+    """Spec §7.2. Tek santiyeli projede `site_id` gonderilmezse otomatik atanir
+    (§4.5) — mockup'ta santiye secici yoktur (KY 38 / KK 39)."""
+    block = await service.create_block(session, user, project_id, data)
+    return await service.block_response(session, block)
+
+
+@router.patch("/blocks/{block_id}", response_model=BlockResponse, dependencies=[_FULL])
+async def update_block_endpoint(
+    block_id: uuid.UUID,
+    data: BlockUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> BlockResponse:
+    """Spec §7.3. Kimlik YUKARI cozumlenir (blok → proje → gorunurluk);
+    gorunmeyen projenin blogu 404 doner, 403 DEGIL."""
+    block = await service.update_block(session, user, block_id, data)
+    return await service.block_response(session, block)

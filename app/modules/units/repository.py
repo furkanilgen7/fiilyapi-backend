@@ -29,6 +29,58 @@ async def list_blocks_for_project(
     return [(block, site_name) for block, site_name in result.all()]
 
 
+async def get_block(session: AsyncSession, block_id: uuid.UUID) -> Block | None:
+    return await session.get(Block, block_id)
+
+
+async def get_block_by_name(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    name: str,
+    exclude_block_id: uuid.UUID | None = None,
+) -> Block | None:
+    """`uq_blocks_project_name` cakismasini IntegrityError'a DUSMEDEN once yakalar
+
+    (spec §4.3): boylece kullanicija alanina ozel Turkce mesaj verilebilir.
+    IntegrityError → 409 handler'i yaris-durumu emniyet agi olarak KALIR.
+    PATCH'te blogun kendisini haric tutmak icin `exclude_block_id` verilir.
+    """
+    stmt = select(Block).where(Block.project_id == project_id, Block.name == name)
+    if exclude_block_id is not None:
+        stmt = stmt.where(Block.id != exclude_block_id)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def get_unit(session: AsyncSession, unit_id: uuid.UUID) -> Unit | None:
+    return await session.get(Unit, unit_id)
+
+
+async def get_unit_by_no(
+    session: AsyncSession,
+    block_id: uuid.UUID,
+    unit_no: str,
+    exclude_unit_id: uuid.UUID | None = None,
+) -> Unit | None:
+    """`uq_units_block_no` cakismasi icin `get_block_by_name` ile ayni gerekce."""
+    stmt = select(Unit).where(Unit.block_id == block_id, Unit.unit_no == unit_no)
+    if exclude_unit_id is not None:
+        stmt = stmt.where(Unit.id != exclude_unit_id)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def list_units_for_block(session: AsyncSession, block_id: uuid.UUID) -> list[Unit]:
+    """Tek blogun uniteleri — yazma yanitindaki `counts` icin (spec §6.1).
+
+    Yeni acilan blokta bos doner; PATCH'te mevcut sayaci yeniden hesaplar.
+    """
+    result = await session.execute(
+        select(Unit).where(Unit.block_id == block_id).order_by(Unit.sort_order, Unit.unit_no)
+    )
+    return list(result.scalars().all())
+
+
 async def list_units_for_project(session: AsyncSession, project_id: uuid.UUID) -> list[Unit]:
     """Bir projenin TUM uniteleri TEK sorguda (spec §6.1 / plan B3 test 17).
 

@@ -35,6 +35,15 @@ class DuplicateError(DomainError):
     """
 
 
+class UnitValidationError(DomainError):
+    """Blok/ünite iş kuralı ihlali (Alt-Proje 2 P3 spec §4.5, §7.11) — 422.
+
+    `BoqGroupSiteMismatchError` deseninin aynısı: DB `CHECK` ile zorlanamayan ya da
+    zorlansa bile kullanıcıya Türkçe mesaj veremeyecek kurallar (şantiye sayısına
+    bağlı blok ataması, `net > brüt`) tek yazma yolunda servis korkuluğuyla tutulur.
+    """
+
+
 class BoqGroupSiteMismatchError(DomainError):
     """Poz kaleminin bağlanmak istediği grup, hedef şantiyeye ait değil
 
