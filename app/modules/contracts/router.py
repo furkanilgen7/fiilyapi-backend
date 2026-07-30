@@ -23,6 +23,7 @@ from app.modules.contracts import distribution, service
 from app.modules.contracts.models import ContractStatus
 from app.modules.contracts.schemas import (
     ContractDistributionResponse,
+    ContractDistributionSave,
     ContractListResponse,
     ContractType,
     EmployerContractDetail,
@@ -86,6 +87,12 @@ def _employer_contract_item_updated(project_name: str, code: str, description: s
     return f"Sözleşme poz kalemi güncellendi: {project_name} · {code} — {description}"
 
 
+def _contract_distribution_saved(project_name: str) -> str:
+    """Task C8 — spec §8'de `contract_distribution_saved` olarak merkezileşecek.
+    `audit/messages.py`'de HENÜZ YOK; C6'nın geçici yardımcı deseni izlenir."""
+    return f"Poz dağılımı kaydedildi: {project_name}"
+
+
 @router.get(
     "/projects/{project_id}/contract",
     response_model=EmployerContractDetail,
@@ -123,6 +130,31 @@ async def get_contract_distribution_endpoint(
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> ContractDistributionResponse:
     return await distribution.build_distribution(session, user, project_id)
+
+
+@router.put(
+    "/projects/{project_id}/contract/distribution",
+    response_model=ContractDistributionResponse,
+    dependencies=[_FULL],
+)
+async def save_contract_distribution_endpoint(
+    request: Request,
+    project_id: uuid.UUID,
+    data: ContractDistributionSave,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> ContractDistributionResponse:
+    """`POZ` 24 "Dağılımı Kaydet" — ekranın tamamı tek atomik istekte."""
+    result = await distribution.save_distribution(session, user, project_id, data)
+    project = await service._visible_project(session, user, project_id)
+    await record_audit(
+        session,
+        action=AuditAction.update,
+        detail=_contract_distribution_saved(project.name),
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return result
 
 
 @router.post(

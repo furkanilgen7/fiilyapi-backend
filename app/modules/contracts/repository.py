@@ -12,7 +12,7 @@ from decimal import Decimal
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.boq.models import BoqItem
+from app.modules.boq.models import BoqGroup, BoqItem
 from app.modules.contracts.models import (
     ContractStatus,
     EmployerContractGroup,
@@ -153,6 +153,33 @@ async def list_distributed_boq_items(
     if not item_ids:
         return []
     stmt = select(BoqItem).where(BoqItem.contract_item_id.in_(item_ids))
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def list_boq_items_for_sites(
+    session: AsyncSession, site_ids: list[uuid.UUID]
+) -> list[BoqItem]:
+    """Verilen şantiyelerin TÜM BOQ satırları TEK sorguda (task C8).
+
+    `contract_item_id IS NULL` satırlar da gelir — dağıtım yazarken
+    `uq_boq_items_site_code` çakışması bu satırlardan da doğabilir
+    (şantiyenin kendi başına girdiği poz aynı numarayı tutuyor olabilir).
+    """
+    if not site_ids:
+        return []
+    stmt = select(BoqItem).where(BoqItem.site_id.in_(site_ids))
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def list_boq_groups_for_sites(
+    session: AsyncSession, site_ids: list[uuid.UUID]
+) -> list[BoqGroup]:
+    """Verilen şantiyelerin BOQ grupları TEK sorguda (task C8 grup önbelleği)."""
+    if not site_ids:
+        return []
+    stmt = select(BoqGroup).where(BoqGroup.site_id.in_(site_ids))
     result = await session.execute(stmt)
     return list(result.scalars().all())
 

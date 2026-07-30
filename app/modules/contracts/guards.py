@@ -69,6 +69,19 @@ END_BEFORE_START = "Bitiş tarihi işe başlama tarihinden önce olamaz."
 SITE_PROJECT_MISMATCH = "Seçilen şantiye bu projeye ait değil"
 DISTRIBUTION_EXCEEDS = "Şantiye kotaları toplamı sözleşme miktarını aşamaz."
 
+# 422 — spec §3.3 kısmi benzersiz indeksi
+# (`uq_boq_items_contract_item_site`): her (kalem, şantiye) çifti için TEK kota
+# hücresi vardır. Gövde ekranın tamamı olduğu için aynı hücrenin iki kez
+# gönderilmesi kullanıcı hatasıdır; `IntegrityError` → 409 "Veri bütünlüğü
+# hatası" gövdesine DÜŞÜLMEZ, önce burada anlaşılır 422 ile karşılanır.
+DUPLICATE_ALLOCATION = "Aynı kalem ve şantiye için tek kota gönderilebilir."
+
+# 409 — BOQ satırı oluşturulurken `uq_boq_items_site_code` çakışması. Şantiye
+# aynı poz numarasını kendi başına girmiş olabilir (spec §3.3: `contract_item_id
+# IS NULL` satırlar meşrudur); bu durumda sözleşmeden kopyalanacak satır
+# yazılamaz. Spec bu durumu adlandırmıyor — task C8 kararı, C13 gözden geçirir.
+BOQ_CODE_TAKEN_IN_SITE = "Bu poz numarası hedef şantiyede zaten kullanılıyor"
+
 # 409 — silme korkulukları (spec §7). Yeni istisna sınıfı AÇILMAZ: mevcut
 # `RelatedRecordsExistError`. Metinlerde ADET VERİLMEZ, eyleme dönüktür
 # (`sites/guards.py`'deki `BLOCK_HAS_UNITS` dersi).
