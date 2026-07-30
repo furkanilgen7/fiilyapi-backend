@@ -13,9 +13,9 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import DuplicateError, NotFoundError
+from app.core.errors import DuplicateError, NotFoundError, RelatedRecordsExistError
 from app.modules.contracts import repository
-from app.modules.contracts.guards import SUBCONTRACTOR_MISSING
+from app.modules.contracts.guards import SUBCONTRACTOR_HAS_CONTRACTS, SUBCONTRACTOR_MISSING
 from app.modules.contracts.models import Subcontractor
 from app.modules.contracts.schemas import SubcontractorCreate, SubcontractorUpdate
 
@@ -74,3 +74,21 @@ async def update_subcontractor(
     await session.flush()
     await session.refresh(subcontractor)
     return subcontractor
+
+
+async def delete_subcontractor(session: AsyncSession, subcontractor_id: uuid.UUID) -> str:
+    """Spec §7. `subcontractors.id`'yi hedefleyen `subcontractor_contracts.
+
+    subcontractor_id` FK'si RESTRICT'tir — DB de korur, korkuluk kullanıcıya
+    Türkçe/eyleme dönük metin vermek için ÖNCE çalışır (`sites/service.py.
+    delete_site` deseninin aynısı). Metin, satır yok olmadan ÖNCE kurulur.
+    """
+    subcontractor = await repository.get_subcontractor(session, subcontractor_id)
+    if subcontractor is None:
+        raise NotFoundError(SUBCONTRACTOR_MISSING)
+    if await repository.subcontractor_has_contracts(session, subcontractor.id):
+        raise RelatedRecordsExistError(SUBCONTRACTOR_HAS_CONTRACTS)
+    name = subcontractor.name
+    await session.delete(subcontractor)
+    await session.flush()
+    return name

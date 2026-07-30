@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # geri bakmazlar, dolayisiyla dongusel import RISKI YOKTUR (olcum: iki dosyanin
 # da tek `app.` importu `Base`). Fonksiyon ici import'a gerek kalmadi.
 from app.modules.boq.models import BoqGroup, BoqItem
+from app.modules.contracts.models import SubcontractorContract
 from app.modules.sites.models import Section, Site
 from app.modules.units.models import Block
 from app.modules.users.models import User, UserStatus
@@ -158,5 +159,24 @@ async def site_has_blocks(session: AsyncSession, site_id: uuid.UUID) -> bool:
     """
     result = await session.execute(
         select(select(Block.id).where(Block.site_id == site_id).exists())
+    )
+    return bool(result.scalar_one())
+
+
+async def site_has_contracts(session: AsyncSession, site_id: uuid.UUID) -> bool:
+    """Santiyede taseron sozlesmesi var mi (`subcontractor_contracts.site_id`
+
+    -> RESTRICT, Alt-Proje 2 P5 spec §7, task C12). Ilk uc kontrolun aksine bu
+    FK RESTRICT'tir (CASCADE DEGIL) — sozlesme silinmeden santiye silinemez;
+    korkuluk yine de burada erken calisir, aksi halde kullanici DB'nin
+    `IntegrityError` -> 409 emniyet agina duser ve "Veri butunlugu hatasi" gibi
+    eyleme donuk OLMAYAN bir metin gorur.
+    """
+    result = await session.execute(
+        select(
+            select(SubcontractorContract.id)
+            .where(SubcontractorContract.site_id == site_id)
+            .exists()
+        )
     )
     return bool(result.scalar_one())

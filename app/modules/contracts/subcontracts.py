@@ -16,7 +16,13 @@ from types import SimpleNamespace
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import DuplicateError, NotFoundError, SiteValidationError
+from app.core.access import AccessLevel, can_delete
+from app.core.errors import (
+    DeleteNotAllowedError,
+    DuplicateError,
+    NotFoundError,
+    SiteValidationError,
+)
 from app.modules.contracts import guards, repository
 from app.modules.contracts.models import SubcontractorContract, SubcontractorContractItem
 from app.modules.contracts.schemas import (
@@ -30,6 +36,7 @@ from app.modules.contracts.schemas import (
 )
 from app.modules.contracts.service import _subcontractor_amount, _visible_project
 from app.modules.projects.models import Project
+from app.modules.roles.repository import get_permission
 from app.modules.sites import repository as sites_repository
 from app.modules.users.models import User
 
@@ -224,6 +231,26 @@ async def _ensure_item_code_unique(
         raise DuplicateError(guards.DUPLICATE_ITEM_CODE)
 
 
+async def _ensure_source_item_in_project(
+    session: AsyncSession, source_contract_item_id: uuid.UUID | None, project_id: uuid.UUID
+) -> None:
+    """C11 incelemesinden devredilen ek iş: gövdedeki `source_contract_item_id`
+
+    doğrulanmadan yazılıyordu — başka bir projenin işveren kalemine bağlanabilir
+    ve yanıtta o projenin grup adı sızardı (`to_subcontract_item_response` ->
+    `_item_groups`). 404 `ITEM_MISSING` seçildi, 422 DEĞİL: `_visible_item`/
+    `_visible_group`'un IDOR deseninin aynısı — görünmeyen/başka projenin
+    kaydı ile var olmayan kayıt AYNI gövdeyi döner, aksi hâlde elinde UUID'si
+    olan biri kaydın var olduğunu ve başka bir projeye ait olduğunu ayırt
+    edebilirdi.
+    """
+    if source_contract_item_id is None:
+        return
+    source_item = await repository.get_employer_item(session, source_contract_item_id)
+    if source_item is None or source_item.project_id != project_id:
+        raise NotFoundError(guards.ITEM_MISSING)
+
+
 async def create_subcontract_item(
     session: AsyncSession,
     actor: User,
@@ -231,6 +258,7 @@ async def create_subcontract_item(
     data: SubcontractorContractItemCreate,
 ) -> tuple[SubcontractorContractItem, SubcontractorContract, Project]:
     contract, project = await _visible_contract(session, actor, contract_id)
+    await _ensure_source_item_in_project(session, data.source_contract_item_id, project.id)
     await _ensure_item_code_unique(session, contract.id, data.code)
     item = SubcontractorContractItem(
         contract_id=contract.id,
@@ -450,3 +478,48 @@ async def to_subcontract_detail(
         contract_total=_subcontractor_amount(contract),
         items_missing_price=items_missing_price,
     )
+
+
+# --- Silme uçları (task C12, spec §7) ---
+
+
+async def delete_subcontractor_contract(
+    session: AsyncSession, actor: User, contract_id: uuid.UUID
+) -> tuple[str, str | None, str | None]:
+    """`can_delete` (`app/core/access.py`) taslak istisnasının GEÇERLİ olduğu
+
+    TEK uç (spec §5.0, §7). Kapı router'da `_ADMIN` DEĞİL `_FULL`'dir — kararı
+    burada `can_delete` verir: `admin` her şeyi siler, aksi hâlde yalnız
+    kaydı AÇAN aktör + kayıt hâlâ TASLAK + aktörün en az `draft` seviyesi
+    varsa silinebilir. `boq`/`sites` DELETE uçlarının hiçbiri `can_delete`
+    KULLANMAZ (saf `_ADMIN` kapısı yeterlidir) — bu uçtaki taslak istisnası
+    P5'e özgüdür (spec §5.0, C1'in `created_by`/`is_draft` alanlarını bu yüzden
+    eklediği yer). Aktörün gerçek erişim seviyesi `projects/service.py.
+    visible_projects`in `get_permission` çağrısı deseninin aynısıyla okunur —
+    router bağımlılığı yalnız YETKİ TABANI verir, kesin karar burada.
+    """
+    contract, project = await _visible_contract(session, actor, contract_id)
+    permission = await get_permission(session, actor.role_id, "contracts")
+    level = permission.access_level if permission is not None else AccessLevel.none
+    if not can_delete(actor.id, level, contract):
+        raise DeleteNotAllowedError(guards.DELETE_NOT_ALLOWED)
+    project_name = project.name
+    contract_no, subcontractor_name = contract.contract_no, contract.subcontractor_name
+    await session.delete(contract)
+    await session.flush()
+    return project_name, contract_no, subcontractor_name
+
+
+async def delete_subcontract_item(
+    session: AsyncSession, actor: User, item_id: uuid.UUID
+) -> tuple[str | None, str]:
+    """Engel YOK, kapı `_ADMIN` (spec §7 tablosunda AYRICA listelenmez —
+
+    kalem silme `subcontractor_contract_items` satırını hedefler, sözleşmenin
+    kendisini DEĞİL).
+    """
+    item, contract, _ = await _visible_subcontract_item(session, actor, item_id)
+    contract_no, code = contract.contract_no, item.code
+    await session.delete(item)
+    await session.flush()
+    return contract_no, code

@@ -11,13 +11,19 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import DuplicateError, NotFoundError, SiteValidationError
+from app.core.errors import (
+    DuplicateError,
+    NotFoundError,
+    RelatedRecordsExistError,
+    SiteValidationError,
+)
 from app.core.timezone import today
 from app.modules.company.service import get_company
 from app.modules.contracts import repository
 from app.modules.contracts.guards import (
     CONTRACT_MISSING,
     DUPLICATE_ITEM_CODE,
+    GROUP_HAS_ITEMS,
     GROUP_MISSING,
     GROUP_PROJECT_MISMATCH,
     ITEM_MISSING,
@@ -423,3 +429,43 @@ async def update_employer_item(
     await session.flush()
     await session.refresh(item)
     return item, project
+
+
+# --- Silme uçları (task C12, spec §7) ---
+#
+# Kimlik SİLMEDEN ÖNCE okunur (`boq/service.py.delete_item` deseninin aynısı):
+# denetim metni satır yok olduktan sonra kurulursa `project.name`/`group.name`
+# güvenilir okunamaz. Primitif değerler DÖNER, ORM nesnesi DEĞİL — silinmiş
+# bir nesnenin alanına flush sonrası erişmek `ObjectDeletedError` riski taşır.
+
+
+async def delete_employer_group(
+    session: AsyncSession, actor: User, group_id: uuid.UUID
+) -> tuple[str, str]:
+    """409 `GROUP_HAS_ITEMS`: grupta kalem varsa silinmez (spec §7). Kapı `_ADMIN`
+
+    (`boq/router.py.delete_boq_item_endpoint` deseninin aynısı, `can_delete`
+    istisnası burada YOK — yalnız `subcontractor_contracts` silme ucunda geçerli).
+    """
+    group, project = await _visible_group(session, actor, group_id)
+    if await repository.employer_group_has_items(session, group.id):
+        raise RelatedRecordsExistError(GROUP_HAS_ITEMS)
+    project_name, group_name = project.name, group.name
+    await session.delete(group)
+    await session.flush()
+    return project_name, group_name
+
+
+async def delete_employer_item(
+    session: AsyncSession, actor: User, item_id: uuid.UUID
+) -> tuple[str, str, str]:
+    """Engel YOK (spec §7): bağlı `boq_items.contract_item_id` DB'de `ON DELETE
+
+    SET NULL` ile serbest kalır — şantiyenin kendi başına girdiği bir poz gibi
+    (`contract_item_id IS NULL`) BOQ'da kalmaya devam eder, satır SİLİNMEZ.
+    """
+    item, project = await _visible_item(session, actor, item_id)
+    project_name, code, description = project.name, item.code, item.description
+    await session.delete(item)
+    await session.flush()
+    return project_name, code, description

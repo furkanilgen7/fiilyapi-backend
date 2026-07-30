@@ -88,6 +88,12 @@ BOQ_CODE_TAKEN_IN_SITE = "Bu poz numarası hedef şantiyede zaten kullanılıyor
 SUBCONTRACTOR_HAS_CONTRACTS = "Bu taşeronun sözleşmesi var, önce sözleşmeleri silin"
 GROUP_HAS_ITEMS = "Bu grupta poz var, önce pozları silin"
 
+# 403 — `DELETE /subcontractor-contracts/{id}` `can_delete` (app/core/access.py)
+# taslak istisnasını sağlamayan aktöre döner. `require_permission`in ürettiği
+# metinle AYNI: bu da bir YETKİ engelidir (`DeleteNotAllowedError`), yalnız
+# kararı router kapısı DEĞİL servis katmanı verir (spec §5.0).
+DELETE_NOT_ALLOWED = "Bu işlem için yetkiniz yok"
+
 # 422 — `load-from-employer` (spec §6.5): işveren sözleşmesi ya da kalemi yoksa.
 NO_EMPLOYER_ITEMS = "Bu projenin işveren sözleşmesinde poz yok"
 

@@ -255,6 +255,46 @@ async def add_subcontractor(session: AsyncSession, subcontractor: Subcontractor)
     return subcontractor
 
 
+# --- Silme korkulukları (task C12, spec §7) ---
+#
+# `sites/repository.py.site_has_sections` deseninin aynısı:
+# `select(<altsorgu>.exists())` — SATIR ÇEKMEZ, `count(*)` KULLANILMAZ (hata
+# metinlerinde adet verilmez, spec §7 tablosu).
+
+
+async def subcontractor_has_contracts(session: AsyncSession, subcontractor_id: uuid.UUID) -> bool:
+    """Taşerona bağlı sözleşme var mı (`subcontractor_contracts.subcontractor_id`
+
+    -> RESTRICT). DB kendiliğinden korur ama korkuluksuz bırakılırsa kullanıcı
+    "Veri bütünlüğü hatası" görür (`sites/repository.py.site_has_contracts`
+    dersinin aynısı).
+    """
+    result = await session.execute(
+        select(
+            select(SubcontractorContract.id)
+            .where(SubcontractorContract.subcontractor_id == subcontractor_id)
+            .exists()
+        )
+    )
+    return bool(result.scalar_one())
+
+
+async def employer_group_has_items(session: AsyncSession, group_id: uuid.UUID) -> bool:
+    """Grupta poz kalemi var mı (`employer_contract_items.group_id` -> CASCADE).
+
+    `sites/repository.py.site_has_boq` gerekçesinin aynısı: DB CASCADE ile
+    korur ama korkuluksuz bırakılırsa kalemler sessizce yok olur.
+    """
+    result = await session.execute(
+        select(
+            select(EmployerContractItem.id)
+            .where(EmployerContractItem.group_id == group_id)
+            .exists()
+        )
+    )
+    return bool(result.scalar_one())
+
+
 # --- Taşeron sözleşmesi (task C10, spec §3.5/§6.5) ---
 
 

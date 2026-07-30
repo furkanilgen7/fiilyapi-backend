@@ -79,3 +79,30 @@ async def kisitli_headers(
     resp = await client.post("/auth/login", json={"email": email, "password": "parola1234"})
     assert resp.status_code == 200, resp.text
     yield _auth(resp.json()["access_token"])
+
+
+@pytest.fixture
+async def project_manager(seeded_db: AsyncSession, user_factory) -> User:
+    """`project_manager` — `contracts=_F` (task C12 silme testleri): tüm
+
+    projelere erişimi vardır (`all_projects=True`), tek fixture birden çok
+    test dosyasının farklı projelerinde kullanılabilsin diye — `kisitli_headers`
+    (tek proje kapsamı) burada AMAÇ DIŞI, silme testleri kapsam değil YETKİ
+    seviyesini sınar.
+    """
+    email = "pm@contracts-delete.co"
+    user = await user_factory(email=email, password="parola1234", role_key="project_manager")
+    seeded_db.add(UserProjectAccess(user_id=user.id, project_id=None, all_projects=True))
+    await seeded_db.flush()
+    return user
+
+
+@pytest.fixture
+async def project_manager_headers(
+    client: AsyncClient, seeded_db: AsyncSession, project_manager: User
+) -> dict[str, str]:
+    resp = await client.post(
+        "/auth/login", json={"email": project_manager.email, "password": "parola1234"}
+    )
+    assert resp.status_code == 200, resp.text
+    return _auth(resp.json()["access_token"])
