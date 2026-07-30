@@ -78,6 +78,23 @@ GROUP_HAS_ITEMS = "Bu grupta poz var, önce pozları silin"
 # 422 — `load-from-employer` (spec §6.5): işveren sözleşmesi ya da kalemi yoksa.
 NO_EMPLOYER_ITEMS = "Bu projenin işveren sözleşmesinde poz yok"
 
+# --- İşveren sözleşmesi poz grup/kalem yazma yolu (task C6, spec §6.2/§3.3) ---
+
+# Grup dolaylı kimlikle (POST .../contract/items gövdesindeki group_id) başka
+# projenin grubuna işaret edebilir — `BoqGroupSiteMismatchError` deseninin
+# aynısı, yeni istisna sınıfı AÇILMAZ, `SiteValidationError` (422) kullanılır.
+GROUP_PROJECT_MISMATCH = "Poz grubu bu sözleşmeye ait değil"
+
+# 409 — `(project_id, code)` çakışması (`BoqItem` deseninin aynısı).
+DUPLICATE_ITEM_CODE = "Bu poz numarası bu sözleşmede zaten kullanılıyor"
+
+# 422 — spec §3.3: kalan hesabı `remaining = quantity - Σ(bağlı boq_items.quantity)`,
+# hiçbir yerde negatif Kalan gösterilmez. Task brief'in kararı: `DISTRIBUTION_EXCEEDS`
+# metni burada UYGUN DEĞİL (o metin dağıtım toplamının sözleşme miktarını AŞMASI
+# içindir, spec §6.3) — bu ise TERSİ yön: sözleşme miktarı zaten dağıtılmış toplamın
+# ALTINA indirilemez. Task C6'nın kendi metni, C13'te merkezileştirilmez.
+ITEM_QUANTITY_BELOW_DISTRIBUTED = "Miktar, dağıtılmış toplamın altına indirilemez."
+
 
 class _ItemLike(Protocol):
     """`validate_subcontract`'ın kalemlerde okuduğu tek alan.

@@ -7,11 +7,18 @@ kalemleri TEK ek sorguda (IN listesi) toplu gelir.
 """
 
 import uuid
+from decimal import Decimal
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.contracts.models import ContractStatus, SubcontractorContract
+from app.modules.boq.models import BoqItem
+from app.modules.contracts.models import (
+    ContractStatus,
+    EmployerContractGroup,
+    EmployerContractItem,
+    SubcontractorContract,
+)
 from app.modules.projects.models import Project, ProjectContract
 
 
@@ -80,3 +87,73 @@ async def list_subcontractor_contracts(
         )
     result = await session.execute(stmt)
     return list(result.scalars().all())
+
+
+# --- İşveren sözleşmesi poz grup/kalem (task C6, `boq/repository.py` deseninin
+# aynısı — spec §3.2, §6.2) ---
+
+
+async def list_employer_groups(
+    session: AsyncSession, project_id: uuid.UUID
+) -> list[EmployerContractGroup]:
+    """Bir sözleşmenin poz grupları, sıralı. Kalemler ayrı sorgu ATILMAZ:
+
+    `EmployerContractGroup.items` ilişkisi `lazy="selectin"` tanımlıdır (C1),
+    erişildiğinde tüm grupların kalemleri TEK ek sorguda toplu gelir.
+    """
+    result = await session.execute(
+        select(EmployerContractGroup)
+        .where(EmployerContractGroup.project_id == project_id)
+        .order_by(EmployerContractGroup.sort_order, EmployerContractGroup.created_at)
+    )
+    return list(result.scalars().all())
+
+
+async def get_employer_group(
+    session: AsyncSession, group_id: uuid.UUID
+) -> EmployerContractGroup | None:
+    return await session.get(EmployerContractGroup, group_id)
+
+
+async def get_employer_item(
+    session: AsyncSession, item_id: uuid.UUID
+) -> EmployerContractItem | None:
+    return await session.get(EmployerContractItem, item_id)
+
+
+async def get_employer_item_by_code(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    code: str,
+    exclude_item_id: uuid.UUID | None = None,
+) -> EmployerContractItem | None:
+    """`(project_id, code)` çakışmasını `IntegrityError`'a düşmeden ÖNCE yakalar
+
+    (`DuplicateError` deseni, `boq/repository.py.get_item_by_code` emsali).
+    """
+    stmt = select(EmployerContractItem).where(
+        EmployerContractItem.project_id == project_id, EmployerContractItem.code == code
+    )
+    if exclude_item_id is not None:
+        stmt = stmt.where(EmployerContractItem.id != exclude_item_id)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def sum_distributed_quantities(
+    session: AsyncSession, item_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, Decimal]:
+    """Spec §3.3: `distributed_quantity` bağlı `boq_items.quantity` toplamı.
+
+    Kalem başına ayrı sorgu ATILMAZ — `GROUP BY` ile TEK sorguda toplanır
+    (`GET .../contract/items` N kalemli listede N+1 üretmez).
+    """
+    if not item_ids:
+        return {}
+    stmt = (
+        select(BoqItem.contract_item_id, func.sum(BoqItem.quantity))
+        .where(BoqItem.contract_item_id.in_(item_ids))
+        .group_by(BoqItem.contract_item_id)
+    )
+    result = await session.execute(stmt)
+    return {row[0]: row[1] for row in result.all()}

@@ -11,14 +11,37 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import DuplicateError, NotFoundError, SiteValidationError
 from app.core.timezone import today
+from app.modules.company.service import get_company
 from app.modules.contracts import repository
-from app.modules.contracts.models import ContractStatus, SubcontractorContract
+from app.modules.contracts.guards import (
+    CONTRACT_MISSING,
+    DUPLICATE_ITEM_CODE,
+    GROUP_MISSING,
+    GROUP_PROJECT_MISMATCH,
+    ITEM_MISSING,
+    ITEM_QUANTITY_BELOW_DISTRIBUTED,
+)
+from app.modules.contracts.models import (
+    ContractStatus,
+    EmployerContractGroup,
+    EmployerContractItem,
+    SubcontractorContract,
+)
 from app.modules.contracts.schemas import (
     ContractListItem,
     ContractListResponse,
     ContractSummary,
     ContractType,
+    EmployerContractDetail,
+    EmployerContractGroupCreate,
+    EmployerContractGroupItems,
+    EmployerContractGroupUpdate,
+    EmployerContractItemCreate,
+    EmployerContractItemResponse,
+    EmployerContractItemsResponse,
+    EmployerContractItemUpdate,
     MetricPlaceholder,
 )
 from app.modules.projects.models import Project, ProjectContract
@@ -146,3 +169,261 @@ async def list_contracts(
         items = [_subcontractor_item(contract) for contract in contracts]
 
     return ContractListResponse(summary=_summary(items), items=items)
+
+
+# --- İşveren sözleşmesi: gruplar/kalemler (task C6, spec §6.2) ---
+#
+# İki katmanlı koruma spec §6'nın aynısı: router'daki `_VIEW`/`_FULL` YETKİYİ,
+# aşağıdaki `_visible_project` (`sites/service.py._visible_project` deseninin
+# birebiri) `visible_projects` üzerinden KAPSAMI belirler. Görünmeyen projedeki
+# gerçek kayıt ile var olmayan kayıt AYNI 404 gövdesini döner.
+
+
+async def _visible_project(
+    session: AsyncSession, actor: User, project_id: uuid.UUID, missing: str = CONTRACT_MISSING
+) -> Project:
+    visible = await visible_projects(session, actor)
+    project = next((p for p in visible if p.id == project_id), None)
+    if project is None:
+        raise NotFoundError(missing)
+    return project
+
+
+async def _visible_group(
+    session: AsyncSession, actor: User, group_id: uuid.UUID
+) -> tuple[EmployerContractGroup, Project]:
+    """Grup -> proje. Dolaylı kimlikle erişim de görünürlük süzgecinden geçmek
+
+    ZORUNDA (`boq/service.py._visible_group` deseninin aynısı).
+    """
+    group = await repository.get_employer_group(session, group_id)
+    if group is None:
+        raise NotFoundError(GROUP_MISSING)
+    project = await _visible_project(session, actor, group.project_id, GROUP_MISSING)
+    return group, project
+
+
+async def _visible_item(
+    session: AsyncSession, actor: User, item_id: uuid.UUID
+) -> tuple[EmployerContractItem, Project]:
+    item = await repository.get_employer_item(session, item_id)
+    if item is None:
+        raise NotFoundError(ITEM_MISSING)
+    project = await _visible_project(session, actor, item.project_id, ITEM_MISSING)
+    return item, project
+
+
+async def _ensure_group_in_project(
+    session: AsyncSession, group_id: uuid.UUID, project_id: uuid.UUID
+) -> EmployerContractGroup:
+    """Spec §3.2 grup->sözleşme tutarlılığı: DB'de bileşik FK ile ZORLANMAZ
+
+    (yazma yolu tekil), servis korkuluğuyla sağlanır (`BoqItem` §3.3 invariant
+    1'in aynısı). Grup hiç yoksa da aynı 422 ile karşılanır — proje zaten
+    görünürlük süzgecinden geçmiş, yalnızca ait olmadığı bir grup engellenir.
+    """
+    group = await repository.get_employer_group(session, group_id)
+    if group is None or group.project_id != project_id:
+        raise SiteValidationError(GROUP_PROJECT_MISMATCH)
+    return group
+
+
+async def _ensure_code_unique(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    code: str,
+    exclude_item_id: uuid.UUID | None = None,
+) -> None:
+    existing = await repository.get_employer_item_by_code(
+        session, project_id, code, exclude_item_id
+    )
+    if existing is not None:
+        raise DuplicateError(DUPLICATE_ITEM_CODE)
+
+
+async def _distributed_quantity(session: AsyncSession, item_id: uuid.UUID) -> Decimal:
+    sums = await repository.sum_distributed_quantities(session, [item_id])
+    return sums.get(item_id, Decimal("0"))
+
+
+def to_item_response(
+    item: EmployerContractItem, distributed: Decimal
+) -> EmployerContractItemResponse:
+    return EmployerContractItemResponse(
+        id=item.id,
+        group_id=item.group_id,
+        code=item.code,
+        description=item.description,
+        unit=item.unit,
+        quantity=item.quantity,
+        unit_price=item.unit_price,
+        sort_order=item.sort_order,
+        distributed_quantity=distributed,
+        remaining_quantity=item.quantity - distributed,
+    )
+
+
+async def to_item_response_single(
+    session: AsyncSession, item: EmployerContractItem
+) -> EmployerContractItemResponse:
+    return to_item_response(item, await _distributed_quantity(session, item.id))
+
+
+async def get_employer_contract_detail(
+    session: AsyncSession, actor: User, project_id: uuid.UUID
+) -> EmployerContractDetail:
+    """`E14` başlığı (spec §6.2): sözleşme + `items_total` + `advance_amount` +
+
+    yüklenici adı (`company` tek satırından). Sözleşmesi olmayan proje de
+    (görünür olsa dahi) `CONTRACT_MISSING` ile 404 döner — bu ucun var oluş
+    şartı bir sözleşme kaydının bulunmasıdır.
+    """
+    project = await _visible_project(session, actor, project_id)
+    contract = project.contract
+    if contract is None:
+        raise NotFoundError(CONTRACT_MISSING)
+
+    groups = await repository.list_employer_groups(session, project_id)
+    items_total = _quantize_money(
+        sum(
+            (item.quantity * item.unit_price for group in groups for item in group.items),
+            Decimal("0"),
+        )
+    )
+    amount = contract.amount if contract.amount is not None else Decimal("0")
+    advance_amount = _quantize_money(amount * contract.advance_pct / Decimal("100"))
+    company = await get_company(session)
+
+    return EmployerContractDetail(
+        project_id=project.id,
+        contract_no=contract.contract_no,
+        signature_date=contract.signature_date,
+        amount=contract.amount,
+        advance_pct=contract.advance_pct,
+        retainage_pct=contract.retainage_pct,
+        vat_pct=contract.vat_pct,
+        late_penalty_daily=contract.late_penalty_daily,
+        has_price_escalation=contract.has_price_escalation,
+        status=contract.status,
+        start_date=project.start_date,
+        end_date=project.end_date,
+        employer_name=project.employer_name,
+        contractor_name=company.name,
+        items_total=items_total,
+        items_total_diff=amount - items_total,
+        advance_amount=advance_amount,
+    )
+
+
+async def get_employer_contract_items(
+    session: AsyncSession, actor: User, project_id: uuid.UUID
+) -> EmployerContractItemsResponse:
+    """Spec §6.2: gruplar + kalemler, her kalemde `distributed_quantity`/
+
+    `remaining_quantity`. Tek toplu sorgu (`sum_distributed_quantities`) —
+    N kalemli listede N+1 üretmez.
+    """
+    project = await _visible_project(session, actor, project_id)
+    if project.contract is None:
+        raise NotFoundError(CONTRACT_MISSING)
+
+    groups = await repository.list_employer_groups(session, project_id)
+    item_ids = [item.id for group in groups for item in group.items]
+    distributed = await repository.sum_distributed_quantities(session, item_ids)
+
+    return EmployerContractItemsResponse(
+        groups=[
+            EmployerContractGroupItems(
+                id=group.id,
+                name=group.name,
+                sort_order=group.sort_order,
+                items=[
+                    to_item_response(item, distributed.get(item.id, Decimal("0")))
+                    for item in group.items
+                ],
+            )
+            for group in groups
+        ]
+    )
+
+
+async def create_employer_group(
+    session: AsyncSession, actor: User, project_id: uuid.UUID, data: EmployerContractGroupCreate
+) -> tuple[EmployerContractGroup, Project]:
+    """`Project` da döner: router'daki denetim günlüğü satırı proje ADI ister
+
+    (`section_created` gerekçesinin aynısı) — ikinci bir sorgu atılmasın diye.
+    """
+    project = await _visible_project(session, actor, project_id)
+    if project.contract is None:
+        raise NotFoundError(CONTRACT_MISSING)
+    group = EmployerContractGroup(project_id=project.id, name=data.name, sort_order=data.sort_order)
+    session.add(group)
+    await session.flush()
+    await session.refresh(group)
+    return group, project
+
+
+async def update_employer_group(
+    session: AsyncSession, actor: User, group_id: uuid.UUID, data: EmployerContractGroupUpdate
+) -> tuple[EmployerContractGroup, Project]:
+    group, project = await _visible_group(session, actor, group_id)
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(group, field, value)
+    await session.flush()
+    await session.refresh(group)
+    return group, project
+
+
+async def create_employer_item(
+    session: AsyncSession, actor: User, project_id: uuid.UUID, data: EmployerContractItemCreate
+) -> tuple[EmployerContractItem, Project]:
+    """Spec §3.3 IDOR: gövdedeki `group_id` başka projenin grubu olabilir —
+
+    yol parametresi `project_id` ile karşı karşıya konur, uyuşmazlık 422 döner.
+    """
+    project = await _visible_project(session, actor, project_id)
+    if project.contract is None:
+        raise NotFoundError(CONTRACT_MISSING)
+    group = await _ensure_group_in_project(session, data.group_id, project.id)
+    await _ensure_code_unique(session, project.id, data.code)
+    item = EmployerContractItem(
+        project_id=project.id,
+        group_id=group.id,
+        code=data.code,
+        description=data.description,
+        unit=data.unit,
+        quantity=data.quantity,
+        unit_price=data.unit_price,
+        sort_order=data.sort_order,
+    )
+    session.add(item)
+    await session.flush()
+    await session.refresh(item)
+    return item, project
+
+
+async def update_employer_item(
+    session: AsyncSession, actor: User, item_id: uuid.UUID, data: EmployerContractItemUpdate
+) -> tuple[EmployerContractItem, Project]:
+    """`group_id` verilirse spec §3.2 tutarlılığı tekrar kontrol edilir (başka
+
+    sözleşmenin grubuna taşıma yasak); `code` değişirse tekillik tekrar kontrol
+    edilir; `quantity` küçültülürse spec §3.3 kalan hesabı negatif OLAMAZ —
+    dağıtılmış toplamın altına indirme 422 döner (task C6 kararı).
+    """
+    item, project = await _visible_item(session, actor, item_id)
+    updates = data.model_dump(exclude_unset=True)
+    if "group_id" in updates:
+        await _ensure_group_in_project(session, updates["group_id"], project.id)
+    if "code" in updates and updates["code"] != item.code:
+        await _ensure_code_unique(session, project.id, updates["code"], exclude_item_id=item.id)
+    if "quantity" in updates:
+        distributed = await _distributed_quantity(session, item.id)
+        if updates["quantity"] < distributed:
+            raise SiteValidationError(ITEM_QUANTITY_BELOW_DISTRIBUTED)
+    for field, value in updates.items():
+        setattr(item, field, value)
+    await session.flush()
+    await session.refresh(item)
+    return item, project
