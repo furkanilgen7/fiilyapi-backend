@@ -118,6 +118,20 @@ async def test_get_boq_site_chief_allowed(client, db_session, user_factory, proj
     assert resp.status_code == 200
 
 
+async def test_get_boq_procurement_allowed(client, db_session, user_factory, project_factory):
+    """Kullanici karari (2026-07-30): satinalma BOQ'yu gorebilir (sites satiriyla
+    ayni hizaya geldi, boq=view/limited); onceki davranis 403 idi."""
+    project = await project_factory("BOQ-API-PROC-1")
+    site = await _site(db_session, project)
+    token = await _login_with_access(
+        client, db_session, user_factory, "procurement", "proc@boq-api.co"
+    )
+
+    resp = await client.get(f"/sites/{site.id}/boq", headers=_auth(token))
+
+    assert resp.status_code == 200
+
+
 async def test_get_boq_invisible_site_returns_404(
     client, db_session, user_factory, project_factory
 ):
@@ -260,6 +274,23 @@ async def test_create_boq_group_view_only_role_forbidden(
     site = await _site(db_session, project)
     token = await _login_with_access(
         client, db_session, user_factory, "site_chief", "sc@boq-api-11.co"
+    )
+
+    resp = await client.post(
+        f"/sites/{site.id}/boq/groups", headers=_auth(token), json={"name": "TEST GRUBU"}
+    )
+
+    assert resp.status_code == 403
+
+
+async def test_create_boq_group_procurement_forbidden(
+    client, db_session, user_factory, project_factory
+):
+    """Satinalma boq=view/limited: gorur ama full gerektiren yazma ucunda 403 kalir."""
+    project = await project_factory("BOQ-API-PROC-2")
+    site = await _site(db_session, project)
+    token = await _login_with_access(
+        client, db_session, user_factory, "procurement", "proc2@boq-api.co"
     )
 
     resp = await client.post(

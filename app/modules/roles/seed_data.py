@@ -170,9 +170,11 @@ MATRIX: dict[str, list[tuple[AccessLevel, Scope]]] = {
     # spec §4 kullanici karari: site_chief=_LIM (gorur), field_engineer=_N
     # (gormez) — "sites" satirinda ikisi birebir ayni oldugu icin bu ayrim
     # ancak ayri modulle mumkun. accounting/project_manager seviyeleri
-    # "sites" satirindan turetildi. procurement=_N GECICIDIR: kullaniciya
-    # soruldu, cevap gelmedi (spec §4) — teyit bekliyor.
-    "boq": [_A, _F, _LIM, _N, _N, _FIN, _F, _N],
+    # "sites" satirindan turetildi. procurement=_LIM (kullanici karari,
+    # 2026-07-30): satinalma malzemeyi poz uzerinden aliyor, teklif/siparis
+    # akisi poz listesine bakmayi gerektiriyor — artik "sites" satiriyla
+    # birebir ayni (fix/boq-procurement-permission).
+    "boq": [_A, _F, _LIM, _N, _N, _FIN, _F, _LIM],
 }
 
 

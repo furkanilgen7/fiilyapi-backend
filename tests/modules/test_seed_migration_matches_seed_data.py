@@ -34,11 +34,13 @@ INVOICING_MIGRATION_PATH = VERSIONS_DIR / "2cffc2fcfcf0_invoicing_izin_modulu.py
 P1_MIGRATION_PATH = next(VERSIONS_DIR.glob("*_p1_proje_cekirdegi.py"))
 P2_MIGRATION_PATH = next(VERSIONS_DIR.glob("*_p2_santiye_bolum.py"))
 BOQ_MIGRATION_PATH = next(VERSIONS_DIR.glob("*_boq_izin_modulu.py"))
+BOQ_PROCUREMENT_FIX_MIGRATION_PATH = next(VERSIONS_DIR.glob("*_boq_procurement_izin_duzeltmesi.py"))
 EXTENSION_MIGRATION_PATHS = [
     INVOICING_MIGRATION_PATH,
     P1_MIGRATION_PATH,
     P2_MIGRATION_PATH,
     BOQ_MIGRATION_PATH,
+    BOQ_PROCUREMENT_FIX_MIGRATION_PATH,
 ]
 
 
