@@ -2,6 +2,7 @@ import uuid
 
 from pydantic import BaseModel, EmailStr
 
+from app.core.access import AccessLevel
 from app.modules.users.models import UserStatus
 
 
@@ -27,3 +28,11 @@ class MeResponse(BaseModel):
     title: str
     role_key: str
     status: UserStatus
+    # Aktörün KENDİ izin haritası: modül anahtarı -> erişim seviyesi.
+    # Ek yetki İSTEMEZ (bilinçli): `/roles/{id}/permissions` `user_management:view`
+    # arar, bu yüzden salt-okunur bir rol kendi seviyesini göremiyordu ve frontend
+    # yazma butonlarını gizleyemiyordu. Kendi izninin okunması yetki sızıntısı
+    # değildir — aktör zaten o seviyeyi uçları deneyerek keşfedebilir.
+    # İzin satırı olmayan modül haritada YER ALMAZ; frontend bunu "bilinmezlik"
+    # sayıp kontrolü görünür bırakır (güvenlik sınırı her zaman backend'dedir).
+    permissions: dict[str, AccessLevel]
