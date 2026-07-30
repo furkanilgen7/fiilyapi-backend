@@ -20,6 +20,7 @@ from app.modules.projects.router import router as projects_router
 from app.modules.roles.router import router as roles_router
 from app.modules.settings.router import router as settings_router
 from app.modules.sites.router import router as sites_router
+from app.modules.units.router import router as units_router
 from app.modules.users.router import router as users_router
 
 logger = logging.getLogger(__name__)
@@ -73,6 +74,7 @@ app.include_router(projects_router)
 app.include_router(roles_router)
 app.include_router(settings_router)
 app.include_router(sites_router)
+app.include_router(units_router)
 app.include_router(users_router)
 
 
