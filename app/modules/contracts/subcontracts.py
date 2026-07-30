@@ -373,7 +373,7 @@ def _merged_for_validation(contract: SubcontractorContract, changes: dict) -> Si
 
 async def update_subcontractor_contract(
     session: AsyncSession, actor: User, contract_id: uuid.UUID, data: SubcontractorContractUpdate
-) -> tuple[SubcontractorContract, Project]:
+) -> tuple[SubcontractorContract, Project, bool]:
     """PATCH GEVŞEK, YAYIN SIKI (`sites.update_site` deseninin aynısı, spec §4).
 
     Genel dalda zorunluluk kuralları KOŞMAZ — koşsaydı canlıdaki eksik kayıtlı
@@ -381,6 +381,11 @@ async def update_subcontractor_contract(
     geçişidir: orada BİRLEŞİK kayıt üzerinde tüm kurallar koşar ve geçmezse
     satır TASLAK KALIR. Tutarlılık kuralları (şantiye-proje eşleşmesi dahil)
     HER İKİ dalda da koşar.
+
+    `is_publishing` da DÖNER (`units.update_unit`/`sites.update_site` deseni):
+    yayına geçiş olup olmadığı yalnız BURADA bilinir — `is_draft`in ÖNCEKİ
+    değeri router'da görünmez, dolayısıyla ayrımı dışarı taşımak denetim
+    günlüğünde "güncellendi" ile "yayına alındı" satırlarını karıştırırdı.
     """
     contract, project = await _visible_contract(session, actor, contract_id)
     changes = data.model_dump(exclude_unset=True)
@@ -409,7 +414,7 @@ async def update_subcontractor_contract(
         setattr(contract, field, value)
     await session.flush()
     await session.refresh(contract)
-    return contract, project
+    return contract, project, is_publishing
 
 
 async def _item_groups(

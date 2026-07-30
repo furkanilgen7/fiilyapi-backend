@@ -17,6 +17,7 @@ from app.core.deps import get_current_user
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
+from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
 from app.modules.contracts import distribution, service, subcontractors, subcontracts
@@ -75,48 +76,11 @@ async def list_contracts_endpoint(
 # `/projects/{project_id}/contract/...` altında, PATCH düz kökte
 # `/contracts/employer/...` (dolaylı kimlik çözümlemesi kullanır).
 #
-# Denetim günlüğü mesajları C13'te `app/modules/audit/messages.py`'ye
-# merkezileştirilecek (spec §8: `employer_contract_group_created/updated`,
-# `employer_contract_item_created/updated`). O fonksiyonlar henüz YOK — task
-# brief kararı gereği burada `boq_group_created`/`boq_item_created` metin
-# DESENİNİN AYNISI kullanılarak GEÇİCİ, modül-içi yardımcılarla yazılır.
-
-
-def _employer_contract_group_created(project_name: str, name: str) -> str:
-    return f"Sözleşme poz grubu oluşturuldu: {project_name} · {name}"
-
-
-def _employer_contract_group_updated(project_name: str, name: str) -> str:
-    return f"Sözleşme poz grubu güncellendi: {project_name} · {name}"
-
-
-def _employer_contract_item_created(project_name: str, code: str, description: str) -> str:
-    return f"Sözleşme poz kalemi oluşturuldu: {project_name} · {code} — {description}"
-
-
-def _employer_contract_item_updated(project_name: str, code: str, description: str) -> str:
-    return f"Sözleşme poz kalemi güncellendi: {project_name} · {code} — {description}"
-
-
-def _contract_distribution_saved(project_name: str) -> str:
-    """Task C8 — spec §8'de `contract_distribution_saved` olarak merkezileşecek.
-    `audit/messages.py`'de HENÜZ YOK; C6'nın geçici yardımcı deseni izlenir."""
-    return f"Poz dağılımı kaydedildi: {project_name}"
+# Denetim günlüğü mesajları `app/modules/audit/messages.py`de merkezileşir
+# (spec §8, task C13).
 
 
 # --- Taşeron kartoteksi (task C9, spec §3.4/§6.4) ---
-#
-# `employer_created`'in aynı geçici-yardımcı gerekçesi: C13, spec §8'de
-# `subcontractor_created`/`subcontractor_updated` olarak merkezileştirecek —
-# bugün `audit/messages.py`'de YOK.
-
-
-def _subcontractor_created(name: str) -> str:
-    return f"Taşeron oluşturuldu: {name}"
-
-
-def _subcontractor_updated(name: str) -> str:
-    return f"Taşeron güncellendi: {name}"
 
 
 @router.get(
@@ -176,7 +140,7 @@ async def save_contract_distribution_endpoint(
     await record_audit(
         session,
         action=AuditAction.update,
-        detail=_contract_distribution_saved(project.name),
+        detail=messages.contract_distribution_saved(project.name, len(data.allocations)),
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
@@ -200,7 +164,7 @@ async def create_employer_contract_group_endpoint(
     await record_audit(
         session,
         action=AuditAction.create,
-        detail=_employer_contract_group_created(project.name, group.name),
+        detail=messages.employer_contract_group_created(project.name, group.name),
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
@@ -223,15 +187,11 @@ async def update_employer_contract_group_endpoint(
     await record_audit(
         session,
         action=AuditAction.update,
-        detail=_employer_contract_group_updated(project.name, group.name),
+        detail=messages.employer_contract_group_updated(project.name, group.name),
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
     return EmployerContractGroupResponse(id=group.id, name=group.name, sort_order=group.sort_order)
-
-
-def _employer_contract_group_deleted(project_name: str, name: str) -> str:
-    return f"Sözleşme poz grubu silindi: {project_name} · {name}"
 
 
 @router.delete(
@@ -253,7 +213,7 @@ async def delete_employer_contract_group_endpoint(
     await record_audit(
         session,
         action=AuditAction.delete,
-        detail=_employer_contract_group_deleted(project_name, group_name),
+        detail=messages.employer_contract_group_deleted(project_name, group_name),
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
@@ -276,7 +236,7 @@ async def create_employer_contract_item_endpoint(
     await record_audit(
         session,
         action=AuditAction.create,
-        detail=_employer_contract_item_created(project.name, item.code, item.description),
+        detail=messages.employer_contract_item_created(project.name, item.code, item.description),
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
@@ -301,15 +261,11 @@ async def update_employer_contract_item_endpoint(
     await record_audit(
         session,
         action=AuditAction.update,
-        detail=_employer_contract_item_updated(project.name, item.code, item.description),
+        detail=messages.employer_contract_item_updated(project.name, item.code, item.description),
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
     return await service.to_item_response_single(session, item)
-
-
-def _employer_contract_item_deleted(project_name: str, code: str, description: str) -> str:
-    return f"Sözleşme poz kalemi silindi: {project_name} · {code} — {description}"
 
 
 @router.delete(
@@ -332,7 +288,7 @@ async def delete_employer_contract_item_endpoint(
     await record_audit(
         session,
         action=AuditAction.delete,
-        detail=_employer_contract_item_deleted(project_name, code, description),
+        detail=messages.employer_contract_item_deleted(project_name, code, description),
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
@@ -376,7 +332,7 @@ async def create_subcontractor_endpoint(
     await record_audit(
         session,
         action=AuditAction.create,
-        detail=_subcontractor_created(subcontractor.name),
+        detail=messages.subcontractor_created(subcontractor.name),
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
@@ -399,15 +355,11 @@ async def update_subcontractor_endpoint(
     await record_audit(
         session,
         action=AuditAction.update,
-        detail=_subcontractor_updated(subcontractor.name),
+        detail=messages.subcontractor_updated(subcontractor.name),
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
     return SubcontractorResponse.model_validate(subcontractor)
-
-
-def _subcontractor_deleted(name: str) -> str:
-    return f"Taşeron silindi: {name}"
 
 
 @router.delete(
@@ -431,7 +383,7 @@ async def delete_subcontractor_endpoint(
     await record_audit(
         session,
         action=AuditAction.delete,
-        detail=_subcontractor_deleted(name),
+        detail=messages.subcontractor_deleted(name),
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
@@ -440,20 +392,11 @@ async def delete_subcontractor_endpoint(
 # --- Taşeron sözleşmesi POST/GET/PATCH (task C10, spec §6.5) ---
 #
 # DELETE, kalem uçları ve `load-from-employer` bu task'ta AÇILMAZ — C11/C12'nin
-# işi. `_subcontractor_contract_created`/`_updated`: C6/C9'un aynı geçici-
-# yardımcı gerekçesi — C13, spec §8'de merkezileştirecek.
-
-
-def _subcontract_label(contract_no: str | None, subcontractor_name: str | None) -> str:
-    return contract_no or subcontractor_name or "taslak"
-
-
-def _subcontractor_contract_created(project_name: str, label: str) -> str:
-    return f"Taşeron sözleşmesi oluşturuldu: {project_name} · {label}"
-
-
-def _subcontractor_contract_updated(project_name: str, label: str) -> str:
-    return f"Taşeron sözleşmesi güncellendi: {project_name} · {label}"
+# işi. Denetim mesajları `app/modules/audit/messages.py`de merkezileşir (spec
+# §8, task C13); taslak→yayın geçişi `subcontract_published` ile AYRI bir
+# metin üretir (`sites.update_site`/`messages.site_published` deseninin
+# aynısı) — router `is_draft`in ÖNCEKİ değerini göremez, ayrımı servis
+# `is_publishing` olarak döner.
 
 
 @router.post(
@@ -475,8 +418,9 @@ async def create_subcontractor_contract_endpoint(
     await record_audit(
         session,
         action=AuditAction.create,
-        detail=_subcontractor_contract_created(
-            project.name, _subcontract_label(contract.contract_no, contract.subcontractor_name)
+        detail=messages.subcontract_created(
+            project.name,
+            messages._subcontract_label(contract.contract_no, contract.subcontractor_name),
         ),
         actor_user_id=user.id,
         ip_address=client_ip(request),
@@ -510,23 +454,23 @@ async def update_subcontractor_contract_endpoint(
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> SubcontractorContractDetail:
-    contract, project = await subcontracts.update_subcontractor_contract(
+    contract, project, is_publishing = await subcontracts.update_subcontractor_contract(
         session, user, contract_id, data
+    )
+    label = messages._subcontract_label(contract.contract_no, contract.subcontractor_name)
+    detail = (
+        messages.subcontract_published(project.name, label)
+        if is_publishing
+        else messages.subcontract_updated(project.name, label)
     )
     await record_audit(
         session,
         action=AuditAction.update,
-        detail=_subcontractor_contract_updated(
-            project.name, _subcontract_label(contract.contract_no, contract.subcontractor_name)
-        ),
+        detail=detail,
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
     return await subcontracts.to_subcontract_detail(session, contract)
-
-
-def _subcontractor_contract_deleted(project_name: str, label: str) -> str:
-    return f"Taşeron sözleşmesi silindi: {project_name} · {label}"
 
 
 @router.delete(
@@ -563,8 +507,8 @@ async def delete_subcontractor_contract_endpoint(
     await record_audit(
         session,
         action=AuditAction.delete,
-        detail=_subcontractor_contract_deleted(
-            project_name, _subcontract_label(contract_no, subcontractor_name)
+        detail=messages.subcontract_deleted(
+            project_name, messages._subcontract_label(contract_no, subcontractor_name)
         ),
         actor_user_id=user.id,
         ip_address=client_ip(request),
@@ -573,23 +517,8 @@ async def delete_subcontractor_contract_endpoint(
 
 # --- Taşeron sözleşmesi kalemleri + `load-from-employer` (task C11, spec §6.5) ---
 #
-# DELETE bu task'ta AÇILMAZ — C12'nin işi. `_subcontract_item_created/_updated/
-# _items_loaded`: C6/C9/C10'un aynı geçici-yardımcı gerekçesi — spec §8'de
-# `subcontract_item_created/updated`, `subcontract_items_loaded` olarak
-# merkezileşecek, `audit/messages.py`'de HENÜZ YOK (C13 taşır).
-
-
-def _subcontract_item_created(contract_no: str | None, code: str) -> str:
-    return f"Taşeron sözleşmesi kalemi oluşturuldu: {contract_no or 'taslak'} · {code}"
-
-
-def _subcontract_item_updated(contract_no: str | None, code: str) -> str:
-    return f"Taşeron sözleşmesi kalemi güncellendi: {contract_no or 'taslak'} · {code}"
-
-
-def _subcontract_items_loaded(contract_no: str | None, count: int) -> str:
-    label = contract_no or "taslak"
-    return f"Taşeron sözleşmesi kalemleri işverenden yüklendi: {label} · {count} kalem"
+# DELETE bu task'ta AÇILMAZ — C12'nin işi. Denetim mesajları `audit/
+# messages.py`de merkezileşir (spec §8, task C13).
 
 
 @router.post(
@@ -609,7 +538,7 @@ async def create_subcontract_item_endpoint(
     await record_audit(
         session,
         action=AuditAction.create,
-        detail=_subcontract_item_created(contract.contract_no, item.code),
+        detail=messages.subcontract_item_created(contract.contract_no, item.code),
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
@@ -632,15 +561,11 @@ async def update_subcontract_item_endpoint(
     await record_audit(
         session,
         action=AuditAction.update,
-        detail=_subcontract_item_updated(contract.contract_no, item.code),
+        detail=messages.subcontract_item_updated(contract.contract_no, item.code),
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
     return await subcontracts.to_subcontract_item_response(session, item)
-
-
-def _subcontract_item_deleted(contract_no: str | None, code: str) -> str:
-    return f"Taşeron sözleşmesi kalemi silindi: {contract_no or 'taslak'} · {code}"
 
 
 @router.delete(
@@ -663,7 +588,7 @@ async def delete_subcontract_item_endpoint(
     await record_audit(
         session,
         action=AuditAction.delete,
-        detail=_subcontract_item_deleted(contract_no, code),
+        detail=messages.subcontract_item_deleted(contract_no, code),
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
@@ -686,7 +611,7 @@ async def load_subcontract_items_from_employer_endpoint(
     await record_audit(
         session,
         action=AuditAction.create,
-        detail=_subcontract_items_loaded(contract.contract_no, created_count),
+        detail=messages.subcontract_items_loaded(contract.contract_no, created_count),
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
