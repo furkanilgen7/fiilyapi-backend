@@ -239,11 +239,11 @@ async def test_site_chief_can_see_boq_but_field_engineer_cannot(seeded_db):
     assert await _level_of(seeded_db, "field_engineer", "boq") == AccessLevel.none
 
 
-async def test_boq_permissions_match_sites_row_except_field_engineer_and_procurement(seeded_db):
+async def test_boq_permissions_match_sites_row_except_field_engineer_and_hr(seeded_db):
     """boq satiri temel olarak sites satirini izler; bilincli istisnalar (spec §4):
-    field_engineer (gormez), hr_manager ve procurement (sites=_LIM iken boq=none;
-    procurement gecici, teyit bekliyor)."""
-    exceptions = {"field_engineer", "hr_manager", "procurement"}
+    field_engineer ve hr_manager gormez. procurement 2026-07-30 kullanici karariyla
+    artik sites satirindan SAPMIYOR (view/limited) — istisna listesinden cikarildi."""
+    exceptions = {"field_engineer", "hr_manager"}
     for role_key in EXPECTED_ROLE_KEYS - exceptions:
         assert await _level_of(seeded_db, role_key, "boq") == await _level_of(
             seeded_db, role_key, "sites"
