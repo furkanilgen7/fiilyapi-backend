@@ -1,12 +1,14 @@
 """Task 7 — santiye/bolum uclari ve denetim gunlugu (spec §4, §7)."""
 
 import uuid
+from datetime import date
+from decimal import Decimal
 
 from sqlalchemy import select
 
 from app.core.timezone import today
 from app.modules.audit.models import AuditAction, AuditLog
-from app.modules.sites.models import Section, Site
+from app.modules.sites.models import Section, Site, SiteStatus
 from app.modules.users.models import UserProjectAccess
 
 
@@ -229,6 +231,278 @@ async def test_patch_section_missing_returns_404(client, db_session, user_factor
     token = await _login_with_access(client, db_session, user_factory, "patron")
     resp = await client.patch(f"/sections/{uuid.uuid4()}", json={"name": "X"}, headers=_auth(token))
     assert resp.status_code == 404
+
+
+# --- T8: okuma uclarinin genislemesi (spec §4.1, §5.2, §6.2) ---
+#
+# Bu blogun tasidigi tek kural: **YALNIZ EKLEME**. P2'nin dondurdugu hicbir alan
+# kaldirilmadi/yeniden adlandirilmadi (test_p2_contract_fields_still_present bunun
+# kilididir) ve donusturuculere eklenen 16 alan hem listede hem detayda gorunur.
+
+# `SiteCard`e §6.2 ile EKLENEN alanlar. Liste burada ACIKCA yazilir: donusturucuden
+# bir alan sessizce dusesse sema `ValidationError` atardi, ama dusen alan HIC
+# eklenmemis olsaydi (ornegin yeni bir kolon icin) bu test onu yakalar.
+_NEW_CARD_FIELDS = (
+    "is_draft",
+    "site_manager_user_id",
+    "safety_officer_user_id",
+    "safety_officer_name",
+    "safety_officer_is_outsourced",
+    "neighborhood",
+    "parcel",
+    "gps_coordinates",
+    "land_area_m2",
+    "construction_area_m2",
+    "floor_info",
+    "budget",
+    "facilities",
+    "electricity_subscription_no",
+    "water_subscription_no",
+    "planned_worker_count",
+)
+
+# P2'nin (ve P1.1a'nin) sozlesmesi — bu dilimde hicbirine DOKUNULMADI.
+_P2_CARD_FIELDS = (
+    "id",
+    "code",
+    "name",
+    "status",
+    "address",
+    "city",
+    "city_inherited",
+    "site_manager_name",
+    "start_date",
+    "end_date",
+    "delivery_date",
+    "remaining_days",
+    "section_count",
+    "worker_count",
+    "progress_pct",
+)
+
+
+async def _full_site(session, project, code: str = "A-BLOK", **kwargs):
+    """Mockup'in tum yeni alanlari DOLU bir santiye satiri."""
+    defaults = {
+        "neighborhood": "Kuyubaşı Mah.",
+        "parcel": "1234/5",
+        "gps_coordinates": "39.9208, 32.8541",
+        "land_area_m2": Decimal("8000.50"),
+        "construction_area_m2": Decimal("12000.00"),
+        "floor_info": "2 bodrum + 10 normal",
+        "budget": Decimal("45000000.00"),
+        "electricity_subscription_no": "EL-99",
+        "water_subscription_no": "SU-88",
+        "planned_worker_count": 120,
+        "safety_officer_is_outsourced": True,
+        "safety_officer_name": "Dış Kaynak — OSGB",
+        "has_closed_warehouse": True,
+        "has_infirmary": True,
+    }
+    defaults.update(kwargs)
+    return await _site(session, project, code, **defaults)
+
+
+async def test_list_response_includes_new_fields(client, db_session, user_factory, project_factory):
+    project = await project_factory("A-12")
+    await _full_site(db_session, project)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.get(f"/projects/{project.id}/sites", headers=_auth(token))
+
+    assert resp.status_code == 200, resp.text
+    card = resp.json()["items"][0]
+    assert all(field in card for field in _NEW_CARD_FIELDS)
+    assert card["neighborhood"] == "Kuyubaşı Mah."
+    assert card["parcel"] == "1234/5"
+    assert card["gps_coordinates"] == "39.9208, 32.8541"
+    assert Decimal(card["land_area_m2"]) == Decimal("8000.50")
+    assert Decimal(card["construction_area_m2"]) == Decimal("12000.00")
+    assert card["floor_info"] == "2 bodrum + 10 normal"
+    assert Decimal(card["budget"]) == Decimal("45000000.00")
+    assert card["electricity_subscription_no"] == "EL-99"
+    assert card["water_subscription_no"] == "SU-88"
+    assert card["planned_worker_count"] == 120
+    assert card["safety_officer_is_outsourced"] is True
+    assert card["safety_officer_name"] == "Dış Kaynak — OSGB"
+    assert card["is_draft"] is False
+
+
+async def test_detail_response_includes_new_fields(
+    client, db_session, user_factory, project_factory
+):
+    """Detay `SiteCard`'i MIRAS ALIR — iki zarf tek donusturucuden beslenir."""
+    project = await project_factory("A-13")
+    site = await _full_site(db_session, project)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.get(f"/sites/{site.id}", headers=_auth(token))
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert all(field in body for field in _NEW_CARD_FIELDS)
+    assert body["planned_worker_count"] == 120
+    assert body["facilities"]["closed_warehouse"] is True
+
+
+async def test_list_counts_draft_is_correct(client, db_session, user_factory, project_factory):
+    project = await project_factory("A-14")
+    await _site(db_session, project, "T-1", is_draft=True)
+    await _site(db_session, project, "T-2", is_draft=True)
+    await _site(db_session, project, "Y-1")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.get(f"/projects/{project.id}/sites", headers=_auth(token))
+
+    assert resp.json()["counts"]["draft"] == 2
+
+
+async def test_draft_sites_visible_to_everyone_with_project_access(
+    client, db_session, user_factory, project_factory
+):
+    """§13/13: "yalniz benim taslaklarim" kavrami YOKTUR.
+
+    Taslagi kimin yazdigi SAKLANMAZ; projeye erisimi olan herkes gorur. Aksi
+    hâlde sefin yarim biraktigi santiyeyi mudur tamamlayamazdi.
+    """
+    project = await project_factory("A-15")
+    site = await _site(db_session, project, "T-3", is_draft=True)
+    token = await _login_with_access(client, db_session, user_factory, "site_chief")
+
+    listed = await client.get(f"/projects/{project.id}/sites", headers=_auth(token))
+    detail = await client.get(f"/sites/{site.id}", headers=_auth(token))
+
+    assert [s["code"] for s in listed.json()["items"]] == ["T-3"]
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["is_draft"] is True
+
+
+async def test_draft_not_subtracted_from_status_counts(
+    client, db_session, user_factory, project_factory
+):
+    """§5.2: taslak, DURUMU NE ISE o sayacta KALIR; `draft` AYRICA artar.
+
+    Dusseydi sayaclarin toplami `all`i tutmaz, ekranda "3 şantiye" yazip
+    kirilimda 2 gosterilirdi.
+    """
+    project = await project_factory("A-16")
+    await _site(db_session, project, "T-4", is_draft=True)
+    await _site(db_session, project, "T-5", is_draft=True, status=SiteStatus.on_hold)
+    await _site(db_session, project, "Y-2")
+    token = await _login(client, user_factory, "system_admin")
+
+    counts = (await client.get(f"/projects/{project.id}/sites", headers=_auth(token))).json()[
+        "counts"
+    ]
+
+    assert counts == {"all": 3, "active": 2, "on_hold": 1, "completed": 0, "draft": 2}
+    assert counts["active"] + counts["on_hold"] + counts["completed"] == counts["all"]
+
+
+async def test_section_response_includes_manager_user_id(
+    client, db_session, user_factory, project_factory
+):
+    """FK ve ad anlik goruntusu BIRLIKTE doner: ad, kullanici silinse bile kalir."""
+    project = await project_factory("A-17")
+    site = await _site(db_session, project)
+    manager = await user_factory(
+        email=f"bs-{uuid.uuid4().hex[:6]}@t.co",
+        password="parola1234",
+        role_key="site_chief",
+        full_name="Mehmet Yıldız",
+    )
+    db_session.add(
+        Section(
+            site_id=site.id,
+            name="Kaba İnşaat",
+            manager_user_id=manager.id,
+            manager_name="Mehmet Yıldız",
+        )
+    )
+    await db_session.flush()
+    token = await _login(client, user_factory, "system_admin")
+
+    listed = await client.get(f"/sites/{site.id}/sections", headers=_auth(token))
+    detail = await client.get(f"/sites/{site.id}", headers=_auth(token))
+
+    assert listed.json()["items"][0]["manager_user_id"] == str(manager.id)
+    assert listed.json()["items"][0]["manager_name"] == "Mehmet Yıldız"
+    assert detail.json()["sections"][0]["manager_user_id"] == str(manager.id)
+
+
+async def test_section_budget_placeholder_pending_boq(
+    client, db_session, user_factory, project_factory
+):
+    """Bolum bedeli SAKLANMAZ (spec §2.2) — BOQ toplaminin turevidir, yer tutucu doner."""
+    project = await project_factory("A-18")
+    site = await _site(db_session, project)
+    db_session.add(Section(site_id=site.id, name="Kaba İnşaat"))
+    await db_session.flush()
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.get(f"/sites/{site.id}/sections", headers=_auth(token))
+
+    assert resp.json()["items"][0]["budget"] == {
+        "available": False,
+        "value": None,
+        "pending_module": "boq",
+    }
+
+
+async def test_no_duration_days_in_response(client, db_session, user_factory, project_factory):
+    """§3.6: sure TUREVDIR, saklanmaz ve dondurulmez — iki gercek kaynak olmaz."""
+    project = await project_factory("A-19")
+    site = await _full_site(db_session, project)
+    token = await _login(client, user_factory, "system_admin")
+
+    listed = await client.get(f"/projects/{project.id}/sites", headers=_auth(token))
+    detail = await client.get(f"/sites/{site.id}", headers=_auth(token))
+
+    assert "duration_days" not in listed.text
+    assert "duration_days" not in detail.text
+
+
+async def test_p2_contract_fields_still_present(client, db_session, user_factory, project_factory):
+    """GERIYE UYUM AGI (§6.2): P2 frontend'inin okudugu hicbir alan kaybolmadi."""
+    project = await project_factory("A-20", city="Ankara")
+    site = await _full_site(db_session, project, city=None, end_date=date(2027, 3, 1))
+    token = await _login(client, user_factory, "system_admin")
+
+    listed = await client.get(f"/projects/{project.id}/sites", headers=_auth(token))
+    card = listed.json()["items"][0]
+    detail = (await client.get(f"/sites/{site.id}", headers=_auth(token))).json()
+
+    assert all(field in card for field in _P2_CARD_FIELDS)
+    assert all(field in detail for field in _P2_CARD_FIELDS)
+    # P2 mirasi iki turetim BOZULMADI: sehir devri + kalan gun.
+    assert (card["city"], card["city_inherited"]) == ("Ankara", True)
+    assert card["remaining_days"] == (date(2027, 3, 1) - today()).days
+    # Detayin P2 ek alanlari da yerinde.
+    assert {"project", "section_status_counts", "sections", "total_progress_payment"} <= set(detail)
+
+
+async def test_facilities_returned_grouped(client, db_session, user_factory, project_factory):
+    """§4.1: DB'de SEKIZ duz Boolean kolon, API'de TEK ic ice nesne.
+
+    Duz `has_*` anahtarlari yanitta GORUNMEZ — gruplama gorsel kumelenmeyi tasir.
+    """
+    project = await project_factory("A-21")
+    site = await _full_site(db_session, project)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.get(f"/sites/{site.id}", headers=_auth(token))
+
+    assert resp.json()["facilities"] == {
+        "closed_warehouse": True,
+        "open_storage": False,
+        "cold_storage": False,
+        "site_office": False,
+        "canteen": False,
+        "changing_room_wc": False,
+        "dormitory": False,
+        "infirmary": True,
+    }
+    assert "has_closed_warehouse" not in resp.text
 
 
 async def test_no_password_hash_leaks(client, db_session, user_factory, project_factory):
