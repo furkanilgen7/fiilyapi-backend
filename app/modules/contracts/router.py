@@ -36,6 +36,10 @@ from app.modules.contracts.schemas import (
     EmployerContractItemUpdate,
     SubcontractorContractCreate,
     SubcontractorContractDetail,
+    SubcontractorContractItemCreate,
+    SubcontractorContractItemResponse,
+    SubcontractorContractItemsLoadResponse,
+    SubcontractorContractItemUpdate,
     SubcontractorContractUpdate,
     SubcontractorCreate,
     SubcontractorListResponse,
@@ -429,3 +433,97 @@ async def update_subcontractor_contract_endpoint(
         ip_address=client_ip(request),
     )
     return await subcontracts.to_subcontract_detail(session, contract)
+
+
+# --- Taşeron sözleşmesi kalemleri + `load-from-employer` (task C11, spec §6.5) ---
+#
+# DELETE bu task'ta AÇILMAZ — C12'nin işi. `_subcontract_item_created/_updated/
+# _items_loaded`: C6/C9/C10'un aynı geçici-yardımcı gerekçesi — spec §8'de
+# `subcontract_item_created/updated`, `subcontract_items_loaded` olarak
+# merkezileşecek, `audit/messages.py`'de HENÜZ YOK (C13 taşır).
+
+
+def _subcontract_item_created(contract_no: str | None, code: str) -> str:
+    return f"Taşeron sözleşmesi kalemi oluşturuldu: {contract_no or 'taslak'} · {code}"
+
+
+def _subcontract_item_updated(contract_no: str | None, code: str) -> str:
+    return f"Taşeron sözleşmesi kalemi güncellendi: {contract_no or 'taslak'} · {code}"
+
+
+def _subcontract_items_loaded(contract_no: str | None, count: int) -> str:
+    label = contract_no or "taslak"
+    return f"Taşeron sözleşmesi kalemleri işverenden yüklendi: {label} · {count} kalem"
+
+
+@router.post(
+    "/subcontractor-contracts/{contract_id}/items",
+    response_model=SubcontractorContractItemResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[_FULL],
+)
+async def create_subcontract_item_endpoint(
+    request: Request,
+    contract_id: uuid.UUID,
+    data: SubcontractorContractItemCreate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> SubcontractorContractItemResponse:
+    item, contract, _ = await subcontracts.create_subcontract_item(session, user, contract_id, data)
+    await record_audit(
+        session,
+        action=AuditAction.create,
+        detail=_subcontract_item_created(contract.contract_no, item.code),
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return await subcontracts.to_subcontract_item_response(session, item)
+
+
+@router.patch(
+    "/subcontractor-contracts/items/{item_id}",
+    response_model=SubcontractorContractItemResponse,
+    dependencies=[_FULL],
+)
+async def update_subcontract_item_endpoint(
+    request: Request,
+    item_id: uuid.UUID,
+    data: SubcontractorContractItemUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> SubcontractorContractItemResponse:
+    item, contract, _ = await subcontracts.update_subcontract_item(session, user, item_id, data)
+    await record_audit(
+        session,
+        action=AuditAction.update,
+        detail=_subcontract_item_updated(contract.contract_no, item.code),
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return await subcontracts.to_subcontract_item_response(session, item)
+
+
+@router.post(
+    "/subcontractor-contracts/{contract_id}/items/load-from-employer",
+    response_model=SubcontractorContractItemsLoadResponse,
+    dependencies=[_FULL],
+)
+async def load_subcontract_items_from_employer_endpoint(
+    request: Request,
+    contract_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> SubcontractorContractItemsLoadResponse:
+    created_count, skipped_count, contract, _ = await subcontracts.load_items_from_employer(
+        session, user, contract_id
+    )
+    await record_audit(
+        session,
+        action=AuditAction.create,
+        detail=_subcontract_items_loaded(contract.contract_no, created_count),
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return SubcontractorContractItemsLoadResponse(
+        created_count=created_count, skipped_count=skipped_count
+    )

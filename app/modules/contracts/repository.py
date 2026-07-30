@@ -19,6 +19,7 @@ from app.modules.contracts.models import (
     EmployerContractItem,
     Subcontractor,
     SubcontractorContract,
+    SubcontractorContractItem,
 )
 from app.modules.projects.models import Project, ProjectContract
 
@@ -276,6 +277,35 @@ async def get_subcontractor_contract_by_contract_no(
     stmt = select(SubcontractorContract).where(SubcontractorContract.contract_no == contract_no)
     if exclude_id is not None:
         stmt = stmt.where(SubcontractorContract.id != exclude_id)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+# --- Taşeron sözleşmesi kalemleri (task C11, spec §3.6/§6.5) ---
+
+
+async def get_subcontract_item(
+    session: AsyncSession, item_id: uuid.UUID
+) -> SubcontractorContractItem | None:
+    return await session.get(SubcontractorContractItem, item_id)
+
+
+async def get_subcontract_item_by_code(
+    session: AsyncSession,
+    contract_id: uuid.UUID,
+    code: str,
+    exclude_item_id: uuid.UUID | None = None,
+) -> SubcontractorContractItem | None:
+    """`(contract_id, code)` çakışmasını `IntegrityError`'a düşmeden ÖNCE yakalar
+
+    (`get_employer_item_by_code` deseninin aynısı).
+    """
+    stmt = select(SubcontractorContractItem).where(
+        SubcontractorContractItem.contract_id == contract_id,
+        SubcontractorContractItem.code == code,
+    )
+    if exclude_item_id is not None:
+        stmt = stmt.where(SubcontractorContractItem.id != exclude_item_id)
     result = await session.execute(stmt)
     return result.scalar_one_or_none()
 

@@ -22,8 +22,10 @@ from app.modules.contracts.models import SubcontractorContract, SubcontractorCon
 from app.modules.contracts.schemas import (
     SubcontractorContractCreate,
     SubcontractorContractDetail,
+    SubcontractorContractItemCreate,
     SubcontractorContractItemGroup,
     SubcontractorContractItemResponse,
+    SubcontractorContractItemUpdate,
     SubcontractorContractUpdate,
 )
 from app.modules.contracts.service import _subcontractor_amount, _visible_project
@@ -181,6 +183,153 @@ async def get_subcontractor_contract(
 ) -> SubcontractorContract:
     contract, _ = await _visible_contract(session, actor, contract_id)
     return contract
+
+
+async def _visible_subcontract_item(
+    session: AsyncSession, actor: User, item_id: uuid.UUID
+) -> tuple[SubcontractorContractItem, SubcontractorContract, Project]:
+    """Kalem -> sözleşme -> proje. Dolaylı kimlikle erişim de görünürlük
+
+    süzgecinden geçmek ZORUNDA (`_visible_contract`/`service._visible_item`
+    deseninin aynısı). Görünmeyen projedeki gerçek kalem ile var olmayan kalem
+    AYNI 404 gövdesini döner (spec §6, IDOR).
+    """
+    item = await repository.get_subcontract_item(session, item_id)
+    if item is None:
+        raise NotFoundError(guards.ITEM_MISSING)
+    contract = await repository.get_subcontractor_contract(session, item.contract_id)
+    if contract is None:
+        raise NotFoundError(guards.ITEM_MISSING)
+    project = await _visible_project(session, actor, contract.project_id, guards.ITEM_MISSING)
+    return item, contract, project
+
+
+async def _ensure_item_code_unique(
+    session: AsyncSession,
+    contract_id: uuid.UUID,
+    code: str,
+    *,
+    exclude_item_id: uuid.UUID | None = None,
+) -> None:
+    """409: `(contract_id, code)` çakışması (spec §6.5). Aynı Türkçe metin
+
+    `guards.DUPLICATE_ITEM_CODE` (task C6) tek kopya yeniden kullanılır —
+    her iki bağlamda da anlamı aynıdır: "bu poz numarası bu sözleşmede zaten
+    kullanılıyor".
+    """
+    existing = await repository.get_subcontract_item_by_code(
+        session, contract_id, code, exclude_item_id=exclude_item_id
+    )
+    if existing is not None:
+        raise DuplicateError(guards.DUPLICATE_ITEM_CODE)
+
+
+async def create_subcontract_item(
+    session: AsyncSession,
+    actor: User,
+    contract_id: uuid.UUID,
+    data: SubcontractorContractItemCreate,
+) -> tuple[SubcontractorContractItem, SubcontractorContract, Project]:
+    contract, project = await _visible_contract(session, actor, contract_id)
+    await _ensure_item_code_unique(session, contract.id, data.code)
+    item = SubcontractorContractItem(
+        contract_id=contract.id,
+        source_contract_item_id=data.source_contract_item_id,
+        code=data.code,
+        description=data.description,
+        unit=data.unit,
+        quantity=data.quantity,
+        unit_price=data.unit_price,
+        sort_order=data.sort_order,
+    )
+    session.add(item)
+    await session.flush()
+    await session.refresh(item)
+    return item, contract, project
+
+
+async def update_subcontract_item(
+    session: AsyncSession, actor: User, item_id: uuid.UUID, data: SubcontractorContractItemUpdate
+) -> tuple[SubcontractorContractItem, SubcontractorContract, Project]:
+    """PATCH kısmi günceleme (spec §6.5) — `items` gövdesinde `source_contract_item_id`
+
+    YOK, bağ yalnız `load-from-employer` ile kurulur ve PATCH'te değiştirilemez.
+    """
+    item, contract, project = await _visible_subcontract_item(session, actor, item_id)
+    updates = data.model_dump(exclude_unset=True)
+    if "code" in updates and updates["code"] != item.code:
+        await _ensure_item_code_unique(
+            session, contract.id, updates["code"], exclude_item_id=item.id
+        )
+    for field, value in updates.items():
+        setattr(item, field, value)
+    await session.flush()
+    await session.refresh(item)
+    return item, contract, project
+
+
+async def to_subcontract_item_response(
+    session: AsyncSession, item: SubcontractorContractItem
+) -> SubcontractorContractItemResponse:
+    """Tek kalem yanıtı — grup `_item_groups`'un aynı türetme mantığıyla çözülür
+
+    (spec §3.6, POST/PATCH kalem uçlarının ortak yanıt kurucusu).
+    """
+    groups = await _item_groups(session, [item])
+    return SubcontractorContractItemResponse(
+        id=item.id,
+        contract_id=item.contract_id,
+        source_contract_item_id=item.source_contract_item_id,
+        code=item.code,
+        description=item.description,
+        unit=item.unit,
+        quantity=item.quantity,
+        unit_price=item.unit_price,
+        sort_order=item.sort_order,
+        group=groups.get(item.source_contract_item_id) if item.source_contract_item_id else None,
+    )
+
+
+async def load_items_from_employer(
+    session: AsyncSession, actor: User, contract_id: uuid.UUID
+) -> tuple[int, int, SubcontractorContract, Project]:
+    """`FORM` 115 / `TSD` 91 — işveren sözleşmesi kalemlerini kopyalar (spec §6.5).
+
+    `code`/`description`/`unit`/`quantity` kopyalanır, `unit_price` BİLİNÇLİ
+    olarak NULL bırakılır (taşeron fiyatını kullanıcı girer). Idempotent: aynı
+    `code` sözleşmede zaten varsa atlanır, üzerine YAZILMAZ. Atomik: tek
+    `flush` ile — bir kalem yazılamazsa (örn. beklenmeyen bütünlük hatası)
+    hiçbiri kalıcı olmaz, ayrı ayrı commit edilmez.
+    """
+    contract, project = await _visible_contract(session, actor, contract_id)
+    groups = await repository.list_employer_groups(session, contract.project_id)
+    employer_items = [item for group in groups for item in group.items]
+    if not employer_items:
+        raise SiteValidationError(guards.NO_EMPLOYER_ITEMS)
+
+    existing_codes = {item.code for item in contract.items}
+    created_count = 0
+    skipped_count = 0
+    for index, employer_item in enumerate(employer_items):
+        if employer_item.code in existing_codes:
+            skipped_count += 1
+            continue
+        session.add(
+            SubcontractorContractItem(
+                contract_id=contract.id,
+                source_contract_item_id=employer_item.id,
+                code=employer_item.code,
+                description=employer_item.description,
+                unit=employer_item.unit,
+                quantity=employer_item.quantity,
+                unit_price=None,
+                sort_order=index,
+            )
+        )
+        existing_codes.add(employer_item.code)
+        created_count += 1
+    await session.flush()
+    return created_count, skipped_count, contract, project
 
 
 def _merged_for_validation(contract: SubcontractorContract, changes: dict) -> SimpleNamespace:

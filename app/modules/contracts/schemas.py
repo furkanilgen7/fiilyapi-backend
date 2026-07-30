@@ -53,6 +53,7 @@ __all__ = [
     "SubcontractorContractItemCreate",
     "SubcontractorContractItemGroup",
     "SubcontractorContractItemResponse",
+    "SubcontractorContractItemsLoadResponse",
     "SubcontractorContractItemUpdate",
     "SubcontractorContractUpdate",
     "SubcontractorCreate",
@@ -391,6 +392,16 @@ class SubcontractorContractItemResponse(BaseModel):
         if self.unit_price is None:
             return Decimal("0")
         return _quantize_money(self.quantity * self.unit_price)
+
+
+class SubcontractorContractItemsLoadResponse(BaseModel):
+    """`POST .../items/load-from-employer` yanıtı (spec §6.5) — idempotent
+
+    kopyalamanın kaç kalem yazdığını/atladığını bildirir.
+    """
+
+    created_count: int
+    skipped_count: int
 
 
 # --- Taşeron sözleşmesi (spec §3.5) ---
