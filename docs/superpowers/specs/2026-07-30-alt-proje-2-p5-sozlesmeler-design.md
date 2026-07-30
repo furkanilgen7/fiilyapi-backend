@@ -308,7 +308,12 @@ Desen `sites`/`projects` ile birebir (kalıcı karar 4):
 | Sözleşme no | `FORM` 90 | `CONTRACT_NO_REQUIRED = "Sözleşme no zorunludur."` |
 | İmza tarihi | `FORM` 91 | `SIGNATURE_DATE_REQUIRED = "İmza tarihi zorunludur."` |
 | İşe başlama + bitiş | `FORM` 93-94 | `DATES_REQUIRED = "İşe başlama ve bitiş tarihi zorunludur."` |
-| En az bir kalem, hepsinde birim fiyat | `FORM` 138 (sarı alan) | `ITEM_PRICES_REQUIRED = "Tüm pozlarda taşeron birim fiyatı zorunludur."` |
+| Girilen kalemlerin **hepsinde** birim fiyat | `FORM` 138 (sarı alan) | `ITEM_PRICES_REQUIRED = "Tüm pozlarda taşeron birim fiyatı zorunludur."` |
+
+> **Kullanıcı kararı (2026-07-30, C4 incelemesi):** "en az bir kalem" şartı **UYGULANMAZ.**
+> Kalemsiz sözleşme yayına geçebilir; kalemler sonradan eklenir (götürü bedelli işler ve
+> `load-from-employer` akışı için esneklik). Kural yalnız **girilmiş** kalemlere bakar.
+> Bu bir eksik uygulama değildir — geri getirilmez.
 
 **Şantiye zorunlu DEĞİLDİR** — K4 gereği `FORM` 59'daki `*`'tan onaylı sapma.
 
