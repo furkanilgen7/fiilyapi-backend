@@ -11,6 +11,7 @@ from app.core.errors import (
     PermissionLockedError,
     ProjectTypeMismatchError,
     ProjectValidationError,
+    RelatedRecordsExistError,
     UnitValidationError,
 )
 
@@ -44,6 +45,12 @@ async def _project_validation_handler(
 
 
 async def _duplicate_error_handler(request: Request, exc: DuplicateError) -> JSONResponse:
+    return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(exc)})
+
+
+async def _related_records_exist_handler(
+    request: Request, exc: RelatedRecordsExistError
+) -> JSONResponse:
     return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(exc)})
 
 
@@ -84,6 +91,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ProjectTypeMismatchError, _project_type_mismatch_handler)
     app.add_exception_handler(ProjectValidationError, _project_validation_handler)
     app.add_exception_handler(DuplicateError, _duplicate_error_handler)
+    app.add_exception_handler(RelatedRecordsExistError, _related_records_exist_handler)
     app.add_exception_handler(BoqGroupSiteMismatchError, _boq_group_site_mismatch_handler)
     app.add_exception_handler(UnitValidationError, _unit_validation_handler)
     app.add_exception_handler(DomainError, _domain_error_handler)

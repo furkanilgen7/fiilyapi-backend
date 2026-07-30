@@ -92,3 +92,31 @@ async def list_units_for_project(session: AsyncSession, project_id: uuid.UUID) -
         select(Unit).where(Unit.project_id == project_id).order_by(Unit.sort_order, Unit.unit_no)
     )
     return list(result.scalars().all())
+
+
+async def block_has_units(session: AsyncSession, block_id: uuid.UUID) -> bool:
+    """Blok DELETE korkulugunun (spec §7.9) tek sorgusu.
+
+    `count(*)` yerine `EXISTS`: kac unite oldugu KULLANILMAZ (hata mesajinda adet
+    verilmez — gorunurluk disi bilgi sizdirmaz), 24 satiri saymanin anlami yok.
+    """
+    result = await session.execute(
+        select(select(Unit.id).where(Unit.block_id == block_id).exists())
+    )
+    return bool(result.scalar_one())
+
+
+async def existing_unit_nos(
+    session: AsyncSession, block_id: uuid.UUID, unit_nos: list[str]
+) -> set[str]:
+    """Toplu uretimin (spec §7.7) hep-ya-hic on kontrolu — TEK sorgu.
+
+    Uretilecek numaralari tek tek sorgulamak 500 gidis-donus ve yaris penceresi
+    demektir; kesisim burada bir kerede alinir ve YAZMADAN ONCE degerlendirilir.
+    """
+    if not unit_nos:
+        return set()
+    result = await session.execute(
+        select(Unit.unit_no).where(Unit.block_id == block_id, Unit.unit_no.in_(unit_nos))
+    )
+    return set(result.scalars().all())

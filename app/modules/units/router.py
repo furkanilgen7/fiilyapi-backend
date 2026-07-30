@@ -132,3 +132,25 @@ async def update_unit_endpoint(
     `block_id` ile ayni proje icinde tasima serbesttir."""
     unit = await service.update_unit(session, user, unit_id, data)
     return await service.unit_response(session, unit)
+
+
+@router.delete("/units/{unit_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[_FULL])
+async def delete_unit_endpoint(
+    unit_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """Spec §7.9. Unite silme kosulsuzdur (P3'te uniteye bagli tablo yok, §1.3).
+    Gorunmeyen projenin unitesi 404 doner, 403 DEGIL."""
+    await service.delete_unit(session, user, unit_id)
+
+
+@router.delete("/blocks/{block_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[_FULL])
+async def delete_block_endpoint(
+    block_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """Spec §7.9. CASCADE YOK: unitesi olan blok 409 ile reddedilir — 24 daireyi
+    tek istekte silmek geri alinamaz veri kaybidir."""
+    await service.delete_block(session, user, block_id)

@@ -7,6 +7,7 @@ from app.core.errors import (
     DuplicateError,
     NotFoundError,
     ProjectTypeMismatchError,
+    RelatedRecordsExistError,
     UnitValidationError,
 )
 from app.modules.projects.models import Project, ProjectType
@@ -53,6 +54,7 @@ _UNIT_MISSING = "Ünite bulunamadı"
 _SITE_MISSING = "Şantiye bulunamadı"
 _DUPLICATE_BLOCK = "Bu blok adı bu projede zaten kullanılıyor"
 _DUPLICATE_UNIT = "Bu ünite numarası bu blokta zaten kullanılıyor"
+_BLOCK_HAS_UNITS = "Bu blokta ünite var, önce üniteleri silin"
 _NO_SITE_FOR_BLOCK = "Blok tanımlamadan önce projeye şantiye eklenmelidir"
 _SITE_REQUIRED = "Birden fazla şantiye var, blok için şantiye seçilmelidir"
 _OWNER_SIDE_NOT_ALLOWED = "Ünite payı yalnızca kat karşılığı projelerde belirlenebilir"
@@ -539,3 +541,42 @@ async def update_unit(
     await session.flush()
     await session.refresh(unit)
     return unit
+
+
+# --- Silme uclari (spec §7.9) — VERI KAYBI SINIFI ---
+
+
+async def delete_unit(session: AsyncSession, actor: User, unit_id: uuid.UUID) -> None:
+    """Spec §7.9. Unite silme KOSULSUZDUR: P3'te uniteye baglanan hicbir tablo
+    yoktur (spec §1.3). P8 (satis) geldiginde satisi olan unite icin korkuluk
+    O DILIMDE eklenecektir — bugun var olmayan bir bag icin kontrol yazilmaz.
+
+    Gorunurluk yine yukari cozumlenir: gorunmeyen projenin unitesi 404'tur ve
+    var olmayan unite ile ayni mesaji verir (IDOR-6/IDOR-7).
+    """
+    unit, _ = await _visible_unit(session, actor, unit_id)
+    await session.delete(unit)
+    await session.flush()
+
+
+async def delete_block(session: AsyncSession, actor: User, block_id: uuid.UUID) -> None:
+    """Spec §7.9. CASCADE YOKTUR — bu fonksiyonun tek isi cascade'i ENGELLEMEKTIR.
+
+    Blokta en az bir unite varsa silme 409 ile reddedilir. Uc katman birden
+    korur ve UCU DE bilincli olarak yerinde birakilmistir:
+
+    1. Buradaki `block_has_units` on kontrolu — kullaniciya Turkce, eyleme
+       donuk mesaj verir ("once uniteleri silin").
+    2. `units.block_id` uzerindeki `ON DELETE RESTRICT` (B1, spec §4.2) — servis
+       atlanirsa DB reddeder; `IntegrityError → 409` handler'i yaris-durumu agidir.
+    3. Modelde `relationship(cascade=...)` TANIMLI DEGIL — ORM'in kendiliginden
+       unite silecek bir yolu yoktur.
+
+    Mesajda unite ADEDI VERILMEZ (spec §7.9): kullanici sayiyi zaten GET ile
+    goruyor, hata govdesi gorunurluk disi bilgi tasimaz.
+    """
+    block, _ = await _visible_block(session, actor, block_id)
+    if await repository.block_has_units(session, block.id):
+        raise RelatedRecordsExistError(_BLOCK_HAS_UNITS)
+    await session.delete(block)
+    await session.flush()

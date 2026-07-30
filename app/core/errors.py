@@ -44,6 +44,18 @@ class UnitValidationError(DomainError):
     """
 
 
+class RelatedRecordsExistError(DomainError):
+    """Silinmek istenen kayda bağlı alt kayıtlar var (Alt-Proje 2 P3 spec §7.9) — 409.
+
+    `DeleteNotAllowedError` (403) YETKİ engelidir; bu ise ÇAKIŞMA'dır: kullanıcının
+    yetkisi vardır ama kaydın durumu silmeye elverişli değildir. İkisini tek sınıfta
+    toplamak, "yetkin yok" ile "önce alt kayıtları sil" mesajlarını aynı koda düşürür.
+
+    Cascade'e KAYILMAZ: ünitesi olan blok silinirse 24 daire tek istekte gider ve
+    geri alınamaz. DB tarafındaki `ON DELETE RESTRICT` (spec §4.2) ikinci katmandır.
+    """
+
+
 class BoqGroupSiteMismatchError(DomainError):
     """Poz kaleminin bağlanmak istediği grup, hedef şantiyeye ait değil
 

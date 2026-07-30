@@ -1,4 +1,4 @@
-"""B4/B5/B6 — blok/unite okuma + blok/unite yazma uclari (spec §7.1-§7.6, §3.3, §4.5, §8).
+"""B4-B7 — blok/unite okuma + yazma + SILME uclari (spec §7.1-§7.6, §7.9, §3.3, §4.5, §8).
 
 Izin: yeni modul ACILMAZ, okuma `projects` · `view` (spec §8). Gorunmeyen kayit
 **404** doner, 403 DEGIL — varligin kendisi sizdirilmaz. Testler durum koduyla
@@ -8,6 +8,8 @@ katmaninin "proje yok" 404'u ayni koddur, karistirilirsa kirmizi gorunmez.
 
 import uuid
 from decimal import Decimal
+
+from sqlalchemy import func, select
 
 from app.modules.sites.models import Site
 from app.modules.units.models import Block, Unit, UnitKind, UnitOwnerSide
@@ -56,6 +58,25 @@ async def _unit(session, project, block, unit_no: str = "1", **kwargs) -> Unit:
     session.add(unit)
     await session.flush()
     return unit
+
+
+async def _count_units_in_block(session, block_id: uuid.UUID) -> int:
+    """B7 test 6'nin KANITIDIR: 409 sonrasi unite sayisinin DEGISMEDIGINI olcer.
+
+    Durum kodunu dogrulamak yetmez — cascade yanlislikla acilsaydi 409 yine
+    donebilir ama uniteler gitmis olurdu. Sayim tek gercek kanittir.
+    """
+    result = await session.execute(
+        select(func.count()).select_from(Unit).where(Unit.block_id == block_id)
+    )
+    return int(result.scalar_one())
+
+
+async def _block_exists(session, block_id: uuid.UUID) -> bool:
+    result = await session.execute(
+        select(func.count()).select_from(Block).where(Block.id == block_id)
+    )
+    return int(result.scalar_one()) == 1
 
 
 # --- GET /projects/{id}/blocks (spec §7.1) ---
@@ -985,3 +1006,216 @@ async def test_patch_unit_owner_side_in_kendi_yatirim_returns_422(
 
     assert resp.status_code == 422
     assert resp.json()["detail"] == "Ünite payı yalnızca kat karşılığı projelerde belirlenebilir"
+
+
+# --- B7: DELETE /units/{id} (spec §7.9) ---
+#
+# VERI KAYBI SINIFI. Bu bolumun testleri UC DUZEYINDEN kosar (HTTP DELETE), yani
+# dogruladiklari yol servis korkulugu → ORM `session.delete(...)` yoludur.
+# DB duzeyindeki `ON DELETE RESTRICT` ayrica `test_units_models.py::
+# test_block_delete_restricted_when_units_exist` ile ham ORM silme uzerinden
+# dogrulanir — iki katman, iki ayri test. Modelde `relationship(cascade=...)`
+# TANIMLI DEGILDIR, bu yuzden ORM'in kendiliginden unite silme yolu YOKTUR.
+
+
+async def test_delete_unit_returns_204(client, db_session, user_factory, project_factory):
+    project = await project_factory("B7-1")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+    unit = await _unit(db_session, project, block, "1")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.delete(f"/units/{unit.id}", headers=_auth(token))
+
+    assert resp.status_code == 204
+    assert await _count_units_in_block(db_session, block.id) == 0
+
+
+async def test_delete_unit_twice_returns_404(client, db_session, user_factory, project_factory):
+    """Silinen unite ARTIK YOKTUR: ikinci istek 404, 204 degil (idempotent
+    gorunumu kullaniciya "hâlâ duruyor mu?" sorusunu birakirdi)."""
+    project = await project_factory("B7-2")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+    unit = await _unit(db_session, project, block, "1")
+    token = await _login(client, user_factory, "system_admin")
+
+    first = await client.delete(f"/units/{unit.id}", headers=_auth(token))
+    second = await client.delete(f"/units/{unit.id}", headers=_auth(token))
+
+    assert first.status_code == 204
+    assert second.status_code == 404
+    assert second.json()["detail"] == "Ünite bulunamadı"
+
+
+async def test_delete_unit_invisible_returns_404(client, db_session, user_factory, project_factory):
+    """IDOR-6: gorunmeyen projenin unitesi SILINEMEZ ve varligi sizmaz."""
+    project = await project_factory("B7-3")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+    unit = await _unit(db_session, project, block, "1")
+    token = await _login(client, user_factory, "patron")
+
+    resp = await client.delete(f"/units/{unit.id}", headers=_auth(token))
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Ünite bulunamadı"
+    assert await _count_units_in_block(db_session, block.id) == 1
+
+
+async def test_delete_unit_unknown_uuid_returns_404_same_message(client, user_factory):
+    """IDOR-7: var olmayan unite ile gorunmeyen unite AYIRT EDILEMEZ."""
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.delete(f"/units/{uuid.uuid4()}", headers=_auth(token))
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Ünite bulunamadı"
+
+
+async def test_delete_unit_requires_full_permission(
+    client, db_session, user_factory, project_factory
+):
+    """Spec §8: silme `projects` · `full` ister; `view` SILEMEZ (IDOR-13)."""
+    project = await project_factory("B7-4")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+    unit = await _unit(db_session, project, block, "1")
+    token = await _login_with_access(client, db_session, user_factory, "site_chief")
+
+    resp = await client.delete(f"/units/{unit.id}", headers=_auth(token))
+
+    assert resp.status_code == 403
+    assert await _count_units_in_block(db_session, block.id) == 1
+
+
+# --- B7: DELETE /blocks/{id} (spec §7.9) ---
+
+
+async def test_delete_block_with_units_returns_409(
+    client, db_session, user_factory, project_factory
+):
+    """Cascade YOKTUR: unitesi olan blok silinemez (spec §7.9)."""
+    project = await project_factory("B7-5")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+    await _unit(db_session, project, block, "1")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.delete(f"/blocks/{block.id}", headers=_auth(token))
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "Bu blokta ünite var, önce üniteleri silin"
+
+
+async def test_delete_block_with_units_leaves_block_and_units_intact(
+    client, db_session, user_factory, project_factory
+):
+    """KANIT TESTI (plan B7 test 6): 409 SONRASI blok duruyor ve unite sayisi
+    DEGISMEMIS. 24 daireyi tek istekle sessizce silmek geri alinamaz veri
+    kaybidir; durum kodu tek basina bunu kanitlamaz."""
+    project = await project_factory("B7-6")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+    for no in (str(n) for n in range(1, 25)):
+        await _unit(db_session, project, block, no)
+    token = await _login(client, user_factory, "system_admin")
+    before = await _count_units_in_block(db_session, block.id)
+
+    resp = await client.delete(f"/blocks/{block.id}", headers=_auth(token))
+
+    after = await _count_units_in_block(db_session, block.id)
+    assert resp.status_code == 409
+    assert before == 24
+    assert after == before
+    assert await _block_exists(db_session, block.id) is True
+
+
+async def test_delete_block_error_message_omits_unit_count(
+    client, db_session, user_factory, project_factory
+):
+    """Spec §7.9: mesajda unite ADEDI VERILMEZ — gorunurluk disi bilgi sizmaz."""
+    project = await project_factory("B7-7")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+    for no in ("1", "2", "3"):
+        await _unit(db_session, project, block, no)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.delete(f"/blocks/{block.id}", headers=_auth(token))
+
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert detail == "Bu blokta ünite var, önce üniteleri silin"
+    assert not any(char.isdigit() for char in detail)
+
+
+async def test_delete_empty_block_returns_204(client, db_session, user_factory, project_factory):
+    project = await project_factory("B7-8")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.delete(f"/blocks/{block.id}", headers=_auth(token))
+
+    assert resp.status_code == 204
+    assert await _block_exists(db_session, block.id) is False
+
+
+async def test_delete_block_after_units_removed_returns_204(
+    client, db_session, user_factory, project_factory
+):
+    """Akis dogrulamasi: once uniteler, sonra blok — kullaniciya soylenen yol."""
+    project = await project_factory("B7-9")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+    unit = await _unit(db_session, project, block, "1")
+    token = await _login(client, user_factory, "system_admin")
+
+    blocked = await client.delete(f"/blocks/{block.id}", headers=_auth(token))
+    await client.delete(f"/units/{unit.id}", headers=_auth(token))
+    allowed = await client.delete(f"/blocks/{block.id}", headers=_auth(token))
+
+    assert blocked.status_code == 409
+    assert allowed.status_code == 204
+    assert await _block_exists(db_session, block.id) is False
+
+
+async def test_delete_block_invisible_returns_404(
+    client, db_session, user_factory, project_factory
+):
+    """IDOR-6: gorunmeyen projenin blogu SILINEMEZ ve varligi sizmaz."""
+    project = await project_factory("B7-10")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+    token = await _login(client, user_factory, "patron")
+
+    resp = await client.delete(f"/blocks/{block.id}", headers=_auth(token))
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Blok bulunamadı"
+    assert await _block_exists(db_session, block.id) is True
+
+
+async def test_delete_block_unknown_uuid_returns_404_same_message(client, user_factory):
+    """IDOR-7: var olmayan blok ile gorunmeyen blok AYIRT EDILEMEZ."""
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.delete(f"/blocks/{uuid.uuid4()}", headers=_auth(token))
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Blok bulunamadı"
+
+
+async def test_delete_block_requires_full_permission(
+    client, db_session, user_factory, project_factory
+):
+    project = await project_factory("B7-11")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+    token = await _login_with_access(client, db_session, user_factory, "site_chief")
+
+    resp = await client.delete(f"/blocks/{block.id}", headers=_auth(token))
+
+    assert resp.status_code == 403
+    assert await _block_exists(db_session, block.id) is True
