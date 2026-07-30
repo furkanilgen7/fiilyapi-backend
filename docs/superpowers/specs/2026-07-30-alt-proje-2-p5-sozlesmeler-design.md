@@ -474,7 +474,7 @@ Davranış (tek işlemde **atomik**, `sites`'ın iç içe yazımı deseni):
 | `POST /projects/{project_id}/subcontractor-contracts` | `_FULL` | Kalemler **iç içe** ve atomik gönderilebilir (`sites` + bölümler deseni). `is_draft` gövdede |
 | `GET /subcontractor-contracts/{id}` | `_VIEW` | `TSD` başlığı + bağlantı zinciri (47-67) + kalemler + türev toplam |
 | `PATCH /subcontractor-contracts/{id}` | `_FULL` | Taslak→yayın geçişinde tüm kurallar koşar |
-| `DELETE /subcontractor-contracts/{id}` | `_ADMIN` | `can_delete` istisnası: kendi taslağını `draft` seviyesindeki kullanıcı silebilir |
+| `DELETE /subcontractor-contracts/{id}` | `_FULL` + serviste `can_delete` | Kapı bilerek `_FULL`'dür: `_ADMIN` olsaydı taslak istisnası **hiçbir zaman tetiklenemezdi** (kapıdan yalnız admin geçer, admin de koşulsuz siler). Yetki kararı serviste `can_delete` ile verilir → `full` kullanıcı **yalnız kendi taslağını** siler; başkasının taslağı ve yayındaki sözleşme 403. Kalıcı karar 2 korunur. (C12 incelemesi, 2026-07-31) |
 | `POST /subcontractor-contracts/{id}/items` | `_FULL` | 409: `(contract_id, code)` |
 | `PATCH /subcontractor-contracts/items/{item_id}` | `_FULL` | |
 | `DELETE /subcontractor-contracts/items/{item_id}` | `_ADMIN` | |
