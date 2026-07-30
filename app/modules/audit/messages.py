@@ -91,3 +91,19 @@ def section_created(site_name: str, name: str) -> str:
 
 def section_updated(site_name: str, name: str) -> str:
     return f"Bölüm güncellendi: {site_name} · {name}"
+
+
+def boq_group_created(name: str) -> str:
+    return f"İş kalemi grubu oluşturuldu: {name}"
+
+
+def boq_group_updated(name: str) -> str:
+    return f"İş kalemi grubu güncellendi: {name}"
+
+
+def boq_item_created(code: str, description: str) -> str:
+    return f"İş kalemi oluşturuldu: {code} — {description}"
+
+
+def boq_item_updated(code: str, description: str) -> str:
+    return f"İş kalemi güncellendi: {code} — {description}"

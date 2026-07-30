@@ -1,8 +1,11 @@
-"""T4-T6 — BOQ okuma+yazma uclari + router kaydi (spec §4, §5.1-§5.5)."""
+"""T4-T7 — BOQ okuma+yazma uclari + router kaydi + denetim gunlugu (spec §4, §5.1-§5.5)."""
 
 import uuid
 from decimal import Decimal
 
+from sqlalchemy import select
+
+from app.modules.audit.models import AuditAction, AuditLog
 from app.modules.boq.models import BoqGroup, BoqItem
 from app.modules.sites.models import Site
 from app.modules.users.models import UserProjectAccess
@@ -42,6 +45,13 @@ async def _group(session, site, name: str = "TOPRAK VE TEMEL İŞLERİ", **kwarg
     session.add(group)
     await session.flush()
     return group
+
+
+async def _audit_details(session, action: AuditAction) -> list[str]:
+    rows = (
+        (await session.execute(select(AuditLog).where(AuditLog.action == action))).scalars().all()
+    )
+    return [row.detail for row in rows]
 
 
 async def _item(session, site, group, code: str = "01.001", **kwargs) -> BoqItem:
@@ -742,3 +752,91 @@ async def test_update_boq_item_view_only_role_forbidden(
     )
 
     assert resp.status_code == 403
+
+
+# --- T7 — denetim gunlugu (4 yazma ucu) ---
+
+
+async def test_create_boq_group_records_audit(client, db_session, user_factory, project_factory):
+    project = await project_factory("BOQ-API-34")
+    site = await _site(db_session, project)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.post(
+        f"/sites/{site.id}/boq/groups",
+        headers=_auth(token),
+        json={"name": "SIVA VE BOYA İŞLERİ"},
+    )
+
+    assert resp.status_code == 201
+    details = await _audit_details(db_session, AuditAction.create)
+    assert any("SIVA VE BOYA İŞLERİ" in d for d in details)
+
+
+async def test_update_boq_group_records_audit(client, db_session, user_factory, project_factory):
+    project = await project_factory("BOQ-API-35")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site, name="ESKI AD")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.patch(
+        f"/boq/groups/{group.id}", headers=_auth(token), json={"name": "YENI AD"}
+    )
+
+    assert resp.status_code == 200
+    details = await _audit_details(db_session, AuditAction.update)
+    assert any("YENI AD" in d for d in details)
+
+
+async def test_create_boq_item_records_audit(client, db_session, user_factory, project_factory):
+    project = await project_factory("BOQ-API-36")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.post(
+        f"/sites/{site.id}/boq/items",
+        headers=_auth(token),
+        json={
+            "group_id": str(group.id),
+            "code": "01.009",
+            "description": "Kazı (Makine ile)",
+            "unit": "m³",
+            "quantity": "1",
+            "unit_price": "1",
+        },
+    )
+
+    assert resp.status_code == 201
+    details = await _audit_details(db_session, AuditAction.create)
+    assert any("01.009" in d and "Kazı (Makine ile)" in d for d in details)
+
+
+async def test_update_boq_item_records_audit(client, db_session, user_factory, project_factory):
+    project = await project_factory("BOQ-API-37")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    item = await _item(db_session, site, group, code="01.010", description="Eski tarif")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.patch(
+        f"/boq/items/{item.id}", headers=_auth(token), json={"description": "Yeni tarif"}
+    )
+
+    assert resp.status_code == 200
+    details = await _audit_details(db_session, AuditAction.update)
+    assert any("01.010" in d and "Yeni tarif" in d for d in details)
+
+
+async def test_get_boq_does_not_record_audit(client, db_session, user_factory, project_factory):
+    """Okuma uclari denetim kaydi yazmaz (T7 tuzagi)."""
+    project = await project_factory("BOQ-API-38")
+    site = await _site(db_session, project)
+    await _group(db_session, site)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.get(f"/sites/{site.id}/boq", headers=_auth(token))
+
+    assert resp.status_code == 200
+    all_rows = (await db_session.execute(select(AuditLog))).scalars().all()
+    assert all(row.action != AuditAction.create for row in all_rows)
