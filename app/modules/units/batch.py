@@ -16,6 +16,7 @@ from app.core.errors import (
     UnitImportError,
     UnitValidationError,
 )
+from app.modules.audit import messages
 from app.modules.projects.models import Project, ProjectType
 from app.modules.units import guards, repository, service
 from app.modules.units.bulk import generate_unit_numbers
@@ -49,7 +50,7 @@ _MAX_CONFLICT_NUMBERS = 20
 
 async def bulk_create_units(
     session: AsyncSession, actor: User, project_id: uuid.UUID, data: UnitBulkCreate
-) -> UnitListResponse:
+) -> tuple[UnitListResponse, str]:
     """Spec §7.7. HEP-YA-HIC: kismi yazma OLMAZ.
 
     Sira KATIDIR ve degistirilemez — her dogrulama ilk `session.add`'DEN ONCE
@@ -104,7 +105,9 @@ async def bulk_create_units(
         ]
     )
     await session.flush()
-    return await service.list_units(session, actor, project_id)
+    # Spec §9: ISTEK BASINA TEK denetim satiri — 24 unite icin 24 satir degil.
+    detail = messages.units_bulk_created(project.name, block.name, len(numbers))
+    return await service.list_units(session, actor, project_id), detail
 
 
 # --- Excel ice aktarma (spec §6.4, §7.8) — HEP-YA-HIC + SATIR BAZLI RAPOR ---
@@ -158,7 +161,7 @@ def _domain_row_errors(
 
 async def import_units(
     session: AsyncSession, actor: User, project_id: uuid.UUID, content: bytes
-) -> UnitImportResult:
+) -> tuple[UnitImportResult, str]:
     """Spec §7.8. Dosya BELLEKTE islenir ve ATILIR — diske/S3'e/DB'ye yazilmaz.
 
     Sira KATIDIR (bulk ile ayni gerekce): her dogrulama ilk `session.add`'DEN
@@ -242,7 +245,9 @@ async def import_units(
         )
     session.add_all(new_units)
     await session.flush()
-    return UnitImportResult(created=len(rows), blocks_created=len(created_blocks), errors=[])
+    result = UnitImportResult(created=len(rows), blocks_created=len(created_blocks), errors=[])
+    # Spec §9: dosyada kac satir olursa olsun TEK denetim satiri.
+    return result, messages.units_imported(project.name, result.created)
 
 
 # --- Paylasim (spec §7.10, §5.3) — ATOMIKLIK + IDOR SINIFI ---
@@ -250,7 +255,7 @@ async def import_units(
 
 async def update_allocation(
     session: AsyncSession, actor: User, project_id: uuid.UUID, data: UnitAllocationRequest
-) -> UnitListResponse:
+) -> tuple[UnitListResponse, str]:
     """Spec §7.10 (KKP 25 "Paylasimi Kaydet"). HEP-YA-HIC, tek transaction.
 
     Paylar TOPLU URETIMDE ATANMAZ (§6.3'te `owner_side` alani yoktur): paylasim
@@ -284,4 +289,6 @@ async def update_allocation(
     for unit in units:
         unit.owner_side = wanted[unit.id]
     await session.flush()
-    return await service.list_units(session, actor, project_id)
+    # Spec §9: 42 unitelik bir kayit 42 satir yazsaydi gunlugu bogardi — TEK satir.
+    detail = messages.unit_allocation_updated(project.name, len(units))
+    return await service.list_units(session, actor, project_id), detail

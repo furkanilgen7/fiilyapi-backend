@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel
@@ -10,6 +10,9 @@ from app.core.deps import get_current_user
 from app.core.errors import UnitValidationError
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
+from app.core.ratelimit import client_ip
+from app.modules.audit.models import AuditAction
+from app.modules.audit.service import record_audit
 from app.modules.units import batch, importer, service
 from app.modules.units.models import UnitKind
 from app.modules.units.schemas import (
@@ -42,6 +45,32 @@ router = APIRouter(tags=["units"], responses=COMMON_ERROR_RESPONSES)
 _VIEW = require_permission("projects", AccessLevel.view)
 # Yazma uclari `full` ister (spec §8): `view` yetmez (IDOR-13).
 _FULL = require_permission("projects", AccessLevel.full)
+
+
+async def _audit(
+    request: Request,
+    session: AsyncSession,
+    user: User,
+    action: AuditAction,
+    detail: str,
+) -> None:
+    """Denetim satiri (spec §9, B5 deseni).
+
+    Metin servis katmanindan HAZIR gelir: silme uclarinda adlar kayit yok
+    olmadan once okunmak zorundadir ve router onlari sonradan hicbir sorguyla
+    geri getiremez (bkz. `service.py` §9 notu). Yalniz YAZMA uclari cagirir —
+    okuma uclari denetim satiri URETMEZ (P4 T7 kurali).
+
+    `record_audit` commit etmez: satir asil islemle AYNI transaction'a girer,
+    dolayisiyla reddedilen (409/422) bir istek denetim satiri da birakmaz.
+    """
+    await record_audit(
+        session,
+        action=action,
+        detail=detail,
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
 
 
 @router.get("/projects/{project_id}/blocks", response_model=BlockListResponse, dependencies=[_VIEW])
@@ -84,6 +113,7 @@ async def list_units_endpoint(
     dependencies=[_FULL],
 )
 async def create_block_endpoint(
+    request: Request,
     project_id: uuid.UUID,
     data: BlockCreate,
     user: Annotated[User, Depends(get_current_user)],
@@ -91,12 +121,14 @@ async def create_block_endpoint(
 ) -> BlockResponse:
     """Spec §7.2. Tek santiyeli projede `site_id` gonderilmezse otomatik atanir
     (§4.5) — mockup'ta santiye secici yoktur (KY 38 / KK 39)."""
-    block = await service.create_block(session, user, project_id, data)
+    block, detail = await service.create_block(session, user, project_id, data)
+    await _audit(request, session, user, AuditAction.create, detail)
     return await service.block_response(session, block)
 
 
 @router.patch("/blocks/{block_id}", response_model=BlockResponse, dependencies=[_FULL])
 async def update_block_endpoint(
+    request: Request,
     block_id: uuid.UUID,
     data: BlockUpdate,
     user: Annotated[User, Depends(get_current_user)],
@@ -104,7 +136,8 @@ async def update_block_endpoint(
 ) -> BlockResponse:
     """Spec §7.3. Kimlik YUKARI cozumlenir (blok → proje → gorunurluk);
     gorunmeyen projenin blogu 404 doner, 403 DEGIL."""
-    block = await service.update_block(session, user, block_id, data)
+    block, detail = await service.update_block(session, user, block_id, data)
+    await _audit(request, session, user, AuditAction.update, detail)
     return await service.block_response(session, block)
 
 
@@ -115,18 +148,21 @@ async def update_block_endpoint(
     dependencies=[_FULL],
 )
 async def create_unit_endpoint(
+    request: Request,
     project_id: uuid.UUID,
     data: UnitCreate,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> UnitResponse:
     """Spec §7.5. Govdedeki `block_id` bu projeye ait olmali (IDOR-9), aksi hâlde 404."""
-    unit = await service.create_unit(session, user, project_id, data)
+    unit, detail = await service.create_unit(session, user, project_id, data)
+    await _audit(request, session, user, AuditAction.create, detail)
     return await service.unit_response(session, unit)
 
 
 @router.patch("/units/{unit_id}", response_model=UnitResponse, dependencies=[_FULL])
 async def update_unit_endpoint(
+    request: Request,
     unit_id: uuid.UUID,
     data: UnitUpdate,
     user: Annotated[User, Depends(get_current_user)],
@@ -134,30 +170,35 @@ async def update_unit_endpoint(
 ) -> UnitResponse:
     """Spec §7.6. Kimlik YUKARI cozumlenir (unite → proje → gorunurluk);
     `block_id` ile ayni proje icinde tasima serbesttir."""
-    unit = await service.update_unit(session, user, unit_id, data)
+    unit, detail = await service.update_unit(session, user, unit_id, data)
+    await _audit(request, session, user, AuditAction.update, detail)
     return await service.unit_response(session, unit)
 
 
 @router.delete("/units/{unit_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[_FULL])
 async def delete_unit_endpoint(
+    request: Request,
     unit_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> None:
     """Spec §7.9. Unite silme kosulsuzdur (P3'te uniteye bagli tablo yok, §1.3).
     Gorunmeyen projenin unitesi 404 doner, 403 DEGIL."""
-    await service.delete_unit(session, user, unit_id)
+    detail = await service.delete_unit(session, user, unit_id)
+    await _audit(request, session, user, AuditAction.delete, detail)
 
 
 @router.delete("/blocks/{block_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[_FULL])
 async def delete_block_endpoint(
+    request: Request,
     block_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> None:
     """Spec §7.9. CASCADE YOK: unitesi olan blok 409 ile reddedilir — 24 daireyi
     tek istekte silmek geri alinamaz veri kaybidir."""
-    await service.delete_block(session, user, block_id)
+    detail = await service.delete_block(session, user, block_id)
+    await _audit(request, session, user, AuditAction.delete, detail)
 
 
 @router.post(
@@ -167,6 +208,7 @@ async def delete_block_endpoint(
     dependencies=[_FULL],
 )
 async def bulk_create_units_endpoint(
+    request: Request,
     project_id: uuid.UUID,
     data: UnitBulkCreate,
     user: Annotated[User, Depends(get_current_user)],
@@ -174,8 +216,12 @@ async def bulk_create_units_endpoint(
 ) -> UnitListResponse:
     """Spec §7.7. HEP-YA-HIC: uretilen numaralardan biri bile blokta varsa
     HICBIRI yazilmaz (409). Yanit guncel tam listedir — ekran tabloyu yeniden
-    cizer, ikinci bir GET'e gerek kalmaz."""
-    return await batch.bulk_create_units(session, user, project_id, data)
+    cizer, ikinci bir GET'e gerek kalmaz.
+
+    Denetim: 24 unite uretilse de ISTEK BASINA TEK satir yazilir (spec §9)."""
+    result, detail = await batch.bulk_create_units(session, user, project_id, data)
+    await _audit(request, session, user, AuditAction.create, detail)
+    return result
 
 
 @router.patch(
@@ -184,6 +230,7 @@ async def bulk_create_units_endpoint(
     dependencies=[_FULL],
 )
 async def update_allocation_endpoint(
+    request: Request,
     project_id: uuid.UUID,
     data: UnitAllocationRequest,
     user: Annotated[User, Depends(get_current_user)],
@@ -195,8 +242,13 @@ async def update_allocation_endpoint(
     ATOMIK: tek satir bile reddedilirse hicbiri yazilmaz. Listedeki bir unite
     BASKA projeye aitse 404 doner (IDOR-8) ve bu projenin hicbir satiri
     degismez. Yanit guncel tam listedir — ekran tabloyu yeniden cizer.
+
+    Denetim: 42 unitelik bir kayit TEK satir yazar (spec §9) — satir basina
+    gunluk, denetim gunlugunu okunamaz hâle getirirdi.
     """
-    return await batch.update_allocation(session, user, project_id, data)
+    result, detail = await batch.update_allocation(session, user, project_id, data)
+    await _audit(request, session, user, AuditAction.update, detail)
+    return result
 
 
 @router.post(
@@ -205,6 +257,7 @@ async def update_allocation_endpoint(
     dependencies=[_FULL],
 )
 async def import_units_endpoint(
+    request: Request,
     project_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
@@ -223,4 +276,6 @@ async def import_units_endpoint(
         importer.ensure_size(file.size)
     except importer.ImportFileError as exc:
         raise UnitValidationError(str(exc)) from exc
-    return await batch.import_units(session, user, project_id, await file.read())
+    result, detail = await batch.import_units(session, user, project_id, await file.read())
+    await _audit(request, session, user, AuditAction.create, detail)
+    return result

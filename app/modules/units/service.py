@@ -9,6 +9,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import RelatedRecordsExistError
+from app.modules.audit import messages
 from app.modules.sites import repository as sites_repository
 
 # Gorunurluk suzgeci P1'DEN GELIR (spec §8): kopya bir erisim mantigi YAZILMAZ.
@@ -47,6 +48,17 @@ __all__ = [
     "update_unit",
     "visible_projects",
 ]
+
+
+# --- Denetim gunlugu (spec §9) ---
+#
+# Yazma fonksiyonlari sonucun YANINDA hazir denetim METNINI dondurur; satiri
+# `record_audit` ile yazan yine router'dir (B5 deseni). Metin neden router'da
+# KURULMUYOR: (1) SILME uclarinda proje/blok/unite adlari kayit yok olmadan
+# ONCE okunmak zorundadir — router silme sonrasi onlari hicbir sorguyla geri
+# getiremez; (2) adlar zaten gorunurluk cozumu sirasinda elde olur, router'da
+# yeniden kurmak her yazma ucuna fazladan SELECT eklerdi. Metinlerin kendisi
+# `audit/messages.py`'de MERKEZIDIR — f-string servise de gomulmez (P4 T7).
 
 
 # --- Okuma uclari (spec §7.1, §7.4) ---
@@ -136,11 +148,19 @@ async def block_response(session: AsyncSession, block: Block) -> BlockResponse:
     return to_block(block, site.name if site is not None else "", units)
 
 
+async def _block_name(session: AsyncSession, block_id: uuid.UUID) -> str:
+    """Denetim metni ve yanit zarfi icin blok adi. Blok yetki/dogrulama sirasinda
+    zaten yuklendigi icin bu cagri kimlik haritasindan doner, ek sorgu uretmez.
+
+    `block` None olamaz: `block_id` NOT NULL + FK. Kosul yalnizca tip
+    daraltmasi icindir, sessiz bir dusus degil.
+    """
+    block = await repository.get_block(session, block_id)
+    return block.name if block is not None else ""
+
+
 async def unit_response(session: AsyncSession, unit: Unit) -> UnitResponse:
-    block = await repository.get_block(session, unit.block_id)
-    # `block` None olamaz: `block_id` NOT NULL + FK. Kosul yalnizca tip
-    # daraltmasi icindir, sessiz bir dusus degil.
-    return to_unit(unit, block.name if block is not None else "")
+    return to_unit(unit, await _block_name(session, unit.block_id))
 
 
 # --- Blok yazma uclari (spec §7.2, §7.3) ---
@@ -148,7 +168,7 @@ async def unit_response(session: AsyncSession, unit: Unit) -> UnitResponse:
 
 async def create_block(
     session: AsyncSession, actor: User, project_id: uuid.UUID, data: BlockCreate
-) -> Block:
+) -> tuple[Block, str]:
     project = await guards.visible_project(session, actor, project_id)
     site = await guards.resolve_site(session, project.id, data.site_id)
     await guards.ensure_block_name_unique(session, project.id, data.name)
@@ -158,12 +178,12 @@ async def create_block(
     session.add(block)
     await session.flush()
     await session.refresh(block)
-    return block
+    return block, messages.block_created(project.name, block.name)
 
 
 async def update_block(
     session: AsyncSession, actor: User, block_id: uuid.UUID, data: BlockUpdate
-) -> Block:
+) -> tuple[Block, str]:
     """Spec §7.3. `site_id` degistirilebilir (blok yanlis santiyeye acilmissa);
 
     yeni santiye AYNI projede olmali, degilse **404** (spec §4.5 son paragrafi ve
@@ -185,7 +205,7 @@ async def update_block(
             setattr(block, field, value)
     await session.flush()
     await session.refresh(block)
-    return block
+    return block, messages.block_updated(project.name, block.name)
 
 
 # --- Unite yazma uclari (spec §7.5, §7.6, §3.3) ---
@@ -193,7 +213,7 @@ async def update_block(
 
 async def create_unit(
     session: AsyncSession, actor: User, project_id: uuid.UUID, data: UnitCreate
-) -> Unit:
+) -> tuple[Unit, str]:
     """Spec §7.5. `taahhut` projede unite tanimlamak SERBEST (§3.3 — kisit icat
     edilmez); iki fiyat sutunu da her tipte kabul edilir (§4.4)."""
     project = await guards.visible_project(session, actor, project_id)
@@ -217,12 +237,12 @@ async def create_unit(
     session.add(unit)
     await session.flush()
     await session.refresh(unit)
-    return unit
+    return unit, messages.unit_created(project.name, block.name, unit.unit_no)
 
 
 async def update_unit(
     session: AsyncSession, actor: User, unit_id: uuid.UUID, data: UnitUpdate
-) -> Unit:
+) -> tuple[Unit, str]:
     """Spec §7.6. `exclude_unset` ayrimi kritiktir: GONDERILMEYEN alan degismez,
     `null` GONDERILEN alan bosalir (P1/P2/P4 deseni).
 
@@ -256,26 +276,35 @@ async def update_unit(
         setattr(unit, field, value)
     await session.flush()
     await session.refresh(unit)
-    return unit
+    return unit, messages.unit_updated(
+        project.name, await _block_name(session, unit.block_id), unit.unit_no
+    )
 
 
 # --- Silme uclari (spec §7.9) — VERI KAYBI SINIFI ---
 
 
-async def delete_unit(session: AsyncSession, actor: User, unit_id: uuid.UUID) -> None:
+async def delete_unit(session: AsyncSession, actor: User, unit_id: uuid.UUID) -> str:
     """Spec §7.9. Unite silme KOSULSUZDUR: P3'te uniteye baglanan hicbir tablo
     yoktur (spec §1.3). P8 (satis) geldiginde satisi olan unite icin korkuluk
     O DILIMDE eklenecektir — bugun var olmayan bir bag icin kontrol yazilmaz.
 
     Gorunurluk yine yukari cozumlenir: gorunmeyen projenin unitesi 404'tur ve
     var olmayan unite ile ayni mesaji verir (IDOR-6/IDOR-7).
+
+    Denetim metni SILMEDEN ONCE kurulur: satir gittikten sonra blok adi ve
+    unite numarasi hicbir sorguyla geri getirilemez.
     """
-    unit, _ = await guards.visible_unit(session, actor, unit_id)
+    unit, project = await guards.visible_unit(session, actor, unit_id)
+    detail = messages.unit_deleted(
+        project.name, await _block_name(session, unit.block_id), unit.unit_no
+    )
     await session.delete(unit)
     await session.flush()
+    return detail
 
 
-async def delete_block(session: AsyncSession, actor: User, block_id: uuid.UUID) -> None:
+async def delete_block(session: AsyncSession, actor: User, block_id: uuid.UUID) -> str:
     """Spec §7.9. CASCADE YOKTUR — bu fonksiyonun tek isi cascade'i ENGELLEMEKTIR.
 
     Blokta en az bir unite varsa silme 409 ile reddedilir. Uc katman birden
@@ -291,8 +320,11 @@ async def delete_block(session: AsyncSession, actor: User, block_id: uuid.UUID) 
     Mesajda unite ADEDI VERILMEZ (spec §7.9): kullanici sayiyi zaten GET ile
     goruyor, hata govdesi gorunurluk disi bilgi tasimaz.
     """
-    block, _ = await guards.visible_block(session, actor, block_id)
+    block, project = await guards.visible_block(session, actor, block_id)
     if await repository.block_has_units(session, block.id):
         raise RelatedRecordsExistError(guards.BLOCK_HAS_UNITS)
+    # `delete_unit` ile ayni gerekce: metin satir yok olmadan ONCE kurulur.
+    detail = messages.block_deleted(project.name, block.name)
     await session.delete(block)
     await session.flush()
+    return detail
