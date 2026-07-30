@@ -87,14 +87,23 @@ def _totals(groups: list[BoqGroupResponse]) -> BoqTotals:
     )
 
 
+async def get_boq_export_for_site(
+    session: AsyncSession, actor: User, site_id: uuid.UUID
+) -> tuple[Site, BoqListResponse]:
+    """Spec §5.1/§5.3 ortak okuma yolu. Gorunmeyen santiye 404 doner (P2 §5.2
+    deseni), 403 degil — varligin kendisi sizdirilmaz. `Site` de donulur:
+    T8 disa aktarim ucu dosya adi icin `site.code`'a ihtiyac duyar."""
+    site, _ = await _visible_site(session, actor, site_id)
+    groups = [to_group(group) for group in await repository.list_groups_for_site(session, site.id)]
+    return site, BoqListResponse(totals=_totals(groups), groups=groups)
+
+
 async def get_boq_for_site(
     session: AsyncSession, actor: User, site_id: uuid.UUID
 ) -> BoqListResponse:
-    """Spec §5.1 okuma yolu. Gorunmeyen santiye 404 doner (P2 §5.2 deseni),
-    403 degil — varligin kendisi sizdirilmaz."""
-    site, _ = await _visible_site(session, actor, site_id)
-    groups = [to_group(group) for group in await repository.list_groups_for_site(session, site.id)]
-    return BoqListResponse(totals=_totals(groups), groups=groups)
+    """Spec §5.1 okuma yolu — `get_boq_export_for_site`'in ince sarmalayicisi."""
+    _, response = await get_boq_export_for_site(session, actor, site_id)
+    return response
 
 
 # --- Gorunurluk — yazma uclari icin yukari cozumleme (spec §5.5) ---

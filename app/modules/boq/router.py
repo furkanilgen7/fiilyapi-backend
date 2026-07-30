@@ -1,7 +1,8 @@
 import uuid
 from typing import Annotated
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel
@@ -14,6 +15,7 @@ from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
 from app.modules.boq import service
+from app.modules.boq.export import build_boq_workbook
 from app.modules.boq.schemas import (
     BoqGroupCreate,
     BoqGroupResponse,
@@ -24,6 +26,8 @@ from app.modules.boq.schemas import (
     BoqListResponse,
 )
 from app.modules.users.models import User
+
+XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 # Spec §4 karari: BOQ okuma/yazma uclari "sites" degil kendi "boq" iznine
 # baglidir — site_chief/field_engineer'i ayirmanin tek yolu budur. Yazma
@@ -44,6 +48,42 @@ async def get_boq_endpoint(
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> BoqListResponse:
     return await service.get_boq_for_site(session, user, site_id)
+
+
+def _content_disposition(filename: str) -> str:
+    """Spec §5.3: dosya adi santiye kodundan turer, Turkce karakter icerebilir.
+
+    RFC 5987 `filename*` UTF-8 parametresiyle birlikte ASCII-guvenli bir
+    `filename` da yollanir (eski istemciler icin dusus): Turkce karakterler
+    ASCII'ye yaklastirilir/atlanir, tirnak kacisi yapilir.
+    """
+    ascii_fallback = filename.encode("ascii", errors="ignore").decode("ascii").replace('"', "")
+    if not ascii_fallback:
+        ascii_fallback = "is-kalemleri.xlsx"
+    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(filename)}"
+
+
+@router.get(
+    "/sites/{site_id}/boq/export",
+    dependencies=[_VIEW],
+    response_class=Response,
+    responses={200: {"content": {XLSX_MEDIA_TYPE: {}}, "description": "Excel dosyasi"}},
+)
+async def export_boq_endpoint(
+    site_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> Response:
+    """Spec §5.3: BOQ'yu xlsx olarak indirir. Okuma ucudur — `record_audit`
+    cagirmaz (T7 kurali: okumalar denetim gunlugune yazmaz)."""
+    site, boq = await service.get_boq_export_for_site(session, user, site_id)
+    buffer = build_boq_workbook(boq)
+    filename = f"is-kalemleri-{site.code}.xlsx"
+    return Response(
+        content=buffer.getvalue(),
+        media_type=XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": _content_disposition(filename)},
+    )
 
 
 @router.post(
