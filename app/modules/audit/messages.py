@@ -79,8 +79,41 @@ def site_created(name: str) -> str:
     return f"Yeni şantiye oluşturuldu: {name}"
 
 
+def site_draft_created(name: str) -> str:
+    """Taslak olusturma yayin olusturmadan AYRI metindir (spec §10).
+
+    Denetim ekraninda "gercekten bir santiye acildi mi" sorusu metinden
+    cevaplanabilmelidir; tek metin kullanmak yarim kalmis bir taslagi tamamlanmis
+    bir acilis gibi gosterirdi.
+    """
+    return f"Yeni şantiye taslağı oluşturuldu: {name}"
+
+
+def site_sections_created(site_name: str, count: int) -> str:
+    """Bolumlu form icin TEK OZET satir (`units_bulk_created` deseni, spec §10).
+
+    Bolum basina ayri satir yazilmaz: 5 bolumlu bir form 6 denetim satiri
+    uretmez, 2 uretir — gunluk okunabilirligi kaydin sayisindan daha degerlidir.
+    """
+    return f"Şantiye bölümleri oluşturuldu: {site_name} · {count} bölüm"
+
+
 def site_updated(name: str) -> str:
     return f"Şantiye güncellendi: {name}"
+
+
+def site_published(name: str) -> str:
+    """`is_draft: true -> false` gecisi (spec §5.3, §10) — duz guncellemeden AYRI."""
+    return f"Şantiye taslaktan yayına alındı: {name}"
+
+
+def site_deleted(project_name: str, name: str) -> str:
+    """Metin santiye satiri SILINMEDEN ONCE kurulmalidir (spec §10).
+
+    Sonra kurulursa `project.name` ve `site.name` guvenilir okunamaz ve satir bos
+    adla yazilir — yani silinen kaydin NE OLDUGU tamamen kaybolur.
+    """
+    return f"Şantiye silindi: {project_name} · {name}"
 
 
 def section_created(site_name: str, name: str) -> str:
@@ -91,6 +124,11 @@ def section_created(site_name: str, name: str) -> str:
 
 def section_updated(site_name: str, name: str) -> str:
     return f"Bölüm güncellendi: {site_name} · {name}"
+
+
+def section_deleted(site_name: str, name: str) -> str:
+    """`site_deleted` ile ayni kural: metin `session.delete`ten ONCE kurulur."""
+    return f"Bölüm silindi: {site_name} · {name}"
 
 
 def boq_group_created(name: str) -> str:

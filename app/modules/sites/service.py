@@ -10,6 +10,12 @@ from app.core.errors import (
     SiteValidationError,
 )
 from app.core.timezone import today
+
+# Denetim METINLERI merkezidir (`audit/messages.py`): f-string ne servise ne
+# router'a gomulur. Silme ve yayin metinleri BURADA kurulur, cunku gereken
+# baglam (silinmeden onceki ad, `is_draft`in ONCEKI degeri) yalniz servis
+# katmaninda vardir.
+from app.modules.audit import messages
 from app.modules.projects.models import Project
 
 # Gorunurluk suzgeci P1'den GELIR (spec §5.2). Burada kopya bir erisim mantigi
@@ -497,7 +503,7 @@ def _merged_for_validation(site: Site, changes: dict) -> SimpleNamespace:
 
 async def update_site(
     session: AsyncSession, actor: User, site_id: uuid.UUID, data: SiteUpdate
-) -> Site:
+) -> tuple[Site, str]:
     """PATCH GEVSEK, YAYIN SIKI (§5.3, §11.3/3).
 
     Zorunluluk dogrulamasi burada KOSMAZ — kossaydi canlidaki sefsiz/il bilgisi
@@ -505,6 +511,11 @@ async def update_site(
     degistirmek isterken "Şantiye şefi seçiniz." duvarina carpardi. Tek istisna
     `is_draft: true -> false` gecisidir: orada BIRLESIK kayit uzerinde tum
     kurallar kosar ve gecmezse satir TASLAK KALIR.
+
+    Denetim metnini de DONER (`units.update_unit` deseni): yayina gecis olup
+    olmadigi yalniz BURADA bilinir — router `is_draft`in ONCEKI degerini goremez,
+    dolayisiyla ayrimi disariya tasimak "Şantiye güncellendi" ile "yayına alındı"
+    satirlarini birbirine karistirirdi.
     """
     site, _ = await _visible_site(session, actor, site_id)
     # `facilities` DISARIDA BIRAKILIR: gruplu sozlesmenin duz kolon karsiligi yok,
@@ -543,7 +554,10 @@ async def update_site(
         _apply_facilities(site, data.facilities)
     await session.flush()
     await session.refresh(site)
-    return site
+    detail = (
+        messages.site_published(site.name) if is_publishing else messages.site_updated(site.name)
+    )
+    return site, detail
 
 
 async def create_section(
@@ -589,7 +603,7 @@ async def update_section(
 # --- Silme uclari (spec §7.1) ---
 
 
-async def delete_site(session: AsyncSession, actor: User, site_id: uuid.UUID) -> tuple[str, str]:
+async def delete_site(session: AsyncSession, actor: User, site_id: uuid.UUID) -> str:
     """Spec §7.1. **CASCADE'i ENGELLEMEK bu fonksiyonun TEK isidir.**
 
     `sites.id`'yi hedefleyen DORT FK'nin da `ON DELETE CASCADE` oldugu koddan
@@ -608,11 +622,14 @@ async def delete_site(session: AsyncSession, actor: User, site_id: uuid.UUID) ->
     "Taslak zaten yarim, gitsin" kisayolu taslak/yayin ayrimini silme
     guvenliginin onune gecirirdi.
 
-    Donen deger: silinen kaydin `(proje adi, santiye adi)` anlik goruntusu.
-    Metin SILMEDEN ONCE kurulur (`units/service.py:327` dersi) — satir gittikten
-    sonra bu iki alan hicbir sorguyla geri getirilemez ve denetim satiri bos adla
-    yazilirdi, yani silinen kaydin NE OLDUGU tamamen kaybolurdu. T12'nin denetim
-    cagrisi bu anlik goruntuyu kullanir.
+    Donen deger: DENETIM METNI. Metin `session.delete`ten ONCE kurulur
+    (`units/service.py:327` dersi) — satir gittikten sonra `project.name` ve
+    `site.name` guvenilir okunamaz ve denetim satiri bos adla yazilirdi, yani
+    silinen kaydin NE OLDUGU tamamen kaybolurdu.
+
+    Engellenen silme (409) denetime HICBIR SEY yazmaz: bu fonksiyon istisna
+    atarak doner, metin hic kurulmaz. Denetim gerceklesen olayi kaydeder,
+    denemeyi degil.
     """
     site, project = await _visible_site(session, actor, site_id)
     if await repository.site_has_sections(session, site.id):
@@ -621,15 +638,13 @@ async def delete_site(session: AsyncSession, actor: User, site_id: uuid.UUID) ->
         raise RelatedRecordsExistError(guards.SITE_HAS_BOQ)
     if await repository.site_has_blocks(session, site.id):
         raise RelatedRecordsExistError(guards.SITE_HAS_BLOCKS)
-    snapshot = (project.name, site.name)
+    detail = messages.site_deleted(project.name, site.name)
     await session.delete(site)
     await session.flush()
-    return snapshot
+    return detail
 
 
-async def delete_section(
-    session: AsyncSession, actor: User, section_id: uuid.UUID
-) -> tuple[str, str]:
+async def delete_section(session: AsyncSession, actor: User, section_id: uuid.UUID) -> str:
     """Spec §7.1. Bolum silme KOSULSUZDUR — uydurma bir engel yazilmaz.
 
     Kod tabaninda `sections.id`'yi hedefleyen HICBIR FK yoktur (dogrulandi):
@@ -649,11 +664,11 @@ async def delete_section(
     Kalan bolumlerin `sort_order` degerleri YENIDEN NUMARALANMAZ (davranis
     kilidi): silme, dokunulmayan satirlarin sirasini degistirmez.
 
-    Donen deger: `(santiye adi, bolum adi)` anlik goruntusu — `delete_site` ile
-    ayni gerekce, metin satir yok olmadan ONCE kurulur.
+    Donen deger: DENETIM METNI — `delete_site` ile ayni gerekce, metin satir yok
+    olmadan ONCE kurulur.
     """
     section, site = await _visible_section(session, actor, section_id)
-    snapshot = (site.name, section.name)
+    detail = messages.section_deleted(site.name, section.name)
     await session.delete(section)
     await session.flush()
-    return snapshot
+    return detail

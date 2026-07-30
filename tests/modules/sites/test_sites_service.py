@@ -348,7 +348,7 @@ async def test_update_site_changes_fields(seeded_db, user_factory, project_facto
     site = await _site(seeded_db, project, name="Eski Ad")
     user = await _patron(seeded_db, user_factory, "s22@t.co")
 
-    updated = await service.update_site(
+    updated, _ = await service.update_site(
         seeded_db, user, site.id, SiteUpdate(name="Yeni Ad", status=SiteStatus.on_hold)
     )
 
