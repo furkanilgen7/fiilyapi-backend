@@ -17,6 +17,7 @@ from app.modules.units.schemas import (
     BlockListResponse,
     BlockResponse,
     BlockUpdate,
+    UnitAllocationRequest,
     UnitBulkCreate,
     UnitCreate,
     UnitImportResult,
@@ -175,6 +176,27 @@ async def bulk_create_units_endpoint(
     HICBIRI yazilmaz (409). Yanit guncel tam listedir — ekran tabloyu yeniden
     cizer, ikinci bir GET'e gerek kalmaz."""
     return await service.bulk_create_units(session, user, project_id, data)
+
+
+@router.patch(
+    "/projects/{project_id}/units/allocation",
+    response_model=UnitListResponse,
+    dependencies=[_FULL],
+)
+async def update_allocation_endpoint(
+    project_id: uuid.UUID,
+    data: UnitAllocationRequest,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> UnitListResponse:
+    """Spec §7.10 (KKP 25). Paylar TOPLU URETIMDE atanmaz, SONRADAN bu ucla
+    girilir: paylasim noterden sonra belli olur (KKP 78).
+
+    ATOMIK: tek satir bile reddedilirse hicbiri yazilmaz. Listedeki bir unite
+    BASKA projeye aitse 404 doner (IDOR-8) ve bu projenin hicbir satiri
+    degismez. Yanit guncel tam listedir — ekran tabloyu yeniden cizer.
+    """
+    return await service.update_allocation(session, user, project_id, data)
 
 
 @router.post(

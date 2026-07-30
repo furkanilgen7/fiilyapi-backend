@@ -122,6 +122,21 @@ async def existing_unit_nos(
     return set(result.scalars().all())
 
 
+async def get_units_by_ids(session: AsyncSession, unit_ids: list[uuid.UUID]) -> list[Unit]:
+    """Paylasim ucunun (spec §7.10) TEK sorgusu — `existing_unit_nos` ile ayni gerekce.
+
+    42 uniteyi tek tek `session.get` ile cekmek 42 gidis-donus demektir; dahasi
+    dogrulama YAZMADAN ONCE bitmek zorundadir, bu yuzden tum satirlar once TEK
+    `SELECT` ile alinir. Proje eslesmesi SERVISTE denetlenir: burada suzmek,
+    "baska projenin unitesi" ile "hic olmayan unite" ayrimini repository'ye
+    tasirdi ve iki durum icin ayni 404'u uretmek zorlasirdi (IDOR-7/IDOR-8).
+    """
+    if not unit_ids:
+        return []
+    result = await session.execute(select(Unit).where(Unit.id.in_(unit_ids)))
+    return list(result.scalars().all())
+
+
 async def max_sort_order(session: AsyncSession, block_id: uuid.UUID) -> int:
     """Blokta kullanilan en buyuk `sort_order`; blok bossa **-1**.
 

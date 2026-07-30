@@ -38,6 +38,7 @@ from app.modules.units.schemas import (
     BlockUpdate,
     CountPlaceholder,
     MetricPlaceholder,
+    UnitAllocationRequest,
     UnitBlockGroup,
     UnitBulkCreate,
     UnitCreate,
@@ -73,7 +74,9 @@ _BULK_NUMBERS_TAKEN = "Üretilecek ünite numaralarından bazıları blokta zate
 _NO_SITE_FOR_BLOCK = "Blok tanımlamadan önce projeye şantiye eklenmelidir"
 _SITE_REQUIRED = "Birden fazla şantiye var, blok için şantiye seçilmelidir"
 _OWNER_SIDE_NOT_ALLOWED = "Ünite payı yalnızca kat karşılığı projelerde belirlenebilir"
+_ALLOCATION_WRONG_TYPE = "Paylaşım yalnızca kat karşılığı projelerde kaydedilebilir"
 _NET_GT_GROSS = "Net alan brüt alandan büyük olamaz"
+_DUPLICATE_IN_PAYLOAD = "Aynı ünite listede birden çok kez var"
 
 # Spec §6.1: bu dilimde YAZILMAYAN turev alanlarin bagli oldugu modul anahtarlari.
 # Kullaniciya gosterilecek metin degil, B6 yer tutucu sozlesmesindeki anahtardir.
@@ -801,3 +804,45 @@ async def import_units(
     session.add_all(new_units)
     await session.flush()
     return UnitImportResult(created=len(rows), blocks_created=len(created_blocks), errors=[])
+
+
+# --- Paylasim (spec §7.10, §5.3) — ATOMIKLIK + IDOR SINIFI ---
+
+
+async def update_allocation(
+    session: AsyncSession, actor: User, project_id: uuid.UUID, data: UnitAllocationRequest
+) -> UnitListResponse:
+    """Spec §7.10 (KKP 25 "Paylasimi Kaydet"). HEP-YA-HIC, tek transaction.
+
+    Paylar TOPLU URETIMDE ATANMAZ (§6.3'te `owner_side` alani yoktur): paylasim
+    noterden SONRA belli olur (KKP 78), bu yuzden ayri bir uc olarak girilir.
+
+    Sira KATIDIR ve degistirilemez — her dogrulama ilk yazmadan ONCE biter:
+
+    1. proje gorunurlugu (404, IDOR-1); gorunmeyen proje var olmayanla AYNI mesaj
+    2. proje tipi `kat_karsiligi` degilse hic islem yapilmadan 422 (§3.3)
+    3. listede tekrarlanan `unit_id` → 422; "son kazanir" SESSIZ kabul EDILMEZ,
+       ekranda iki satira dokunan kullanici hangisinin gecerli oldugunu goremezdi
+    4. tum uniteler TEK `SELECT` ile cekilir; eksik VEYA baska projeye ait tek
+       satir bile varsa 404 (IDOR-8) ve HICBIRI yazilmaz
+
+    4. adimda "bulunamadi" ile "baska projenin" AYNI mesaji doner: aksi hâlde
+    elinde UUID olan kullanici kaydin var oldugunu ve baskasina ait oldugunu
+    ayirt edebilirdi (`_visible_unit` ile ayni gerekce).
+    """
+    project = await _visible_project(session, actor, project_id)
+    if project.project_type is not ProjectType.kat_karsiligi:
+        raise ProjectTypeMismatchError(_ALLOCATION_WRONG_TYPE)
+
+    wanted = {item.unit_id: item.owner_side for item in data.items}
+    if len(wanted) != len(data.items):
+        raise UnitValidationError(_DUPLICATE_IN_PAYLOAD)
+
+    units = await repository.get_units_by_ids(session, list(wanted))
+    if len(units) != len(wanted) or any(unit.project_id != project.id for unit in units):
+        raise NotFoundError(_UNIT_MISSING)
+
+    for unit in units:
+        unit.owner_side = wanted[unit.id]
+    await session.flush()
+    return await list_units(session, actor, project_id)
