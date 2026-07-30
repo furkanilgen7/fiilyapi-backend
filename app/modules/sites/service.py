@@ -10,7 +10,7 @@ from app.modules.projects.models import Project
 # yazilmaz: iki ayri suzgec zamanla ayrisir ve ayrisan taraf sessiz bir yetki
 # sizintisi olur.
 from app.modules.projects.service import visible_projects
-from app.modules.sites import repository
+from app.modules.sites import guards, repository
 from app.modules.sites.models import Section, SectionStatus, Site, SiteStatus
 from app.modules.sites.schemas import (
     CountPlaceholder,
@@ -230,9 +230,12 @@ def _site_counts(sites: list[Site]) -> SiteCounts:
 # kullanici kaydin hala var oldugunu ve baska bir projeye ait oldugunu ayirt
 # edebilir. Bu yuzden ISTENEN kaynagin mesaji zincir boyunca TASINIR: santiye
 # ucunda hem "yok" hem "gormuyorsun" ayni cevabi verir.
-_PROJECT_MISSING = "Proje bulunamadı"
-_SITE_MISSING = "Şantiye bulunamadı"
-_SECTION_MISSING = "Bölüm bulunamadı"
+#
+# Metinler T5'te `guards.py`'ye TASINDI (spec §7.2 tablosu tek yerde durur);
+# burada yalniz yerel takma adlar kalir — iki kopya metin zamanla ayrisir.
+_PROJECT_MISSING = guards.PROJECT_MISSING
+_SITE_MISSING = guards.SITE_MISSING
+_SECTION_MISSING = guards.SECTION_MISSING
 
 
 async def _visible_project(

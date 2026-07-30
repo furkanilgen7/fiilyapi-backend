@@ -12,6 +12,7 @@ from app.core.errors import (
     ProjectTypeMismatchError,
     ProjectValidationError,
     RelatedRecordsExistError,
+    SiteValidationError,
     UnitImportError,
     UnitValidationError,
 )
@@ -40,6 +41,12 @@ async def _project_type_mismatch_handler(
 async def _project_validation_handler(
     request: Request, exc: ProjectValidationError
 ) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content={"detail": str(exc)}
+    )
+
+
+async def _site_validation_handler(request: Request, exc: SiteValidationError) -> JSONResponse:
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content={"detail": str(exc)}
     )
@@ -101,6 +108,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(NotFoundError, _not_found_handler)
     app.add_exception_handler(ProjectTypeMismatchError, _project_type_mismatch_handler)
     app.add_exception_handler(ProjectValidationError, _project_validation_handler)
+    app.add_exception_handler(SiteValidationError, _site_validation_handler)
     app.add_exception_handler(DuplicateError, _duplicate_error_handler)
     app.add_exception_handler(RelatedRecordsExistError, _related_records_exist_handler)
     app.add_exception_handler(BoqGroupSiteMismatchError, _boq_group_site_mismatch_handler)
