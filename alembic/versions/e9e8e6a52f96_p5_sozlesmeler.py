@@ -134,9 +134,7 @@ def upgrade() -> None:
         sa.Column("phone", sa.String(length=30), nullable=True),
         sa.Column("email", sa.String(length=255), nullable=True),
         sa.Column("category", sa.String(length=100), nullable=True),
-        sa.Column(
-            "is_active", sa.Boolean(), server_default=sa.text("true"), nullable=False
-        ),
+        sa.Column("is_active", sa.Boolean(), server_default=sa.text("true"), nullable=False),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -214,26 +212,16 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["project_id"], ["project_contracts.project_id"], ondelete="CASCADE"
         ),
-        sa.ForeignKeyConstraint(
-            ["group_id"], ["employer_contract_groups.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["group_id"], ["employer_contract_groups.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint(
-            "project_id", "code", name="uq_employer_contract_items_project_code"
-        ),
-        sa.CheckConstraint(
-            "quantity > 0", name="ck_employer_contract_items_quantity_positive"
-        ),
-        sa.CheckConstraint(
-            "unit_price >= 0", name="ck_employer_contract_items_unit_price_nonneg"
-        ),
+        sa.UniqueConstraint("project_id", "code", name="uq_employer_contract_items_project_code"),
+        sa.CheckConstraint("quantity > 0", name="ck_employer_contract_items_quantity_positive"),
+        sa.CheckConstraint("unit_price >= 0", name="ck_employer_contract_items_unit_price_nonneg"),
     )
     op.create_index(
         "ix_employer_contract_items_project_id", "employer_contract_items", ["project_id"]
     )
-    op.create_index(
-        "ix_employer_contract_items_group_id", "employer_contract_items", ["group_id"]
-    )
+    op.create_index("ix_employer_contract_items_group_id", "employer_contract_items", ["group_id"])
 
     # 5. boq_items.contract_item_id + kismi benzersiz indeks
     op.add_column(
@@ -268,9 +256,7 @@ def upgrade() -> None:
         sa.Column("work_category", sa.String(length=100), nullable=True),
         sa.Column("contract_no", sa.String(length=100), nullable=True),
         sa.Column("signature_date", sa.Date(), nullable=True),
-        sa.Column(
-            "is_notarized", sa.Boolean(), server_default=sa.text("false"), nullable=False
-        ),
+        sa.Column("is_notarized", sa.Boolean(), server_default=sa.text("false"), nullable=False),
         sa.Column("start_date", sa.Date(), nullable=True),
         sa.Column("end_date", sa.Date(), nullable=True),
         sa.Column("late_penalty_daily", sa.Numeric(precision=18, scale=2), nullable=True),
@@ -292,9 +278,7 @@ def upgrade() -> None:
             server_default="monthly",
             nullable=False,
         ),
-        sa.Column(
-            "payment_term_days", sa.Integer(), server_default="30", nullable=False
-        ),
+        sa.Column("payment_term_days", sa.Integer(), server_default="30", nullable=False),
         sa.Column(
             "materials_by_contractor",
             sa.Boolean(),
@@ -307,18 +291,14 @@ def upgrade() -> None:
             server_default=sa.text("false"),
             nullable=False,
         ),
-        sa.Column(
-            "vat_withholding", sa.Boolean(), server_default=sa.text("false"), nullable=False
-        ),
+        sa.Column("vat_withholding", sa.Boolean(), server_default=sa.text("false"), nullable=False),
         sa.Column(
             "status",
             postgresql.ENUM(name="contract_status", create_type=False),
             server_default="active",
             nullable=False,
         ),
-        sa.Column(
-            "is_draft", sa.Boolean(), server_default=sa.text("false"), nullable=False
-        ),
+        sa.Column("is_draft", sa.Boolean(), server_default=sa.text("false"), nullable=False),
         sa.Column("created_by", sa.UUID(), nullable=False),
         sa.Column(
             "created_at",
@@ -334,25 +314,19 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(["project_id"], ["projects.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["site_id"], ["sites.id"], ondelete="RESTRICT"),
-        sa.ForeignKeyConstraint(
-            ["subcontractor_id"], ["subcontractors.id"], ondelete="RESTRICT"
-        ),
+        sa.ForeignKeyConstraint(["subcontractor_id"], ["subcontractors.id"], ondelete="RESTRICT"),
         sa.ForeignKeyConstraint(["created_by"], ["users.id"], ondelete="RESTRICT"),
         sa.PrimaryKeyConstraint("id"),
         sa.CheckConstraint(
             "advance_pct BETWEEN 0 AND 100 AND retainage_pct BETWEEN 0 AND 100",
             name="ck_subcontract_pct_range",
         ),
-        sa.CheckConstraint(
-            "payment_term_days >= 0", name="ck_subcontract_payment_term"
-        ),
+        sa.CheckConstraint("payment_term_days >= 0", name="ck_subcontract_payment_term"),
     )
     op.create_index(
         "ix_subcontractor_contracts_project_id", "subcontractor_contracts", ["project_id"]
     )
-    op.create_index(
-        "ix_subcontractor_contracts_site_id", "subcontractor_contracts", ["site_id"]
-    )
+    op.create_index("ix_subcontractor_contracts_site_id", "subcontractor_contracts", ["site_id"])
     op.create_index(
         "uq_subcontractor_contracts_contract_no",
         "subcontractor_contracts",
@@ -455,13 +429,9 @@ def downgrade() -> None:
     )
     op.drop_table("subcontractor_contract_items")
 
-    op.drop_index(
-        "uq_subcontractor_contracts_contract_no", table_name="subcontractor_contracts"
-    )
+    op.drop_index("uq_subcontractor_contracts_contract_no", table_name="subcontractor_contracts")
     op.drop_index("ix_subcontractor_contracts_site_id", table_name="subcontractor_contracts")
-    op.drop_index(
-        "ix_subcontractor_contracts_project_id", table_name="subcontractor_contracts"
-    )
+    op.drop_index("ix_subcontractor_contracts_project_id", table_name="subcontractor_contracts")
     op.drop_table("subcontractor_contracts")
 
     op.drop_index("uq_boq_items_contract_item_site", table_name="boq_items")
@@ -469,17 +439,11 @@ def downgrade() -> None:
     op.drop_constraint("fk_boq_items_contract_item_id", "boq_items", type_="foreignkey")
     op.drop_column("boq_items", "contract_item_id")
 
-    op.drop_index(
-        "ix_employer_contract_items_group_id", table_name="employer_contract_items"
-    )
-    op.drop_index(
-        "ix_employer_contract_items_project_id", table_name="employer_contract_items"
-    )
+    op.drop_index("ix_employer_contract_items_group_id", table_name="employer_contract_items")
+    op.drop_index("ix_employer_contract_items_project_id", table_name="employer_contract_items")
     op.drop_table("employer_contract_items")
 
-    op.drop_index(
-        "ix_employer_contract_groups_project_id", table_name="employer_contract_groups"
-    )
+    op.drop_index("ix_employer_contract_groups_project_id", table_name="employer_contract_groups")
     op.drop_table("employer_contract_groups")
 
     op.drop_index("ix_subcontractors_name", table_name="subcontractors")
