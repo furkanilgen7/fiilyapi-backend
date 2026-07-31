@@ -41,6 +41,7 @@ BLOCK_MISSING = "Blok bulunamadı"
 UNIT_MISSING = "Ünite bulunamadı"
 SITE_MISSING = "Şantiye bulunamadı"
 DUPLICATE_BLOCK = "Bu blok adı bu projede zaten kullanılıyor"
+DUPLICATE_BLOCK_CODE = "Bu blok kodu bu projede zaten kullanılıyor"
 DUPLICATE_UNIT = "Bu ünite numarası bu blokta zaten kullanılıyor"
 BLOCK_HAS_UNITS = "Bu blokta ünite var, önce üniteleri silin"
 BULK_NUMBERS_TAKEN = "Üretilecek ünite numaralarından bazıları blokta zaten var"
@@ -154,6 +155,21 @@ async def ensure_block_name_unique(
     """`uq_blocks_project_name` — acik SELECT ile ONDEN (spec §4.3, P4 deseni)."""
     if await repository.get_block_by_name(session, project_id, name, exclude_block_id) is not None:
         raise DuplicateError(DUPLICATE_BLOCK)
+
+
+async def ensure_block_code_unique(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    code: str,
+    exclude_block_id: uuid.UUID | None = None,
+) -> None:
+    """`uq_blocks_project_code` — acik SELECT ile ONDEN (spec §3.2).
+
+    Kullanici kodu ELLE girerse aynen kabul edilir (BE 71 alani serbest
+    yazilabilir); yalniz benzersizlik dogrulanir → cakisma **409**.
+    """
+    if await repository.get_block_by_code(session, project_id, code, exclude_block_id) is not None:
+        raise DuplicateError(DUPLICATE_BLOCK_CODE)
 
 
 async def ensure_unit_no_unique(

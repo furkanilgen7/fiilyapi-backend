@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from app.core.access import AccessLevel
 from app.modules.roles.models import Module, Role, RolePermission
 from app.modules.sites.models import Site
+from app.modules.units.codes import effective_block_code
 from app.modules.units.models import Block, Unit, UnitKind, UnitOwnerSide
 from app.modules.users.models import UserProjectAccess
 
@@ -1330,3 +1331,26 @@ async def test_delete_block_admin_permission_allowed(
 
     assert resp.status_code == 204
     assert await _block_exists(db_session, block.id) is False
+
+
+# --- P3.1 §0.B: kodu NULL olan blokta ANLIK turetme (spec §3.2, karar 8) ---
+
+
+async def test_null_kodlu_blokta_anlik_turetme_saklanmaz(db_session, project_factory):
+    """Canli bloklarin `code`'u NULL dogar ve NULL KALIR.
+
+    Toplu uretimin `{Blok}` jetonu icin kod ANLIK turetilir; bu cagri `blocks`
+    satirini **UPDATE ETMEZ**. Aksi hâlde okuma yolunda gizli bir yazma olur ve
+    karar 8'in "backfill migration'i YOKTUR" kurali arka kapidan delinirdi.
+    """
+    project = await project_factory("P31-0B")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site, "C Blok")
+    assert block.code is None
+
+    assert effective_block_code(block.code, block.name) == "C"
+
+    block_id = block.id
+    db_session.expire_all()
+    stored = (await db_session.execute(select(Block.code).where(Block.id == block_id))).scalar_one()
+    assert stored is None
