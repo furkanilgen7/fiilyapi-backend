@@ -25,6 +25,7 @@ from app.modules.progress_payments.schemas import (
     ProgressPaymentLinesSave,
     ProgressPaymentListResponse,
     ProgressPaymentUpdate,
+    RefreshPricesResponse,
     RejectBody,
 )
 from app.modules.users.models import User
@@ -134,6 +135,28 @@ async def save_progress_payment_lines_endpoint(
     payment, dropped_orphan_count = await service.save_lines(session, user, payment_id, data)
     detail = await service.get_detail(session, user, payment.id)
     return detail.model_copy(update={"dropped_orphan_count": dropped_orphan_count})
+
+
+@router.post(
+    "/progress-payments/{payment_id}/refresh-prices",
+    response_model=RefreshPricesResponse,
+    dependencies=[_DRAFT],
+)
+async def refresh_progress_payment_prices_endpoint(
+    payment_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> RefreshPricesResponse:
+    """§5.1/§9.3: yalnız `draft`'ta bağı kopmamış satırların snapshot beşlisini
+    + hakedişin yüzde üçlüsünü kalemden/sözleşmeden bilinçli tazeler.
+
+    Yanıt YALNIZ `{refreshed_count}`'tur (plan Adım 1'in test şeması) — güncel
+    ekran ayrı bir `GET /progress-payments/{id}` ile okunur; `PUT …/lines`'ın
+    aksine burada tek gövdede iki bilgi (sayaç + tam detay) BİRLEŞTİRİLMEZ,
+    çünkü tazeleme sonrası frontend zaten ekranı yeniden çizmek için detayı
+    ayrıca çeker (spec §9.3, `RefreshPricesResponse`)."""
+    _, refreshed_count = await service.refresh_prices(session, user, payment_id)
+    return RefreshPricesResponse(refreshed_count=refreshed_count)
 
 
 # --- Durum geçişleri (spec §7, §9.4) ---

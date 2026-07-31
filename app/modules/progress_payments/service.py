@@ -90,6 +90,79 @@ async def visible_payment_locked(
     return locked, project, contract
 
 
+# --- Fiyat tazeleme (spec §5.1, §9.3, §14 D3/D5) ---
+
+
+async def refresh_prices(
+    session: AsyncSession, actor: User, payment_id: uuid.UUID
+) -> tuple[ProgressPayment, int]:
+    """`POST …/refresh-prices` — yalnız `draft`'ta bağı kopmamış satırların
+    snapshot BEŞLİSİNİ (`code/description/unit/contract_unit_price/group_name`)
+    kalemden, hakedişin YÜZDE ÜÇLÜSÜNÜ (`vat_pct/advance_pct/retainage_pct`)
+    sözleşmeden yeniden kopyalar (spec §5.1: "yüzdeler de aynı uçta tazelenir",
+    §14 D3/D5). `coefficient`/`quantity` KULLANICI VERİSİDİR, DOKUNULMAZ.
+
+    Kilit sırası `create`/`transitions.perform` ile AYNIDIR (önce sözleşme,
+    sonra hakediş, `visible_payment_locked`) — ters sırada kilitleyen ikinci
+    bir yol karşılıklı kilitlenmeye (deadlock) yol açar.
+
+    Kalemi silinmiş satır (`contract_item_id IS NULL`, `SET NULL`) tazelenemez:
+    kıyaslanacak canlı fiyat yoktur. SESSİZCE atlanmaz — satır SİLİNMEZ, yalnız
+    `refreshed_count`'a girmez; bu durum zaten `get_detail`'in `is_price_stale
+    =None` alanıyla kullanıcıya bildirilir (spec §5.1 dipnotu) — ayrı bir
+    "düşen satır" alanı icat edilmez, çünkü hiçbir veri kaybolmaz.
+
+    Değişmemiş satır/yüzde YAZILMAZ (gereksiz `UPDATE` yok, no-op tazeleme
+    `refreshed_count=0` döner) — beş alanın TAMAMI aynıysa satır sayılmaz.
+    """
+    payment, _, contract = await visible_payment_locked(session, actor, payment_id)
+    if payment.status != ProgressPaymentStatus.draft:
+        raise ConflictError(guards.INVALID_STATUS_TRANSITION)
+    if contract is None:
+        raise SiteValidationError(guards.NO_EMPLOYER_CONTRACT)
+
+    if payment.vat_pct != contract.vat_pct:
+        payment.vat_pct = contract.vat_pct
+    if payment.advance_pct != contract.advance_pct:
+        payment.advance_pct = contract.advance_pct
+    if payment.retainage_pct != contract.retainage_pct:
+        payment.retainage_pct = contract.retainage_pct
+
+    item_ids = [
+        line.contract_item_id for line in payment.lines if line.contract_item_id is not None
+    ]
+    items_with_group = await repository.get_employer_items_with_group_by_ids(session, item_ids)
+
+    refreshed_count = 0
+    for line in payment.lines:
+        if line.contract_item_id is None:
+            continue
+        item_and_group = items_with_group.get(line.contract_item_id)
+        if item_and_group is None:
+            # Sözlükte yok ama FK hâlâ dolu: yarışta silinmiş olabilir — bu
+            # tazeleme turunda kalemi silinmiş satırla AYNI muameleyi görür.
+            continue
+        item, group_name = item_and_group
+        if (
+            line.code == item.code
+            and line.description == item.description
+            and line.unit == item.unit
+            and line.contract_unit_price == item.unit_price
+            and line.group_name == group_name
+        ):
+            continue
+        line.code = item.code
+        line.description = item.description
+        line.unit = item.unit
+        line.contract_unit_price = item.unit_price
+        line.group_name = group_name
+        refreshed_count += 1
+
+    await session.flush()
+    await session.refresh(payment)
+    return payment, refreshed_count
+
+
 # --- Oluşturma (spec §9.2, D8, kalıcı karar 4/9) ---
 #
 # Satır üretimi/doğrulaması TEK YOLDAN geçer: `lines.py`. H4'te burada duran
