@@ -559,6 +559,17 @@ Yanıt: `contract_amount` · `cumulative_gross` (E14 130) · `progress_pct` (E14
 (E14 145) · `payment_count` (SHK 82 "4 hakediş") · `pending_count` (SHK 84) ·
 `remaining = contract_amount − cumulative_gross` (E15 89-90).
 
+**`net_total` formülü (H9 denetim O3, 2026-07-31):**
+
+```
+net_total = cumulative_gross − advance_deduction_total − retention_total   # KDV HARİÇ
+```
+
+Bu, §6.4'ün tek-hakediş `net`inden (KDV **dâhil**) BİLİNÇLİ olarak farklıdır:
+burası sözleşmenin kümülatif hakkedilen bedelini özetler (E14 kartı), §6.4 ise
+tek bir hakedişin tahsil edilecek fatura tutarını hesaplar. Gerekçe/kanıt E14
+145: 8.400.000 − 1.680.000 − 420.000 = 6.300.000 (KDV yok).
+
 **P5 placeholder'larının doldurulması:** `EmployerContractDetail.progress_payment_summary`
 ve `ContractListItem.progress_pct` / `ContractSummary.progress_payment_total`
 (`contracts/schemas.py:83-101`) artık `MetricPlaceholder` yerine gerçek değer döner;
@@ -612,6 +623,16 @@ riskini ortadan kaldırma fırsatıdır — şema tarafında alan tipi düz değ
    şantiye kartları, `sites/schemas.py`) bu dilimde **DEĞİŞMEDİ** — plan H9
    dosya listesi yalnız `contracts`'ı kapsar; şantiye kartları verisini §9.6
    özet ucundan alır ve kendi diliminde bağlanır.
+
+   **Değişmeyen ama anlamı bulanıklaşan anahtarlar (H9 denetim O4, 2026-07-31):**
+   `pending_module="progress_payments"` dört ayrı yerde duruyor —
+   `boq/service.py`, `projects/service.py`, `sites/service.py`,
+   `dashboard/service.py`. Hepsi `available=False` ile DÜRÜST (o metrik gerçekten
+   hesaplanmıyor) — bu bir hata DEĞİLDİR. Ama anahtar artık gerçekten var olan
+   bir modülün adını taşıyor; H9'un taşeron tarafında (`SubcontractorContractDetail.
+   pending_modules`, madde 4 tablosu) tam bu gerekçeyle `subcontractor_progress_
+   payments` olarak yeniden adlandırılmıştı. Bu dört yer KENDİ dilimlerinde ele
+   alınacak — bu P7 diliminde kod DEĞİŞTİRİLMEDİ.
 5. FF toggle'ı (OLU 56): `project_contracts.has_price_escalation = false` olan
    sözleşmede frontend katsayı kolonunu kilitler (1,000); backend yine de gelen
    katsayıyı kabul eder mi? **Hayır** — tutarlılık kuralı: `has_price_escalation =

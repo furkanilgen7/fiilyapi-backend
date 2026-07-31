@@ -193,10 +193,12 @@ async def count_payments_by_status(
     session: AsyncSession, project_id: uuid.UUID, status: ProgressPaymentStatus
 ) -> int:
     """§9.6 `pending_count` (SHK 84) — satırları çekmeden sayar."""
-    stmt = select(func.count()).where(
-        ProgressPayment.project_id == project_id, ProgressPayment.status == status
+    stmt = (
+        select(func.count())
+        .select_from(ProgressPayment)
+        .where(ProgressPayment.project_id == project_id, ProgressPayment.status == status)
     )
-    return int((await session.execute(stmt.select_from(ProgressPayment))).scalar_one())
+    return int((await session.execute(stmt)).scalar_one())
 
 
 async def get_sites_by_ids(

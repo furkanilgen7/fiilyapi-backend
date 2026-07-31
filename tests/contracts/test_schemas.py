@@ -37,6 +37,7 @@ from app.modules.contracts.schemas import (
     SubcontractorResponse,
     SubcontractorUpdate,
 )
+from app.modules.progress_payments.schemas import ProgressPaymentSummary
 
 # --- Brief'teki taban testler (Adim 1) ---
 
@@ -233,6 +234,20 @@ def _employer_item_response(**overrides):
     return EmployerContractItemResponse(**taban)
 
 
+def _sifir_hakedis_ozeti() -> ProgressPaymentSummary:
+    return ProgressPaymentSummary(
+        contract_amount=Decimal("1000"),
+        cumulative_gross=Decimal("0.00"),
+        progress_pct=Decimal("0.00"),
+        advance_deduction_total=Decimal("0.00"),
+        retention_total=Decimal("0.00"),
+        net_total=Decimal("0.00"),
+        payment_count=0,
+        pending_count=0,
+        remaining=Decimal("1000"),
+    )
+
+
 def test_employer_contract_detail_kapsam_disi_alanlar_acik_doner():
     detay = EmployerContractDetail(
         project_id=uuid.uuid4(),
@@ -252,15 +267,44 @@ def test_employer_contract_detail_kapsam_disi_alanlar_acik_doner():
         items_total=Decimal("900"),
         items_total_diff=Decimal("100"),
         advance_amount=Decimal("200"),
+        progress_payment_summary=_sifir_hakedis_ozeti(),
     )
     # P7/H9 (spec §9.6): `progress_payments` yer tutucu listesinden ÇIKTI;
-    # `progress_payment_summary` servis tarafından GERÇEK özetle doldurulur
-    # (şema varsayılanı yine `None`, uç yanıtı `test_summary.py`de doğrulanır).
-    assert detay.progress_payment_summary is None
+    # H9 denetim O2 sonrası `progress_payment_summary` ZORUNLU alandır — uç
+    # her zaman gerçek bir özet döner (hakediş yoksa sıfırlarla), `None`
+    # DEĞİL (uç yanıtı ayrıca `test_summary.py`de doğrulanır).
+    assert detay.progress_payment_summary == _sifir_hakedis_ozeti()
     assert detay.milestones is None
     assert detay.documents is None
     assert "progress_payments" not in detay.pending_modules
     assert detay.pending_modules == ["project_schedule", "documents"]
+
+
+def test_employer_contract_detail_hakedis_ozeti_zorunludur():
+    """H9 denetim O2: alan verilmezse `ValidationError` — `None` varsayılanı
+
+    KALDIRILDI, uç sözleşmesi her zaman dolu bir özet taşımayı garanti eder.
+    """
+    with pytest.raises(ValidationError):
+        EmployerContractDetail(
+            project_id=uuid.uuid4(),
+            contract_no="SZL-2025-001",
+            signature_date=None,
+            amount=Decimal("1000"),
+            advance_pct=Decimal("20"),
+            retainage_pct=Decimal("5"),
+            vat_pct=Decimal("20"),
+            late_penalty_daily=None,
+            has_price_escalation=False,
+            status=ContractStatus.active,
+            start_date=None,
+            end_date=None,
+            employer_name="ABC Insaat",
+            contractor_name="XYZ Yuklenici",
+            items_total=Decimal("900"),
+            items_total_diff=Decimal("100"),
+            advance_amount=Decimal("200"),
+        )
 
 
 def test_subcontractor_contract_detail_kapsam_disi_alanlar_acik_doner():

@@ -202,8 +202,9 @@ class EmployerContractDetail(BaseModel):
     """`E14` başlığı. Sözleşmenin kendi alanları için YENİ yazma ucu AÇILMAZ
     (spec §6.2) — bu yalnız okuma şemasıdır.
 
-    Kapsam dışı (spec §2.2): hakediş özeti (P7), milestone takvimi (P11),
-    belgeler (kalıcı karar 8) — üçü de burada AÇIKÇA `None` döner.
+    Kapsam dışı (spec §2.2): milestone takvimi (P11), belgeler (kalıcı karar
+    8) — ikisi de burada AÇIKÇA `None` döner. Hakediş özeti (P7) artık kapsam
+    dışı DEĞİL (P7/H9): `progress_payment_summary` ZORUNLUDUR, `None` döndürmez.
     """
 
     project_id: uuid.UUID
@@ -225,10 +226,13 @@ class EmployerContractDetail(BaseModel):
     items_total: Decimal
     items_total_diff: Decimal
     advance_amount: Decimal
-    progress_payment_summary: ProgressPaymentSummary | None = None
+    progress_payment_summary: ProgressPaymentSummary
     """E14 127-147 "Hakediş Özeti" kartı — P7/H9'da GERÇEK veriye bağlandı
-    (spec §9.6). `None` yalnız sözleşme okunamadığında değil, hiç dolmadığında
-    da DEĞİL: uç her zaman bir özet döndürür (hakediş yoksa sıfırlarla)."""
+    (spec §9.6). ZORUNLU alan (H9 denetim O2): tek üretici
+    `contracts.service.get_employer_contract_detail`, sözleşme varlığı zaten
+    bu şemaya ulaşmanın ön şartı (yoksa 404) ve `progress_payments_summary.
+    build_summary` HER yolda dolu bir gövde döner (hakediş yoksa sıfırlarla) —
+    `None` gelen bir dal yoktur, bu yüzden şema da `None`'a izin vermez."""
     milestones: None = None
     documents: None = None
     pending_modules: list[str] = Field(default_factory=lambda: ["project_schedule", "documents"])
