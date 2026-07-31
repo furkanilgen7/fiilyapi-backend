@@ -47,6 +47,79 @@ class UnitOwnerSide(str, enum.Enum):
     landowner = "landowner"
 
 
+class BlockRoofType(str, enum.Enum):
+    """BE 80 "Cati Tipi": Yok · Dubleks · Teras."""
+
+    none = "none"
+    duplex = "duplex"
+    terrace = "terrace"
+
+
+class BlockGroundUsage(str, enum.Enum):
+    """BE 82 "Zemin Kat Kullanimi": Ticari · Konut · Ortak Alan."""
+
+    commercial = "commercial"
+    apartment = "apartment"
+    common = "common"
+
+
+class BlockParkingType(str, enum.Enum):
+    """BE 86 "Otopark": Kapali · Acik · Yok."""
+
+    closed = "closed"
+    open = "open"
+    none = "none"
+
+
+class BlockStatus(str, enum.Enum):
+    """BE 101 "Durum": Planlama · Insaat Halinde · Tamamlandi.
+
+    Sunucu varsayilani `construction` (mockup 101 `selected`), fakat sutun
+    NULLABLE kalir: mevcut canli bloklara "Insaat Halinde" varsaymak yanlis
+    olabilirdi ve karar 8 canli satirlara dokunan veri migration'ini yasaklar.
+    """
+
+    planning = "planning"
+    construction = "construction"
+    completed = "completed"
+
+
+class UnitFacing(str, enum.Enum):
+    """UE 78 / TU 112 "Cephe" — karar 7: mockup'ta gecen TAM OLARAK bes deger.
+
+    Pusulanin kalan uc yonu (`northeast`, `northwest`, `southeast`) ICAT EDILMEZ;
+    ihtiyac dogarsa additive olarak enum takasiyla eklenir (spec §4.2).
+    """
+
+    south = "south"
+    southwest = "southwest"
+    east = "east"
+    north = "north"
+    west = "west"
+
+
+class UnitParkingRight(str, enum.Enum):
+    """UE 81 "Otopark Hakki": Yok · 1 Kapali · 2."""
+
+    none = "none"
+    one_closed = "one_closed"
+    two = "two"
+
+
+class UnitSalesStatus(str, enum.Enum):
+    """UE 94 "Satis Durumu": Satista (Bos) · Rezerve · Satildi · Satisa Kapali.
+
+    "Arsa Sahibinde" (KKP 92) bu kumeye GIRMEZ: o `owner_side='landowner'`
+    turevidir ve zaten `is_landowner_share` olarak doner. KY 276'nin "Tapulu"
+    degeri de girmez — tapu devri P8'in kaydidir ve `sold` ile eslenir.
+    """
+
+    listed = "listed"
+    reserved = "reserved"
+    sold = "sold"
+    closed = "closed"
+
+
 class Block(Base):
     """Blok — proje altindaki unite grubu (spec §4.1).
 

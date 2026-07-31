@@ -48,6 +48,19 @@ UNIT_KIND_LABELS_AFTER = ["apartment", "shop", "office", "warehouse", "parking"]
 # Takas sirasinda kullanilan gecici tip adlari downgrade/upgrade sonrasi KALMAMALIDIR.
 UNIT_KIND_TEMP_TYPES = ("unit_kind_new", "unit_kind_old")
 
+P31_R2_PARENT = P31_R1_REVISION
+P31_R2_REVISION = "c2d3e4f5a6b7"
+P31_R2_TYPE_LABELS = {
+    "block_roof_type": ["none", "duplex", "terrace"],
+    "block_ground_usage": ["commercial", "apartment", "common"],
+    "block_parking_type": ["closed", "open", "none"],
+    "block_status": ["planning", "construction", "completed"],
+    "unit_facing": ["south", "southwest", "east", "north", "west"],
+    "unit_parking_right": ["none", "one_closed", "two"],
+    "unit_sales_status": ["listed", "reserved", "sold", "closed"],
+}
+P31_R2_TYPES = tuple(P31_R2_TYPE_LABELS)
+
 
 def _asyncpg_dsn(database: str) -> str:
     """settings.test_database_url'i asyncpg'nin anladigi duz DSN'e cevirir."""
@@ -93,6 +106,17 @@ async def _enum_labels(conn: asyncpg.Connection, name: str) -> list[str]:
         name,
     )
     return [row["enumlabel"] for row in rows]
+
+
+async def _column_counts(conn: asyncpg.Connection) -> dict[str, int]:
+    return {
+        table: await conn.fetchval(
+            "SELECT count(*) FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = $1",
+            table,
+        )
+        for table in NEW_TABLES
+    }
 
 
 @asynccontextmanager
@@ -248,3 +272,48 @@ async def test_r1_baska_sema_degisikligi_yok():
                 for table in NEW_TABLES
             }
         assert after == before
+
+
+# --- P3.1 / R2: yedi yeni enum tipi (izole revizyon) ---
+
+
+async def test_r2_yedi_tip_olusur():
+    """R2 yedi tipi olusturur ve KOLON EKLEMEZ (spec §10.2/R2)."""
+    async with _temp_database("p31_r2_mig") as database:
+        _run_alembic("upgrade", P31_R2_PARENT, database=database)
+        async with _connect(database) as conn:
+            for enum_type in P31_R2_TYPES:
+                assert not await _type_exists(conn, enum_type), f"{enum_type} R2 oncesi var"
+            before = await _column_counts(conn)
+
+        _run_alembic("upgrade", P31_R2_REVISION, database=database)
+        async with _connect(database) as conn:
+            for enum_type, labels in P31_R2_TYPE_LABELS.items():
+                assert await _enum_labels(conn, enum_type) == labels
+            assert await _current_revision(conn) == P31_R2_REVISION
+            assert await _column_counts(conn) == before
+
+
+async def test_r2_downgrade_yedi_tipi_de_dusurur():
+    """`DROP TYPE` unutulan tek bir tip bile ikinci upgrade'i patlatir (plan §0.A.4)."""
+    async with _temp_database("p31_r2_drop") as database:
+        _run_alembic("upgrade", P31_R2_REVISION, database=database)
+        _run_alembic("downgrade", P31_R2_PARENT, database=database)
+        async with _connect(database) as conn:
+            for enum_type in P31_R2_TYPES:
+                assert not await _type_exists(conn, enum_type), (
+                    f"{enum_type} downgrade sonrasi pg_type'da duruyor"
+                )
+            assert await _current_revision(conn) == P31_R2_PARENT
+
+
+async def test_r2_ikinci_upgrade_patlamaz():
+    async with _temp_database("p31_r2_twice") as database:
+        _run_alembic("upgrade", P31_R2_REVISION, database=database)
+        _run_alembic("downgrade", P31_R2_PARENT, database=database)
+        _run_alembic("upgrade", P31_R2_REVISION, database=database)
+        async with _connect(database) as conn:
+            for enum_type in P31_R2_TYPES:
+                assert await _type_exists(conn, enum_type), (
+                    f"{enum_type} ikinci upgrade sonrasi yok"
+                )

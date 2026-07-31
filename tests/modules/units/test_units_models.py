@@ -14,7 +14,19 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from app.modules.projects.models import Project
 from app.modules.sites.models import Site
-from app.modules.units.models import Block, Unit, UnitKind, UnitOwnerSide
+from app.modules.units.models import (
+    Block,
+    BlockGroundUsage,
+    BlockParkingType,
+    BlockRoofType,
+    BlockStatus,
+    Unit,
+    UnitFacing,
+    UnitKind,
+    UnitOwnerSide,
+    UnitParkingRight,
+    UnitSalesStatus,
+)
 
 
 async def _site(session, project: Project, code: str = "SANTIYE-1", name: str = "Merkez") -> Site:
@@ -302,3 +314,25 @@ async def test_unit_owner_side_nullable(db_session, project_factory):
     await db_session.flush()
     loaded = (await db_session.execute(select(Unit).where(Unit.id == unit.id))).scalar_one()
     assert loaded.owner_side is UnitOwnerSide.landowner
+
+
+# --- P3.1 / R2: yedi yeni enum tipi ---
+
+
+def test_yedi_yeni_enum_uyeleri():
+    """Spec §3.1 ve §4.1/4.2 tablolarindaki deger kumeleri BIREBIR."""
+    assert [m.value for m in BlockRoofType] == ["none", "duplex", "terrace"]
+    assert [m.value for m in BlockGroundUsage] == ["commercial", "apartment", "common"]
+    assert [m.value for m in BlockParkingType] == ["closed", "open", "none"]
+    assert [m.value for m in BlockStatus] == ["planning", "construction", "completed"]
+    assert [m.value for m in UnitFacing] == ["south", "southwest", "east", "north", "west"]
+    assert [m.value for m in UnitParkingRight] == ["none", "one_closed", "two"]
+    assert [m.value for m in UnitSalesStatus] == ["listed", "reserved", "sold", "closed"]
+
+
+def test_unit_facing_bes_deger():
+    """Karar 7: mockup'ta gecen TAM OLARAK bes yon; `northeast` / `northwest` /
+    `southeast` ICAT EDILMEZ."""
+    assert len(UnitFacing) == 5
+    for absent in ("northeast", "northwest", "southeast"):
+        assert absent not in {m.value for m in UnitFacing}
