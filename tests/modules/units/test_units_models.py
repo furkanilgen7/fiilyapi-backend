@@ -336,3 +336,197 @@ def test_unit_facing_bes_deger():
     assert len(UnitFacing) == 5
     for absent in ("northeast", "northwest", "southeast"):
         assert absent not in {m.value for m in UnitFacing}
+
+
+# --- P3.1 / R3: 21 yeni kolon ---
+
+BLOCK_NEW_COLUMNS = (
+    "code",
+    "basement_floor_count",
+    "floor_count",
+    "roof_type",
+    "units_per_floor",
+    "ground_floor_usage",
+    "shop_count",
+    "construction_area_m2",
+    "elevator_count",
+    "parking_type",
+    "estimated_delivery_date",
+    "status",
+    "notes",
+)
+UNIT_NEW_COLUMNS = (
+    "floor",
+    "facing",
+    "balcony_area_m2",
+    "bathroom_count",
+    "parking_right",
+    "min_sale_price",
+    "vat_rate",
+    "sales_status",
+)
+
+
+async def _nullability(session, table: str) -> dict[str, str]:
+    rows = (
+        await session.execute(
+            text(
+                "SELECT column_name, is_nullable FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = :table"
+            ),
+            {"table": table},
+        )
+    ).all()
+    return {name: nullable for name, nullable in rows}
+
+
+async def test_blocks_13_yeni_kolon_hepsi_nullable(db_session):
+    """Plan §0.A.5: bu dilimde HICBIR kolon NOT NULL yapilmaz (taslak destegi)."""
+    nullability = await _nullability(db_session, "blocks")
+    assert {column: nullability.get(column) for column in BLOCK_NEW_COLUMNS} == {
+        column: "YES" for column in BLOCK_NEW_COLUMNS
+    }
+
+
+async def test_units_8_yeni_kolon_hepsi_nullable(db_session):
+    nullability = await _nullability(db_session, "units")
+    assert {column: nullability.get(column) for column in UNIT_NEW_COLUMNS} == {
+        column: "YES" for column in UNIT_NEW_COLUMNS
+    }
+
+
+async def test_units_floor_string20_ve_check_yok(db_session):
+    """Karar 4: kat METINDIR; `ck_units_floor` YOKTUR."""
+    row = (
+        await db_session.execute(
+            text(
+                "SELECT data_type, character_maximum_length FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = 'units' AND column_name = 'floor'"
+            )
+        )
+    ).one()
+    assert row.data_type == "character varying"
+    assert row.character_maximum_length == 20
+
+    constraints = (
+        (
+            await db_session.execute(
+                text(
+                    "SELECT conname FROM pg_constraint WHERE conrelid = 'units'::regclass "
+                    "AND contype = 'c'"
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert "ck_units_floor" not in set(constraints)
+
+
+async def test_yeni_check_kisitlari_isimleriyle_var(db_session):
+    """Spec §3.1 / §4.1 tablolarindaki CHECK adlari BIREBIR."""
+    for table, expected in (
+        (
+            "blocks",
+            {
+                "ck_blocks_basement_floor_count",
+                "ck_blocks_floor_count",
+                "ck_blocks_units_per_floor",
+                "ck_blocks_shop_count",
+                "ck_blocks_construction_area",
+                "ck_blocks_elevator_count",
+            },
+        ),
+        (
+            "units",
+            {
+                "ck_units_balcony_area",
+                "ck_units_bathroom_count",
+                "ck_units_min_sale_price",
+                "ck_units_vat_rate",
+            },
+        ),
+    ):
+        names = set(
+            (
+                await db_session.execute(
+                    text(
+                        "SELECT conname FROM pg_constraint "
+                        f"WHERE conrelid = '{table}'::regclass AND contype = 'c'"
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert expected <= names, f"{table}: eksik CHECK {expected - names}"
+
+
+async def test_status_server_default_construction(db_session, project_factory):
+    project = await project_factory("P-UNIT-19")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site, name="Varsayilan Blok")
+    await db_session.refresh(block)
+    assert block.status is BlockStatus.construction
+
+
+async def test_sales_status_server_default_listed(db_session, project_factory):
+    project = await project_factory("P-UNIT-20")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+    unit = _unit(project, block)
+    db_session.add(unit)
+    await db_session.flush()
+    await db_session.refresh(unit)
+    assert unit.sales_status is UnitSalesStatus.listed
+
+
+async def test_uq_blocks_project_code_null_serbest(db_session, project_factory):
+    """Postgres'te birden cok NULL serbesttir: kodu olmayan eski bloklar kisiti ihlal etmez."""
+    project = await project_factory("P-UNIT-21")
+    site = await _site(db_session, project)
+    await _block(db_session, project, site, name="A Blok", code=None)
+    await _block(db_session, project, site, name="B Blok", code=None)  # dogurgan olmadan gecmeli
+
+
+async def test_uq_blocks_project_code_ayni_kod_reddedilir(db_session, project_factory):
+    project = await project_factory("P-UNIT-22")
+    site = await _site(db_session, project)
+    await _block(db_session, project, site, name="A Blok", code="A")
+
+    db_session.add(Block(project_id=project.id, site_id=site.id, name="B Blok", code="A"))
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+async def test_negatif_sayac_check_ihlali(db_session, project_factory):
+    project = await project_factory("P-UNIT-23")
+    site = await _site(db_session, project)
+
+    db_session.add(Block(project_id=project.id, site_id=site.id, name="Eksi Blok", floor_count=-1))
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+async def test_units_vat_rate_check_0_100(db_session, project_factory):
+    project = await project_factory("P-UNIT-24")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+
+    db_session.add(_unit(project, block, vat_rate=Decimal("101.00")))
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+def test_sales_status_docstring_p8_notu_icerir():
+    """Bir sonraki ajan sutunu "P3 ihlali" sanip SILMEMELIDIR (spec §4.4).
+
+    Docstring hem YENI gecis notunu tasimali hem de P3'un artik gecersiz olan
+    "sales_status sutunu YOKTUR" iddiasini TASIMAMALIDIR.
+    """
+    doc = Unit.__doc__
+    assert doc is not None
+    assert "GELECEK IS — P8" in doc
+    assert "sales_status" in doc
+    assert "gecici bir cozumdur" in doc
+    assert "`sales_status` gibi sutunlar yoktur" not in doc

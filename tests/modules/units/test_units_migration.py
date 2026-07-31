@@ -61,6 +61,34 @@ P31_R2_TYPE_LABELS = {
 }
 P31_R2_TYPES = tuple(P31_R2_TYPE_LABELS)
 
+P31_R3_PARENT = P31_R2_REVISION
+P31_R3_REVISION = "c3d4e5f6a7b8"
+P31_R3_BLOCK_COLUMNS = (
+    "code",
+    "basement_floor_count",
+    "floor_count",
+    "roof_type",
+    "units_per_floor",
+    "ground_floor_usage",
+    "shop_count",
+    "construction_area_m2",
+    "elevator_count",
+    "parking_type",
+    "estimated_delivery_date",
+    "status",
+    "notes",
+)
+P31_R3_UNIT_COLUMNS = (
+    "floor",
+    "facing",
+    "balcony_area_m2",
+    "bathroom_count",
+    "parking_right",
+    "min_sale_price",
+    "vat_rate",
+    "sales_status",
+)
+
 
 def _asyncpg_dsn(database: str) -> str:
     """settings.test_database_url'i asyncpg'nin anladigi duz DSN'e cevirir."""
@@ -93,6 +121,15 @@ async def _table_exists(conn: asyncpg.Connection, name: str) -> bool:
 
 async def _type_exists(conn: asyncpg.Connection, name: str) -> bool:
     return await conn.fetchval("SELECT EXISTS (SELECT 1 FROM pg_type WHERE typname = $1)", name)
+
+
+async def _constraint_exists(conn: asyncpg.Connection, table: str, name: str) -> bool:
+    return await conn.fetchval(
+        "SELECT EXISTS (SELECT 1 FROM pg_constraint "
+        "WHERE conrelid = $1::regclass AND conname = $2)",
+        table,
+        name,
+    )
 
 
 async def _current_revision(conn: asyncpg.Connection) -> str | None:
@@ -317,3 +354,128 @@ async def test_r2_ikinci_upgrade_patlamaz():
                 assert await _type_exists(conn, enum_type), (
                     f"{enum_type} ikinci upgrade sonrasi yok"
                 )
+
+
+# --- P3.1 / R3: 21 kolon + 1 UNIQUE + CHECK'ler ---
+
+
+async def _columns(conn: asyncpg.Connection, table: str) -> dict[str, str]:
+    rows = await conn.fetch(
+        "SELECT column_name, is_nullable FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = $1",
+        table,
+    )
+    return {row["column_name"]: row["is_nullable"] for row in rows}
+
+
+async def _seed_block_and_unit(conn: asyncpg.Connection) -> tuple[str, str]:
+    """R3 ONCESI bir blok ve bir unite yazar; upgrade'in mevcut satirlari
+    degistirmedigi boyle olculur (karar 8: veri migration'i YOKTUR)."""
+    project_id = str(uuid.uuid4())
+    site_id = str(uuid.uuid4())
+    block_id = str(uuid.uuid4())
+    unit_id = str(uuid.uuid4())
+    await conn.execute(
+        "INSERT INTO projects (id, code, name, budget, progress_pct) "
+        "VALUES ($1::uuid, 'P-MIG-1', 'Migration Projesi', 0, 0)",
+        project_id,
+    )
+    await conn.execute(
+        "INSERT INTO sites (id, project_id, code, name) "
+        "VALUES ($1::uuid, $2::uuid, 'SNT-MIG-1', 'Merkez')",
+        site_id,
+        project_id,
+    )
+    await conn.execute(
+        "INSERT INTO blocks (id, project_id, site_id, name) "
+        "VALUES ($1::uuid, $2::uuid, $3::uuid, 'A Blok')",
+        block_id,
+        project_id,
+        site_id,
+    )
+    await conn.execute(
+        "INSERT INTO units (id, project_id, block_id, unit_no, unit_kind) "
+        "VALUES ($1::uuid, $2::uuid, $3::uuid, '1', 'apartment')",
+        unit_id,
+        project_id,
+        block_id,
+    )
+    return block_id, unit_id
+
+
+async def test_r3_upgrade_downgrade_upgrade():
+    async with _temp_database("p31_r3_mig") as database:
+        _run_alembic("upgrade", P31_R3_PARENT, database=database)
+        async with _connect(database) as conn:
+            block_before = await _columns(conn, "blocks")
+            unit_before = await _columns(conn, "units")
+            for column in P31_R3_BLOCK_COLUMNS:
+                assert column not in block_before
+            for column in P31_R3_UNIT_COLUMNS:
+                assert column not in unit_before
+
+        _run_alembic("upgrade", P31_R3_REVISION, database=database)
+        async with _connect(database) as conn:
+            blocks = await _columns(conn, "blocks")
+            units = await _columns(conn, "units")
+            # 21 kolonun TAMAMI nullable (plan §0.A.5).
+            assert [blocks.get(c) for c in P31_R3_BLOCK_COLUMNS] == ["YES"] * 13
+            assert [units.get(c) for c in P31_R3_UNIT_COLUMNS] == ["YES"] * 8
+            assert await _constraint_exists(conn, "blocks", "uq_blocks_project_code")
+            assert not await _constraint_exists(conn, "units", "ck_units_floor")
+            assert await _current_revision(conn) == P31_R3_REVISION
+
+        _run_alembic("downgrade", P31_R3_PARENT, database=database)
+        async with _connect(database) as conn:
+            blocks = await _columns(conn, "blocks")
+            units = await _columns(conn, "units")
+            for column in P31_R3_BLOCK_COLUMNS:
+                assert column not in blocks, f"blocks.{column} downgrade sonrasi duruyor"
+            for column in P31_R3_UNIT_COLUMNS:
+                assert column not in units, f"units.{column} downgrade sonrasi duruyor"
+            # Tipler R2'nin sorumlulugudur: R3 downgrade'i onlari DUSURMEZ.
+            for enum_type in P31_R2_TYPES:
+                assert await _type_exists(conn, enum_type)
+
+        _run_alembic("upgrade", P31_R3_REVISION, database=database)
+        async with _connect(database) as conn:
+            assert set(P31_R3_BLOCK_COLUMNS) <= set(await _columns(conn, "blocks"))
+            assert set(P31_R3_UNIT_COLUMNS) <= set(await _columns(conn, "units"))
+
+
+async def test_r3_mevcut_satirlar_degismez():
+    """Karar 8: canli satirlara dokunan veri migration'i YOKTUR.
+
+    `status` / `sales_status` yalniz YENI satirlar icin varsayilan alir; mevcut
+    satirlarda NULL kalirlar. Bu yuzden kolonlar ONCE varsayilansiz eklenir,
+    varsayilan SONRA `SET DEFAULT` ile konur — `ADD COLUMN ... DEFAULT` mevcut
+    satirlari da doldururdu.
+    """
+    async with _temp_database("p31_r3_data") as database:
+        _run_alembic("upgrade", P31_R3_PARENT, database=database)
+        async with _connect(database) as conn:
+            block_id, unit_id = await _seed_block_and_unit(conn)
+            block_before = dict(
+                await conn.fetchrow("SELECT * FROM blocks WHERE id = $1::uuid", block_id)
+            )
+            unit_before = dict(
+                await conn.fetchrow("SELECT * FROM units WHERE id = $1::uuid", unit_id)
+            )
+
+        _run_alembic("upgrade", P31_R3_REVISION, database=database)
+        async with _connect(database) as conn:
+            block_after = dict(
+                await conn.fetchrow("SELECT * FROM blocks WHERE id = $1::uuid", block_id)
+            )
+            unit_after = dict(
+                await conn.fetchrow("SELECT * FROM units WHERE id = $1::uuid", unit_id)
+            )
+
+        for column, value in block_before.items():
+            assert block_after[column] == value, f"blocks.{column} degisti"
+        for column, value in unit_before.items():
+            assert unit_after[column] == value, f"units.{column} degisti"
+        for column in P31_R3_BLOCK_COLUMNS:
+            assert block_after[column] is None, f"blocks.{column} mevcut satirda NULL degil"
+        for column in P31_R3_UNIT_COLUMNS:
+            assert unit_after[column] is None, f"units.{column} mevcut satirda NULL degil"
