@@ -84,6 +84,12 @@ async def _unit(session, project, block, unit_no: str = "1", **kwargs) -> Unit:
     return unit
 
 
+def _bos_sayac() -> dict[str, int]:
+    """P3.1 §4.3: `UnitKindBreakdown` bes sayacli (UE 74). Karar 13: EKRAN
+    etiketleri degismez, yalniz sayaclar eklenir."""
+    return {"apartment": 0, "shop": 0, "office": 0, "warehouse": 0, "parking": 0, "total": 0}
+
+
 async def _count_units_in_block(session, block_id: uuid.UUID) -> int:
     """B7 test 6'nin KANITIDIR: 409 sonrasi unite sayisinin DEGISMEDIGINI olcer.
 
@@ -159,7 +165,8 @@ async def test_get_blocks_returns_empty_block(client, db_session, user_factory, 
     blocks = resp.json()["blocks"]
     assert [b["name"] for b in blocks] == ["A Blok"]
     assert blocks[0]["site_name"] == "Kuzey"
-    assert blocks[0]["counts"] == {"apartment": 0, "shop": 0, "total": 0}
+    # P3.1 §4.3: `UnitKindBreakdown` uc yeni sayac aldi (UE 74).
+    assert blocks[0]["counts"] == _bos_sayac()
 
 
 # --- GET /projects/{id}/units (spec §7.4) ---
@@ -255,11 +262,19 @@ async def test_get_units_happy_path_matches_spec_envelope(
         "owner_side",
         "is_landowner_share",
         "sort_order",
+        "floor",
+        "facing",
+        "balcony_area_m2",
+        "bathroom_count",
+        "parking_right",
+        "min_sale_price",
+        "vat_rate",
         "sales_status",
         "sale_price",
         "buyer_name",
         "shareholder",
         "unit_cost",
+        "expected_profit",
     }
     assert unit["label"] == "A Blok · 12"
     assert unit["unit_price_per_m2"] == "8098.59"
@@ -446,7 +461,7 @@ async def test_create_block_auto_assigns_single_site(
     assert body["site_id"] == str(site.id)
     assert body["site_name"] == "Kuzey"
     assert body["name"] == "A Blok"
-    assert body["counts"] == {"apartment": 0, "shop": 0, "total": 0}
+    assert body["counts"] == _bos_sayac()
 
 
 async def test_create_block_without_any_site_returns_422(client, user_factory, project_factory):
@@ -1575,3 +1590,169 @@ async def test_blok_negatif_sayac_422(client, db_session, user_factory, project_
     )
 
     assert resp.status_code == 422
+
+
+# --- P3.1 T6: unite formunun 8 yeni alani (spec §2.2, §4.1-§4.5) ---
+
+_UNITE_FORMU = {
+    "floor": "3. Kat",  # UE 66 — METIN (karar 4)
+    "facing": "southwest",  # UE 78
+    "balcony_area_m2": "14.00",  # UE 79
+    "bathroom_count": 2,  # UE 80
+    "parking_right": "one_closed",  # UE 81
+    "min_sale_price": "1380000.00",  # UE 92
+    "vat_rate": "10.00",  # UE 93
+    "sales_status": "sold",  # UE 94
+}
+
+
+async def test_unite_8_yeni_alan_yazilir_ve_doner(
+    client, db_session, user_factory, project_factory
+):
+    project = await project_factory("T6-1")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.post(
+        f"/projects/{project.id}/units",
+        json={"block_id": str(block.id), "unit_no": "B-12", "unit_kind": "apartment"}
+        | _UNITE_FORMU,
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 201
+    body = resp.json()
+    for field, value in _UNITE_FORMU.items():
+        assert body[field] == value, field
+
+
+async def test_sales_status_gonderilmezse_listed(client, db_session, user_factory, project_factory):
+    """UE 94'te "Satışta (Boş)" `selected` gelir → sunucu varsayilani `listed`.
+
+    Varsayilan ZORUNLULUK DEGILDIR (karar 11): alan gonderilmeyebilir.
+    """
+    project = await project_factory("T6-2")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.post(
+        f"/projects/{project.id}/units",
+        json={"block_id": str(block.id), "unit_no": "1", "unit_kind": "apartment"},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 201
+    assert resp.json()["sales_status"] == "listed"
+
+
+async def test_unit_kind_office_warehouse_parking_201(
+    client, db_session, user_factory, project_factory
+):
+    """UE 74 bes secenek: enum genislemesi uctan uca calisir (spec §4.3)."""
+    project = await project_factory("T6-3")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+    token = await _login(client, user_factory, "system_admin")
+
+    for index, kind in enumerate(("office", "warehouse", "parking")):
+        resp = await client.post(
+            f"/projects/{project.id}/units",
+            json={"block_id": str(block.id), "unit_no": f"{index}", "unit_kind": kind},
+            headers=_auth(token),
+        )
+        assert resp.status_code == 201, kind
+        assert resp.json()["unit_kind"] == kind
+
+
+async def test_floor_cati_kati_aynen_doner_21_karakter_422(
+    client, db_session, user_factory, project_factory
+):
+    """Karar 4: kat METINDIR — mockup etiketi AYNEN saklanir, sayiya cevrilmez."""
+    project = await project_factory("T6-4")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.post(
+        f"/projects/{project.id}/units",
+        json={
+            "block_id": str(block.id),
+            "unit_no": "1",
+            "unit_kind": "apartment",
+            "floor": "Çatı Katı",
+        },
+        headers=_auth(token),
+    )
+    assert resp.status_code == 201
+    assert resp.json()["floor"] == "Çatı Katı"
+
+    too_long = await client.post(
+        f"/projects/{project.id}/units",
+        json={
+            "block_id": str(block.id),
+            "unit_no": "2",
+            "unit_kind": "apartment",
+            "floor": "K" * 21,
+        },
+        headers=_auth(token),
+    )
+    assert too_long.status_code == 422
+
+
+async def test_floor_gonderilmezse_none_201(client, db_session, user_factory, project_factory):
+    """UE 66'da kirmizi `*` var ama zorunluluk DOGURMAZ (karar 11)."""
+    project = await project_factory("T6-5")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.post(
+        f"/projects/{project.id}/units",
+        json={"block_id": str(block.id), "unit_no": "1", "unit_kind": "apartment"},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 201
+    assert resp.json()["floor"] is None
+
+
+async def test_patch_sales_status_sold_200(client, db_session, user_factory, project_factory):
+    """Kullanici karari 2: satis durumu BUGUN ELLE degistirilebilir (spec §4.4).
+
+    P8 geldiginde bu alan otomatiklesecek ve elle giris KILITLENECEKTIR.
+    """
+    project = await project_factory("T6-6")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+    unit = await _unit(db_session, project, block, "1")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.patch(
+        f"/units/{unit.id}", json={"sales_status": "sold"}, headers=_auth(token)
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["sales_status"] == "sold"
+
+
+async def test_expected_profit_ve_unit_cost_yer_tutucu(
+    client, db_session, user_factory, project_factory
+):
+    """Karar 3: maliyet ELLE GIRILMEZ → UE 91 ve UE 97-99 YER TUTUCUDUR.
+
+    Maliyet ileride Is Kalemleri/satinalmadan hesaplanacak; bugun kolon ACILMAZ.
+    """
+    project = await project_factory("T6-7")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+    await _unit(db_session, project, block, "1")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.get(f"/projects/{project.id}/units", headers=_auth(token))
+
+    unit = resp.json()["blocks"][0]["units"][0]
+    for field in ("unit_cost", "expected_profit"):
+        assert unit[field]["available"] is False, field
+        assert unit[field]["pending_module"] == "project_costs", field

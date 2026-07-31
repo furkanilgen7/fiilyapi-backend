@@ -20,6 +20,7 @@ from app.modules.units.guards import visible_projects
 from app.modules.units.models import Block, Unit, UnitKind
 from app.modules.units.schemas import (
     BLOCK_FORM_FIELDS,
+    UNIT_FORM_FIELDS,
     BlockCreate,
     BlockListResponse,
     BlockResponse,
@@ -272,6 +273,7 @@ async def create_unit(
         appraisal_value=data.appraisal_value,
         owner_side=data.owner_side,
         sort_order=data.sort_order,
+        **data.model_dump(include=set(UNIT_FORM_FIELDS)),
     )
     session.add(unit)
     await session.flush()

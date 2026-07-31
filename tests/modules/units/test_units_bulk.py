@@ -232,7 +232,14 @@ async def test_bulk_applies_common_defaults(client, db_session, user_factory, pr
     assert all(u["unit_kind"] == "shop" for u in units)
     assert all(u["layout"] == "3+1" for u in units)
     assert all(u["list_price"] == "1150000.00" for u in units)
-    assert resp.json()["totals"]["counts"] == {"apartment": 0, "shop": 2, "total": 2}
+    assert resp.json()["totals"]["counts"] == {
+        "apartment": 0,
+        "shop": 2,
+        "office": 0,
+        "warehouse": 0,
+        "parking": 0,
+        "total": 2,
+    }
 
 
 async def test_bulk_conflict_returns_409_and_writes_nothing(

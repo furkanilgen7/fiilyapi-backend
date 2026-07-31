@@ -67,6 +67,10 @@ def _counts(units: list[Unit]) -> UnitKindBreakdown:
     return UnitKindBreakdown(
         apartment=sum(1 for u in units if u.unit_kind is UnitKind.apartment),
         shop=sum(1 for u in units if u.unit_kind is UnitKind.shop),
+        # UE 74 (spec §4.3) — karar 13: sayaclar eklenir, EKRAN ETIKETLERI DEGIL.
+        office=sum(1 for u in units if u.unit_kind is UnitKind.office),
+        warehouse=sum(1 for u in units if u.unit_kind is UnitKind.warehouse),
+        parking=sum(1 for u in units if u.unit_kind is UnitKind.parking),
     )
 
 
@@ -103,8 +107,9 @@ def to_block(block: Block, site_name: str, units: list[Unit]) -> BlockResponse:
 
 
 def to_unit(unit: Unit, block_name: str) -> UnitResponse:
-    """Satis alanlari (KY 275-277, KKP 91-92) P8/P9/P10'un isidir ve yer tutucu
-    doner — `units`'te saklanmaz (spec §4.6)."""
+    """Satis FIYATI/ALICISI (KY 275/277, KKP 91) hâlâ P8/P9'un isidir ve yer
+    tutucu doner. Satis DURUMU (UE 94) P3.1'de gercek sutuna dondu — kullanici
+    karari 2, P3 §4.6'dan bilincli donus (spec §4.4)."""
     return UnitResponse(
         id=unit.id,
         block_id=unit.block_id,
@@ -118,11 +123,21 @@ def to_unit(unit: Unit, block_name: str) -> UnitResponse:
         appraisal_value=unit.appraisal_value,
         owner_side=unit.owner_side,
         sort_order=unit.sort_order,
-        sales_status=_metric(_UNIT_SALES),
+        floor=unit.floor,
+        facing=unit.facing,
+        balcony_area_m2=unit.balcony_area_m2,
+        bathroom_count=unit.bathroom_count,
+        parking_right=unit.parking_right,
+        min_sale_price=unit.min_sale_price,
+        vat_rate=unit.vat_rate,
+        # UE 94 artik GERCEK degerdir (kullanici karari 2, spec §4.4).
+        sales_status=unit.sales_status,
         sale_price=_metric(_UNIT_SALES),
         buyer_name=_metric(_UNIT_SALES),
         shareholder=_metric(_SHAREHOLDER_UNITS),
+        # Maliyet kolonu ACILMAZ (karar 3): maliyet yoksa kâr da yoktur.
         unit_cost=_metric(_PROJECT_COSTS),
+        expected_profit=_metric(_PROJECT_COSTS),
     )
 
 

@@ -50,6 +50,9 @@ SITE_REQUIRED = "Birden fazla şantiye var, blok için şantiye seçilmelidir"
 OWNER_SIDE_NOT_ALLOWED = "Ünite payı yalnızca kat karşılığı projelerde belirlenebilir"
 ALLOCATION_WRONG_TYPE = "Paylaşım yalnızca kat karşılığı projelerde kaydedilebilir"
 NET_GT_GROSS = "Net alan brüt alandan büyük olamaz"
+# Karar 9 (spec §4.2, §8.3): kume KODDA sabittir ve `schemas.VatRate` zorlar —
+# metin diger tum alan mesajlariyla birlikte BURADA durur.
+INVALID_VAT_RATE = "KDV oranı yalnızca %1, %10 veya %20 olabilir"
 DUPLICATE_IN_PAYLOAD = "Aynı ünite listede birden çok kez var"
 
 

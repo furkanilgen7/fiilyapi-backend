@@ -2,19 +2,24 @@ import enum
 import uuid
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
+from typing import Annotated
 
-from pydantic import BaseModel, Field, computed_field, model_validator
+from pydantic import AfterValidator, BaseModel, Field, computed_field, model_validator
 
 # Yer tutucu sozlesmesi TEK yerde tanimlidir (B6/P1, spec §6): kopyalanmaz,
 # projects modulunden import edilir (BOQ `schemas.py:8` deseninin aynisi).
 from app.modules.projects.schemas import CountPlaceholder, MetricPlaceholder
+from app.modules.units.guards import INVALID_VAT_RATE
 from app.modules.units.models import (
     BlockGroundUsage,
     BlockParkingType,
     BlockRoofType,
     BlockStatus,
+    UnitFacing,
     UnitKind,
     UnitOwnerSide,
+    UnitParkingRight,
+    UnitSalesStatus,
 )
 
 __all__ = [
@@ -33,6 +38,7 @@ __all__ = [
     "UnitBlockGroup",
     "UnitBulkCreate",
     "UnitCreate",
+    "UnitFacing",
     "UnitImportResult",
     "UnitImportRowError",
     "UnitKind",
@@ -41,7 +47,9 @@ __all__ = [
     "UnitNumberingPattern",
     "UnitOwnerSide",
     "UnitOwnerSideFilter",
+    "UnitParkingRight",
     "UnitResponse",
+    "UnitSalesStatus",
     "UnitSideSummary",
     "UnitTotals",
     "UnitUpdate",
@@ -57,11 +65,31 @@ _MAX_IMPORT_BYTES = 2 * 1024 * 1024
 _MAX_IMPORT_ROWS = 1000
 
 _LABEL_SEPARATOR = " · "
+
+# KARAR 9: KDV listesi (%1 / %10 / %20) KODDA SABITTIR (UE 93). Sutun
+# `Numeric(5,2)` serbest kalir ve DB CHECK yalniz `0..100` der — kumeyi burasi
+# zorlar. Gerekce: KDV yasayla degisen bir listedir; gun gelip %8 eklenirse
+# migration degil, BU SATIR degisir (spec §4.2).
+_ALLOWED_VAT_RATES = (Decimal("1"), Decimal("10"), Decimal("20"))
 _MONEY = Decimal("0.01")
 
 
 def _quantize_money(value: Decimal) -> Decimal:
     return value.quantize(_MONEY, rounding=ROUND_HALF_UP)
+
+
+def _check_vat_rate(value: Decimal | None) -> Decimal | None:
+    if value is not None and value not in _ALLOWED_VAT_RATES:
+        raise ValueError(INVALID_VAT_RATE)
+    return value
+
+
+# `Create` ve `Update` AYNI kurala tabidir; iki ayri validator zamanla ayrisir.
+VatRate = Annotated[
+    Decimal | None,
+    Field(default=None, ge=0, max_digits=5, decimal_places=2),
+    AfterValidator(_check_vat_rate),
+]
 
 
 class UnitValueBasis(str, enum.Enum):
@@ -95,13 +123,18 @@ class UnitKindBreakdown(BaseModel):
     """KY 71 "48 Daire + 4 Dukkan", KK 121, SY 104. `total` turevdir: iki sayacin
     toplami saklanmaz, yoksa zamanla kayabilir."""
 
-    apartment: int = 0
-    shop: int = 0
+    apartment: int = 0  # KY 71 "48 Daire"
+    shop: int = 0  # KY 71 "4 Dukkan"
+    # UE 74 (spec §4.3). KARAR 13: ekran ETIKETLERI DEGISMEZ — KY 71 / KK 72 /
+    # SY 74 hâlâ "Daire + Dukkan" der; uc yeni sayac sifirsa ekranda GORUNMEZ.
+    office: int = 0
+    warehouse: int = 0
+    parking: int = 0
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def total(self) -> int:
-        return self.apartment + self.shop
+        return self.apartment + self.shop + self.office + self.warehouse + self.parking
 
 
 class BlockResponse(BaseModel):
@@ -157,12 +190,25 @@ class UnitResponse(BaseModel):
     appraisal_value: Decimal | None  # KKP 89 "Rayic Deger"
     owner_side: UnitOwnerSide | None  # KKP 90 "Sahip"
     sort_order: int
+    # --- Unite formu (UE), spec §4.1 ---
+    floor: str | None  # UE 66 — METIN (karar 4)
+    facing: UnitFacing | None  # UE 78
+    balcony_area_m2: Decimal | None  # UE 79
+    bathroom_count: int | None  # UE 80
+    parking_right: UnitParkingRight | None  # UE 81
+    min_sale_price: Decimal | None  # UE 92
+    vat_rate: Decimal | None  # UE 93
+    # UE 94 — ARTIK YER TUTUCU DEGIL (kullanici karari 2, spec §4.4). P8
+    # geldiginde OTOMATIKLESECEK ve elle giris kilitlenecektir.
+    sales_status: UnitSalesStatus | None
     # --- ileri dilim yer tutuculari ---
-    sales_status: MetricPlaceholder  # P8 (KY 276, KKP 92)
     sale_price: MetricPlaceholder  # P8 (KY 275)
     buyer_name: MetricPlaceholder  # P8 (KY 277)
     shareholder: MetricPlaceholder  # P9 (KKP 91)
-    unit_cost: MetricPlaceholder  # P10 (FDS 62)
+    # KARAR 3: maliyet ELLE GIRILMEZ, kolon ACILMAZ (spec §4.5) — ileride Is
+    # Kalemleri/satinalmadan hesaplanacak. Maliyet yoksa kâr da yoktur.
+    unit_cost: MetricPlaceholder  # UE 91 / FDS 62
+    expected_profit: MetricPlaceholder  # UE 97-99
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -282,7 +328,32 @@ class BlockUpdate(_BlockFormFields):
     sort_order: int | None = Field(default=None, ge=0)
 
 
-class UnitCreate(BaseModel):
+class _UnitFormFields(BaseModel):
+    """UE formunun 8 yeni alani — `Create` ve `Update` icin TEK kopya (§4.1).
+
+    KARAR 11: **HICBIRI ZORUNLU DEGILDIR.** UE 66 (`floor`) ve UE 94
+    (`sales_status`) mockup'ta kirmizi `*` tasir; bu YALNIZ UI ipucudur. Excel
+    ice aktarma `Kat` sutununu zorunlu tutmuyor — zorunlu yapilsaydi ice aktarma
+    KENDI KENDINI kirardi.
+
+    KARAR 2: `min_sale_price <= list_price` BURADA DA zorlanmaz; ne
+    `model_validator`, ne DB CHECK, ne servis (spec §4.1).
+    """
+
+    floor: str | None = Field(default=None, max_length=20)  # UE 66 — METIN
+    facing: UnitFacing | None = None  # UE 78
+    balcony_area_m2: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=2)
+    bathroom_count: int | None = Field(default=None, ge=0)  # UE 80
+    parking_right: UnitParkingRight | None = None  # UE 81
+    min_sale_price: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=2)
+    vat_rate: VatRate = None  # UE 93 — kume {1, 10, 20} (karar 9)
+
+
+# Servis, yeni alanlari TEK TEK YAZMAK yerine bu kumeyi kullanir.
+UNIT_FORM_FIELDS = frozenset(_UnitFormFields.model_fields) | {"sales_status"}
+
+
+class UnitCreate(_UnitFormFields):
     block_id: uuid.UUID
     unit_no: str = Field(min_length=1, max_length=30)
     unit_kind: UnitKind
@@ -293,9 +364,12 @@ class UnitCreate(BaseModel):
     appraisal_value: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=2)
     owner_side: UnitOwnerSide | None = None
     sort_order: int = Field(default=0, ge=0)
+    # UE 94'te "Satışta (Boş)" `selected` gelir → sunucu VARSAYILANI `listed`.
+    # Varsayilan ZORUNLULUK DEGILDIR (karar 11).
+    sales_status: UnitSalesStatus | None = UnitSalesStatus.listed
 
 
-class UnitUpdate(BaseModel):
+class UnitUpdate(_UnitFormFields):
     """TUM alanlar opsiyoneldir; "gonderilmedi" ile "null yapildi" ayrimi servis
     katmaninda `model_fields_set` ile cozulur (P1/P2/P4 deseni)."""
 
@@ -309,6 +383,8 @@ class UnitUpdate(BaseModel):
     appraisal_value: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=2)
     owner_side: UnitOwnerSide | None = None
     sort_order: int | None = Field(default=None, ge=0)
+    # Kullanici karari 2: satis durumu BUGUN elle degistirilebilir (spec §4.4).
+    sales_status: UnitSalesStatus | None = None
 
 
 class UnitAllocationItem(BaseModel):
