@@ -34,6 +34,21 @@ async def get_payment(session: AsyncSession, payment_id: uuid.UUID) -> ProgressP
     return await session.get(ProgressPayment, payment_id)
 
 
+async def get_payment_locked(
+    session: AsyncSession, payment_id: uuid.UUID
+) -> ProgressPayment | None:
+    """Durum geçişlerinin kilit satırı (spec §7, §9.4).
+
+    `populate_existing=True` ZORUNLUDUR: `session.get` kimlik haritasındaki ESKİ
+    nesneyi döndürebilir ve o zaman kilit alınmış ama DURUM eski değerinden
+    okunmuş olurdu — iki eşzamanlı `approve`'dan ikincisi, birincinin commit'ini
+    GÖREMEDEN ilerlerdi (kilit varmış gibi görünen, aslında olmayan koruma).
+    """
+    return await session.get(
+        ProgressPayment, payment_id, with_for_update=True, populate_existing=True
+    )
+
+
 async def get_contract_locked(
     session: AsyncSession, project_id: uuid.UUID
 ) -> ProjectContract | None:

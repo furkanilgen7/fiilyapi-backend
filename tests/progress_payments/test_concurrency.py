@@ -17,13 +17,13 @@ import uuid
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, event, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import ConflictError
 from app.core.security import hash_password
-from app.modules.progress_payments import schemas, service
-from app.modules.progress_payments.models import ProgressPayment
+from app.modules.progress_payments import schemas, service, transitions
+from app.modules.progress_payments.models import ProgressPayment, ProgressPaymentStatus
 from app.modules.projects.models import Project, ProjectContract
 from app.modules.roles.models import Role
 from app.modules.roles.seed_data import seed_reference_data
@@ -141,6 +141,219 @@ async def _attempt_create(project_id: uuid.UUID, actor_id: uuid.UUID) -> str:
         except ConflictError:
             await session.rollback()
             return "conflict"
+
+
+async def test_iki_esZamanli_onay_yalniz_biri_gecer() -> None:
+    """H6: `approve` geçişi hakediş satırını `SELECT … FOR UPDATE` ile kilitler.
+
+    Kanıt deseni `test_iki_esZamanli_olusturma_yalniz_biri_gecer` ile aynıdır ve
+    aynı gerekçeye dayanır (H4 denetimi Y3): `asyncio.gather` tek başına iki
+    görevi kritik anda KESİŞTİRMEZ. Burada tx1 kilidi alıp TUTARKEN tx2'nin
+    ilerleyemediği doğrudan gösterilir; kilit kalkınca tx2 kaydı YENİDEN okur
+    (`populate_existing`) ve artık `approved` olduğunu görüp 409 alır.
+
+    Kilit YOKSA ya da durum kilit ALTINDA yeniden okunmuyorsa iki senaryo doğar:
+    (a) tx2 beklemez → `not task2.done()` iddiası kırmızı; (b) tx2 eski durumu
+    okur → ikisi de "approved" döner ve `approved_by` ikinci aktörle ÜZERİNE
+    yazılır — son iddia kırmızı.
+    """
+    project_id, user_id, payment_id, ikinci_user_id = await _onay_kurulumu()
+    try:
+        lock_acquired = asyncio.Event()
+        release_lock = asyncio.Event()
+
+        task1 = asyncio.create_task(
+            _attempt_approve_and_hold(payment_id, user_id, lock_acquired, release_lock)
+        )
+        await asyncio.wait_for(lock_acquired.wait(), timeout=5)
+
+        task2 = asyncio.create_task(_attempt_approve(payment_id, ikinci_user_id))
+        await asyncio.sleep(0.3)
+        assert not task2.done(), (
+            "tx2, tx1 kilidi serbest bırakmadan ilerleyebildi — "
+            "`approve` artık hakediş satırını KİLİTLEMİYOR olabilir"
+        )
+
+        release_lock.set()
+        result1 = await asyncio.wait_for(task1, timeout=5)
+        result2 = await asyncio.wait_for(task2, timeout=5)
+        assert sorted([result1, result2]) == ["approved", "conflict"]
+
+        async with _SessionFactory() as verify_session:
+            payment = await verify_session.get(ProgressPayment, payment_id)
+            assert payment.status is ProgressPaymentStatus.approved
+            # Damga TEK kez atıldı: ikinci aktör üzerine YAZAMADI.
+            assert payment.approved_by == user_id
+    finally:
+        await _onay_temizligi(project_id, user_id, ikinci_user_id)
+
+
+async def test_gecis_once_sozlesmeyi_sonra_hakedisi_for_update_ile_okur() -> None:
+    """Kilitlerin VARLIĞI ve SIRASI — SQL düzeyinde.
+
+    Davranış testleri bu iki şeyi ayırt EDEMEZ ve bunu saklamıyoruz: `approve`
+    sözleşme satırını da kilitlediği ve sonunda hakedişi zaten `UPDATE` ettiği
+    için, hakediş satırındaki `FOR UPDATE` kaldırılsa bile eşzamanlılık
+    testleri yeşil kalır (mutasyon denetimi M11'in bulgusu). Kilit yine de
+    spec §7'nin açık gereğidir ve savunmanın YERELLİĞİDİR: yarın kilit almayan
+    ikinci bir geçiş yolu ya da salt-okuma bir karar eklenirse koruma ancak
+    burada durursa ayakta kalır.
+
+    SIRA da burada sabitlenir: **önce `project_contracts`, sonra
+    `progress_payments`** — `service.create` ile AYNI sıra. Ters sırada
+    kilitleyen bir yol eklenirse karşılıklı kilitlenme (deadlock) doğar; bu
+    iddia o günü kırmızıyla karşılar.
+    """
+    project_id, user_id, payment_id, ikinci_user_id = await _onay_kurulumu()
+    ifadeler: list[str] = []
+
+    def kaydet(conn, cursor, statement, parameters, context, executemany) -> None:  # noqa: ANN001
+        ifadeler.append(" ".join(statement.split()))
+
+    event.listen(test_engine.sync_engine, "before_cursor_execute", kaydet)
+    try:
+        async with _SessionFactory() as session:
+            actor = await session.get(User, user_id)
+            await transitions.perform(session, actor, payment_id, transitions.PaymentAction.approve)
+            await session.commit()
+    finally:
+        event.remove(test_engine.sync_engine, "before_cursor_execute", kaydet)
+        await _onay_temizligi(project_id, user_id, ikinci_user_id)
+
+    kilitli = [ifade for ifade in ifadeler if "FOR UPDATE" in ifade]
+    sozlesme = [i for i, ifade in enumerate(kilitli) if "FROM project_contracts" in ifade]
+    hakedis = [i for i, ifade in enumerate(kilitli) if "FROM progress_payments" in ifade]
+    assert sozlesme, f"sözleşme satırı FOR UPDATE ile okunmadı: {kilitli}"
+    assert hakedis, f"hakediş satırı FOR UPDATE ile okunmadı: {kilitli}"
+    assert sozlesme[0] < hakedis[0], f"kilit sırası ters: {kilitli}"
+
+
+async def test_gecis_hakedis_satirinin_kilidini_bekler() -> None:
+    """Yukarıdaki test kilidin VARLIĞINI kanıtlar ama HANGİ satırın kilitlendiğini
+    ayırt edemez: `approve` sözleşme satırını da kilitler ve iki `approve`
+    yarışında dışlamayı tek başına o kilit de sağlayabilir (mutasyon denetimi
+    M11 bunu gösterdi — `progress_payments` satırındaki `FOR UPDATE` kaldırılınca
+    test yeşil kalıyordu).
+
+    Bu test tam olarak HAKEDİŞ SATIRINI hedefler: dışarıdaki bir transaction
+    yalnız o satırı `FOR UPDATE` ile tutar (sözleşmeye DOKUNMAZ) ve geçişin
+    beklediği gösterilir. `repository.get_payment_locked`'taki `with_for_update`
+    kalkarsa geçiş beklemeden ilerler ve `not task.done()` iddiası kırmızıya döner.
+    """
+    project_id, user_id, payment_id, ikinci_user_id = await _onay_kurulumu()
+    try:
+        async with _SessionFactory() as tutan:
+            await tutan.execute(
+                text("SELECT id FROM progress_payments WHERE id = :id FOR UPDATE"),
+                {"id": payment_id},
+            )
+
+            task = asyncio.create_task(_attempt_approve(payment_id, user_id))
+            await asyncio.sleep(0.3)
+            assert not task.done(), (
+                "geçiş, hakediş satırı DIŞARIDAN kilitliyken ilerledi — "
+                "`get_payment_locked` artık `SELECT … FOR UPDATE` yapmıyor olabilir"
+            )
+            await tutan.rollback()
+
+        assert await asyncio.wait_for(task, timeout=5) == "approved"
+    finally:
+        await _onay_temizligi(project_id, user_id, ikinci_user_id)
+
+
+async def _attempt_approve_and_hold(
+    payment_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    lock_acquired: asyncio.Event,
+    release_lock: asyncio.Event,
+) -> str:
+    async with _SessionFactory() as session:
+        actor = await session.get(User, actor_id)
+        await transitions.perform(session, actor, payment_id, transitions.PaymentAction.approve)
+        lock_acquired.set()
+        await release_lock.wait()
+        await session.commit()
+        return "approved"
+
+
+async def _attempt_approve(payment_id: uuid.UUID, actor_id: uuid.UUID) -> str:
+    async with _SessionFactory() as session:
+        actor = await session.get(User, actor_id)
+        try:
+            await transitions.perform(session, actor, payment_id, transitions.PaymentAction.approve)
+            await session.commit()
+            return "approved"
+        except ConflictError:
+            await session.rollback()
+            return "conflict"
+
+
+async def _onay_kurulumu() -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]:
+    """Reel commit'li kurulum: sözleşme + `pending_approval` hakediş + İKİ aktör.
+
+    İki ayrı aktör bilinçlidir: `approved_by`'ın hangi transaction tarafından
+    damgalandığı ancak böyle ayırt edilebilir.
+    """
+    async with _SessionFactory() as session:
+        await seed_reference_data(session)
+        await session.commit()
+
+        role = (await session.execute(select(Role).where(Role.key == "system_admin"))).scalar_one()
+        project = Project(code="PP-CONC-002", name="Onay Eşzamanlılık Projesi")
+        session.add(project)
+        await session.flush()
+        contract = ProjectContract(
+            project_id=project.id,
+            contract_no="SZL-2026-CONC2",
+            amount=Decimal("1000000"),
+            advance_pct=Decimal("10"),
+            retainage_pct=Decimal("5"),
+            vat_pct=Decimal("20"),
+        )
+        session.add(contract)
+        birinci = User(
+            email="onay1@pp-crud.co",
+            password_hash=hash_password("parola1234"),
+            full_name="Onay Aktörü 1",
+            role_id=role.id,
+        )
+        ikinci = User(
+            email="onay2@pp-crud.co",
+            password_hash=hash_password("parola1234"),
+            full_name="Onay Aktörü 2",
+            role_id=role.id,
+        )
+        session.add_all([birinci, ikinci])
+        await session.flush()
+        payment = ProgressPayment(
+            project_id=project.id,
+            sequence_no=1,
+            status=ProgressPaymentStatus.pending_approval,
+            period_year=2026,
+            period_month=3,
+            vat_pct=contract.vat_pct,
+            advance_pct=contract.advance_pct,
+            retainage_pct=contract.retainage_pct,
+            created_by=birinci.id,
+        )
+        session.add(payment)
+        await session.commit()
+        return project.id, birinci.id, payment.id, ikinci.id
+
+
+async def _onay_temizligi(
+    project_id: uuid.UUID, user_id: uuid.UUID, ikinci_user_id: uuid.UUID
+) -> None:
+    async with _SessionFactory() as session:
+        await session.execute(
+            delete(ProgressPayment).where(ProgressPayment.project_id == project_id)
+        )
+        await session.execute(
+            delete(ProjectContract).where(ProjectContract.project_id == project_id)
+        )
+        await session.execute(delete(Project).where(Project.id == project_id))
+        await session.execute(delete(User).where(User.id.in_([user_id, ikinci_user_id])))
+        await session.commit()
 
 
 async def _temizle(project_id: uuid.UUID, user_id: uuid.UUID) -> None:

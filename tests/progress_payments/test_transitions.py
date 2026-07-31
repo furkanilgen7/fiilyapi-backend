@@ -1,0 +1,526 @@
+"""Task H6 — durum geçişleri: submit/approve/reject/mark-paid/unapprove
+(spec §7 tamamı, §9.4, §9.7).
+
+Üç ayrı kural ailesi burada koşar ve BİRBİRİNE KARIŞTIRILMAZ:
+
+1. **Geçiş tablosu** (§7): tanımlı beş çift dışındaki HER çift 409
+   `INVALID_STATUS_TRANSITION` — tam matris parametrize edilir (20 çift, 5 geçerli,
+   15 geçersiz), böylece tabloya kaçak bir çift eklendiğinde test kırmızıya döner.
+2. **İzin kapıları** (§7 tablosu): kapı GÖRÜNÜRLÜKTEN ÖNCE çalışır — yetkisiz rol,
+   GÖRDÜĞÜ bir kayıtta bile 403 alır (404 değil), görmediği kayıtta da 403 alır
+   (varlık sızdırmaz).
+3. **Onay anındaki kota bekçisi** (H5 denetimi O2): kota yalnız yazma anında
+   kontrol edilseydi, aynı anda açık iki taslak kotayı ayrı ayrı geçip toplamda
+   aşardı. `test_ikinci_onay_kotayi_asinca_422` bu deliği kapatır.
+"""
+
+import uuid
+from datetime import UTC, datetime
+from decimal import Decimal
+
+import pytest
+from httpx import AsyncClient
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.modules.progress_payments import guards, lines, transitions
+from app.modules.progress_payments.models import ProgressPayment, ProgressPaymentStatus
+from app.modules.users.models import User
+
+pytestmark = pytest.mark.asyncio
+
+DURUMLAR = [durum.value for durum in ProgressPaymentStatus]
+UCLAR = ["submit", "approve", "reject", "mark-paid", "unapprove"]
+
+# Spec §7 tablosu — BU BEŞ ÇİFT geçerlidir, başka hiçbir çift değildir.
+GECERLI: dict[tuple[str, str], str] = {
+    ("draft", "submit"): "pending_approval",
+    ("pending_approval", "approve"): "approved",
+    ("pending_approval", "reject"): "draft",
+    ("approved", "mark-paid"): "paid",
+    # §7 tablosu: "approved → pending_approval (geri çek)". Taslağa DÖNMEZ —
+    # taslağa dönüş iki adımdır (unapprove + reject), her adımı denetim izli.
+    ("approved", "unapprove"): "pending_approval",
+}
+TUM_CIFTLER = [(durum, uc) for durum in DURUMLAR for uc in UCLAR]
+GECERSIZ_CIFTLER = [cift for cift in TUM_CIFTLER if cift not in GECERLI]
+
+
+async def _durum(session: AsyncSession, payment_id: uuid.UUID) -> ProgressPayment:
+    payment = await session.get(ProgressPayment, payment_id)
+    await session.refresh(payment)
+    return payment
+
+
+# --- 1. Geçiş tablosu (spec §7) ---
+
+
+@pytest.mark.parametrize("durum,uc", GECERSIZ_CIFTLER)
+async def test_gecersiz_gecis_409(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    hakedis_fabrikasi,
+    durum: str,
+    uc: str,
+) -> None:
+    """Tanımsız HER çift 409 `INVALID_STATUS_TRANSITION` — `paid → unapprove`
+    dahil (K7: `paid` sonrası düzeltme yolu YOK).
+
+    Aktör `system_admin`: kapı TÜM uçlarda açıktır, bu yüzden 409'un kaynağı
+    yetki değil YALNIZ geçiş tablosudur.
+    """
+    payment_id = await hakedis_fabrikasi(ProgressPaymentStatus(durum))
+    yanit = await client.post(f"/progress-payments/{payment_id}/{uc}", headers=admin_headers)
+    assert yanit.status_code == 409, yanit.text
+    assert yanit.json()["detail"] == guards.INVALID_STATUS_TRANSITION
+
+
+@pytest.mark.parametrize("cift,hedef", list(GECERLI.items()))
+async def test_gecerli_gecis_hedef_duruma_goturur(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    hakedis_fabrikasi,
+    cift: tuple[str, str],
+    hedef: str,
+) -> None:
+    """Beş geçerli çiftin HEDEFİ de doğrulanır: tablo doğru çifti kabul edip
+    YANLIŞ duruma götürseydi (ör. unapprove → draft) yalnız "409 gelmedi"
+    kontrolü bunu kaçırırdı."""
+    durum, uc = cift
+    payment_id = await hakedis_fabrikasi(ProgressPaymentStatus(durum))
+    yanit = await client.post(f"/progress-payments/{payment_id}/{uc}", headers=admin_headers)
+    assert yanit.status_code == 200, yanit.text
+    assert yanit.json()["status"] == hedef
+
+
+# --- 2. Damgalar (spec §7 tablosu) ---
+
+
+async def test_submit_damga_ve_durum(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    seeded_db: AsyncSession,
+    gecerli_taslak: uuid.UUID,
+) -> None:
+    """E15 71 / OLU 25 "Onaya Gönder": `submitted_at` damgalanır."""
+    onces = datetime.now(UTC)
+    yanit = await client.post(f"/progress-payments/{gecerli_taslak}/submit", headers=admin_headers)
+    assert yanit.status_code == 200, yanit.text
+    assert yanit.json()["status"] == "pending_approval"
+    assert yanit.json()["submitted_at"] is not None
+
+    payment = await _durum(seeded_db, gecerli_taslak)
+    assert payment.status is ProgressPaymentStatus.pending_approval
+    assert payment.submitted_at >= onces
+    assert payment.approved_at is None and payment.approved_by is None and payment.paid_at is None
+
+
+async def test_approve_damgalari(
+    client: AsyncClient,
+    muhasebe_headers: dict[str, str],
+    seeded_db: AsyncSession,
+    hakedis_fabrikasi,
+) -> None:
+    """`approved_by` = ONAYLAYAN aktör (oluşturan değil), `approved_at` dolu."""
+    payment_id = await hakedis_fabrikasi(ProgressPaymentStatus.pending_approval)
+    yanit = await client.post(f"/progress-payments/{payment_id}/approve", headers=muhasebe_headers)
+    assert yanit.status_code == 200, yanit.text
+
+    onaylayan = (
+        await seeded_db.execute(select(User).where(User.email == "muhasebe@pp-transitions.co"))
+    ).scalar_one()
+    payment = await _durum(seeded_db, payment_id)
+    assert payment.status is ProgressPaymentStatus.approved
+    assert payment.approved_by == onaylayan.id
+    assert payment.approved_at is not None
+    assert payment.paid_at is None
+
+
+async def test_mark_paid_damgasi(
+    client: AsyncClient,
+    muhasebe_headers: dict[str, str],
+    seeded_db: AsyncSession,
+    hakedis_fabrikasi,
+) -> None:
+    """K11: `mark-paid` onay seviyesindedir; `paid_at` damgalanır, onay damgaları
+    KORUNUR (ödeme onayı geçersiz kılmaz)."""
+    payment_id = await hakedis_fabrikasi(ProgressPaymentStatus.pending_approval)
+    await client.post(f"/progress-payments/{payment_id}/approve", headers=muhasebe_headers)
+    yanit = await client.post(
+        f"/progress-payments/{payment_id}/mark-paid", headers=muhasebe_headers
+    )
+    assert yanit.status_code == 200, yanit.text
+
+    payment = await _durum(seeded_db, payment_id)
+    assert payment.status is ProgressPaymentStatus.paid
+    assert payment.paid_at is not None
+    assert payment.approved_at is not None and payment.approved_by is not None
+
+
+async def test_unapprove_onay_damgalarini_siler(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    muhasebe_headers: dict[str, str],
+    seeded_db: AsyncSession,
+    hakedis_fabrikasi,
+) -> None:
+    """Onay GERİ ÇEKİLİR: kayıt `pending_approval`'a dönerken `approved_at`/
+    `approved_by` TEMİZLENİR — aksi hâlde onay bekleyen bir kayıt "onaylayan"
+    bilgisi taşır ve denetimde yanlış kişiyi işaret ederdi."""
+    payment_id = await hakedis_fabrikasi(ProgressPaymentStatus.pending_approval)
+    await client.post(f"/progress-payments/{payment_id}/approve", headers=muhasebe_headers)
+
+    yanit = await client.post(f"/progress-payments/{payment_id}/unapprove", headers=admin_headers)
+    assert yanit.status_code == 200, yanit.text
+    assert yanit.json()["status"] == "pending_approval"
+
+    payment = await _durum(seeded_db, payment_id)
+    assert payment.approved_at is None
+    assert payment.approved_by is None
+
+
+async def test_reject_drafta_dondurur_ve_yeniden_duzenlenir(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    hakedis_fabrikasi,
+    hakedis_santiyesi,
+    hakedis_kalemi,
+) -> None:
+    """Ret sonrası taslak YENİDEN DÜZENLENEBİLİR olmalıdır: `PUT …/lines`
+    yalnız `draft`'ta çalıştığı için bu, geçişin gerçekten `draft` hedeflediğinin
+    uçtan uca kanıtıdır."""
+    item, _ = hakedis_kalemi
+    payment_id = await hakedis_fabrikasi(ProgressPaymentStatus.pending_approval)
+
+    ret = await client.post(f"/progress-payments/{payment_id}/reject", headers=admin_headers)
+    assert ret.status_code == 200, ret.text
+    assert ret.json()["status"] == "draft"
+
+    duzenleme = await client.put(
+        f"/progress-payments/{payment_id}/lines",
+        json={
+            "lines": [
+                {
+                    "contract_item_id": str(item.id),
+                    "site_id": str(hakedis_santiyesi.id),
+                    "quantity": "5",
+                }
+            ]
+        },
+        headers=admin_headers,
+    )
+    assert duzenleme.status_code == 200, duzenleme.text
+    assert Decimal(duzenleme.json()["lines"][0]["quantity"]) == Decimal("5")
+
+
+async def test_reject_gerekcesi_kabul_edilir_kolon_acilmaz(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    seeded_db: AsyncSession,
+    hakedis_fabrikasi,
+) -> None:
+    """K12: gövdedeki `reason` kabul edilir (denetim günlüğüne H10'da taşınır),
+    hakediş tablosuna AYRI KOLON açılmaz — yanıt şemasında da yer almaz."""
+    payment_id = await hakedis_fabrikasi(ProgressPaymentStatus.pending_approval)
+    yanit = await client.post(
+        f"/progress-payments/{payment_id}/reject",
+        json={"reason": "Miktarlar şantiye tutanağıyla uyuşmuyor"},
+        headers=admin_headers,
+    )
+    assert yanit.status_code == 200, yanit.text
+    assert yanit.json()["status"] == "draft"
+    assert "reason" not in yanit.json()
+    assert not hasattr(await _durum(seeded_db, payment_id), "reason")
+
+
+# --- 3. Submit zorunluluk kuralları (spec §7, `guards.validate_submit`) ---
+
+
+async def test_submit_donemsiz_422(
+    client: AsyncClient, admin_headers: dict[str, str], hakedis_fabrikasi
+) -> None:
+    payment_id = await hakedis_fabrikasi(ProgressPaymentStatus.draft, donem=False)
+    yanit = await client.post(f"/progress-payments/{payment_id}/submit", headers=admin_headers)
+    assert yanit.status_code == 422, yanit.text
+    assert yanit.json()["detail"] == guards.PERIOD_REQUIRED
+
+
+async def test_submit_satirsiz_422(
+    client: AsyncClient, admin_headers: dict[str, str], hakedis_fabrikasi
+) -> None:
+    payment_id = await hakedis_fabrikasi(ProgressPaymentStatus.draft, miktar=None)
+    yanit = await client.post(f"/progress-payments/{payment_id}/submit", headers=admin_headers)
+    assert yanit.status_code == 422, yanit.text
+    assert yanit.json()["detail"] == guards.LINES_REQUIRED
+
+
+async def test_submit_sifir_miktarli_satirla_422(
+    client: AsyncClient, admin_headers: dict[str, str], hakedis_fabrikasi
+) -> None:
+    """Satır VAR ama Σ miktar = 0: taslakta meşru (OLU 172), onaya gönderilemez."""
+    payment_id = await hakedis_fabrikasi(ProgressPaymentStatus.draft, miktar=Decimal("0"))
+    yanit = await client.post(f"/progress-payments/{payment_id}/submit", headers=admin_headers)
+    assert yanit.status_code == 422, yanit.text
+    assert yanit.json()["detail"] == guards.LINES_REQUIRED
+
+
+async def test_submit_sozlesme_bedelsizken_422(
+    client: AsyncClient, admin_headers: dict[str, str], bedelsiz_sozlesmede_taslak: uuid.UUID
+) -> None:
+    """§6.3: avans tavanı `contract.amount` olmadan uygulanamaz."""
+    yanit = await client.post(
+        f"/progress-payments/{bedelsiz_sozlesmede_taslak}/submit", headers=admin_headers
+    )
+    assert yanit.status_code == 422, yanit.text
+    assert yanit.json()["detail"] == guards.CONTRACT_AMOUNT_REQUIRED
+
+
+async def test_submit_basarisizsa_durum_degismez(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    seeded_db: AsyncSession,
+    hakedis_fabrikasi,
+) -> None:
+    """Zorunluluk kuralı GEÇİŞTEN ÖNCE koşar: 422 alan hakediş `draft` KALIR."""
+    payment_id = await hakedis_fabrikasi(ProgressPaymentStatus.draft, donem=False)
+    await client.post(f"/progress-payments/{payment_id}/submit", headers=admin_headers)
+    payment = await _durum(seeded_db, payment_id)
+    assert payment.status is ProgressPaymentStatus.draft
+    assert payment.submitted_at is None
+
+
+# --- 4. İzin kapıları (spec §7 tablosu; kapı GÖRÜNÜRLÜKTEN ÖNCE) ---
+
+
+async def test_sef_approve_edemez_403(
+    client: AsyncClient,
+    site_chief_headers: dict[str, str],
+    kisitli_projede_onay_bekleyen: uuid.UUID,
+) -> None:
+    """Matris `progress_payments=_DRF`: şef taslak üretir, ONAYLAYAMAZ.
+
+    Kayıt şefin GÖRDÜĞÜ projededir — dönen 403 kapsam değil YETKİ kararıdır.
+    """
+    yanit = await client.post(
+        f"/progress-payments/{kisitli_projede_onay_bekleyen}/approve", headers=site_chief_headers
+    )
+    assert yanit.status_code == 403, yanit.text
+
+
+async def test_saha_submit_edebilir(
+    client: AsyncClient, saha_headers: dict[str, str], gecerli_taslak: uuid.UUID
+) -> None:
+    """Matris `progress_payments=_DRF`: saha mühendisi kendi projesinde onaya
+    gönderebilir (`submit` taslak seviyesindedir)."""
+    yanit = await client.post(f"/progress-payments/{gecerli_taslak}/submit", headers=saha_headers)
+    assert yanit.status_code == 200, yanit.text
+    assert yanit.json()["status"] == "pending_approval"
+
+
+async def test_saha_approve_edemez_403(
+    client: AsyncClient, saha_headers: dict[str, str], hakedis_fabrikasi
+) -> None:
+    payment_id = await hakedis_fabrikasi(ProgressPaymentStatus.pending_approval)
+    yanit = await client.post(f"/progress-payments/{payment_id}/approve", headers=saha_headers)
+    assert yanit.status_code == 403, yanit.text
+
+
+async def test_muhasebe_reject_ve_mark_paid_yapabilir(
+    client: AsyncClient, muhasebe_headers: dict[str, str], hakedis_fabrikasi
+) -> None:
+    """`reject` ve `mark-paid` de ONAY seviyesindedir (§7 tablosu, K11)."""
+    ret_edilecek = await hakedis_fabrikasi(ProgressPaymentStatus.pending_approval)
+    ret = await client.post(f"/progress-payments/{ret_edilecek}/reject", headers=muhasebe_headers)
+    assert ret.status_code == 200, ret.text
+
+    odenecek = await hakedis_fabrikasi(ProgressPaymentStatus.approved)
+    odeme = await client.post(f"/progress-payments/{odenecek}/mark-paid", headers=muhasebe_headers)
+    assert odeme.status_code == 200, odeme.text
+
+
+async def test_admin_disinda_unapprove_403(
+    client: AsyncClient, muhasebe_headers: dict[str, str], hakedis_fabrikasi
+) -> None:
+    """`unapprove` YALNIZ `admin`: onay seviyesindeki muhasebe kendi onayını bile
+    geri çekemez (§7 tablosu — geri çekme silme yolunun ön adımıdır)."""
+    payment_id = await hakedis_fabrikasi(ProgressPaymentStatus.approved)
+    yanit = await client.post(
+        f"/progress-payments/{payment_id}/unapprove", headers=muhasebe_headers
+    )
+    assert yanit.status_code == 403, yanit.text
+
+
+async def test_patron_unapprove_edemez_403(
+    client: AsyncClient, seeded_db: AsyncSession, user_factory, hakedis_fabrikasi
+) -> None:
+    """`full` seviyesi (patron) `admin`'i KAPSAMAZ (`access.py` sırası) — kapı
+    `_ADMIN` seçildiği için patron da geri çekemez."""
+    await user_factory(email="patron@pp-transitions.co", password="parola1234", role_key="patron")
+    giris = await client.post(
+        "/auth/login", json={"email": "patron@pp-transitions.co", "password": "parola1234"}
+    )
+    headers = {"Authorization": f"Bearer {giris.json()['access_token']}"}
+    payment_id = await hakedis_fabrikasi(ProgressPaymentStatus.approved)
+    yanit = await client.post(f"/progress-payments/{payment_id}/unapprove", headers=headers)
+    assert yanit.status_code == 403, yanit.text
+
+
+@pytest.mark.parametrize("uc", UCLAR)
+async def test_izinsiz_rol_403(
+    client: AsyncClient, hr_headers: dict[str, str], hakedis_fabrikasi, uc: str
+) -> None:
+    """İK matris satırı `_N`: kapı GÖRÜNÜRLÜKTEN ÖNCE çalışır → her uçta 403."""
+    payment_id = await hakedis_fabrikasi(ProgressPaymentStatus.draft)
+    yanit = await client.post(f"/progress-payments/{payment_id}/{uc}", headers=hr_headers)
+    assert yanit.status_code == 403, yanit.text
+
+
+# --- 5. Kapsam / IDOR (spec §9.0) ---
+
+
+@pytest.mark.parametrize("uc", ["submit", "approve", "reject", "mark-paid"])
+async def test_gorunmeyen_hakedis_404_olmayanla_ayni(
+    client: AsyncClient, kisitli_headers: dict[str, str], gorunmeyen_hakedis: uuid.UUID, uc: str
+) -> None:
+    """Görünmeyen projedeki GERÇEK hakediş ile var OLMAYAN kimlik AYIRT EDİLEMEZ.
+
+    `unapprove` bu listede YOKTUR: kapısı `_ADMIN` olduğu için `project_manager`
+    oraya 403 ile takılır (kapı görünürlükten önce) — ayrı testi aşağıdadır.
+    """
+    gercek = await client.post(
+        f"/progress-payments/{gorunmeyen_hakedis}/{uc}", headers=kisitli_headers
+    )
+    sahte = await client.post(f"/progress-payments/{uuid.uuid4()}/{uc}", headers=kisitli_headers)
+    assert gercek.status_code == sahte.status_code == 404, gercek.text
+    assert gercek.json() == sahte.json() == {"detail": guards.PAYMENT_MISSING}
+
+
+async def test_gorunmeyen_hakediste_unapprove_kapida_403(
+    client: AsyncClient, kisitli_headers: dict[str, str], gorunmeyen_hakedis: uuid.UUID
+) -> None:
+    """Kapı görünürlükten ÖNCE: yetkisi olmayan rol 404 ile 403 arasındaki farktan
+    kaydın varlığını çıkaramaz, çünkü GÖRDÜĞÜ kayıtta da aynı 403'ü alır."""
+    yanit = await client.post(
+        f"/progress-payments/{gorunmeyen_hakedis}/unapprove", headers=kisitli_headers
+    )
+    assert yanit.status_code == 403, yanit.text
+
+
+async def test_capraz_proje_kapsami_gecise_sizmaz(
+    client: AsyncClient,
+    kisitli_headers: dict[str, str],
+    kisitli_projede_onay_bekleyen: uuid.UUID,
+    gorunmeyen_hakedis: uuid.UUID,
+) -> None:
+    """Aynı aktör: GÖRDÜĞÜ projede geçiş 200, GÖRMEDİĞİ projede 404."""
+    gorunen = await client.post(
+        f"/progress-payments/{kisitli_projede_onay_bekleyen}/approve", headers=kisitli_headers
+    )
+    assert gorunen.status_code == 200, gorunen.text
+
+    gorunmeyen = await client.post(
+        f"/progress-payments/{gorunmeyen_hakedis}/submit", headers=kisitli_headers
+    )
+    assert gorunmeyen.status_code == 404, gorunmeyen.text
+
+
+# --- 6. H5'ten DEVREDİLEN: onay anında kota yeniden doğrulanır (denetim O2) ---
+
+
+async def test_ikinci_onay_kotayi_asinca_422(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    seeded_db: AsyncSession,
+    kota_bolusen_iki_hakedis: tuple[uuid.UUID, uuid.UUID],
+) -> None:
+    """Kotanın nihai bekçisi YAZMA değil ONAY anıdır (H5 denetimi O2).
+
+    İki açık hakediş de 600 birimle kotaya (1.000) tek başına sığar; birincisi
+    onaylanınca kümülatif kümeye girer ve ikincinin onayı 1.200 > 1.000 ile
+    422 `QUANTITY_EXCEEDS_QUOTA` alır. Kontrol yalnız `PUT …/lines`'ta kalsaydı
+    aşım SESSİZCE gerçekleşirdi.
+    """
+    birinci, ikinci = kota_bolusen_iki_hakedis
+
+    ilk_onay = await client.post(f"/progress-payments/{birinci}/approve", headers=admin_headers)
+    assert ilk_onay.status_code == 200, ilk_onay.text
+
+    ikinci_onay = await client.post(f"/progress-payments/{ikinci}/approve", headers=admin_headers)
+    assert ikinci_onay.status_code == 422, ikinci_onay.text
+    assert ikinci_onay.json()["detail"] == guards.QUANTITY_EXCEEDS_QUOTA
+
+    # Reddedilen onay durumu DEĞİŞTİRMEZ.
+    assert (await _durum(seeded_db, ikinci)).status is ProgressPaymentStatus.pending_approval
+
+
+async def test_kota_sigiyorsa_ikinci_onay_gecer(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    seeded_db: AsyncSession,
+    kota_bolusen_iki_hakedis: tuple[uuid.UUID, uuid.UUID],
+) -> None:
+    """Kural ASIMDA koşar, her onayda değil: ikinci hakedişin miktarı kotaya
+    sığacak şekilde düşürülürse onay GEÇER (aksi hâlde yukarıdaki test, kotayı
+    hiç okumayan bir "ikinci onayı hep reddet" hatasıyla da yeşil kalırdı)."""
+    birinci, ikinci = kota_bolusen_iki_hakedis
+    ikinci_kayit = await seeded_db.get(ProgressPayment, ikinci)
+    ikinci_kayit.lines[0].quantity = Decimal("400")
+    await seeded_db.flush()
+
+    assert (
+        await client.post(f"/progress-payments/{birinci}/approve", headers=admin_headers)
+    ).status_code == 200
+    yanit = await client.post(f"/progress-payments/{ikinci}/approve", headers=admin_headers)
+    assert yanit.status_code == 200, yanit.text
+
+
+async def test_onay_kota_kontrolu_tek_toplama_yolunu_kullanir(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    kota_bolusen_iki_hakedis: tuple[uuid.UUID, uuid.UUID],
+) -> None:
+    """Kümülatif toplam `lines.prior_completed_totals`'tan okunur — İKİNCİ bir
+    toplama yolu açılmaz (P5'in "iki farklı doğruluk tanımı" bulgusu).
+
+    Casus, gerçek fonksiyonu sarar (davranış değişmez) ve `approve` sırasında
+    çağrıldığını kanıtlar.
+    """
+    birinci, _ = kota_bolusen_iki_hakedis
+    cagrilar: list[tuple[uuid.UUID, int]] = []
+    gercek = lines.prior_completed_totals
+
+    async def casus(session, project_id, before_sequence_no):
+        cagrilar.append((project_id, before_sequence_no))
+        return await gercek(session, project_id, before_sequence_no)
+
+    monkeypatch.setattr(transitions.lines, "prior_completed_totals", casus)
+    yanit = await client.post(f"/progress-payments/{birinci}/approve", headers=admin_headers)
+    assert yanit.status_code == 200, yanit.text
+    assert cagrilar, "approve, kota kontrolünü `lines.prior_completed_totals` üzerinden yapmıyor"
+
+
+# --- 7. D8 zinciri (spec §9.2) ---
+
+
+async def test_approve_sonrasi_yeni_hakedis_acilabilir(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    sozlesmeli_proje: uuid.UUID,
+    hakedis_fabrikasi,
+) -> None:
+    """D8: açık hakediş kalmayınca yeni hakediş açılabilir, `sequence_no` +1."""
+    payment_id = await hakedis_fabrikasi(ProgressPaymentStatus.pending_approval)
+    acikken = await client.post(
+        f"/projects/{sozlesmeli_proje}/progress-payments", json={}, headers=admin_headers
+    )
+    assert acikken.status_code == 409, acikken.text
+
+    onay = await client.post(f"/progress-payments/{payment_id}/approve", headers=admin_headers)
+    assert onay.status_code == 200, onay.text
+
+    yeni = await client.post(
+        f"/projects/{sozlesmeli_proje}/progress-payments", json={}, headers=admin_headers
+    )
+    assert yeni.status_code == 201, yeni.text
+    assert yeni.json()["sequence_no"] == 2

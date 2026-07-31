@@ -69,6 +69,27 @@ async def _visible_payment(
     return payment, project
 
 
+async def visible_payment_locked(
+    session: AsyncSession, actor: User, payment_id: uuid.UUID
+) -> tuple[ProgressPayment, Project, ProjectContract | None]:
+    """Kapsam süzgeci + `SELECT … FOR UPDATE` — durum geçişlerinin (H6) giriş kapısı.
+
+    Kilit sırası `create` ile AYNIDIR: **önce sözleşme, sonra hakediş**. Ters
+    sırada kilitleyen ikinci bir yol açılırsa karşılıklı kilitlenme doğar.
+
+    Kapsam kararı (404) kilitten ÖNCE verilir — görünmeyen bir kaydın satırı
+    boşuna kilitlenmez ve 404 metni her iki halde de `PAYMENT_MISSING`'dir
+    (spec §9.0).
+    """
+    payment, project = await _visible_payment(session, actor, payment_id)
+    contract = await repository.get_contract_locked(session, project.id)
+    locked = await repository.get_payment_locked(session, payment_id)
+    if locked is None:
+        # Yarışta silinmiş olabilir (H8 silme yolu) — var olmayan kayıtla aynı 404.
+        raise NotFoundError(guards.PAYMENT_MISSING)
+    return locked, project, contract
+
+
 # --- Oluşturma (spec §9.2, D8, kalıcı karar 4/9) ---
 #
 # Satır üretimi/doğrulaması TEK YOLDAN geçer: `lines.py`. H4'te burada duran

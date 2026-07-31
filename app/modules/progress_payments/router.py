@@ -17,7 +17,7 @@ from app.core.db import get_db
 from app.core.deps import get_current_user
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
-from app.modules.progress_payments import service
+from app.modules.progress_payments import service, transitions
 from app.modules.progress_payments.models import ProgressPaymentStatus
 from app.modules.progress_payments.schemas import (
     ProgressPaymentCreate,
@@ -25,6 +25,7 @@ from app.modules.progress_payments.schemas import (
     ProgressPaymentLinesSave,
     ProgressPaymentListResponse,
     ProgressPaymentUpdate,
+    RejectBody,
 )
 from app.modules.users.models import User
 
@@ -133,3 +134,106 @@ async def save_progress_payment_lines_endpoint(
     payment, dropped_orphan_count = await service.save_lines(session, user, payment_id, data)
     detail = await service.get_detail(session, user, payment.id)
     return detail.model_copy(update={"dropped_orphan_count": dropped_orphan_count})
+
+
+# --- Durum geçişleri (spec §7, §9.4) ---
+#
+# Beş uç da TEK yoldan (`transitions.perform`) geçer; geçiş tablosu ve kilit
+# orada TEK kopyadır. Router'ın tek işi KAPIYI seçmektir (§7 tablosunun "asgari
+# seviye" kolonu) — durum kontrolü BURADA TEKRARLANMAZ.
+
+
+@router.post(
+    "/progress-payments/{payment_id}/submit",
+    response_model=ProgressPaymentDetail,
+    dependencies=[_DRAFT],
+)
+async def submit_progress_payment_endpoint(
+    payment_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> ProgressPaymentDetail:
+    """E15 71 / OLU 25 "Onaya Gönder" — `draft → pending_approval`.
+
+    Zorunluluk kuralları (dönem, satır/Σ>0, sözleşme bedeli) YALNIZ burada koşar
+    (§7): taslak eksik veriyle serbestçe saklanır (kalıcı karar 4).
+    """
+    payment = await transitions.perform(session, user, payment_id, transitions.PaymentAction.submit)
+    return await service.get_detail(session, user, payment.id)
+
+
+@router.post(
+    "/progress-payments/{payment_id}/approve",
+    response_model=ProgressPaymentDetail,
+    dependencies=[_APPROVE],
+)
+async def approve_progress_payment_endpoint(
+    payment_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> ProgressPaymentDetail:
+    """`pending_approval → approved`; kota kilit altında YENİDEN doğrulanır."""
+    payment = await transitions.perform(
+        session, user, payment_id, transitions.PaymentAction.approve
+    )
+    return await service.get_detail(session, user, payment.id)
+
+
+@router.post(
+    "/progress-payments/{payment_id}/reject",
+    response_model=ProgressPaymentDetail,
+    dependencies=[_APPROVE],
+)
+async def reject_progress_payment_endpoint(
+    payment_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    data: RejectBody | None = None,
+) -> ProgressPaymentDetail:
+    """`pending_approval → draft` — ret sonrası taslak yeniden düzenlenebilir.
+
+    Gövde İSTEĞE BAĞLIDIR (K12: mockup'ta ret formu yok). `reason` bugün hiçbir
+    kolona yazılmaz; denetim günlüğüne H10'da taşınacaktır — o güne kadar
+    kabul edilip yok sayılması bilinçlidir (frontend kontratı §10 ile sabit).
+    """
+    payment = await transitions.perform(session, user, payment_id, transitions.PaymentAction.reject)
+    return await service.get_detail(session, user, payment.id)
+
+
+@router.post(
+    "/progress-payments/{payment_id}/mark-paid",
+    response_model=ProgressPaymentDetail,
+    dependencies=[_APPROVE],
+)
+async def mark_paid_progress_payment_endpoint(
+    payment_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> ProgressPaymentDetail:
+    """`approved → paid` (K11: onay seviyesi). Ödeme detayı formu mockup'ta YOK
+    → tek tıkla işaretleme, yalnız `paid_at` damgalanır."""
+    payment = await transitions.perform(
+        session, user, payment_id, transitions.PaymentAction.mark_paid
+    )
+    return await service.get_detail(session, user, payment.id)
+
+
+@router.post(
+    "/progress-payments/{payment_id}/unapprove",
+    response_model=ProgressPaymentDetail,
+    dependencies=[_ADMIN],
+)
+async def unapprove_progress_payment_endpoint(
+    payment_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> ProgressPaymentDetail:
+    """`approved → pending_approval` (geri çek) — YALNIZ `admin` (§7 tablosu).
+
+    `paid` kaynak DEĞİLDİR (K7): ödenmiş hakedişin geri dönüşü yoktur, denemesi
+    409'dur.
+    """
+    payment = await transitions.perform(
+        session, user, payment_id, transitions.PaymentAction.unapprove
+    )
+    return await service.get_detail(session, user, payment.id)
