@@ -49,13 +49,14 @@ import enum
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import NamedTuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, SiteValidationError
 from app.modules.progress_payments import guards, lines, repository, service
 from app.modules.progress_payments.models import ProgressPayment, ProgressPaymentStatus
-from app.modules.projects.models import ProjectContract
+from app.modules.projects.models import Project, ProjectContract
 from app.modules.users.models import User
 
 _ZERO = Decimal("0")
@@ -70,6 +71,21 @@ class PaymentAction(str, enum.Enum):
     reject = "reject"
     mark_paid = "mark-paid"
     unapprove = "unapprove"
+
+
+class TransitionResult(NamedTuple):
+    """`perform()` dönüşü — denetim günlüğü (H10) için `project` de taşınır.
+
+    `previous_approver_name`/`previous_approved_at` YALNIZ `unapprove`de
+    doludur (H6'dan devredilen ZORUNLU not, plan H10, spec §11): `_stamp`
+    damgaları NULL'lamadan ÖNCE `perform()` içinde okunur — router bu ikisini
+    yeniden sorgulayamaz, çünkü döndüğünde damgalar zaten silinmiştir.
+    """
+
+    payment: ProgressPayment
+    project: Project
+    previous_approver_name: str | None = None
+    previous_approved_at: datetime | None = None
 
 
 #: Spec §7 tablosu — TEK KOPYA. Burada olmayan çift 409'dur.
@@ -170,15 +186,34 @@ async def _apply_action_rules(
         await _revalidate_quota(session, payment)
 
 
+async def _resolve_username(session: AsyncSession, user_id: uuid.UUID | None) -> str | None:
+    """Denetim günlüğü (H10): `unapprove` öncesi `approved_by` FK'sini ada çevirir.
+
+    `session.get` kimlik haritasından (identity map) okur — aynı transaction
+    içinde ekstra bir round-trip garanti değildir ama gerekli olduğunda tek
+    satır SELECT'tir, N+1 riski taşımaz (tek çağrı, tek kullanıcı).
+    """
+    if user_id is None:
+        return None
+    user = await session.get(User, user_id)
+    return user.full_name if user is not None else None
+
+
 async def perform(
     session: AsyncSession, actor: User, payment_id: uuid.UUID, action: PaymentAction
-) -> ProgressPayment:
+) -> TransitionResult:
     """Tek geçiş yolu (spec §7). Sıra: kapsam → kilit → tablo → korkuluk → damga.
 
     Kapsam süzgeci (404) korkuluklardan ÖNCE koşar: görünmeyen bir hakedişin
     durumu hakkında 409/422 ile bilgi sızdırılmaz (spec §9.0).
+
+    H6'dan devredilen ZORUNLULUK (plan H10, spec §11): `unapprove` için eski
+    `approved_by`/`approved_at` `_stamp` onları NULL'lamadan ÖNCE okunur —
+    sıra tersine çevrilirse (`_stamp` çağrısından SONRA okuma) değerler zaten
+    `None`dır ve denetim mesajı sessizce "Bilinmiyor" ile gider (hata FIRLAMAZ,
+    bu yüzden mutasyon testiyle ayrıca doğrulanır).
     """
-    payment, _, contract = await service.visible_payment_locked(session, actor, payment_id)
+    payment, project, contract = await service.visible_payment_locked(session, actor, payment_id)
 
     new_status = TRANSITIONS.get((payment.status, action))
     if new_status is None:
@@ -186,10 +221,16 @@ async def perform(
 
     await _apply_action_rules(session, payment, contract, action)
 
+    previous_approver_name: str | None = None
+    previous_approved_at: datetime | None = None
+    if action is PaymentAction.unapprove:
+        previous_approved_at = payment.approved_at
+        previous_approver_name = await _resolve_username(session, payment.approved_by)
+
     payment.status = new_status
     _stamp(payment, action, actor)
     await session.flush()
     # `updated_at` server `onupdate` ile yenilendiği için expire olur; açık
     # refresh olmadan yanıt inşası `MissingGreenlet` verir.
     await session.refresh(payment)
-    return payment
+    return TransitionResult(payment, project, previous_approver_name, previous_approved_at)

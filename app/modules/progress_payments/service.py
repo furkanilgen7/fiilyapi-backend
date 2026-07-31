@@ -45,6 +45,29 @@ _ZERO = Decimal("0")
 _HUNDRED = Decimal("100")
 _DEFAULT_COEFFICIENT = Decimal("1.000")
 
+# Denetim günlüğü (H10, spec §11) — `progress_payment_deleted` kaydın durumunu
+# insan-okur Türkçe etiketle taşır (`audit/messages.py.ACCESS_LEVEL_LABELS`
+# deseninin aynısı, ama izin seviyesi DEĞİL modülün kendi durum enum'u olduğu
+# için audit modülüne değil BURAYA aittir — audit generic kalır).
+_STATUS_LABELS: dict[ProgressPaymentStatus, str] = {
+    ProgressPaymentStatus.draft: "Taslak",
+    ProgressPaymentStatus.pending_approval: "Onay Bekliyor",
+    ProgressPaymentStatus.approved: "Onaylandı",
+    ProgressPaymentStatus.paid: "Ödendi",
+}
+
+
+class DeletedPaymentSummary(NamedTuple):
+    """H8'den devredilen not (plan H10): silinen kaydın `session.delete`
+
+    ÖNCESİNDE çıkarılmış özeti — kayıt gittiğinde bu üçlü bir daha okunamaz.
+    """
+
+    project_name: str
+    sequence_no: int
+    status_label: str
+    amount: Decimal
+
 
 # --- Kapsam (spec §9.0) ---
 
@@ -99,7 +122,7 @@ async def visible_payment_locked(
 
 async def refresh_prices(
     session: AsyncSession, actor: User, payment_id: uuid.UUID
-) -> tuple[ProgressPayment, int]:
+) -> tuple[ProgressPayment, Project, int]:
     """`POST …/refresh-prices` — yalnız `draft`'ta bağı kopmamış satırların
     snapshot BEŞLİSİNİ (`code/description/unit/contract_unit_price/group_name`)
     kalemden, hakedişin YÜZDE ÜÇLÜSÜNÜ (`vat_pct/advance_pct/retainage_pct`)
@@ -119,7 +142,7 @@ async def refresh_prices(
     Değişmemiş satır/yüzde YAZILMAZ (gereksiz `UPDATE` yok, no-op tazeleme
     `refreshed_count=0` döner) — beş alanın TAMAMI aynıysa satır sayılmaz.
     """
-    payment, _, contract = await visible_payment_locked(session, actor, payment_id)
+    payment, project, contract = await visible_payment_locked(session, actor, payment_id)
     if payment.status != ProgressPaymentStatus.draft:
         raise ConflictError(guards.INVALID_STATUS_TRANSITION)
     if contract is None:
@@ -164,7 +187,7 @@ async def refresh_prices(
 
     await session.flush()
     await session.refresh(payment)
-    return payment, refreshed_count
+    return payment, project, refreshed_count
 
 
 # --- Oluşturma (spec §9.2, D8, kalıcı karar 4/9) ---
@@ -261,7 +284,7 @@ async def update(
 
 async def save_lines(
     session: AsyncSession, actor: User, payment_id: uuid.UUID, data: ProgressPaymentLinesSave
-) -> tuple[ProgressPayment, int]:
+) -> tuple[ProgressPayment, Project, int]:
     """`PUT /progress-payments/{id}/lines` — DEĞİŞTİRME semantiği (spec §9.2/§10-2).
 
     Bu katman YALNIZ kapsam (§9.0) ve durum kapısını (§7) kurar; gövdenin
@@ -282,7 +305,7 @@ async def save_lines(
 
     dropped_orphan_count = await lines.apply_lines(session, project, contract, payment, data.lines)
     await session.refresh(payment)
-    return payment, dropped_orphan_count
+    return payment, project, dropped_orphan_count
 
 
 # --- Hesap türevleri (spec §6.2-§6.4, §6.6, §8) — DB'den okunan tarihsel zincir ---
@@ -652,7 +675,9 @@ async def build_detail(
 # --- Silme (spec §7.1, §9.5, K8) ---
 
 
-async def delete_payment(session: AsyncSession, actor: User, payment_id: uuid.UUID) -> None:
+async def delete_payment(
+    session: AsyncSession, actor: User, payment_id: uuid.UUID
+) -> DeletedPaymentSummary:
     """`DELETE /progress-payments/{id}` — K8'in İKİ KATMANLI kuralı.
 
     Katman 1 (§7.1/1): `status ∈ {approved, paid}` → 409 `PAYMENT_NOT_DELETABLE`
@@ -682,8 +707,12 @@ async def delete_payment(session: AsyncSession, actor: User, payment_id: uuid.UU
     ile AYNIDIR (önce sözleşme, sonra hakediş), durum ve `can_delete`
     kontrolleri KİLİTLİ satır üzerinden yapılır. Yarışta satır zaten silinmişse
     `visible_payment_locked` mevcut `PAYMENT_MISSING` 404'ünü üretir.
+
+    Denetim günlüğü (H8'den devredilen not, plan H10, spec §11): dönüş değeri
+    kaydın `session.delete`den ÖNCE çıkarılmış özetidir (`sequence_no`/durum/
+    tutar) — kayıt gittiğinde bunlar bir daha okunamaz.
     """
-    payment, _, _ = await visible_payment_locked(session, actor, payment_id)
+    payment, project, _ = await visible_payment_locked(session, actor, payment_id)
 
     if payment.status in (ProgressPaymentStatus.approved, ProgressPaymentStatus.paid):
         raise ConflictError(guards.PAYMENT_NOT_DELETABLE)
@@ -693,7 +722,21 @@ async def delete_payment(session: AsyncSession, actor: User, payment_id: uuid.UU
     if not can_delete(actor.id, level, payment):
         raise DeleteNotAllowedError(guards.DELETE_NOT_ALLOWED)
 
+    # H8'den devredilen ZORUNLULUK (plan H10, spec §11): özet `session.delete`
+    # ÖNCESİNDE kurulur. Mutasyon denetimi (H10) bu okumayı silmeden SONRAKİ bir
+    # yeniden sorguya (`repository.get_payment`) taşıyarak doğrulandı: aynı
+    # transaction kendi silme işlemini gördüğü için satır bulunamaz ve kod
+    # sessizce varsayılanlara düşer (#0/"Bilinmiyor"/0.00 TL, HATA FIRLAMADAN) —
+    # test kırmızıya döndü, kanıt raporda. Doğru sıra ile geri alındı.
+    summary = DeletedPaymentSummary(
+        project_name=project.name,
+        sequence_no=payment.sequence_no,
+        status_label=_STATUS_LABELS[payment.status],
+        amount=_gross_total(payment.lines),
+    )
+
     # `ProgressPayment.lines` cascade="all, delete-orphan" (H1) — satırlar
     # bu `session.delete` ile BİRLİKTE gider, ayrı bir silme çağrısı gerekmez.
     await session.delete(payment)
     await session.flush()
+    return summary
