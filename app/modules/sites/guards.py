@@ -73,6 +73,12 @@ SECTION_NAME_REQUIRED = "{n}. bölüm: bölüm adı zorunludur."
 SITE_HAS_SECTIONS = "Bu şantiyede bölüm var, önce bölümleri silin"
 SITE_HAS_BOQ = "Bu şantiyede iş kalemi var, önce iş kalemlerini silin"
 SITE_HAS_BLOCKS = "Bu şantiyede blok var, önce blokları silin"
+# Alt-Proje 2 P5 (Sözleşmeler, task C12, spec §7) — dördüncü korkuluk:
+# `subcontractor_contracts.site_id` FK'si RESTRICT'tir (DB seviyesinde de
+# korunur), ama korkuluksuz bırakılırsa kullanıcı anlaşılmaz "Veri bütünlüğü
+# hatası" (`IntegrityError` → 409) görür — diğer üç kontrolle AYNI eyleme
+# dönük Türkçe metin burada erken karşılanır.
+SITE_HAS_CONTRACTS = "Bu şantiyede taşeron sözleşmesi var, önce sözleşmeleri silin"
 
 # GPS BICIM HATASI SABITI YOKTUR (§3.5 revize karari): sunucu GPS metnini
 # dogrulamaz, dolayisiyla boyle bir hata uretmez.
