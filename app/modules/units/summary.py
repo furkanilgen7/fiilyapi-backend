@@ -9,7 +9,7 @@ olmamalidir: bu modul yalnizca ORM nesnelerini semalara cevirir.
 from decimal import ROUND_HALF_UP, Decimal
 
 from app.modules.projects.models import ProjectType
-from app.modules.units.models import Block, Unit, UnitKind, UnitOwnerSide
+from app.modules.units.models import Block, Unit, UnitKind, UnitOwnerSide, UnitSalesStatus
 from app.modules.units.schemas import (
     BlockResponse,
     CountPlaceholder,
@@ -72,6 +72,22 @@ def _counts(units: list[Unit]) -> UnitKindBreakdown:
         warehouse=sum(1 for u in units if u.unit_kind is UnitKind.warehouse),
         parking=sum(1 for u in units if u.unit_kind is UnitKind.parking),
     )
+
+
+def _by_sales_status(units: list[Unit]) -> dict[UnitSalesStatus, int]:
+    """UE 94'un dort degerinin sayimi (spec §8.2).
+
+    Sayim BURADA, zaten bellekte olan liste uzerinde yapilir: ayri bir
+    `GROUP BY` sorgusu ikinci bir gidis-donus demek olurdu ve `totals` zaten
+    projenin TUM unitelerini alan tek sorgudan besleniyor. Dort anahtar da her
+    zaman doner; `sales_status` NULL olan (migration oncesi) satirlar hicbir
+    sayaca girmez — uydurulmus bir durum atanmaz.
+    """
+    counts = dict.fromkeys(UnitSalesStatus, 0)
+    for unit in units:
+        if unit.sales_status is not None:
+            counts[unit.sales_status] += 1
+    return counts
 
 
 def _basis_value(unit: Unit, basis: UnitValueBasis) -> Decimal | None:
@@ -179,6 +195,7 @@ def totals(units: list[Unit], basis: UnitValueBasis) -> UnitTotals:
     """Spec §7.4: toplamlar SUZGECTEN ETKILENMEZ — cagiran daima projenin TUM
     unitelerini verir (P1 `list_projects_overview` kuralinin birebir tekrari)."""
     total_value = _sum([_basis_value(u, basis) for u in units])
+    by_status = _by_sales_status(units)
     return UnitTotals(
         counts=_counts(units),
         value_basis=basis,
@@ -188,9 +205,10 @@ def totals(units: list[Unit], basis: UnitValueBasis) -> UnitTotals:
         total_appraisal_value=_sum([u.appraisal_value for u in units]),
         total_gross_area_m2=_sum([u.gross_area_m2 for u in units]),
         sides=[_side_summary(side, units, basis, len(units)) for side in _SIDE_ORDER],
-        sold_units=_count(_UNIT_SALES),
-        reserved_units=_count(_UNIT_SALES),
-        available_units=_count(_UNIT_SALES),
+        by_sales_status=by_status,
+        sold_units=by_status[UnitSalesStatus.sold],
+        reserved_units=by_status[UnitSalesStatus.reserved],
+        available_units=by_status[UnitSalesStatus.listed],
         sales_revenue=_metric(_UNIT_SALES),
         average_sale_price=_metric(_UNIT_SALES),
     )

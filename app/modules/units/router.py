@@ -14,7 +14,7 @@ from app.core.ratelimit import client_ip
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
 from app.modules.units import batch, importer, service
-from app.modules.units.models import UnitKind
+from app.modules.units.models import UnitKind, UnitSalesStatus
 from app.modules.units.schemas import (
     BlockCreate,
     BlockListResponse,
@@ -95,6 +95,8 @@ async def list_units_endpoint(
     site_id: Annotated[uuid.UUID | None, Query()] = None,
     kind: Annotated[UnitKind | None, Query()] = None,
     owner_side: Annotated[UnitOwnerSideFilter | None, Query()] = None,
+    floor: Annotated[str | None, Query(max_length=20)] = None,
+    sales_status: Annotated[UnitSalesStatus | None, Query()] = None,
 ) -> UnitListResponse:
     """Spec §7.4. Suzgecler YALNIZ listeyi daraltir; `totals` daima projenin
     tamamini sayar. `site_id` blok uzerinden cozulur (`units`'te `site_id` yok)."""
@@ -106,6 +108,8 @@ async def list_units_endpoint(
         site_id=site_id,
         kind=kind,
         owner_side=owner_side,
+        floor=floor,
+        sales_status=sales_status,
     )
 
 

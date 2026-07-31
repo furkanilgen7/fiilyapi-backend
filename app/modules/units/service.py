@@ -17,7 +17,7 @@ from app.modules.sites import repository as sites_repository
 # adini kullanir ve bu ad korunur.
 from app.modules.units import codes, guards, repository
 from app.modules.units.guards import visible_projects
-from app.modules.units.models import Block, Unit, UnitKind
+from app.modules.units.models import Block, Unit, UnitKind, UnitSalesStatus
 from app.modules.units.schemas import (
     BLOCK_FORM_FIELDS,
     UNIT_FORM_FIELDS,
@@ -95,8 +95,20 @@ async def list_blocks(
     )
 
 
-def _matches(unit: Unit, kind: UnitKind | None, owner_side: UnitOwnerSideFilter | None) -> bool:
+def _matches(
+    unit: Unit,
+    kind: UnitKind | None,
+    owner_side: UnitOwnerSideFilter | None,
+    floor: str | None,
+    sales_status: UnitSalesStatus | None,
+) -> bool:
     if kind is not None and unit.unit_kind is not kind:
+        return False
+    # Kat METINDIR (karar 4) → TAM ESLESME. Parcali eslesme "3" ile "3. Kat"i
+    # birbirine karistirirdi ve bu sessiz bir veri karisikligi olurdu.
+    if floor is not None and unit.floor != floor:
+        return False
+    if sales_status is not None and unit.sales_status is not sales_status:
         return False
     if owner_side is None:
         return True
@@ -114,6 +126,8 @@ async def list_units(
     site_id: uuid.UUID | None = None,
     kind: UnitKind | None = None,
     owner_side: UnitOwnerSideFilter | None = None,
+    floor: str | None = None,
+    sales_status: UnitSalesStatus | None = None,
 ) -> UnitListResponse:
     """Spec §7.4. Suzgecler YALNIZ listeyi daraltir; `totals` daima projenin
     tamamini sayar. `site_id` suzgeci blok uzerinden calisir — `units`'te
@@ -134,7 +148,7 @@ async def list_units(
             units=[
                 to_unit(unit, block.name)
                 for unit in by_block[block.id]
-                if _matches(unit, kind, owner_side)
+                if _matches(unit, kind, owner_side, floor, sales_status)
             ],
         )
         for block, site_name in selected

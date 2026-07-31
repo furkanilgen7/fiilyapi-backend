@@ -15,7 +15,7 @@ from app.core.access import AccessLevel
 from app.modules.roles.models import Module, Role, RolePermission
 from app.modules.sites.models import Site
 from app.modules.units.codes import effective_block_code
-from app.modules.units.models import Block, Unit, UnitKind, UnitOwnerSide
+from app.modules.units.models import Block, Unit, UnitKind, UnitOwnerSide, UnitSalesStatus
 from app.modules.users.models import UserProjectAccess
 
 
@@ -205,6 +205,8 @@ async def test_get_units_happy_path_matches_spec_envelope(
         "total_appraisal_value",
         "total_gross_area_m2",
         "sides",
+        # P3.1 §8.2: dort degerli satis durumu kirilimi.
+        "by_sales_status",
         "sold_units",
         "reserved_units",
         "available_units",
@@ -1756,3 +1758,96 @@ async def test_expected_profit_ve_unit_cost_yer_tutucu(
     for field in ("unit_cost", "expected_profit"):
         assert unit[field]["available"] is False, field
         assert unit[field]["pending_module"] == "project_costs", field
+
+
+# --- P3.1 T7: satis durumu sayaclari ve yeni suzgecler (spec §8.2) ---
+
+
+async def _satis_durumu_seti(session, project, site):
+    """Dort durumdan biri kadar unite + kat etiketleri (KY 258-259 kirilimi)."""
+    block = await _block(session, project, site)
+    await _unit(session, project, block, "1", sales_status=UnitSalesStatus.sold, floor="3. Kat")
+    await _unit(session, project, block, "2", sales_status=UnitSalesStatus.sold, floor="3")
+    await _unit(session, project, block, "3", sales_status=UnitSalesStatus.reserved, floor="Zemin")
+    await _unit(session, project, block, "4", sales_status=UnitSalesStatus.listed)
+    await _unit(session, project, block, "5", sales_status=UnitSalesStatus.closed)
+    return block
+
+
+async def test_sales_status_suzgeci_listeyi_daraltir(
+    client, db_session, user_factory, project_factory
+):
+    project = await project_factory("T7-1")
+    site = await _site(db_session, project)
+    await _satis_durumu_seti(db_session, project, site)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.get(f"/projects/{project.id}/units?sales_status=sold", headers=_auth(token))
+
+    assert resp.status_code == 200
+    assert [u["unit_no"] for u in resp.json()["blocks"][0]["units"]] == ["1", "2"]
+
+
+async def test_totals_suzgecten_etkilenmez(client, db_session, user_factory, project_factory):
+    """P3 §7.4 kurali KORUNUR: suzgec YALNIZ listeyi daraltir, `totals` daima
+    projenin TAMAMINI sayar."""
+    project = await project_factory("T7-2")
+    site = await _site(db_session, project)
+    await _satis_durumu_seti(db_session, project, site)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.get(f"/projects/{project.id}/units?sales_status=sold", headers=_auth(token))
+
+    totals = resp.json()["totals"]
+    assert totals["counts"]["total"] == 5
+    assert totals["by_sales_status"]["listed"] == 1
+
+
+async def test_by_sales_status_dort_degeri_de_sayar(
+    client, db_session, user_factory, project_factory
+):
+    """KY 258-259 / KKP 161-163 kirilimi artik GERCEK sayilabilir (spec §8.2)."""
+    project = await project_factory("T7-3")
+    site = await _site(db_session, project)
+    await _satis_durumu_seti(db_session, project, site)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.get(f"/projects/{project.id}/units", headers=_auth(token))
+
+    totals = resp.json()["totals"]
+    assert totals["by_sales_status"] == {"listed": 1, "reserved": 1, "sold": 2, "closed": 1}
+    assert totals["sold_units"] == 2
+    assert totals["reserved_units"] == 1
+    assert totals["available_units"] == 1  # `listed` — `closed` BOS DEGILDIR
+
+
+async def test_floor_suzgeci_tam_eslesme(client, db_session, user_factory, project_factory):
+    """Karar 4: kat METINDIR → suzgec TAM ESLESMEDIR. "3" ile "3. Kat" AYRI
+    degerlerdir; parcali eslesme sessiz veri karisikligi olurdu."""
+    project = await project_factory("T7-4")
+    site = await _site(db_session, project)
+    await _satis_durumu_seti(db_session, project, site)
+    token = await _login(client, user_factory, "system_admin")
+
+    kat = await client.get(f"/projects/{project.id}/units?floor=3.%20Kat", headers=_auth(token))
+    sayi = await client.get(f"/projects/{project.id}/units?floor=3", headers=_auth(token))
+
+    assert [u["unit_no"] for u in kat.json()["blocks"][0]["units"]] == ["1"]
+    assert [u["unit_no"] for u in sayi.json()["blocks"][0]["units"]] == ["2"]
+
+
+async def test_sales_revenue_hala_yer_tutucu(client, db_session, user_factory, project_factory):
+    """P8 SINIRI KORUNUYOR: GERCEKLESEN satis tutari hâlâ P8'in verisidir —
+    `sales_status` sutunu acildi diye ciro uydurulmaz (spec §8.2)."""
+    project = await project_factory("T7-5")
+    site = await _site(db_session, project)
+    await _satis_durumu_seti(db_session, project, site)
+    token = await _login(client, user_factory, "system_admin")
+
+    totals = (await client.get(f"/projects/{project.id}/units", headers=_auth(token))).json()[
+        "totals"
+    ]
+
+    for field in ("sales_revenue", "average_sale_price"):
+        assert totals[field]["available"] is False, field
+        assert totals[field]["pending_module"] == "unit_sales", field

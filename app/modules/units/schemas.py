@@ -253,9 +253,18 @@ class UnitTotals(BaseModel):
     total_appraisal_value: Decimal
     total_gross_area_m2: Decimal  # KKP 68'in (insaat alani) YERINE GECMEZ
     sides: list[UnitSideSummary]  # contractor / landowner / atanmamis
-    sold_units: CountPlaceholder  # P8 (KY 88, 264)
-    reserved_units: CountPlaceholder  # P8 (KY 265)
-    available_units: CountPlaceholder  # P8 (KY 266)
+    # KY 258-259 "34 satildi · 5 rezerve · 13 bos", KKP 161-163 tfoot kirilimi.
+    # DORT deger de her zaman doner (sifir olsa bile): eksik anahtar, ekranda
+    # "veri yok" ile "sifir" ayrimini kaybettirirdi (spec §8.2).
+    by_sales_status: dict[UnitSalesStatus, int]
+    # P3'te yer tutucuydular; `sales_status` sutunu acildigi icin GERCEK sayaca
+    # dondular (spec §8.2). `available` = `listed` — `closed` (Satisa Kapali)
+    # bos olsa bile SATISTA DEGILDIR.
+    sold_units: int  # KY 88, 264
+    reserved_units: int  # KY 265
+    available_units: int  # KY 266
+    # YER TUTUCU KALIR: GERCEKLESEN satis tutari hâlâ P8'in verisidir — durum
+    # sutunu acildi diye ciro uydurulmaz.
     sales_revenue: MetricPlaceholder  # P8 (KY 93)
     average_sale_price: MetricPlaceholder  # P8 (KY 267)
 

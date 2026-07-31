@@ -357,7 +357,9 @@ async def test_placeholders_carry_correct_pending_module(seeded_db, user_factory
     assert unit.unit_cost.pending_module == "project_costs"
     # UE 97-99: maliyet yoksa kâr da yok (karar 3).
     assert unit.expected_profit.pending_module == "project_costs"
-    assert totals.sold_units.pending_module == "unit_sales"
+    # P3.1 §8.2: uc sayac GERCEK oldu; GERCEKLESEN satis tutari P8'de KALDI.
+    assert totals.sold_units == 0
+    assert totals.available_units == 1
     assert totals.sales_revenue.pending_module == "unit_sales"
     assert all(
         placeholder.available is False
@@ -367,9 +369,6 @@ async def test_placeholders_carry_correct_pending_module(seeded_db, user_factory
             unit.shareholder,
             unit.unit_cost,
             unit.expected_profit,
-            totals.sold_units,
-            totals.reserved_units,
-            totals.available_units,
             totals.sales_revenue,
             totals.average_sale_price,
         )
