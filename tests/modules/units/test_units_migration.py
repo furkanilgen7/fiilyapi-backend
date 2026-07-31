@@ -16,6 +16,8 @@ import os
 import subprocess
 import sys
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import asyncpg
@@ -36,6 +38,15 @@ PARENT_REVISION = "e3a8b4a5b93b"
 UNITS_REVISION = "a4c7f1d2e8b3"
 NEW_TABLES = ("blocks", "units")
 NEW_ENUM_TYPES = ("unit_kind", "unit_owner_side")
+
+# --- P3.1 ---
+# `head` / `-1` KULLANILMAZ (plan §0.A.3): her revizyon ACIK id'siyle olculur.
+P31_R1_PARENT = "d2a32dcae735"
+P31_R1_REVISION = "c1d2e3f4a5b6"
+UNIT_KIND_LABELS_BEFORE = ["apartment", "shop"]
+UNIT_KIND_LABELS_AFTER = ["apartment", "shop", "office", "warehouse", "parking"]
+# Takas sirasinda kullanilan gecici tip adlari downgrade/upgrade sonrasi KALMAMALIDIR.
+UNIT_KIND_TEMP_TYPES = ("unit_kind_new", "unit_kind_old")
 
 
 def _asyncpg_dsn(database: str) -> str:
@@ -73,6 +84,43 @@ async def _type_exists(conn: asyncpg.Connection, name: str) -> bool:
 
 async def _current_revision(conn: asyncpg.Connection) -> str | None:
     return await conn.fetchval("SELECT version_num FROM alembic_version")
+
+
+async def _enum_labels(conn: asyncpg.Connection, name: str) -> list[str]:
+    rows = await conn.fetch(
+        "SELECT e.enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid "
+        "WHERE t.typname = $1 ORDER BY e.enumsortorder",
+        name,
+    )
+    return [row["enumlabel"] for row in rows]
+
+
+@asynccontextmanager
+async def _temp_database(prefix: str) -> AsyncIterator[str]:
+    """Tek kullanimlik yerel veritabani; basarisizlikta da dusurulur (plan §0.A.2)."""
+    database = f"{prefix}_{uuid.uuid4().hex[:8]}"
+    admin = await asyncpg.connect(_asyncpg_dsn("postgres"))
+    try:
+        await admin.execute(f'CREATE DATABASE "{database}"')
+    finally:
+        await admin.close()
+    try:
+        yield database
+    finally:
+        admin = await asyncpg.connect(_asyncpg_dsn("postgres"))
+        try:
+            await admin.execute(f'DROP DATABASE IF EXISTS "{database}" WITH (FORCE)')
+        finally:
+            await admin.close()
+
+
+@asynccontextmanager
+async def _connect(database: str) -> AsyncIterator[asyncpg.Connection]:
+    conn = await asyncpg.connect(_asyncpg_dsn(database))
+    try:
+        yield conn
+    finally:
+        await conn.close()
 
 
 async def test_upgrade_downgrade_upgrade_round_trip():
@@ -128,3 +176,75 @@ async def test_upgrade_downgrade_upgrade_round_trip():
             await admin.execute(f'DROP DATABASE IF EXISTS "{database}" WITH (FORCE)')
         finally:
             await admin.close()
+
+
+# --- P3.1 / R1: `unit_kind` enum takasi (izole revizyon) ---
+
+
+async def test_r1_upgrade_downgrade_upgrade():
+    """R1 tur donusu: 2 etiket → 5 etiket → 2 etiket → 5 etiket."""
+    async with _temp_database("p31_r1_mig") as database:
+        _run_alembic("upgrade", P31_R1_PARENT, database=database)
+        async with _connect(database) as conn:
+            assert await _enum_labels(conn, "unit_kind") == UNIT_KIND_LABELS_BEFORE
+
+        _run_alembic("upgrade", P31_R1_REVISION, database=database)
+        async with _connect(database) as conn:
+            assert await _enum_labels(conn, "unit_kind") == UNIT_KIND_LABELS_AFTER
+            assert await _current_revision(conn) == P31_R1_REVISION
+
+        _run_alembic("downgrade", P31_R1_PARENT, database=database)
+        async with _connect(database) as conn:
+            assert await _enum_labels(conn, "unit_kind") == UNIT_KIND_LABELS_BEFORE
+            assert await _current_revision(conn) == P31_R1_PARENT
+
+        # IKINCI upgrade: `DROP TYPE` unutulmussa burasi "type already exists" ile patlar.
+        _run_alembic("upgrade", P31_R1_REVISION, database=database)
+        async with _connect(database) as conn:
+            assert await _enum_labels(conn, "unit_kind") == UNIT_KIND_LABELS_AFTER
+
+
+async def test_r1_downgrade_eski_tipi_birakmaz():
+    """Takasin gecici tipleri ne upgrade ne downgrade sonrasi `pg_type`'da kalir."""
+    async with _temp_database("p31_r1_type") as database:
+        _run_alembic("upgrade", P31_R1_REVISION, database=database)
+        async with _connect(database) as conn:
+            for temp_type in UNIT_KIND_TEMP_TYPES:
+                assert not await _type_exists(conn, temp_type), (
+                    f"{temp_type} upgrade sonrasi pg_type'da duruyor"
+                )
+
+        _run_alembic("downgrade", P31_R1_PARENT, database=database)
+        async with _connect(database) as conn:
+            for temp_type in UNIT_KIND_TEMP_TYPES:
+                assert not await _type_exists(conn, temp_type), (
+                    f"{temp_type} downgrade sonrasi pg_type'da duruyor"
+                )
+            assert await _type_exists(conn, "unit_kind")
+
+
+async def test_r1_baska_sema_degisikligi_yok():
+    """R1 IZOLEDIR: `units`/`blocks` kolon sayisi degismez (spec §10.2/R1)."""
+    async with _temp_database("p31_r1_iso") as database:
+        _run_alembic("upgrade", P31_R1_PARENT, database=database)
+        async with _connect(database) as conn:
+            before = {
+                table: await conn.fetchval(
+                    "SELECT count(*) FROM information_schema.columns "
+                    "WHERE table_schema = 'public' AND table_name = $1",
+                    table,
+                )
+                for table in NEW_TABLES
+            }
+
+        _run_alembic("upgrade", P31_R1_REVISION, database=database)
+        async with _connect(database) as conn:
+            after = {
+                table: await conn.fetchval(
+                    "SELECT count(*) FROM information_schema.columns "
+                    "WHERE table_schema = 'public' AND table_name = $1",
+                    table,
+                )
+                for table in NEW_TABLES
+            }
+        assert after == before

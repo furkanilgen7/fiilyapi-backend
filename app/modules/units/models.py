@@ -22,10 +22,22 @@ from app.core.db import Base
 
 
 class UnitKind(str, enum.Enum):
-    """KY 71 "48 Daire + 4 Dukkan", KY 308 "Dukkan 2", SY 104/132-135."""
+    """KY 71 "48 Daire + 4 Dukkan", KY 308 "Dukkan 2", SY 104/132-135.
+
+    P3.1 §4.3: UE 74 bes secenek gosterir (Daire · Dukkan/Ticari · Ofis · Depo ·
+    Otopark), bu yuzden `office` / `warehouse` / `parking` eklendi. Enum genislemesi
+    `ALTER TYPE ... ADD VALUE` ile DEGIL, tip TAKASIYLA yapilir (izole revizyon
+    `c1d2e3f4a5b6`) — `ADD VALUE` ayni islem icinde kullanilamaz ve GERI ALINAMAZ.
+
+    Karar 13: ekran etiketleri DEGISMEZ (KY 71 / KK 72 / SY 74 hala "Daire +
+    Dukkan" der); uc yeni deger yalniz sayaclara eklenir ve sifirsa gorunmez.
+    """
 
     apartment = "apartment"
     shop = "shop"
+    office = "office"
+    warehouse = "warehouse"
+    parking = "parking"
 
 
 class UnitOwnerSide(str, enum.Enum):

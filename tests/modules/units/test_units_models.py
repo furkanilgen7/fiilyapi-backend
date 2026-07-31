@@ -249,6 +249,44 @@ async def test_unit_kind_enum_rejects_unknown_value(db_session, project_factory)
         )
 
 
+def test_unit_kind_bes_deger_icerir():
+    """P3.1 spec §4.3: UE 74 Daire · Dukkan · Ofis · Depo · Otopark."""
+    assert [member.value for member in UnitKind] == [
+        "apartment",
+        "shop",
+        "office",
+        "warehouse",
+        "parking",
+    ]
+
+
+async def test_unit_kind_db_enum_degerleri(db_session):
+    """pg_enum'da bes etiket, spec §4.3'teki sirayla."""
+    labels = (
+        (
+            await db_session.execute(
+                text(
+                    "SELECT e.enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid "
+                    "WHERE t.typname = 'unit_kind' ORDER BY e.enumsortorder"
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert list(labels) == ["apartment", "shop", "office", "warehouse", "parking"]
+
+
+async def test_unit_kind_office_warehouse_parking_yazilabilir(db_session, project_factory):
+    project = await project_factory("P-UNIT-18")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+
+    for index, kind in enumerate((UnitKind.office, UnitKind.warehouse, UnitKind.parking)):
+        db_session.add(_unit(project, block, unit_no=f"K{index}", unit_kind=kind))
+    await db_session.flush()  # dogurgan olmadan gecmeli
+
+
 async def test_unit_owner_side_nullable(db_session, project_factory):
     """spec §5.3: paylasim noterden sonra girilir, bos birakmak hata degildir."""
     project = await project_factory("P-UNIT-17")
