@@ -12,6 +12,7 @@ from decimal import Decimal
 from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.boq.models import BoqItem
 from app.modules.contracts.models import EmployerContractGroup, EmployerContractItem
 from app.modules.progress_payments.models import (
     ProgressPayment,
@@ -129,6 +130,37 @@ async def list_prior_completed_payments(
 
 async def get_site(session: AsyncSession, site_id: uuid.UUID) -> Site | None:
     return await session.get(Site, site_id)
+
+
+async def get_sites_by_ids(
+    session: AsyncSession, site_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, Site]:
+    """Satır doğrulamasının şantiye sahipliği kontrolü (spec §6.5/3) — gövdedeki
+    TÜM şantiyeler TEK sorguda okunur (satır başına `session.get` N+1 olurdu)."""
+    if not site_ids:
+        return {}
+    stmt = select(Site).where(Site.id.in_(site_ids))
+    result = await session.execute(stmt)
+    return {site.id: site for site in result.scalars().all()}
+
+
+async def get_distributed_quotas(
+    session: AsyncSession, item_ids: list[uuid.UUID], site_ids: list[uuid.UUID]
+) -> dict[tuple[uuid.UUID, uuid.UUID], Decimal]:
+    """(kalem, şantiye) → dağıtılmış BOQ kotası (spec §6.5/1-2).
+
+    Sözlükte ANAHTARIN BULUNMAMASI "bu çift dağıtılmamış" demektir
+    (`ITEM_NOT_DISTRIBUTED`); değeri ise kota tavanıdır (`QUANTITY_EXCEEDS_QUOTA`).
+    `uq_boq_items_contract_item_site` kısmi benzersiz indeksi çift başına en fazla
+    bir satır garanti eder (`boq/models.py:75-81`) — toplama gerekmez.
+    """
+    if not item_ids or not site_ids:
+        return {}
+    stmt = select(BoqItem.contract_item_id, BoqItem.site_id, BoqItem.quantity).where(
+        BoqItem.contract_item_id.in_(item_ids), BoqItem.site_id.in_(site_ids)
+    )
+    result = await session.execute(stmt)
+    return {(row[0], row[1]): row[2] for row in result.all()}
 
 
 async def get_employer_items_with_group_by_ids(

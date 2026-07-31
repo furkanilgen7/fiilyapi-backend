@@ -22,6 +22,7 @@ from app.modules.progress_payments.models import ProgressPaymentStatus
 from app.modules.progress_payments.schemas import (
     ProgressPaymentCreate,
     ProgressPaymentDetail,
+    ProgressPaymentLinesSave,
     ProgressPaymentListResponse,
     ProgressPaymentUpdate,
 )
@@ -101,4 +102,28 @@ async def update_progress_payment_endpoint(
 ) -> ProgressPaymentDetail:
     """Yalnız `status=draft` (spec §7); aksi 409 `INVALID_STATUS_TRANSITION`."""
     payment, _ = await service.update(session, user, payment_id, data)
+    return await service.get_detail(session, user, payment.id)
+
+
+@router.put(
+    "/progress-payments/{payment_id}/lines",
+    response_model=ProgressPaymentDetail,
+    dependencies=[_DRAFT],
+)
+async def save_progress_payment_lines_endpoint(
+    payment_id: uuid.UUID,
+    data: ProgressPaymentLinesSave,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> ProgressPaymentDetail:
+    """OLU formunun tek "Taslak Kaydet" gövdesi — **DEĞİŞTİRME** semantiği.
+
+    ⚠️ Gövdede geçmeyen satır SİLİNİR. P5'in `PUT …/contract/distribution`
+    **BİRLEŞTİRME** ucunun TERSİDİR (orada gövdede geçmeyen hücre KORUNUR) —
+    frontend'de ikisi yan yana kullanılacağı için karıştırılmamalıdır (spec §10/2).
+
+    Yalnız `status=draft` (409 `INVALID_STATUS_TRANSITION`); §6.5 korkulukları
+    (dağıtım ön şartı, kota tavanı, sahiplik, FF kilidi) her yazımda koşar.
+    """
+    payment, _ = await service.save_lines(session, user, payment_id, data)
     return await service.get_detail(session, user, payment.id)

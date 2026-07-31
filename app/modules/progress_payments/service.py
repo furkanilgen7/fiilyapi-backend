@@ -13,9 +13,9 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import ConflictError, DuplicateError, NotFoundError, SiteValidationError
+from app.core.errors import ConflictError, NotFoundError, SiteValidationError
 from app.core.timezone import today
-from app.modules.progress_payments import calculations, guards, repository
+from app.modules.progress_payments import calculations, guards, lines, repository
 from app.modules.progress_payments.models import (
     ProgressPayment,
     ProgressPaymentLine,
@@ -28,7 +28,7 @@ from app.modules.progress_payments.schemas import (
     ProgressPaymentDetail,
     ProgressPaymentGroupSummary,
     ProgressPaymentLineDetail,
-    ProgressPaymentLineInput,
+    ProgressPaymentLinesSave,
     ProgressPaymentListItem,
     ProgressPaymentListResponse,
     ProgressPaymentUpdate,
@@ -69,60 +69,13 @@ async def _visible_payment(
     return payment, project
 
 
-# --- Satır snapshot inşası (spec §4.2/§5, §6.5-3/4) ---
-#
-# YALNIZ H4'ün kapsadığı iki IDOR/tutarlılık kuralı burada uygulanır: şantiye
-# projeye ait olmalı (SITE_PROJECT_MISMATCH) ve kalem bu projenin sözleşmesine
-# ait olmalı (ITEM_PROJECT_MISMATCH). Dağıtım ön şartı / kota tavanı / FF kilidi
-# (§6.5 kuralları 1-2 + spec §10/5) BİLİNÇLİ OLARAK burada YOK — H5'in "EN
-# RİSKLİ" `lines.py`'si bunları `PUT …/lines` üzerinde uygular (plan §Task H5).
-
-
-async def _build_lines(
-    session: AsyncSession,
-    project: Project,
-    inputs: list[ProgressPaymentLineInput],
-    default_coefficient: Decimal,
-) -> list[ProgressPaymentLine]:
-    seen_cells: set[tuple[uuid.UUID, uuid.UUID]] = set()
-    item_ids = [entry.contract_item_id for entry in inputs]
-    items_with_group = await repository.get_employer_items_with_group_by_ids(session, item_ids)
-
-    lines: list[ProgressPaymentLine] = []
-    for entry in inputs:
-        cell = (entry.contract_item_id, entry.site_id)
-        if cell in seen_cells:
-            raise DuplicateError(guards.DUPLICATE_CELL)
-        seen_cells.add(cell)
-
-        site = await repository.get_site(session, entry.site_id)
-        if site is None or site.project_id != project.id:
-            raise SiteValidationError(guards.SITE_PROJECT_MISMATCH)
-
-        item_and_group = items_with_group.get(entry.contract_item_id)
-        if item_and_group is None or item_and_group[0].project_id != project.id:
-            raise SiteValidationError(guards.ITEM_PROJECT_MISMATCH)
-        item, group_name = item_and_group
-
-        lines.append(
-            ProgressPaymentLine(
-                contract_item_id=item.id,
-                site_id=site.id,
-                code=item.code,
-                description=item.description,
-                unit=item.unit,
-                contract_unit_price=item.unit_price,
-                coefficient=entry.coefficient
-                if entry.coefficient is not None
-                else default_coefficient,
-                quantity=entry.quantity,
-                group_name=group_name,
-            )
-        )
-    return lines
-
-
 # --- Oluşturma (spec §9.2, D8, kalıcı karar 4/9) ---
+#
+# Satır üretimi/doğrulaması TEK YOLDAN geçer: `lines.py`. H4'te burada duran
+# asgari sahiplik kontrolleri (SITE_PROJECT_MISMATCH/ITEM_PROJECT_MISMATCH/
+# DUPLICATE_CELL) H5'te oraya taşındı ve §6.5'in kalan kurallarıyla (dağıtım ön
+# şartı, kota tavanı, FF kilidi) BİRLEŞTİRİLDİ — iki kopya kural zamanla ayrışır,
+# ayrışan taraf sessiz bir veri hatası olur (guards.py'nin en üstündeki kural).
 
 
 async def create(
@@ -160,7 +113,14 @@ async def create(
         created_by=actor.id,
     )
     if data.lines:
-        payment.lines = await _build_lines(session, project, data.lines, default_coefficient)
+        payment.lines = await lines.build_lines(
+            session,
+            project,
+            contract,
+            data.lines,
+            default_coefficient=default_coefficient,
+            sequence_no=sequence_no,
+        )
 
     session.add(payment)
     await session.flush()
@@ -186,6 +146,29 @@ async def update(
     return payment, project
 
 
+async def save_lines(
+    session: AsyncSession, actor: User, payment_id: uuid.UUID, data: ProgressPaymentLinesSave
+) -> tuple[ProgressPayment, Project]:
+    """`PUT /progress-payments/{id}/lines` — DEĞİŞTİRME semantiği (spec §9.2/§10-2).
+
+    Bu katman YALNIZ kapsam (§9.0) ve durum kapısını (§7) kurar; gövdenin
+    doğrulaması ve uygulanması `lines.apply_lines`'tadır. Ayrım bilinçlidir:
+    `lines.py` görünürlük katmanını (`_visible_payment`) çağırsaydı
+    `service → lines → service` döngüsel importu doğardı (plan bu fonksiyonu
+    `lines.save_lines` diye adlandırıyordu — sapma ve gerekçesi budur).
+    """
+    payment, project = await _visible_payment(session, actor, payment_id)
+    if payment.status != ProgressPaymentStatus.draft:
+        raise ConflictError(guards.INVALID_STATUS_TRANSITION)
+    contract = project.contract
+    if contract is None:
+        raise SiteValidationError(guards.NO_EMPLOYER_CONTRACT)
+
+    await lines.apply_lines(session, project, contract, payment, data.lines)
+    await session.refresh(payment)
+    return payment, project
+
+
 # --- Hesap türevleri (spec §6.2-§6.4, §6.6, §8) — DB'den okunan tarihsel zincir ---
 #
 # Avans mahsubu KÜMÜLATİF TAVANLIDIR (spec §6.3): payment N'in tavanı, N'DEN
@@ -194,11 +177,12 @@ async def update(
 # zincirleme çağrısı (her adım bir öncekinin sonucunu besler).
 
 
-def _gross_total(lines: list[ProgressPaymentLine]) -> Decimal:
+def _gross_total(payment_lines: list[ProgressPaymentLine]) -> Decimal:
+    # Parametre adı `lines` DEĞİL: modül düzeyindeki `lines` importunu gölgeler.
     return sum(
         (
             calculations.line_total(line.contract_unit_price, line.coefficient, line.quantity)
-            for line in lines
+            for line in payment_lines
         ),
         Decimal("0.00"),
     )
@@ -301,20 +285,9 @@ async def _line_rows(
 ) -> tuple[list[ProgressPaymentLineDetail], list[ProgressPaymentGroupSummary], Decimal]:
     """Satır detayları + grup toplulaştırması + §8 fiziksel ilerleme payı
     (`Σ cumulative_quantity × canlı unit_price`)."""
-    prior_payments = await repository.list_prior_completed_payments(
-        session, project.id, payment.sequence_no
-    )
-    prior_totals: dict[tuple[uuid.UUID, uuid.UUID], tuple[Decimal, Decimal]] = {}
-    for prior in prior_payments:
-        for line in prior.lines:
-            if line.contract_item_id is None:
-                continue
-            key = (line.contract_item_id, line.site_id)
-            prev_qty, prev_amt = prior_totals.get(key, (_ZERO, _ZERO))
-            line_amt = calculations.line_total(
-                line.contract_unit_price, line.coefficient, line.quantity
-            )
-            prior_totals[key] = (prev_qty + line.quantity, prev_amt + line_amt)
+    # E15 "Önceki" kolonu ile §6.5/2 kota tavanı AYNI tanımdan okur — kaynak
+    # `lines.prior_completed_totals` (bkz. oradaki GOREV-SIRASI §2/1 notu).
+    prior_totals = await lines.prior_completed_totals(session, project.id, payment.sequence_no)
 
     item_ids = [
         line.contract_item_id for line in payment.lines if line.contract_item_id is not None
