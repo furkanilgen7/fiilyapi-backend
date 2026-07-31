@@ -144,13 +144,13 @@ class ProgressPaymentLineDetail(BaseModel):
     id: uuid.UUID
     contract_item_id: uuid.UUID | None
     site_id: uuid.UUID
-    code: str
+    code: str = Field(max_length=50)
     description: str
-    unit: str
+    unit: str = Field(max_length=50)
     contract_unit_price: Decimal
     coefficient: Decimal
     quantity: Decimal
-    group_name: str | None
+    group_name: str | None = Field(max_length=200)
     sort_order: int
     adjusted_unit_price: Decimal
     line_total: Decimal

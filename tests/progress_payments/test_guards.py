@@ -8,6 +8,7 @@ from decimal import Decimal
 import pytest
 
 from app.core.errors import SiteValidationError
+from app.modules.contracts import guards as contracts_guards
 from app.modules.progress_payments import guards
 
 
@@ -72,3 +73,11 @@ def test_submit_hata_sirasi_donem_once_kontrol_edilir():
     with pytest.raises(SiteValidationError) as hata:
         guards.validate_submit(_Hakedis(period_year=None, lines=[]), _Sozlesme())
     assert str(hata.value) == guards.PERIOD_REQUIRED
+
+
+def test_site_project_mismatch_iki_modulde_senkron():
+    """Denetim H3 bulgusu: `SITE_PROJECT_MISMATCH` metni `contracts/guards.py`den
+    BİLİNÇLİ OLARAK kopyalanır (`app/core/`de metin sabitleri için doğal bir ev
+    yok, modül bağımsızlığı korunur). Bu test sürüklenmeyi yakalar: biri
+    değişip diğeri unutulursa kırmızıya döner."""
+    assert guards.SITE_PROJECT_MISMATCH == contracts_guards.SITE_PROJECT_MISMATCH

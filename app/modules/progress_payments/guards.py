@@ -41,7 +41,13 @@ CONTRACT_AMOUNT_REQUIRED = "Sözleşme bedeli girilmeden hakediş onaya gönderi
 ITEM_NOT_DISTRIBUTED = "Bu poz seçilen şantiyeye dağıtılmadı; önce poz dağılımını yapın."
 QUANTITY_EXCEEDS_QUOTA = "Kümülatif hakediş miktarı şantiye kotasını aşamaz."
 # `contracts/guards.py:69` metniyle BİREBİR AYNI — kopya değil, iki modülün
-# bağımsız sözleşmesi olarak bilinçli tekrar (spec §9.7 dipnotu).
+# bağımsız sözleşmesi olarak bilinçli tekrar (spec §9.7 dipnotu). `app/core/`
+# altında hata METİNLERİ için doğal bir ev YOK (yalnız `app/core/errors.py`
+# istisna SINIFLARINI tutar, `SiteValidationError` gibi — metin sabitleri
+# değil); yeni bir paylaşılan modül icat etmek modül bağımsızlığı ilkesini
+# (bu dosyanın en üstü) ihlal eder. Bunun yerine `test_guards.py`deki
+# `test_site_project_mismatch_iki_modulde_senkron` bu iki sabitin SÜRÜKLENMESİNİ
+# yakalar: biri değişip diğeri unutulursa test kırmızıya döner.
 SITE_PROJECT_MISMATCH = "Seçilen şantiye bu projeye ait değil"
 NO_EMPLOYER_CONTRACT = "Bu projenin işveren sözleşmesi yok."
 ESCALATION_DISABLED = "Bu sözleşmede fiyat farkı şartı yok."
