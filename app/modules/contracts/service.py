@@ -48,14 +48,11 @@ from app.modules.contracts.schemas import (
     EmployerContractItemResponse,
     EmployerContractItemsResponse,
     EmployerContractItemUpdate,
-    MetricPlaceholder,
 )
 from app.modules.projects.models import Project, ProjectContract
 from app.modules.projects.service import visible_projects
 from app.modules.users.models import User
 
-# Spec §2.2: hakediş P7'nin işi, bu dilimde yazılmaz — yer tutucu anahtarı.
-_PROGRESS_PAYMENTS = "progress_payments"
 _MONEY = Decimal("0.01")
 
 
@@ -63,8 +60,19 @@ def _quantize_money(value: Decimal) -> Decimal:
     return value.quantize(_MONEY, rounding=ROUND_HALF_UP)
 
 
-def _employer_item(project: Project, contract: ProjectContract) -> ContractListItem:
-    """Alan eşlemesi spec §6.1 tablosu — işveren sütunu BİREBİR."""
+def _employer_item(
+    project: Project, contract: ProjectContract, cumulative_gross: Decimal
+) -> ContractListItem:
+    """Alan eşlemesi spec §6.1 tablosu — işveren sütunu BİREBİR.
+
+    `progress_pct` P7/H9'da gerçek değere döndü (spec §9.6): §8'in FİNANSAL
+    ilerlemesidir (`kümülatif brüt / bedel × 100`), `projects.progress_pct`
+    elle girilen alanı DEĞİL. İki kaynak yan yana durursa hangisinin "ilerleme"
+    olduğu belirsizleşir; sözleşme ekranında ölçü sözleşmenin hakkedilen
+    bedelidir.
+    """
+    from app.modules.progress_payments import summary as progress_payments_summary
+
     return ContractListItem(
         id=project.id,
         title=project.name,
@@ -73,9 +81,7 @@ def _employer_item(project: Project, contract: ProjectContract) -> ContractListI
         amount=contract.amount if contract.amount is not None else Decimal("0"),
         start_date=project.start_date,
         end_date=project.end_date,
-        progress_pct=MetricPlaceholder(
-            available=True, value=project.progress_pct, pending_module=_PROGRESS_PAYMENTS
-        ),
+        progress_pct=progress_payments_summary.progress_pct(cumulative_gross, contract.amount),
         status=contract.status,
         is_draft=project.is_draft,
     )
@@ -118,13 +124,16 @@ def _subcontractor_item(contract: SubcontractorContract) -> ContractListItem:
         amount=_subcontractor_amount(contract),
         start_date=contract.start_date,
         end_date=contract.end_date,
-        progress_pct=MetricPlaceholder(pending_module=_PROGRESS_PAYMENTS),
+        # Taşeron hakedişi AYRI dilim (spec §1.2): sahte 0 yerine `None`.
+        progress_pct=None,
         status=contract.status,
         is_draft=contract.is_draft,
     )
 
 
-def _summary(items: list[ContractListItem]) -> ContractSummary:
+def _summary(
+    items: list[ContractListItem], progress_payment_total: Decimal | None
+) -> ContractSummary:
     """`SZL` 34-38 üst KPI şeridi (spec §6.1). `expiring_this_month_count`:
 
     durumu `active` VE bitiş tarihi sunucunun görüntüleme saat dilimindeki
@@ -144,6 +153,7 @@ def _summary(items: list[ContractListItem]) -> ContractSummary:
     return ContractSummary(
         total_amount=total_amount,
         active_count=active_count,
+        progress_payment_total=progress_payment_total,
         expiring_this_month_count=expiring_this_month_count,
     )
 
@@ -156,7 +166,14 @@ async def list_contracts(
     status_filter: ContractStatus | None,
     q: str | None,
 ) -> ContractListResponse:
+    # Yerel import: `contracts` → `progress_payments` yönü TEK taraflıdır ve
+    # modül düzeyinde kurulsaydı `progress_payments.service`in `contracts.models`
+    # importuyla dairesel bir zincire dönme riski taşırdı (`projects/service.py`
+    # deseninin aynısı).
+    from app.modules.progress_payments import summary as progress_payments_summary
+
     visible_ids = [p.id for p in await visible_projects(session, actor)]
+    progress_payment_total: Decimal | None = None
 
     if contract_type == "employer":
         rows = await repository.list_employer_contracts(
@@ -166,7 +183,18 @@ async def list_contracts(
             status_filter=status_filter,
             q=q,
         )
-        items = [_employer_item(project, contract) for project, contract in rows]
+        # Kümülatif brütler TEK toplu sorguda (proje başına ayrı sorgu YOK,
+        # plan H9 Adım 3); kapsam süzgeci SQL'de kalır.
+        cumulative = await progress_payments_summary.cumulative_gross_by_projects(
+            session, [project.id for project, _ in rows]
+        )
+        items = [
+            _employer_item(project, contract, cumulative.get(project.id, Decimal("0.00")))
+            for project, contract in rows
+        ]
+        progress_payment_total = _quantize_money(
+            sum((cumulative.get(project.id, Decimal("0")) for project, _ in rows), Decimal("0"))
+        )
     else:
         contracts = await repository.list_subcontractor_contracts(
             session,
@@ -177,7 +205,9 @@ async def list_contracts(
         )
         items = [_subcontractor_item(contract) for contract in contracts]
 
-    return ContractListResponse(summary=_summary(items), items=items)
+    # Taşeron listesinde hakediş toplamı `None` KALIR (spec §1.2): taşeron
+    # hakedişi bu dilimde yazılmadı, sahte 0 gösterilmez.
+    return ContractListResponse(summary=_summary(items, progress_payment_total), items=items)
 
 
 # --- İşveren sözleşmesi: gruplar/kalemler (task C6, spec §6.2) ---
@@ -287,6 +317,8 @@ async def get_employer_contract_detail(
     (görünür olsa dahi) `CONTRACT_MISSING` ile 404 döner — bu ucun var oluş
     şartı bir sözleşme kaydının bulunmasıdır.
     """
+    from app.modules.progress_payments import summary as progress_payments_summary
+
     project = await _visible_project(session, actor, project_id)
     contract = project.contract
     if contract is None:
@@ -321,6 +353,9 @@ async def get_employer_contract_detail(
         items_total=items_total,
         items_total_diff=amount - items_total,
         advance_amount=advance_amount,
+        progress_payment_summary=await progress_payments_summary.build_summary(
+            session, project, contract
+        ),
     )
 
 

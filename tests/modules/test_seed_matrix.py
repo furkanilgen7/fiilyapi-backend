@@ -1,6 +1,6 @@
 from sqlalchemy import select, text
 
-from app.core.access import AccessLevel
+from app.core.access import AccessLevel, satisfies
 from app.modules.roles.models import Module, ModuleGroup, Role, RolePermission
 from app.modules.roles.seed_data import seed_reference_data
 
@@ -249,3 +249,30 @@ async def test_boq_permissions_match_sites_row_except_field_engineer_and_hr(seed
         assert await _level_of(seeded_db, role_key, "boq") == await _level_of(
             seeded_db, role_key, "sites"
         )
+
+
+async def test_contracts_view_implies_progress_payments_view(seeded_db):
+    """Çapraz-modül değişmezi (H9 denetim Y1): `contracts >= view` olan HİÇBİR
+
+    rol `progress_payments < view` olamaz.
+
+    Gerekçe: `EmployerContractDetail.progress_payment_summary`
+    (`contracts/service.py`) hakedişin kümülatif brüt/avans/teminat/net
+    finansallarını `contracts` kapısının (`_VIEW`/`_FULL`) ARKASINDA gömer —
+    `progress_payments` kapısından hiç geçmeden. Bu güvenli tek şart matrisi
+    ihlal etmemesidir: bugün 8 rolün hiçbiri ihlal etmiyor (`router.py:69-74`
+    yorumundaki iddianın kanıtı budur), ama bu test yoksa gelecekte İzin
+    Matrisi ekranından bir role `contracts=view` + `progress_payments=none`
+    verilirse, o rol `progress_payments` izni olmadan E14 detayı üzerinden
+    hakediş finansallarını okuyabilir hale gelir ve hiçbir test kırmızıya
+    dönmez.
+    """
+    for role_key in EXPECTED_ROLE_KEYS:
+        contracts_level = await _level_of(seeded_db, role_key, "contracts")
+        progress_payments_level = await _level_of(seeded_db, role_key, "progress_payments")
+        if satisfies(contracts_level, AccessLevel.view):
+            assert satisfies(progress_payments_level, AccessLevel.view), (
+                f"{role_key}: contracts={contracts_level} ama "
+                f"progress_payments={progress_payments_level} — gömülü özet izin "
+                "arka kapısı açıyor"
+            )

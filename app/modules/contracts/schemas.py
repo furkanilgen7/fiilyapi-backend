@@ -20,9 +20,11 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from app.modules.contracts.models import ContractStatus, PaymentPeriod
 
-# Yer tutucu sözleşmesi TEK yerde tanımlıdır (B6/P1, spec §10): kopyalanmaz,
-# projects modülünden import edilir (`boq`/`sites` deseninin aynısı).
-from app.modules.projects.schemas import MetricPlaceholder
+# İşveren hakediş özeti P7'de GERÇEK veriye bağlandı (spec §9.6): E14 127-147
+# kartı artık yer tutucu değil, hesaplanmış özettir. Yön TEK taraflıdır
+# (`contracts` → `progress_payments`); şema importu döngü YARATMAZ çünkü
+# `progress_payments.schemas` yalnız kendi modellerini okur.
+from app.modules.progress_payments.schemas import ProgressPaymentSummary
 
 __all__ = [
     "ContractAllocationInput",
@@ -47,7 +49,6 @@ __all__ = [
     "EmployerContractItemResponse",
     "EmployerContractItemsResponse",
     "EmployerContractItemUpdate",
-    "MetricPlaceholder",
     "SubcontractorContractCreate",
     "SubcontractorContractDetail",
     "SubcontractorContractItemCreate",
@@ -76,13 +77,21 @@ ContractType = Literal["employer", "subcontractor"]
 
 
 class ContractSummary(BaseModel):
-    """`SZL` 34-38 üst KPI şeridi. `progress_payment_total` P7'nin işi (spec §2.2)."""
+    """`SZL` 34-38 üst KPI şeridi.
+
+    `progress_payment_total` (P7/H9, spec §9.6): işveren listesinde listelenen
+    sözleşmelerin KÜMÜLATİF BRÜT hakediş toplamı — artık `MetricPlaceholder`
+    DEĞİL düz `Decimal`. Taşeron listesinde `None`'dır: taşeron hakedişi ayrı
+    dilimdir (spec §1.2), sahte bir 0 yerine dürüst boş değer döner.
+
+    ⚠️ **Frontend için kırıcı değişiklik** (spec §10/4): alan artık
+    `{available, value, pending_module}` sarmalayıcısı değildir; `gen:api`
+    yenilenmeden tüketilemez.
+    """
 
     total_amount: Decimal
     active_count: int
-    progress_payment_total: MetricPlaceholder = Field(
-        default_factory=lambda: MetricPlaceholder(pending_module="progress_payments")
-    )
+    progress_payment_total: Decimal | None = None
     expiring_this_month_count: int
 
 
@@ -97,9 +106,13 @@ class ContractListItem(BaseModel):
     amount: Decimal
     start_date: date | None
     end_date: date | None
-    progress_pct: MetricPlaceholder = Field(
-        default_factory=lambda: MetricPlaceholder(pending_module="progress_payments")
-    )
+    progress_pct: Decimal | None = None
+    """§8 finansal ilerleme: `kümülatif brüt / bedel × 100` (P7/H9, spec §9.6).
+
+    İşveren sözleşmesinde gerçek değer; bedel yok/sıfır ise `None`. Taşeron
+    sözleşmesinde her zaman `None` (ayrı dilim, spec §1.2). Kırıcı değişiklik:
+    eskiden `MetricPlaceholder` sarmalayıcısıydı (spec §10/4).
+    """
     status: ContractStatus
     is_draft: bool
 
@@ -189,8 +202,9 @@ class EmployerContractDetail(BaseModel):
     """`E14` başlığı. Sözleşmenin kendi alanları için YENİ yazma ucu AÇILMAZ
     (spec §6.2) — bu yalnız okuma şemasıdır.
 
-    Kapsam dışı (spec §2.2): hakediş özeti (P7), milestone takvimi (P11),
-    belgeler (kalıcı karar 8) — üçü de burada AÇIKÇA `None` döner.
+    Kapsam dışı (spec §2.2): milestone takvimi (P11), belgeler (kalıcı karar
+    8) — ikisi de burada AÇIKÇA `None` döner. Hakediş özeti (P7) artık kapsam
+    dışı DEĞİL (P7/H9): `progress_payment_summary` ZORUNLUDUR, `None` döndürmez.
     """
 
     project_id: uuid.UUID
@@ -212,12 +226,18 @@ class EmployerContractDetail(BaseModel):
     items_total: Decimal
     items_total_diff: Decimal
     advance_amount: Decimal
-    progress_payment_summary: None = None
+    progress_payment_summary: ProgressPaymentSummary
+    """E14 127-147 "Hakediş Özeti" kartı — P7/H9'da GERÇEK veriye bağlandı
+    (spec §9.6). ZORUNLU alan (H9 denetim O2): tek üretici
+    `contracts.service.get_employer_contract_detail`, sözleşme varlığı zaten
+    bu şemaya ulaşmanın ön şartı (yoksa 404) ve `progress_payments_summary.
+    build_summary` HER yolda dolu bir gövde döner (hakediş yoksa sıfırlarla) —
+    `None` gelen bir dal yoktur, bu yüzden şema da `None`'a izin vermez."""
     milestones: None = None
     documents: None = None
-    pending_modules: list[str] = Field(
-        default_factory=lambda: ["progress_payments", "project_schedule", "documents"]
-    )
+    pending_modules: list[str] = Field(default_factory=lambda: ["project_schedule", "documents"])
+    """`progress_payments` bu listeden ÇIKTI (P7/H9): modül artık yazıldı ve
+    `progress_payment_summary` gerçek veri taşıyor."""
 
 
 # --- Poz dağılımı (spec §6.3, `POZ` ekranı) ---
@@ -492,4 +512,10 @@ class SubcontractorContractDetail(BaseModel):
     items_missing_price: int
     progress_payment_summary: None = None
     documents: None = None
-    pending_modules: list[str] = Field(default_factory=lambda: ["progress_payments", "documents"])
+    pending_modules: list[str] = Field(
+        default_factory=lambda: ["subcontractor_progress_payments", "documents"]
+    )
+    """⚠️ Buradaki yer tutucu **TAŞERON** hakedişidir, işveren hakedişi DEĞİL —
+    P7 yalnız işveren tarafını yazdı. Anahtar bu yüzden spec §1.2'nin adıyla
+    (`subcontractor_progress_payments`) YENİDEN ADLANDIRILDI; listeden
+    ÇIKARILMADI: taşeron hakedişi hâlâ ayrı ve yazılmamış bir dilimdir."""

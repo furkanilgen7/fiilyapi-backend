@@ -37,6 +37,7 @@ from app.modules.contracts.schemas import (
     SubcontractorResponse,
     SubcontractorUpdate,
 )
+from app.modules.progress_payments.schemas import ProgressPaymentSummary
 
 # --- Brief'teki taban testler (Adim 1) ---
 
@@ -233,6 +234,20 @@ def _employer_item_response(**overrides):
     return EmployerContractItemResponse(**taban)
 
 
+def _sifir_hakedis_ozeti() -> ProgressPaymentSummary:
+    return ProgressPaymentSummary(
+        contract_amount=Decimal("1000"),
+        cumulative_gross=Decimal("0.00"),
+        progress_pct=Decimal("0.00"),
+        advance_deduction_total=Decimal("0.00"),
+        retention_total=Decimal("0.00"),
+        net_total=Decimal("0.00"),
+        payment_count=0,
+        pending_count=0,
+        remaining=Decimal("1000"),
+    )
+
+
 def test_employer_contract_detail_kapsam_disi_alanlar_acik_doner():
     detay = EmployerContractDetail(
         project_id=uuid.uuid4(),
@@ -252,13 +267,44 @@ def test_employer_contract_detail_kapsam_disi_alanlar_acik_doner():
         items_total=Decimal("900"),
         items_total_diff=Decimal("100"),
         advance_amount=Decimal("200"),
+        progress_payment_summary=_sifir_hakedis_ozeti(),
     )
-    assert detay.progress_payment_summary is None
+    # P7/H9 (spec §9.6): `progress_payments` yer tutucu listesinden ÇIKTI;
+    # H9 denetim O2 sonrası `progress_payment_summary` ZORUNLU alandır — uç
+    # her zaman gerçek bir özet döner (hakediş yoksa sıfırlarla), `None`
+    # DEĞİL (uç yanıtı ayrıca `test_summary.py`de doğrulanır).
+    assert detay.progress_payment_summary == _sifir_hakedis_ozeti()
     assert detay.milestones is None
     assert detay.documents is None
-    assert "progress_payments" in detay.pending_modules
-    assert "project_schedule" in detay.pending_modules
-    assert "documents" in detay.pending_modules
+    assert "progress_payments" not in detay.pending_modules
+    assert detay.pending_modules == ["project_schedule", "documents"]
+
+
+def test_employer_contract_detail_hakedis_ozeti_zorunludur():
+    """H9 denetim O2: alan verilmezse `ValidationError` — `None` varsayılanı
+
+    KALDIRILDI, uç sözleşmesi her zaman dolu bir özet taşımayı garanti eder.
+    """
+    with pytest.raises(ValidationError):
+        EmployerContractDetail(
+            project_id=uuid.uuid4(),
+            contract_no="SZL-2025-001",
+            signature_date=None,
+            amount=Decimal("1000"),
+            advance_pct=Decimal("20"),
+            retainage_pct=Decimal("5"),
+            vat_pct=Decimal("20"),
+            late_penalty_daily=None,
+            has_price_escalation=False,
+            status=ContractStatus.active,
+            start_date=None,
+            end_date=None,
+            employer_name="ABC Insaat",
+            contractor_name="XYZ Yuklenici",
+            items_total=Decimal("900"),
+            items_total_diff=Decimal("100"),
+            advance_amount=Decimal("200"),
+        )
 
 
 def test_subcontractor_contract_detail_kapsam_disi_alanlar_acik_doner():
@@ -288,9 +334,12 @@ def test_subcontractor_contract_detail_kapsam_disi_alanlar_acik_doner():
         contract_total=Decimal("0"),
         items_missing_price=0,
     )
+    # ⚠️ Buradaki yer tutucu TAŞERON hakedişidir (spec §1.2) — P7 yalnız işveren
+    # tarafını yazdı. Anahtar bu yüzden ÇIKARILMADI, `subcontractor_progress_
+    # payments` olarak YENİDEN ADLANDIRILDI (P7/H9).
     assert detay.progress_payment_summary is None
     assert detay.documents is None
-    assert detay.pending_modules == ["progress_payments", "documents"]
+    assert detay.pending_modules == ["subcontractor_progress_payments", "documents"]
 
 
 def test_contract_summary_hakedis_toplami_kapsam_disi():
@@ -299,8 +348,9 @@ def test_contract_summary_hakedis_toplami_kapsam_disi():
         active_count=1,
         expiring_this_month_count=0,
     )
-    assert ozet.progress_payment_total.available is False
-    assert ozet.progress_payment_total.pending_module == "progress_payments"
+    # P7/H9: düz `Decimal | None`. Şema varsayılanı `None` (taşeron listesi);
+    # işveren listesinde servis gerçek toplamı geçirir.
+    assert ozet.progress_payment_total is None
 
 
 def test_subcontractor_contract_item_response_bagsiz_kalem_group_null_doner():
@@ -358,7 +408,7 @@ def test_contract_list_response_ozet_ve_kalemler():
             )
         ],
     )
-    assert yanit.items[0].progress_pct.available is False
+    assert yanit.items[0].progress_pct is None
 
 
 def test_contract_allocation_input_miktar_pozitif_olmali():

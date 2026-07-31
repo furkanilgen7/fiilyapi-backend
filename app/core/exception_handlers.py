@@ -4,6 +4,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import (
     BoqGroupSiteMismatchError,
+    ConflictError,
     DeleteNotAllowedError,
     DomainError,
     DuplicateError,
@@ -62,6 +63,10 @@ async def _related_records_exist_handler(
     return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(exc)})
 
 
+async def _conflict_error_handler(request: Request, exc: ConflictError) -> JSONResponse:
+    return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(exc)})
+
+
 async def _boq_group_site_mismatch_handler(
     request: Request, exc: BoqGroupSiteMismatchError
 ) -> JSONResponse:
@@ -111,6 +116,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(SiteValidationError, _site_validation_handler)
     app.add_exception_handler(DuplicateError, _duplicate_error_handler)
     app.add_exception_handler(RelatedRecordsExistError, _related_records_exist_handler)
+    app.add_exception_handler(ConflictError, _conflict_error_handler)
     app.add_exception_handler(BoqGroupSiteMismatchError, _boq_group_site_mismatch_handler)
     app.add_exception_handler(UnitValidationError, _unit_validation_handler)
     app.add_exception_handler(UnitImportError, _unit_import_handler)

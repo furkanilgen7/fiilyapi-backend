@@ -79,6 +79,11 @@ SITE_HAS_BLOCKS = "Bu şantiyede blok var, önce blokları silin"
 # hatası" (`IntegrityError` → 409) görür — diğer üç kontrolle AYNI eyleme
 # dönük Türkçe metin burada erken karşılanır.
 SITE_HAS_CONTRACTS = "Bu şantiyede taşeron sözleşmesi var, önce sözleşmeleri silin"
+# Alt-Proje 2 P7 (İşveren Hakedişi, task H8, spec §4.2/§7.1) — beşinci korkuluk:
+# `progress_payment_lines.site_id` FK'si de RESTRICT'tir (`SITE_HAS_CONTRACTS`
+# gerekçesinin aynısı: DB zaten korur ama korkuluksuz bırakılırsa kullanıcı
+# `IntegrityError` → 409 emniyet ağının eyleme dönük OLMAYAN metnini görür).
+SITE_HAS_PROGRESS_PAYMENTS = "Bu şantiyede hakediş satırı var, önce hakedişleri silin"
 
 # GPS BICIM HATASI SABITI YOKTUR (§3.5 revize karari): sunucu GPS metnini
 # dogrulamaz, dolayisiyla boyle bir hata uretmez.

@@ -1,0 +1,424 @@
+"""İşveren hakedişi (P7) uçları — CRUD (H4) + satır/tazeleme (H5/H7) + durum
+geçişleri (H6) + silme (H8) + denetim günlüğü (H10, spec §11).
+
+`contracts/router.py` deseninin aynısı: kapı sabitleri modül düzeyinde tanımlanır.
+Denetim günlüğü (`record_audit`) TÜM yazma uçlarına bağlıdır; mesaj aileleri
+`app/modules/audit/messages.py`de merkezileşir (plan Task H10).
+"""
+
+import uuid
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Query, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.access import AccessLevel
+from app.core.db import get_db
+from app.core.deps import get_current_user
+from app.core.openapi import COMMON_ERROR_RESPONSES
+from app.core.permissions import require_permission
+from app.core.ratelimit import client_ip
+from app.modules.audit import messages
+from app.modules.audit.models import AuditAction
+from app.modules.audit.service import record_audit
+from app.modules.progress_payments import service, summary, transitions
+from app.modules.progress_payments.models import ProgressPaymentStatus
+from app.modules.progress_payments.schemas import (
+    ProgressPaymentCreate,
+    ProgressPaymentDetail,
+    ProgressPaymentLinesSave,
+    ProgressPaymentListResponse,
+    ProgressPaymentSummary,
+    ProgressPaymentUpdate,
+    RefreshPricesResponse,
+    RejectBody,
+)
+from app.modules.users.models import User
+
+router = APIRouter(tags=["progress-payments"], responses=COMMON_ERROR_RESPONSES)
+
+_VIEW = require_permission("progress_payments", AccessLevel.view)
+_DRAFT = require_permission("progress_payments", AccessLevel.draft)
+_APPROVE = require_permission("progress_payments", AccessLevel.approve)
+_ADMIN = require_permission("progress_payments", AccessLevel.admin)
+
+
+@router.get(
+    "/progress-payments",
+    response_model=ProgressPaymentListResponse,
+    dependencies=[_VIEW],
+)
+async def list_progress_payments_endpoint(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    project_id: uuid.UUID | None = None,
+    site_id: uuid.UUID | None = None,
+    status_filter: Annotated[ProgressPaymentStatus | None, Query(alias="status")] = None,
+) -> ProgressPaymentListResponse:
+    return await service.list_payments(
+        session, user, project_id=project_id, site_id=site_id, status_filter=status_filter
+    )
+
+
+@router.get(
+    "/projects/{project_id}/progress-payments/summary",
+    response_model=ProgressPaymentSummary,
+    dependencies=[_VIEW],
+)
+async def get_progress_payment_summary_endpoint(
+    project_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> ProgressPaymentSummary:
+    """E14 127-147 "Hakediş Özeti" kartı + SHK 82-84 şantiye kartları (spec §9.6).
+
+    Kapı `_VIEW`: özet yalnız OKUMA'dır. Aynı gövde `contracts` modülünün E14
+    detayına da gömülür (`EmployerContractDetail.progress_payment_summary`) —
+    izin matrisinde `contracts ≥ view` olan HER rolün `progress_payments ≥ view`
+    olduğu doğrulanmıştır (`seed_data.py:169/187`), bu yüzden gömme bir izin
+    arka kapısı açmaz.
+    """
+    return await summary.get_summary(session, user, project_id)
+
+
+@router.get(
+    "/progress-payments/{payment_id}",
+    response_model=ProgressPaymentDetail,
+    dependencies=[_VIEW],
+)
+async def get_progress_payment_endpoint(
+    payment_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> ProgressPaymentDetail:
+    return await service.get_detail(session, user, payment_id)
+
+
+@router.post(
+    "/projects/{project_id}/progress-payments",
+    response_model=ProgressPaymentDetail,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[_DRAFT],
+)
+async def create_progress_payment_endpoint(
+    request: Request,
+    project_id: uuid.UUID,
+    data: ProgressPaymentCreate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> ProgressPaymentDetail:
+    """D8/K9: sözleşmede açık hakediş varsa 409; sözleşme yoksa 422 (spec §9.2).
+
+    Yanıt hesap türevleri (`calculation`/`progress`/`groups`) taşıdığı için
+    TEK detay inşa yolundan (`service.build_detail`) geçer — iki kopya hesap
+    mantığı riski taşınmaz. `get_detail` DEĞİL `build_detail` çağrılır (H4
+    denetimi O3): `create` kapsam süzgecini zaten koşturmuş ve `(payment,
+    project)` çiftini çözmüştür; `get_detail` ikinci bir `visible_projects`
+    sorgusu daha koştururdu.
+    """
+    payment, project = await service.create(session, user, project_id, data)
+    await record_audit(
+        session,
+        action=AuditAction.create,
+        detail=messages.progress_payment_created(project.name, payment.sequence_no),
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return await service.build_detail(session, payment, project)
+
+
+@router.patch(
+    "/progress-payments/{payment_id}",
+    response_model=ProgressPaymentDetail,
+    dependencies=[_DRAFT],
+)
+async def update_progress_payment_endpoint(
+    request: Request,
+    payment_id: uuid.UUID,
+    data: ProgressPaymentUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> ProgressPaymentDetail:
+    """Yalnız `status=draft` (spec §7); aksi 409 `INVALID_STATUS_TRANSITION`."""
+    payment, project = await service.update(session, user, payment_id, data)
+    await record_audit(
+        session,
+        action=AuditAction.update,
+        detail=messages.progress_payment_updated(project.name, payment.sequence_no),
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return await service.build_detail(session, payment, project)
+
+
+@router.put(
+    "/progress-payments/{payment_id}/lines",
+    response_model=ProgressPaymentDetail,
+    dependencies=[_DRAFT],
+)
+async def save_progress_payment_lines_endpoint(
+    request: Request,
+    payment_id: uuid.UUID,
+    data: ProgressPaymentLinesSave,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> ProgressPaymentDetail:
+    """OLU formunun tek "Taslak Kaydet" gövdesi — **DEĞİŞTİRME** semantiği.
+
+    ⚠️ Gövdede geçmeyen satır SİLİNİR. P5'in `PUT …/contract/distribution`
+    **BİRLEŞTİRME** ucunun TERSİDİR (orada gövdede geçmeyen hücre KORUNUR) —
+    frontend'de ikisi yan yana kullanılacağı için karıştırılmamalıdır (spec §10/2).
+
+    Yalnız `status=draft` (409 `INVALID_STATUS_TRANSITION`); §6.5 korkulukları
+    (dağıtım ön şartı, kota tavanı, sahiplik, FF kilidi) her yazımda koşar.
+
+    Kalemi silinmiş satırlar gövdeden adreslenemediği için düşer; sayıları
+    yanıtın `dropped_orphan_count` alanında BİLDİRİLİR (spec §10/7, sessiz
+    atlama yok). `get_detail` bu bilgiyi bilemez — `model_copy` ile üzerine
+    yazılır (mutasyon yok, yeni nesne).
+
+    Denetim mesajı `payment.lines` (kaydedilmiş NİHAİ durum) uzunluğunu taşır
+    (spec §11 `progress_payment_lines_saved(…, count)`) — gövdedeki `len(data.
+    lines)` DEĞİL, çünkü ikisi düşen bağı-kopmuş satırlar YOKSA zaten eşittir
+    ama tutarlılık için TEK doğruluk kaynağı (kalıcı hâl) tercih edilir.
+    """
+    payment, project, dropped_orphan_count = await service.save_lines(
+        session, user, payment_id, data
+    )
+    await record_audit(
+        session,
+        action=AuditAction.update,
+        detail=messages.progress_payment_lines_saved(
+            project.name, payment.sequence_no, len(payment.lines)
+        ),
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    detail = await service.get_detail(session, user, payment.id)
+    return detail.model_copy(update={"dropped_orphan_count": dropped_orphan_count})
+
+
+@router.post(
+    "/progress-payments/{payment_id}/refresh-prices",
+    response_model=RefreshPricesResponse,
+    dependencies=[_DRAFT],
+)
+async def refresh_progress_payment_prices_endpoint(
+    request: Request,
+    payment_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> RefreshPricesResponse:
+    """§5.1/§9.3: yalnız `draft`'ta bağı kopmamış satırların snapshot beşlisini
+    + hakedişin yüzde üçlüsünü kalemden/sözleşmeden bilinçli tazeler.
+
+    Yanıt YALNIZ `{refreshed_count}`'tur (plan Adım 1'in test şeması) — güncel
+    ekran ayrı bir `GET /progress-payments/{id}` ile okunur; `PUT …/lines`'ın
+    aksine burada tek gövdede iki bilgi (sayaç + tam detay) BİRLEŞTİRİLMEZ,
+    çünkü tazeleme sonrası frontend zaten ekranı yeniden çizmek için detayı
+    ayrıca çeker (spec §9.3, `RefreshPricesResponse`)."""
+    payment, project, refreshed_count = await service.refresh_prices(session, user, payment_id)
+    await record_audit(
+        session,
+        action=AuditAction.update,
+        detail=messages.progress_payment_prices_refreshed(
+            project.name, payment.sequence_no, refreshed_count
+        ),
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return RefreshPricesResponse(refreshed_count=refreshed_count)
+
+
+# --- Durum geçişleri (spec §7, §9.4) ---
+#
+# Beş uç da TEK yoldan (`transitions.perform`) geçer; geçiş tablosu ve kilit
+# orada TEK kopyadır. Router'ın tek işi KAPIYI seçmektir (§7 tablosunun "asgari
+# seviye" kolonu) — durum kontrolü BURADA TEKRARLANMAZ.
+
+
+@router.post(
+    "/progress-payments/{payment_id}/submit",
+    response_model=ProgressPaymentDetail,
+    dependencies=[_DRAFT],
+)
+async def submit_progress_payment_endpoint(
+    request: Request,
+    payment_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> ProgressPaymentDetail:
+    """E15 71 / OLU 25 "Onaya Gönder" — `draft → pending_approval`.
+
+    Zorunluluk kuralları (dönem, satır/Σ>0, sözleşme bedeli) YALNIZ burada koşar
+    (§7): taslak eksik veriyle serbestçe saklanır (kalıcı karar 4).
+    """
+    result = await transitions.perform(session, user, payment_id, transitions.PaymentAction.submit)
+    await record_audit(
+        session,
+        action=AuditAction.update,
+        detail=messages.progress_payment_submitted(result.project.name, result.payment.sequence_no),
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return await service.get_detail(session, user, result.payment.id)
+
+
+@router.post(
+    "/progress-payments/{payment_id}/approve",
+    response_model=ProgressPaymentDetail,
+    dependencies=[_APPROVE],
+)
+async def approve_progress_payment_endpoint(
+    request: Request,
+    payment_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> ProgressPaymentDetail:
+    """`pending_approval → approved`; kota kilit altında YENİDEN doğrulanır."""
+    result = await transitions.perform(session, user, payment_id, transitions.PaymentAction.approve)
+    # `AuditAction.approve` (`audit/models.py` docstring'i) TAM BU UÇ için
+    # ayrılmıştı — diğer geçişler `AuditAction.update`dir.
+    await record_audit(
+        session,
+        action=AuditAction.approve,
+        detail=messages.progress_payment_approved(result.project.name, result.payment.sequence_no),
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return await service.get_detail(session, user, result.payment.id)
+
+
+@router.post(
+    "/progress-payments/{payment_id}/reject",
+    response_model=ProgressPaymentDetail,
+    dependencies=[_APPROVE],
+)
+async def reject_progress_payment_endpoint(
+    request: Request,
+    payment_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    data: RejectBody | None = None,
+) -> ProgressPaymentDetail:
+    """`pending_approval → draft` — ret sonrası taslak yeniden düzenlenebilir.
+
+    Gövde İSTEĞE BAĞLIDIR (K12: mockup'ta ret formu yok). `reason` hiçbir
+    kolona yazılmaz — TEK kalıcı izi denetim günlüğüdür (spec §11).
+    """
+    result = await transitions.perform(session, user, payment_id, transitions.PaymentAction.reject)
+    reason = data.reason if data is not None else None
+    await record_audit(
+        session,
+        action=AuditAction.update,
+        detail=messages.progress_payment_rejected(
+            result.project.name, result.payment.sequence_no, reason
+        ),
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return await service.get_detail(session, user, result.payment.id)
+
+
+@router.post(
+    "/progress-payments/{payment_id}/mark-paid",
+    response_model=ProgressPaymentDetail,
+    dependencies=[_APPROVE],
+)
+async def mark_paid_progress_payment_endpoint(
+    request: Request,
+    payment_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> ProgressPaymentDetail:
+    """`approved → paid` (K11: onay seviyesi). Ödeme detayı formu mockup'ta YOK
+    → tek tıkla işaretleme, yalnız `paid_at` damgalanır."""
+    result = await transitions.perform(
+        session, user, payment_id, transitions.PaymentAction.mark_paid
+    )
+    await record_audit(
+        session,
+        action=AuditAction.update,
+        detail=messages.progress_payment_paid(result.project.name, result.payment.sequence_no),
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return await service.get_detail(session, user, result.payment.id)
+
+
+@router.post(
+    "/progress-payments/{payment_id}/unapprove",
+    response_model=ProgressPaymentDetail,
+    dependencies=[_ADMIN],
+)
+async def unapprove_progress_payment_endpoint(
+    request: Request,
+    payment_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> ProgressPaymentDetail:
+    """`approved → pending_approval` (geri çek) — YALNIZ `admin` (§7 tablosu).
+
+    `paid` kaynak DEĞİLDİR (K7): ödenmiş hakedişin geri dönüşü yoktur, denemesi
+    409'dur.
+
+    H6'dan devredilen ZORUNLULUK (plan H10, spec §11): bugüne kadar `unapprove`
+    geriye HİÇBİR iz bırakmıyordu — `transitions.perform` eski `approved_by`/
+    `approved_at`'ı damgalar NULL'lanmadan ÖNCE yakalar (`TransitionResult`),
+    mesaj bu ikisini taşır.
+    """
+    result = await transitions.perform(
+        session, user, payment_id, transitions.PaymentAction.unapprove
+    )
+    await record_audit(
+        session,
+        action=AuditAction.update,
+        detail=messages.progress_payment_unapproved(
+            result.project.name,
+            result.payment.sequence_no,
+            result.previous_approver_name,
+            result.previous_approved_at,
+        ),
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return await service.get_detail(session, user, result.payment.id)
+
+
+# --- Silme (spec §7.1, §9.5, task H8) ---
+
+
+@router.delete(
+    "/progress-payments/{payment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[_DRAFT],
+)
+async def delete_progress_payment_endpoint(
+    request: Request,
+    payment_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """K8 iki katmanlı kural (spec §7.1). Kapı `_DRAFT`dir — `_ADMIN` olsaydı
+
+    taslağı üreten şef/saha rollerinin (draft seviyesi) KENDİ taslaklarını
+    silme istisnası ölü kural olurdu (`subcontracts.delete_subcontractor_
+    contract`in `_FULL` kapı kararının aynı gerekçesi, spec §7.1 girişi).
+    Kesin karar `service.delete_payment`'tadır: `approved`/`paid` ADMİN DAHİL
+    kimseye açık değildir; kalanında `can_delete` (admin koşulsuz, aksi hâlde
+    yalnız kaydı açan aktörün KENDİ taslağı).
+
+    H8'den devredilen not (plan H10, spec §11): `service.delete_payment`
+    kaydın özetini (`sequence_no`/durum/tutar) `session.delete`den ÖNCE
+    çıkarıp döner — kayıt gittiğinde bunlar bir daha okunamaz.
+    """
+    summary = await service.delete_payment(session, user, payment_id)
+    await record_audit(
+        session,
+        action=AuditAction.delete,
+        detail=messages.progress_payment_deleted(
+            summary.project_name, summary.sequence_no, summary.status_label, summary.amount
+        ),
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
