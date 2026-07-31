@@ -1009,6 +1009,14 @@ async def test_hakedisli_santiye_silinemez_409(client, admin_headers, hakedisli_
 **Kabul:** çapraz tablo testlerinin tamamı (409/403/204 hücreleri) yeşil;
 `sites` mevcut silme testleri yeşil.
 
+**Kilit notu (H8 denetimi K1 KRİTİK bulgusu, 2026-07-31):** silme de bir YAZMA
+işlemidir; iki katmanlı kural `visible_payment_locked` ile sözleşme→hakediş
+sırasında kilit alınarak uygulanmalıdır — aksi hâlde kilitsiz okuma
+(`_visible_payment`) K8 katman-1'ini (`approved`/`paid` silinemez) eşzamanlı bir
+`approve` ile TOCTOU (yarış koşulu) yoluyla atlatılabilir hâle getirir. İlk
+uygulama bu notu atlamıştı; düzeltme `tests/progress_payments/test_concurrency.py`'de
+bariyerli yarış testiyle doğrulandı.
+
 ---
 
 ### Task H9 — Özet ucu + `contracts` placeholder'larının doldurulması ⚠️ RİSKLİ (kırıcı şema değişikliği)
@@ -1136,6 +1144,14 @@ için delik şu an açıktır.
 - [ ] Test: `test_unapprove_denetim_kaydi_eski_onay_damgalarini_tasir` —
       onayla, geri çek, günlük metninde onaylayanın adının ve eski onay
       tarihinin GEÇTİĞİNİ doğrula.
+
+#### ❗ H8'den devredilen — DÜŞÜK: silme olayları H10'a kadar denetim izinde görünmez
+
+H8 denetimi (2026-07-31): `progress_payment_deleted` mesajı H10'da eklenecek.
+Kayıt gittiğinde geriye HİÇBİR iz kalmıyor olması bu ekin gerekçesidir — mesaj
+silinen kaydın **sequence_no/durum/tutar özetini** taşımalı (satır `unapprove`
+gibi geriye dönük okunamaz, çünkü kayıt artık DB'de yok; değerler `session.delete`
+öncesinde yakalanmalıdır).
 
 **Dosyalar:**
 - Değiştir: `app/modules/audit/messages.py`, `router.py` (veya servis katmanı —

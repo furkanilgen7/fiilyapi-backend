@@ -477,6 +477,13 @@ serviste iki katman:
    (`created_by = actor AND is_draft`). `pending_approval` kaydı admin-dışı kimse
    silemez (is_draft=false).
 
+**Kilit (H8 denetimi K1, 2026-07-31 bulgusu):** silme de bir YAZMA işlemidir —
+yukarıdaki iki katman `visible_payment_locked` (§7'nin `SELECT … FOR UPDATE`
+kilidi, sözleşme → hakediş sırası) ile kilitlenmiş satır üzerinden kararlaştırılır.
+Kilitsiz okuma (`_visible_payment`) kullanılırsa eşzamanlı bir `approve` katman-1
+kontrolünü TOCTOU ile atlatıp `approved`/`paid` kaydı silebilir — bu bölüm ilk
+yazıldığında kilitten hiç bahsetmiyordu, kör nokta buradan doğdu.
+
 ---
 
 ## 8. Sözleşme İlerlemesi göstergeleri (E15 177-190)

@@ -583,8 +583,16 @@ async def delete_payment(session: AsyncSession, actor: User, payment_id: uuid.UU
     Kapsam (§9.0) `_visible_payment` ile İLK adımda kurulur: görünmeyen
     projedeki GERÇEK kayıt ile var olmayan kimlik burada da AYIRT EDİLEMEZ
     404'tür — durum/yetki kontrolleri görünürlükten SONRA çalışır.
+
+    Silme de bir YAZMA işlemidir (H8 denetimi K1, 2026-07-31): satır kilitsiz
+    okunursa (`_visible_payment`) eşzamanlı bir `approve` katman-1 kontrolünü
+    TOCTOU ile atlatıp `approved`/`paid` kaydı silebilir. Bu yüzden burada da
+    `visible_payment_locked` kullanılır — kilit sırası `create`/`transitions`
+    ile AYNIDIR (önce sözleşme, sonra hakediş), durum ve `can_delete`
+    kontrolleri KİLİTLİ satır üzerinden yapılır. Yarışta satır zaten silinmişse
+    `visible_payment_locked` mevcut `PAYMENT_MISSING` 404'ünü üretir.
     """
-    payment, _ = await _visible_payment(session, actor, payment_id)
+    payment, _, _ = await visible_payment_locked(session, actor, payment_id)
 
     if payment.status in (ProgressPaymentStatus.approved, ProgressPaymentStatus.paid):
         raise ConflictError(guards.PAYMENT_NOT_DELETABLE)

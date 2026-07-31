@@ -287,6 +287,73 @@ async def test_gecis_hakedis_satirinin_kilidini_bekler() -> None:
         await _onay_temizligi(project_id, user_id, ikinci_user_id)
 
 
+async def test_silinirken_esZamanli_onay_kazanirsa_409_alir() -> None:
+    """H8 denetimi K1 (KRİTİK) — `delete_payment` artık `_visible_payment`
+    (kilitsiz) değil `visible_payment_locked` kullanır (spec §7.1, §7 eşzamanlılık
+    notu). Düzeltmeden ÖNCE kanıtlanan yarış: tx-A kilitsiz okur (pending_approval),
+    tx-B eşzamanlı `approve` FOR UPDATE + commit ile geçer, tx-A hâlâ eski
+    `pending_approval` görüşüyle DELETE'i yürütürdü — `approved`/`paid` kaydı
+    admin dahil kimse silemez garantisi (K8) TOCTOU ile atlatılırdı.
+
+    Bu test tek-session `client`/`seeded_db` fixture'ıyla KURULAMAZ (`db_session`
+    dış transaction'ı asla commit etmez, iki görev aynı bağlantıyı paylaşır,
+    gerçek satır kilidi asla test edilmez) — bu yüzden `test_iki_esZamanli_onay_*`
+    ile AYNI bariyerli, iki-bağımsız-bağlantılı desen kullanılır.
+
+    Senaryo: tx-B (`approve`) kilidi ALIP TUTARKEN tx-A (`delete_payment`) aynı
+    kilit zincirinde (sözleşme → hakediş, `visible_payment_locked`) BEKLER; tx-B
+    commit edip kilidi bırakınca tx-A devam eder, satırı ARTIK `approved` olarak
+    görür ve katman-1 kontrolüne (§7.1/1) takılıp 409 `PAYMENT_NOT_DELETABLE`
+    alır — satır DB'de duruyor kalır.
+    """
+    project_id, user_id, payment_id, ikinci_user_id = await _onay_kurulumu()
+    try:
+        lock_acquired = asyncio.Event()
+        release_lock = asyncio.Event()
+
+        task_approve = asyncio.create_task(
+            _attempt_approve_and_hold(payment_id, user_id, lock_acquired, release_lock)
+        )
+        await asyncio.wait_for(lock_acquired.wait(), timeout=5)
+
+        task_delete = asyncio.create_task(_attempt_delete(payment_id, ikinci_user_id))
+        await asyncio.sleep(0.3)
+        assert not task_delete.done(), (
+            "silme, onay kilidi serbest bırakılmadan ilerleyebildi — "
+            "`delete_payment` artık `visible_payment_locked` KULLANMIYOR olabilir "
+            "(K1 regresyonu, H8 denetimi)"
+        )
+
+        release_lock.set()
+        onay_sonucu = await asyncio.wait_for(task_approve, timeout=5)
+        silme_sonucu = await asyncio.wait_for(task_delete, timeout=5)
+
+        assert onay_sonucu == "approved"
+        assert silme_sonucu == "conflict", (
+            "silme, tazelenmiş `approved` durumunu GÖRMEDİ — K8 katman-1 TOCTOU "
+            "ile atlatılmış olabilir"
+        )
+
+        async with _SessionFactory() as verify_session:
+            payment = await verify_session.get(ProgressPayment, payment_id)
+            assert payment is not None, "approved/paid kayıt yarışta silinmiş — K8 ihlali"
+            assert payment.status is ProgressPaymentStatus.approved
+    finally:
+        await _onay_temizligi(project_id, user_id, ikinci_user_id)
+
+
+async def _attempt_delete(payment_id: uuid.UUID, actor_id: uuid.UUID) -> str:
+    async with _SessionFactory() as session:
+        actor = await session.get(User, actor_id)
+        try:
+            await service.delete_payment(session, actor, payment_id)
+            await session.commit()
+            return "deleted"
+        except ConflictError:
+            await session.rollback()
+            return "conflict"
+
+
 async def _attempt_approve_and_hold(
     payment_id: uuid.UUID,
     actor_id: uuid.UUID,
