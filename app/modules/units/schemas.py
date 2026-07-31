@@ -42,6 +42,8 @@ __all__ = [
     "UnitAllocationRequest",
     "UnitBlockGroup",
     "UnitBulkCreate",
+    "UnitBulkPreview",
+    "UnitBulkPreviewRow",
     "UnitBulkSlot",
     "UnitCreate",
     "UnitFacing",
@@ -501,6 +503,45 @@ class UnitBulkCreate(BaseModel):
                 # Tekil POST ile AYNI kural: `guards`tan CAGRILIR, kopyalanmaz.
                 ensure_net_le_gross(slot.gross_area_m2, slot.net_area_m2)
         return self
+
+
+class UnitBulkPreviewRow(BaseModel):
+    """TU 151-156 onizleme tablosunun BIR satiri (spec §5.4).
+
+    `floor` ile `floor_label` AYRI alanlardir ve birlestirilmemelidir (karar 4):
+    `floor` uretim turunun SAYISIDIR (TU 152 1/2/3 basiyor, numaralandirmanin
+    girdisi), `floor_label` ise uniteye YAZILACAK metindir ("1. Kat", "Zemin",
+    "Çatı Katı"). Tek alana indirilseydi ekran ya sayiyi ya etiketi kaybederdi.
+    """
+
+    unit_no: str  # TU 151
+    floor: int  # TU 152
+    floor_label: str  # karar 4 — `units.floor` sutununa yazilacak deger
+    layout: str | None  # TU 153 "Tip"
+    gross_area_m2: Decimal | None  # TU 154 "Brut/Net m²"
+    net_area_m2: Decimal | None
+    facing: UnitFacing | None  # TU 155
+    list_price: Decimal | None  # TU 156
+    conflict: bool  # TU 177 — cakisma UYARIDIR, hata degil (spec §5.6)
+
+
+class UnitBulkPreview(BaseModel):
+    """AYRI UC'un yaniti (spec §5.4) — `UnitListResponse` ile birlestirilemez.
+
+    Ortada `id`'si olan unite yoktur, `totals` projenin tamamini sayar, `blocks`
+    gruplari MEVCUT kayitlardir. Tek uca `dry_run` bayragi konsaydi
+    `response_model` iki seklin BIRLESIMINE (`Union`) zorlanir ve `gen:api`
+    ciktisinda her iki alan da `optional` gorunerek istemci tarafinda sessiz
+    `undefined` sinifi dogardi.
+    """
+
+    total_units: int  # TU 73, 146, 171
+    total_list_value: Decimal  # TU 146, 172 — SATIRLARDAN toplanir (karar 5)
+    conflicting_unit_nos: list[str]  # TU 177
+    # TUM satirlar doner, 500 bile olsa: TU 166 "… 17 unite daha" bir FRONTEND
+    # kirpmasidir. Sunucu kirpsaydi ekran "hangi satir cakisiyor" sorusunu
+    # cevaplayamazdi (spec §5.4).
+    rows: list[UnitBulkPreviewRow]  # TU 159-165
 
 
 # --- Excel ice aktarma (kullanici karari, mockup yok — spec §6.4) ---

@@ -1,8 +1,13 @@
-"""Toplu yazma yollari: toplu uretim, Excel ice aktarma, paylasim (spec §7.7, §7.8, §7.10).
+"""Toplu yollar: toplu uretim, uretim ONIZLEMESI, Excel ice aktarma, paylasim
+(spec §5.4, §7.7, §7.8, §7.10).
 
-Tekil CRUD'dan (`service.py`) AYRI dosyada tutulur: ucunun de ortak sinifi
-ATOMIKLIK'tir ("hep-ya-hic, kismi yazma OLMAZ") ve ucu de tek istekte yuzlerce
+Tekil CRUD'dan (`service.py`) AYRI dosyada tutulur: yazan ucunun ortak sinifi
+ATOMIKLIK'tir ("hep-ya-hic, kismi yazma OLMAZ") ve hepsi tek istekte yuzlerce
 satira dokunur. Kurallar `guards.py`'den CAGRILIR, kopyalanmaz.
+
+`preview_bulk_units` bu dosyadaki TEK OKUMA yoludur ve bilerek buradadir:
+onizleme ile gercek uretimin AYNI saf fonksiyondan (`bulk.generate_units`)
+beslendigi ancak yan yana dururken gorunur kalir.
 """
 
 import uuid
@@ -18,7 +23,7 @@ from app.core.errors import (
 )
 from app.modules.audit import messages
 from app.modules.projects.models import Project, ProjectType
-from app.modules.units import codes, guards, repository, service
+from app.modules.units import bulk, codes, guards, repository, service
 from app.modules.units.bulk import generate_unit_numbers
 from app.modules.units.importer import (
     IMPORT_ROW_ERRORS,
@@ -33,6 +38,8 @@ from app.modules.units.models import Block, Unit
 from app.modules.units.schemas import (
     UnitAllocationRequest,
     UnitBulkCreate,
+    UnitBulkPreview,
+    UnitBulkPreviewRow,
     UnitImportResult,
     UnitImportRowError,
     UnitListResponse,
@@ -112,6 +119,57 @@ async def bulk_create_units(
     # Spec §9: ISTEK BASINA TEK denetim satiri — 24 unite icin 24 satir degil.
     detail = messages.units_bulk_created(project.name, block.name, len(numbers))
     return await service.list_units(session, actor, project_id), detail
+
+
+async def preview_bulk_units(
+    session: AsyncSession, actor: User, project_id: uuid.UUID, data: UnitBulkCreate
+) -> UnitBulkPreview:
+    """Spec §5.4. **HICBIR SEY YAZMAZ** — bu fonksiyonun tek sozlesmesi budur.
+
+    Burada `session.add`, `flush`, `commit` ya da herhangi bir `UPDATE` YOKTUR
+    ve olmamalidir; tek DB erisimi cakisma sorgusudur (`existing_unit_nos`, saf
+    `SELECT`). Denetim satiri da yazilmaz: onizleme bir OKUMA ucudur (spec §9,
+    P4 T7 kurali) ve router bu fonksiyondan denetim METNI almaz — imzasinin
+    `bulk_create_units`'ten farkli olmasi (tek deger, `tuple` degil) bu ayrimi
+    YAPISAL kilar, unutulabilir bir konvansiyona birakmaz.
+
+    Uretim mantigi TEK KOPYADIR: `bulk.generate_units` saf fonksiyonu hem burada
+    hem `bulk_create_units`'te cagrilir. `POST …/units/bulk` onizlemeden gelen
+    satirlari KABUL ETMEZ, ayni girdiden yeniden uretir — aksi hâlde istemci
+    govdesi fiyat uydurabilirdi (TU 182 "Onizlemeyi Yenile").
+
+    Cakisma HATA DEGILDIR (spec §5.6, TU 177): satirlar `conflict=True` ile
+    doner ve kullanici `start_number`'i degistirip yeniden onizler. Blokaj
+    yalniz kaydetmededir (409).
+    """
+    project = await guards.visible_project(session, actor, project_id)
+    block = await guards.block_in_project(session, project, data.block_id)
+    guards.ensure_net_le_gross(data.gross_area_m2, data.net_area_m2)
+
+    generated = bulk.generate_units(data, codes.effective_block_code(block.code, block.name))
+    numbers = [unit.unit_no for unit in generated]
+    taken = await repository.existing_unit_nos(session, block.id, numbers)
+    return UnitBulkPreview(
+        total_units=len(generated),
+        total_list_value=bulk.total_list_value(generated),
+        # Uretim sirasi KORUNUR (kume sirasi degil): kullanici hangi araligin
+        # cakistigini ancak sirali listede gorebilir (409 mesajiyla ayni gerekce).
+        conflicting_unit_nos=[number for number in numbers if number in taken],
+        rows=[
+            UnitBulkPreviewRow(
+                unit_no=unit.unit_no,
+                floor=unit.floor,
+                floor_label=unit.floor_label,
+                layout=unit.layout,
+                gross_area_m2=unit.gross_area_m2,
+                net_area_m2=unit.net_area_m2,
+                facing=unit.facing,
+                list_price=unit.list_price,
+                conflict=unit.unit_no in taken,
+            )
+            for unit in generated
+        ],
+    )
 
 
 # --- Excel ice aktarma (spec §6.4, §7.8) — HEP-YA-HIC + SATIR BAZLI RAPOR ---

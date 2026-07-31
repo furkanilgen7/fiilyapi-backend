@@ -22,6 +22,7 @@ from app.modules.units.schemas import (
     BlockUpdate,
     UnitAllocationRequest,
     UnitBulkCreate,
+    UnitBulkPreview,
     UnitCreate,
     UnitImportResult,
     UnitListResponse,
@@ -246,6 +247,35 @@ async def bulk_create_units_endpoint(
     result, detail = await batch.bulk_create_units(session, user, project_id, data)
     await _audit(request, session, user, AuditAction.create, detail)
     return result
+
+
+@router.post(
+    "/projects/{project_id}/units/bulk/preview",
+    response_model=UnitBulkPreview,
+    dependencies=[_FULL],
+)
+async def preview_bulk_units_endpoint(
+    project_id: uuid.UUID,
+    data: UnitBulkCreate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> UnitBulkPreview:
+    """Spec §5.4 (TU 159-182). **HICBIR SEY YAZMAZ** ve **DENETIM URETMEZ**.
+
+    `dry_run` bayragi yerine AYRI UC olmasinin uc gerekcesi (spec §5.4):
+    1. Yanit sekilleri farklidir — gercek uretim `201 UnitListResponse` doner;
+       onizlemede `id`'si olan unite yoktur. Tek uc `response_model`'i bir
+       `Union`'a zorlar ve `gen:api` ciktisinda sessiz `undefined` sinifi dogar.
+    2. Denetim ayrimi temiz kalir: "yazan uc denetim yazar" kurali bir bayraga
+       BAGLI HALE GELMEZ. Bu yuzden bu fonksiyon `_audit` CAGIRMAZ ve `Request`
+       parametresi bile ALMAZ — denetim yazmak icin gereken IP bu ucta yoktur.
+    3. Uretim mantigi tek kopyadir: iki uc da `bulk.generate_units`'i cagirir.
+
+    Izin `full` KALIR: onizleme yazma akisinin parcasidir ve `view` kullanicisina
+    fiyat uretim kurallarini acmaz. Cakisma HATA DEGILDIR (TU 177) — satirlar
+    `conflict=true` ile 200 doner; blokaj yalniz `POST …/units/bulk`'tadir (409).
+    """
+    return await batch.preview_bulk_units(session, user, project_id, data)
 
 
 @router.patch(
