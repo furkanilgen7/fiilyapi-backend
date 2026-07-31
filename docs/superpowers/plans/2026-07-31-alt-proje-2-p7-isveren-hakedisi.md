@@ -1051,7 +1051,7 @@ değildir** — taşeron hakedişi ayrı dilimdir (spec §1.2). Buradaki değer
 placeholder adı), listeden çıkarılMAZ. Spec §9.6'nın "schemas.py:495" atfı bu
 düzeltmeyle uygulanır; çelişki plan raporunda kullanıcıya not edilmiştir.
 
-- [ ] **Adım 1: Testleri yaz**
+- [x] **Adım 1: Testleri yaz**
 
 ```python
 async def test_ozet_e14_altin(client, admin_headers, dort_onayli_hakedisli_proje):
@@ -1085,37 +1085,54 @@ async def test_hakedissiz_projede_ozet_sifirlar(client, admin_headers, sozlesmel
     # kümülatifler 0, progress_pct 0 veya null (amount doluysa 0), remaining = amount
 ```
 
-- [ ] **Adım 2: Koştur, KIRMIZI gör** (yeni testler) — ayrıca mevcut
+- [x] **Adım 2: Koştur, KIRMIZI gör** (yeni testler) — ayrıca mevcut
   `test_contract_list.py`'nin hangi assertlerinin kırılacağı **önce grep'le bulunur**
   (`grep -rn "progress_payment_total\|progress_pct\|pending_modules" tests/`), tahmin edilmez.
-- [ ] **Adım 3: Uygula** — özet tek sorgu ailesiyle (N+1 yok); `contracts/service.py`
+- [x] **Adım 3: Uygula** — özet tek sorgu ailesiyle (N+1 yok); `contracts/service.py`
   liste yolunda proje başına kümülatif brüt toplu (tek GROUP BY) çekilir;
   dairesel import riski: `contracts` → `progress_payments` yönlü **yerel import**
   (`projects/service.py:401` deseni koddan doğrulanır).
-- [ ] **Adım 4: Koştur, YEŞİL gör** — tam `tests/contracts/` paketi de koşturulur.
-- [ ] **Adım 5: Lint (tüm repo) + Commit** —
+- [x] **Adım 4: Koştur, YEŞİL gör** — tam `tests/contracts/` paketi de koşturulur.
+- [x] **Adım 5: Lint (tüm repo) + Commit** —
   `feat(progress-payments): özet ucu + contracts placeholder'ları gerçek değere döndü`
 
 **Kabul:** E14 altın sayıları uçtan yeşil · `contracts` paketinin tamamı yeşil ·
 `pending_modules` işveren tarafında `progress_payments` içermiyor, taşeron tarafında
 `subcontractor_progress_payments` var.
 
-**H4'ten devredilen (H4 denetimi, kod DEĞİŞTİRİLMEDİ — yalnız kayıt):**
+**H4'ten devredilen — H9'da UYGULANDI (2026-07-31):**
 
-- **O1 (N+1):** liste ucu 5 hakediş için 27 sorgu, detay 18 sorgu üretiyor;
+- [x] **O1 (N+1) — KAPANDI.** Ölçüm (`test_summary.py::test_liste_sorgu_
+  sayisi_hakedis_sayisiyla_buyumez`): 4 hakedişli filtreli listede 9 →
+  **4** `progress_payment*` sorgusu; 12 hakedişli filtresiz listede 24 →
+  **4** (liste + satırları + tamamlanmış geçmiş + onların satırları).
+  Sayı artık hakediş sayısıyla BÜYÜMEZ (üst sınır testi ≤ 4).
+  `contracts` liste yolu da tek toplu çekimle 2 sorguda kalır.
+  Detay yolunda geçmiş iki kez çekiliyordu (`_line_rows` + `_history_state`),
+  tek çekime indi. Çözüm: `repository.list_completed_payments_by_projects`
+  (tek sorgu, `project_id IN (…)` SQL süzgeci) + bellekte gruplama
+  (`service._prior_payments`). Özgün kayıt: liste ucu 5 hakediş için 27 sorgu, detay 18 sorgu üretiyor;
   ~60 hakedişli bir projede ~300 sorguya çıkar. `list_payments`/`get_detail`'in
   `_history_state` çağrıları her hakediş için önceki tamamlanmış hakedişleri
   AYRI AYRI çekiyor — görünen projeler için önceki tamamlanmış hakedişler TEK
   sorguda toplu çekilip bellekte `project_id`'ye göre gruplanmalı (H9'un özet
   sorgusuyla aynı aile).
-- **O3:** `router.py`'deki `create`/`update` uçları yanıtı `get_detail`'i
+- [x] **O3 — KAPANDI.** `service.get_detail` ikiye ayrıldı: `build_detail`
+  (çözülmüş `(payment, project)` çiftini alır, görünürlük kontrolü YAPMAZ) +
+  ince `get_detail` sarmalayıcısı. `POST`/`PATCH` uçları `build_detail`
+  çağırır; `visible_projects` istek başına TEK kez koşar
+  (`test_olusturma_yaniti_gorunurlugu_iki_kez_sorgulamaz`). Özgün kayıt:
+  `router.py`'deki `create`/`update` uçları yanıtı `get_detail`'i
   YENİDEN çağırarak kuruyor (`create_progress_payment_endpoint`/
   `update_progress_payment_endpoint`) — bu da `visible_projects` sorgusunun
   istek başına İKİ KEZ koşmasına yol açıyor (`_visible_project`/`_visible_payment`
   içinden). `get_detail` çözülmüş `(payment, project)` çiftini kabul edecek
   şekilde ikiye ayrılabilir: iç detay-inşa fonksiyonu + dıştan görünürlük
   kontrolü yapan ince sarmalayıcı.
-- **O5:** `service.py:293-385` `_line_rows` 93 satır — coding-style kuralındaki
+- [x] **O5 — KAPANDI.** `_line_rows` 93 → 22 satır (docstring hariç); üç
+  yardımcı: `lines.totals_from_payments` (önceki toplamlar, sorgusuz),
+  `_line_detail` (tek satır), `_group_summaries` (grup toplamları).
+  Özgün kayıt: `service.py:293-385` `_line_rows` 93 satır — coding-style kuralındaki
   <50 satır sınırını aşıyor. Üç yardımcıya bölünmeli: (1) önceki tamamlanmış
   hakedişlerden `prior_totals` haritası kurma, (2) tek satır için `LineDetail`
   inşası, (3) grup toplamlarının biriktirilmesi.

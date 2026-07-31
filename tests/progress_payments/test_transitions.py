@@ -23,7 +23,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.progress_payments import guards, lines, transitions
+from app.modules.progress_payments import guards, lines, service, transitions
 from app.modules.progress_payments.models import ProgressPayment, ProgressPaymentStatus
 from app.modules.users.models import User
 
@@ -496,6 +496,20 @@ async def test_onay_kota_kontrolu_tek_toplama_yolunu_kullanir(
         return await gercek(session, project_id, **kwargs)
 
     monkeypatch.setattr(transitions.lines, "completed_totals", casus)
+
+    # H9 (O1) sonrası §6.6 "Önceki" kolonu geçmişi ARTIK `completed_totals` ile
+    # DEĞİL, `service.build_detail`in TEK toplu çekimiyle okur (aynı sorgu iki
+    # kez koşmasın diye) ve toplamayı `lines.totals_from_payments`'ın AYNI
+    # gövdesinden alır. Mod ayrımının gösterim tarafı bu yüzden repository
+    # çağrısında ölçülür — kural değişmedi, ölçüm noktası değişti.
+    gecmis_cagrilari: list[dict] = []
+    gercek_gecmis = service.repository.list_completed_payments
+
+    async def gecmis_casusu(session, project_id, **kwargs):
+        gecmis_cagrilari.append(kwargs)
+        return await gercek_gecmis(session, project_id, **kwargs)
+
+    monkeypatch.setattr(service.repository, "list_completed_payments", gecmis_casusu)
     yanit = await client.post(f"/progress-payments/{birinci}/approve", headers=admin_headers)
     assert yanit.status_code == 200, yanit.text
     assert cagrilar, "approve, kota kontrolünü `lines.completed_totals` üzerinden yapmıyor"
@@ -510,9 +524,9 @@ async def test_onay_kota_kontrolu_tek_toplama_yolunu_kullanir(
     assert kota_cagrisi.get("exclude_payment_id") == birinci, (
         f"kota tavanı kaydın KENDİSİNİ dışlamıyor: {kota_cagrisi}"
     )
-    assert any(c.get("before_sequence_no") is not None for c in cagrilar), (
+    assert any(c.get("before_sequence_no") is not None for c in gecmis_cagrilari), (
         "§6.6 gösterim kolonları da sırasız kümeye kaymış olabilir (mod ayrımı kayboldu): "
-        f"{cagrilar}"
+        f"{gecmis_cagrilari}"
     )
 
 

@@ -253,12 +253,14 @@ def test_employer_contract_detail_kapsam_disi_alanlar_acik_doner():
         items_total_diff=Decimal("100"),
         advance_amount=Decimal("200"),
     )
+    # P7/H9 (spec §9.6): `progress_payments` yer tutucu listesinden ÇIKTI;
+    # `progress_payment_summary` servis tarafından GERÇEK özetle doldurulur
+    # (şema varsayılanı yine `None`, uç yanıtı `test_summary.py`de doğrulanır).
     assert detay.progress_payment_summary is None
     assert detay.milestones is None
     assert detay.documents is None
-    assert "progress_payments" in detay.pending_modules
-    assert "project_schedule" in detay.pending_modules
-    assert "documents" in detay.pending_modules
+    assert "progress_payments" not in detay.pending_modules
+    assert detay.pending_modules == ["project_schedule", "documents"]
 
 
 def test_subcontractor_contract_detail_kapsam_disi_alanlar_acik_doner():
@@ -288,9 +290,12 @@ def test_subcontractor_contract_detail_kapsam_disi_alanlar_acik_doner():
         contract_total=Decimal("0"),
         items_missing_price=0,
     )
+    # ⚠️ Buradaki yer tutucu TAŞERON hakedişidir (spec §1.2) — P7 yalnız işveren
+    # tarafını yazdı. Anahtar bu yüzden ÇIKARILMADI, `subcontractor_progress_
+    # payments` olarak YENİDEN ADLANDIRILDI (P7/H9).
     assert detay.progress_payment_summary is None
     assert detay.documents is None
-    assert detay.pending_modules == ["progress_payments", "documents"]
+    assert detay.pending_modules == ["subcontractor_progress_payments", "documents"]
 
 
 def test_contract_summary_hakedis_toplami_kapsam_disi():
@@ -299,8 +304,9 @@ def test_contract_summary_hakedis_toplami_kapsam_disi():
         active_count=1,
         expiring_this_month_count=0,
     )
-    assert ozet.progress_payment_total.available is False
-    assert ozet.progress_payment_total.pending_module == "progress_payments"
+    # P7/H9: düz `Decimal | None`. Şema varsayılanı `None` (taşeron listesi);
+    # işveren listesinde servis gerçek toplamı geçirir.
+    assert ozet.progress_payment_total is None
 
 
 def test_subcontractor_contract_item_response_bagsiz_kalem_group_null_doner():
@@ -358,7 +364,7 @@ def test_contract_list_response_ozet_ve_kalemler():
             )
         ],
     )
-    assert yanit.items[0].progress_pct.available is False
+    assert yanit.items[0].progress_pct is None
 
 
 def test_contract_allocation_input_miktar_pozitif_olmali():

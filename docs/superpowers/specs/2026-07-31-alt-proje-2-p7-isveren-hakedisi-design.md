@@ -591,6 +591,27 @@ riskini ortadan kaldırma fırsatıdır — şema tarafında alan tipi düz değ
    `0` 422" kuralı dağılıma özgüdür, hakedişe taşınmaz.
 4. `MetricPlaceholder` → düz değer geçişi (§9.6) `contracts` yanıt şemalarında
    kırıcı değişikliktir; `openapi.json` elle kopyalanıp `gen:api` yenilenir.
+
+   **H9'da uygulanan kesin liste (2026-07-31) — `gen:api` bu değişiklikle
+   BİRLİKTE gitmeli, aksi hâlde sözleşme ekranları çalışmaz:**
+
+   | Alan | Eski | Yeni |
+   |---|---|---|
+   | `ContractSummary.progress_payment_total` | `MetricPlaceholder` | `Decimal \| None` — işveren listesinde kümülatif brüt toplamı, taşeron listesinde `null` |
+   | `ContractListItem.progress_pct` | `MetricPlaceholder` (işverende `available=true` + `pending_module` ÇELİŞKİSİ, P5 devir bulgusu 3) | `Decimal \| None` — §8 finansal ilerleme; bedel yok/0 ise `null`; taşeronda her zaman `null` |
+   | `EmployerContractDetail.progress_payment_summary` | `null` | `ProgressPaymentSummary` (§9.6 gövdesi, hakediş yoksa sıfırlarla) |
+   | `EmployerContractDetail.pending_modules` | `["progress_payments", "project_schedule", "documents"]` | `["project_schedule", "documents"]` |
+   | `SubcontractorContractDetail.pending_modules` | `["progress_payments", "documents"]` | `["subcontractor_progress_payments", "documents"]` — **çıkarılmadı, yeniden adlandırıldı**: buradaki yer tutucu TAŞERON hakedişidir (§1.2), işveren hakedişi değil |
+
+   Frontend'in `pending_module` **varlığına dallanan** kodu bu üç alanda artık
+   gerçek değeri GİZLER — dallanma kaldırılmalıdır (P5 devir bulgusu 3'ün
+   kapanışı: `MetricPlaceholder(available=True, …)` çelişkisi bu alanlarda
+   ortadan kalktı).
+
+   `sites` modülünün kartlarındaki `progress_payments` yer tutucuları (SHK
+   şantiye kartları, `sites/schemas.py`) bu dilimde **DEĞİŞMEDİ** — plan H9
+   dosya listesi yalnız `contracts`'ı kapsar; şantiye kartları verisini §9.6
+   özet ucundan alır ve kendi diliminde bağlanır.
 5. FF toggle'ı (OLU 56): `project_contracts.has_price_escalation = false` olan
    sözleşmede frontend katsayı kolonunu kilitler (1,000); backend yine de gelen
    katsayıyı kabul eder mi? **Hayır** — tutarlılık kuralı: `has_price_escalation =

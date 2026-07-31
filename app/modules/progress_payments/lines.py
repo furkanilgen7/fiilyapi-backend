@@ -93,6 +93,19 @@ async def completed_totals(
         before_sequence_no=before_sequence_no,
         exclude_payment_id=exclude_payment_id,
     )
+    return totals_from_payments(payments)
+
+
+def totals_from_payments(
+    payments: list[ProgressPayment],
+) -> dict[LineKey, tuple[Decimal, Decimal]]:
+    """`completed_totals`'ın SORGUSUZ gövdesi — hakedişler ÇAĞIRAN tarafından
+    (toplu çekimle) çözülmüşse toplama burada yapılır (H4 denetimi O1).
+
+    Toplama kuralının TEK kopyası budur: `completed_totals` da bu fonksiyonu
+    çağırır, `service._line_rows` de. İkinci bir toplama kopyası AÇILMAZ (P5'in
+    "iki farklı doğruluk tanımı" bulgusu).
+    """
     totals: dict[LineKey, tuple[Decimal, Decimal]] = {}
     for prior in payments:
         for line in prior.lines:

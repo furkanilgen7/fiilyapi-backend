@@ -17,13 +17,14 @@ from app.core.db import get_db
 from app.core.deps import get_current_user
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
-from app.modules.progress_payments import service, transitions
+from app.modules.progress_payments import service, summary, transitions
 from app.modules.progress_payments.models import ProgressPaymentStatus
 from app.modules.progress_payments.schemas import (
     ProgressPaymentCreate,
     ProgressPaymentDetail,
     ProgressPaymentLinesSave,
     ProgressPaymentListResponse,
+    ProgressPaymentSummary,
     ProgressPaymentUpdate,
     RefreshPricesResponse,
     RejectBody,
@@ -56,6 +57,27 @@ async def list_progress_payments_endpoint(
 
 
 @router.get(
+    "/projects/{project_id}/progress-payments/summary",
+    response_model=ProgressPaymentSummary,
+    dependencies=[_VIEW],
+)
+async def get_progress_payment_summary_endpoint(
+    project_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> ProgressPaymentSummary:
+    """E14 127-147 "Hakediş Özeti" kartı + SHK 82-84 şantiye kartları (spec §9.6).
+
+    Kapı `_VIEW`: özet yalnız OKUMA'dır. Aynı gövde `contracts` modülünün E14
+    detayına da gömülür (`EmployerContractDetail.progress_payment_summary`) —
+    izin matrisinde `contracts ≥ view` olan HER rolün `progress_payments ≥ view`
+    olduğu doğrulanmıştır (`seed_data.py:169/187`), bu yüzden gömme bir izin
+    arka kapısı açmaz.
+    """
+    return await summary.get_summary(session, user, project_id)
+
+
+@router.get(
     "/progress-payments/{payment_id}",
     response_model=ProgressPaymentDetail,
     dependencies=[_VIEW],
@@ -83,12 +105,14 @@ async def create_progress_payment_endpoint(
     """D8/K9: sözleşmede açık hakediş varsa 409; sözleşme yoksa 422 (spec §9.2).
 
     Yanıt hesap türevleri (`calculation`/`progress`/`groups`) taşıdığı için
-    `create` sonrası `get_detail` ÜZERİNDEN yeniden okunur — tek bir detay
-    inşa yolu olur (`contracts/router.py.to_item_response_single` deseninin
-    aynısı), iki kopya hesap mantığı riski taşınmaz.
+    TEK detay inşa yolundan (`service.build_detail`) geçer — iki kopya hesap
+    mantığı riski taşınmaz. `get_detail` DEĞİL `build_detail` çağrılır (H4
+    denetimi O3): `create` kapsam süzgecini zaten koşturmuş ve `(payment,
+    project)` çiftini çözmüştür; `get_detail` ikinci bir `visible_projects`
+    sorgusu daha koştururdu.
     """
-    payment, _ = await service.create(session, user, project_id, data)
-    return await service.get_detail(session, user, payment.id)
+    payment, project = await service.create(session, user, project_id, data)
+    return await service.build_detail(session, payment, project)
 
 
 @router.patch(
@@ -103,8 +127,8 @@ async def update_progress_payment_endpoint(
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> ProgressPaymentDetail:
     """Yalnız `status=draft` (spec §7); aksi 409 `INVALID_STATUS_TRANSITION`."""
-    payment, _ = await service.update(session, user, payment_id, data)
-    return await service.get_detail(session, user, payment.id)
+    payment, project = await service.update(session, user, payment_id, data)
+    return await service.build_detail(session, payment, project)
 
 
 @router.put(

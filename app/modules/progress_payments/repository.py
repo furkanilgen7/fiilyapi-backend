@@ -155,6 +155,50 @@ async def list_completed_payments(
     return list(result.scalars().all())
 
 
+async def list_completed_payments_by_projects(
+    session: AsyncSession, project_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[ProgressPayment]]:
+    """Birden çok projenin tamamlanmış (`approved|paid`) hakedişleri **TEK
+    sorguda**, `project_id`'ye göre gruplanmış (H4 denetimi O1'in çözümü).
+
+    `list_completed_payments`'ın proje başına çağrılan hâli liste ucunda N+1
+    üretiyordu (5 hakediş → 27 sorgu, ~60 hakedişli projede ~300). Burada
+    kapsam süzgeci **SQL'de** uygulanır (`project_id IN (…)`): görünmeyen
+    projenin satırı hiç ÇEKİLMEZ — bellekte süzmek, ileride bir çağıranın
+    süzgeci unutmasıyla sessiz bir kapsam sızıntısına dönüşürdü (spec §9.0).
+
+    Sıra `(project_id, sequence_no)` artan: çağıran, avans mahsubu zincirini
+    (§6.3) ve "Önceki" kolonunu (§6.6) bellekte `sequence_no` eşiğine göre
+    süzerken sıraya güvenebilir. `lines` `lazy="selectin"` ile TEK ek sorguda
+    gelir (hakediş başına değil).
+    """
+    if not project_ids:
+        return {}
+    stmt = (
+        select(ProgressPayment)
+        .where(
+            ProgressPayment.project_id.in_(project_ids),
+            ProgressPayment.status.in_(COMPLETED_STATUSES),
+        )
+        .order_by(ProgressPayment.project_id, ProgressPayment.sequence_no)
+    )
+    result = await session.execute(stmt)
+    grouped: dict[uuid.UUID, list[ProgressPayment]] = {}
+    for payment in result.scalars().all():
+        grouped.setdefault(payment.project_id, []).append(payment)
+    return grouped
+
+
+async def count_payments_by_status(
+    session: AsyncSession, project_id: uuid.UUID, status: ProgressPaymentStatus
+) -> int:
+    """§9.6 `pending_count` (SHK 84) — satırları çekmeden sayar."""
+    stmt = select(func.count()).where(
+        ProgressPayment.project_id == project_id, ProgressPayment.status == status
+    )
+    return int((await session.execute(stmt.select_from(ProgressPayment))).scalar_one())
+
+
 async def get_sites_by_ids(
     session: AsyncSession, site_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, Site]:

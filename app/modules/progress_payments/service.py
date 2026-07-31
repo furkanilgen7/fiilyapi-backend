@@ -10,12 +10,14 @@ hakediş ile var OLMAYAN kimlik AYIRT EDİLEMEZ 404 döner (P5 IDOR dersi, GOREV
 
 import uuid
 from decimal import Decimal
+from typing import NamedTuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel, can_delete
 from app.core.errors import ConflictError, DeleteNotAllowedError, NotFoundError, SiteValidationError
 from app.core.timezone import today
+from app.modules.contracts.models import EmployerContractItem
 from app.modules.progress_payments import calculations, guards, lines, repository
 from app.modules.progress_payments.models import (
     ProgressPayment,
@@ -317,25 +319,64 @@ def _advance_or_uncapped(
     return calculations.advance_deduction(gross, advance_pct, contract_amount, advance_recovered)
 
 
-async def _history_state(
-    session: AsyncSession, contract: ProjectContract, before_sequence_no: int
+class CumulativeState(NamedTuple):
+    """Tamamlanmış hakediş zincirinin biriktirdiği durum (spec §6.3, §8, §9.6)."""
+
+    gross: Decimal
+    advance_recovered: Decimal
+    retention: Decimal
+
+
+def cumulative_state(
+    payments: list[ProgressPayment], contract_amount: Decimal | None
+) -> CumulativeState:
+    """Avans mahsubu zincirinin TEK kopyası — SORGUSUZ, saf.
+
+    `payments` **`sequence_no`'ya göre ARTAN sırada** verilmelidir: her adımın
+    tavanı bir öncekinin kurtardığı avansa bağlıdır (§6.3), basit toplam
+    DEĞİLDİR. Üç çağıran vardır ve üçü de buradan okur — `_history_state`
+    (detay/liste "önceki" durumu), `list_payments` (toplu geçmiş) ve
+    `summary.build_summary` (§9.6 kümülatifleri). Zincir ikinci bir yerde
+    kopyalansaydı, tavan matematiği zamanla iki farklı sonuç üretirdi.
+    """
+    gross_total = _ZERO
+    recovered = _ZERO
+    retention_total = _ZERO
+    for prior in payments:
+        gross_i = _gross_total(prior.lines)
+        gross_total += gross_i
+        recovered += _advance_or_uncapped(gross_i, prior.advance_pct, contract_amount, recovered)
+        retention_total += calculations.retention_amount(gross_i, prior.retainage_pct)
+    return CumulativeState(
+        gross=gross_total, advance_recovered=recovered, retention=retention_total
+    )
+
+
+def _history_state(
+    prior_payments: list[ProgressPayment], contract_amount: Decimal | None
 ) -> tuple[Decimal, Decimal]:
     """`(advance_recovered, prior_gross_total)` — sıradaki hakedişin göreceği
-    kümülatif durum (spec §6.3, §8 finansal ilerleme)."""
-    prior_payments = await repository.list_completed_payments(
-        session, contract.project_id, before_sequence_no=before_sequence_no
-    )
-    recovered = _ZERO
-    prior_gross_total = _ZERO
-    for prior in prior_payments:
-        gross_i = _gross_total(prior.lines)
-        prior_gross_total += gross_i
-        advance_i = _advance_or_uncapped(gross_i, prior.advance_pct, contract.amount, recovered)
-        recovered += advance_i
-    return recovered, prior_gross_total
+    kümülatif durum (spec §6.3, §8 finansal ilerleme).
+
+    Sorgu ARTIK BURADA KOŞMAZ (H4 denetimi O1): önceki tamamlanmış hakedişler
+    çağıran tarafından toplu çekilir; bu fonksiyon yalnız zinciri okur.
+    """
+    state = cumulative_state(prior_payments, contract_amount)
+    return state.advance_recovered, state.gross
 
 
-async def _calculation_block(
+def _prior_payments(
+    completed: list[ProgressPayment], before_sequence_no: int
+) -> list[ProgressPayment]:
+    """§6.6 `prev` kümesi: `sequence_no` daha küçük tamamlanmış hakedişler.
+
+    SQL'deki `sequence_no < N` süzgecinin bellek karşılığı — toplu çekim
+    projenin TÜM tamamlanmış hakedişlerini getirir, sıra eşiği burada uygulanır.
+    """
+    return [p for p in completed if p.sequence_no < before_sequence_no]
+
+
+def _calculation_block(
     payment: ProgressPayment, contract: ProjectContract, advance_recovered: Decimal
 ) -> PaymentCalculationBlock:
     """E15 151-172 / OLU 179-196 ödeme hesabı — liste VE detay tarafından paylaşılır.
@@ -366,14 +407,28 @@ async def list_payments(
     site_id: uuid.UUID | None,
     status_filter: ProgressPaymentStatus | None,
 ) -> ProgressPaymentListResponse:
+    """Geçmiş TOPLU çekilir (H4 denetimi O1): listedeki hakedişlerin projeleri
+    için tamamlanmış hakedişler TEK sorguda okunur ve bellekte `project_id`'ye
+    göre gruplanır. Hakediş başına ayrı geçmiş sorgusu KOŞMAZ — 5 hakediş için
+    27 sorgu üreten eski yol ~60 hakedişli projede ~300 sorguya çıkıyordu.
+
+    Kapsam SQL'de kalır: toplu çekimin proje kümesi `visible_projects`'ten
+    süzülmüş satırlardan türer, ikinci bir görünürlük kararı VERİLMEZ (§9.0).
+    """
     visible_ids = [p.id for p in await visible_projects(session, actor)]
     rows = await repository.list_payments(
         session, visible_ids, project_id=project_id, site_id=site_id, status_filter=status_filter
     )
+    completed_by_project = await repository.list_completed_payments_by_projects(
+        session, sorted({payment.project_id for payment, _ in rows})
+    )
     items = []
     for payment, project in rows:
-        advance_recovered, _ = await _history_state(session, project.contract, payment.sequence_no)
-        calc = await _calculation_block(payment, project.contract, advance_recovered)
+        prior = _prior_payments(
+            completed_by_project.get(payment.project_id, []), payment.sequence_no
+        )
+        advance_recovered, _ = _history_state(prior, project.contract.amount)
+        calc = _calculation_block(payment, project.contract, advance_recovered)
         items.append(
             ProgressPaymentListItem(
                 id=payment.id,
@@ -394,75 +449,54 @@ async def list_payments(
 # --- Detay (spec §9.1, §6.6, §8, §5.1) ---
 
 
-async def _line_rows(
-    session: AsyncSession, project: Project, payment: ProgressPayment
-) -> tuple[list[ProgressPaymentLineDetail], list[ProgressPaymentGroupSummary], Decimal]:
-    """Satır detayları + grup toplulaştırması + §8 fiziksel ilerleme payı
-    (`Σ cumulative_quantity × canlı unit_price`)."""
-    # E15 "Önceki" kolonu §6.6'nın SIRA TABANLI tanımından okur — `completed_totals`'ın
-    # `before_sequence_no` modu. Kota tavanı AYNI fonksiyonun sırasız TAM küme
-    # modunu kullanır (H6 denetimi K1); tek fonksiyon, iki mod, ikinci toplama
-    # kopyası YOK (P5'in GOREV-SIRASI §2/1 bulgusu).
-    prior_totals = await lines.completed_totals(
-        session, project.id, before_sequence_no=payment.sequence_no
+def _line_detail(
+    line: ProgressPaymentLine,
+    previous: tuple[Decimal, Decimal],
+    live_item: EmployerContractItem | None,
+) -> ProgressPaymentLineDetail:
+    """TEK satırın E15 96-141 görünümü (§6.6 türevleri + §5.1 bayrağı).
+
+    `is_price_stale`: bağ koptuysa (`live_item is None`) `None` — kıyaslanacak
+    canlı fiyat yoktur (spec §5.1).
+    """
+    prev_qty, prev_amt = previous
+    this_total = calculations.line_total(line.contract_unit_price, line.coefficient, line.quantity)
+    return ProgressPaymentLineDetail(
+        id=line.id,
+        contract_item_id=line.contract_item_id,
+        site_id=line.site_id,
+        code=line.code,
+        description=line.description,
+        unit=line.unit,
+        contract_unit_price=line.contract_unit_price,
+        coefficient=line.coefficient,
+        quantity=line.quantity,
+        group_name=line.group_name,
+        sort_order=line.sort_order,
+        adjusted_unit_price=calculations.adjusted_unit_price(
+            line.contract_unit_price, line.coefficient
+        ),
+        line_total=this_total,
+        previous_quantity=prev_qty,
+        previous_amount=prev_amt,
+        cumulative_quantity=prev_qty + line.quantity,
+        cumulative_amount=prev_amt + this_total,
+        is_price_stale=(
+            None if live_item is None else line.contract_unit_price != live_item.unit_price
+        ),
     )
 
-    item_ids = [
-        line.contract_item_id for line in payment.lines if line.contract_item_id is not None
-    ]
-    live_items = await repository.get_employer_items_by_ids(session, item_ids)
 
-    line_rows: list[ProgressPaymentLineDetail] = []
-    group_totals: dict[str | None, dict[str, Decimal]] = {}
-    physical_numerator = _ZERO
-
-    for line in payment.lines:
-        adjusted = calculations.adjusted_unit_price(line.contract_unit_price, line.coefficient)
-        this_total = calculations.line_total(
-            line.contract_unit_price, line.coefficient, line.quantity
-        )
-        key = (line.contract_item_id, line.site_id) if line.contract_item_id is not None else None
-        prev_qty, prev_amt = (
-            prior_totals.get(key, (_ZERO, _ZERO)) if key is not None else (_ZERO, _ZERO)
-        )
-        cumulative_qty = prev_qty + line.quantity
-        cumulative_amt = prev_amt + this_total
-
-        live_item = (
-            live_items.get(line.contract_item_id) if line.contract_item_id is not None else None
-        )
-        is_stale = None if live_item is None else line.contract_unit_price != live_item.unit_price
-        contract_amount_for_item = (
-            live_item.quantity * live_item.unit_price if live_item is not None else _ZERO
-        )
-        if live_item is not None:
-            physical_numerator += cumulative_qty * live_item.unit_price
-
-        line_rows.append(
-            ProgressPaymentLineDetail(
-                id=line.id,
-                contract_item_id=line.contract_item_id,
-                site_id=line.site_id,
-                code=line.code,
-                description=line.description,
-                unit=line.unit,
-                contract_unit_price=line.contract_unit_price,
-                coefficient=line.coefficient,
-                quantity=line.quantity,
-                group_name=line.group_name,
-                sort_order=line.sort_order,
-                adjusted_unit_price=adjusted,
-                line_total=this_total,
-                previous_quantity=prev_qty,
-                previous_amount=prev_amt,
-                cumulative_quantity=cumulative_qty,
-                cumulative_amount=cumulative_amt,
-                is_price_stale=is_stale,
-            )
-        )
-
-        group = group_totals.setdefault(
-            line.group_name,
+def _group_summaries(
+    rows: list[tuple[ProgressPaymentLineDetail, Decimal]],
+) -> list[ProgressPaymentGroupSummary]:
+    """E15 96-141'in grup düzeyinde toplulaştırması (spec §6.6): satır
+    detayları + satır başına sözleşme tutarı payı `group_name` altında toplanır.
+    """
+    totals: dict[str | None, dict[str, Decimal]] = {}
+    for detail, contract_amount_for_item in rows:
+        group = totals.setdefault(
+            detail.group_name,
             {
                 "previous_amount": _ZERO,
                 "this_amount": _ZERO,
@@ -470,16 +504,52 @@ async def _line_rows(
                 "contract_amount": _ZERO,
             },
         )
-        group["previous_amount"] += prev_amt
-        group["this_amount"] += this_total
-        group["cumulative_amount"] += cumulative_amt
+        group["previous_amount"] += detail.previous_amount
+        group["this_amount"] += detail.line_total
+        group["cumulative_amount"] += detail.cumulative_amount
         group["contract_amount"] += contract_amount_for_item
-
-    groups = [
-        ProgressPaymentGroupSummary(group_name=group_name, **totals)
-        for group_name, totals in group_totals.items()
+    return [
+        ProgressPaymentGroupSummary(group_name=group_name, **group)
+        for group_name, group in totals.items()
     ]
-    return line_rows, groups, physical_numerator
+
+
+async def _line_rows(
+    session: AsyncSession,
+    payment: ProgressPayment,
+    prior_payments: list[ProgressPayment],
+) -> tuple[list[ProgressPaymentLineDetail], list[ProgressPaymentGroupSummary], Decimal]:
+    """Satır detayları + grup toplulaştırması + §8 fiziksel ilerleme payı
+    (`Σ cumulative_quantity × canlı unit_price`).
+
+    `prior_payments` ÇAĞIRANDAN gelir (H4 denetimi O1): E15 "Önceki" kolonu ile
+    §6.3 avans zinciri AYNI çekimi paylaşır — eskiden ikisi aynı sorguyu ayrı
+    ayrı koşuyordu. Toplama kuralı yine `lines.totals_from_payments`'ın TEK
+    kopyasından okunur (§6.6 sıra tabanlı mod; kota tavanının sırasız modu
+    `lines.completed_totals` üzerinden ayrı kalır, H6 denetimi K1).
+    """
+    prior_totals = lines.totals_from_payments(prior_payments)
+    item_ids = [
+        line.contract_item_id for line in payment.lines if line.contract_item_id is not None
+    ]
+    live_items = await repository.get_employer_items_by_ids(session, item_ids)
+
+    rows: list[tuple[ProgressPaymentLineDetail, Decimal]] = []
+    physical_numerator = _ZERO
+    for line in payment.lines:
+        live_item = (
+            live_items.get(line.contract_item_id) if line.contract_item_id is not None else None
+        )
+        key = (line.contract_item_id, line.site_id) if line.contract_item_id is not None else None
+        previous = prior_totals.get(key, (_ZERO, _ZERO)) if key is not None else (_ZERO, _ZERO)
+        detail = _line_detail(line, previous, live_item)
+        contract_amount_for_item = _ZERO
+        if live_item is not None:
+            contract_amount_for_item = live_item.quantity * live_item.unit_price
+            physical_numerator += detail.cumulative_quantity * live_item.unit_price
+        rows.append((detail, contract_amount_for_item))
+
+    return [detail for detail, _ in rows], _group_summaries(rows), physical_numerator
 
 
 async def _progress_block(
@@ -516,17 +586,38 @@ async def _progress_block(
 async def get_detail(
     session: AsyncSession, actor: User, payment_id: uuid.UUID
 ) -> ProgressPaymentDetail:
+    """Kapsam süzgeci + detay inşası (spec §9.0, §9.1).
+
+    İnce sarmalayıcıdır (H4 denetimi O3): `(payment, project)` çiftini ZATEN
+    çözmüş olan çağıranlar (`POST`/`PATCH` uçları) `build_detail`'i doğrudan
+    çağırır — aksi hâlde `visible_projects` kapsam sorgusu istek başına İKİ KEZ
+    koşardı.
+    """
     payment, project = await _visible_payment(session, actor, payment_id)
+    return await build_detail(session, payment, project)
+
+
+async def build_detail(
+    session: AsyncSession, payment: ProgressPayment, project: Project
+) -> ProgressPaymentDetail:
+    """E15 ekranının tamamı — GÖRÜNÜRLÜK KONTROLÜ YAPMAZ.
+
+    Çağıranın kapsam kararını (`_visible_project`/`_visible_payment`) çoktan
+    vermiş olması ŞARTTIR: bu ayrım O3'ün çözümüdür, korumanın gevşetilmesi
+    değil. Yeni bir çağıran eklenirken çifti mutlaka kapsam süzgecinden
+    geçirilmiş bir yoldan almalıdır.
+    """
     # D8 sayesinde bir hakedişin var olması sözleşmenin de var olduğunu garanti
     # eder (`project_contracts` CASCADE'i hakedişleri de götürür) — `contract`
     # burada asla None DEĞİLDİR.
     contract = project.contract
 
-    line_rows, groups, physical_numerator = await _line_rows(session, project, payment)
-    advance_recovered, prior_gross_total = await _history_state(
-        session, contract, payment.sequence_no
+    prior_payments = await repository.list_completed_payments(
+        session, project.id, before_sequence_no=payment.sequence_no
     )
-    calc = await _calculation_block(payment, contract, advance_recovered)
+    line_rows, groups, physical_numerator = await _line_rows(session, payment, prior_payments)
+    advance_recovered, prior_gross_total = _history_state(prior_payments, contract.amount)
+    calc = _calculation_block(payment, contract, advance_recovered)
     progress = await _progress_block(
         session, project, contract, calc.gross, physical_numerator, prior_gross_total
     )

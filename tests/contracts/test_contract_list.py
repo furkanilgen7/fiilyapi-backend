@@ -79,11 +79,11 @@ async def test_isveren_listesi_ozet_dondurur(client, admin_headers, ornek_proje,
         "progress_payment_total",
         "expiring_this_month_count",
     }
-    # `progress_payment_total` P7'nin işi (spec §2.2): MetricPlaceholder
-    # sarmalayıcısı `available=False`/`value=None` ile döner — literal JSON
-    # `null` DEĞİL, C3'te sabitlenmiş sözleşme budur.
-    assert govde["summary"]["progress_payment_total"]["available"] is False
-    assert govde["summary"]["progress_payment_total"]["value"] is None
+    # P7/H9 (spec §9.6): `progress_payment_total` artık `MetricPlaceholder`
+    # sarmalayıcısı DEĞİL düz `Decimal`'dır — C3'te sabitlenen sözleşme bilinçli
+    # olarak DEĞİŞTİ (frontend'e kırıcı değişiklik olarak bildirilir, §10/4).
+    # Hakedişi olmayan sözleşmede toplam 0'dır (bilinmiyor değil, gerçekten sıfır).
+    assert Decimal(govde["summary"]["progress_payment_total"]) == Decimal("0.00")
     assert govde["summary"]["active_count"] == 1
     assert len(govde["items"]) == 1
     item = govde["items"][0]
@@ -143,7 +143,9 @@ async def test_taseron_bedeli_turevdir_ve_fiyatsiz_satir_katkisiz(
     assert len(items) == 1
     # Σ(quantity × unit_price) = 100*50 = 5000.00; unit_price IS NULL satır 0 katkı.
     assert items[0]["amount"] == "5000.00"
-    assert items[0]["progress_pct"]["available"] is False
+    # Taşeron hakedişi AYRI dilimdir (spec §1.2): P7/H9 sonrası alan düz
+    # `Decimal | None` olduğu için burada `None` döner — sahte 0 gösterilmez.
+    assert items[0]["progress_pct"] is None
 
 
 @pytest.mark.asyncio
