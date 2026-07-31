@@ -123,23 +123,35 @@ async def list_payments(
     return [(row[0], row[1]) for row in result.all()]
 
 
-async def list_prior_completed_payments(
-    session: AsyncSession, project_id: uuid.UUID, before_sequence_no: int
+async def list_completed_payments(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    before_sequence_no: int | None = None,
+    exclude_payment_id: uuid.UUID | None = None,
 ) -> list[ProgressPayment]:
-    """Önceki tamamlanmış hakedişler, sıra ARTAN (spec §6.3 avans tavanı zinciri +
-    §6.6/§8 kümülatif türevler). D8 sayesinde küme nettir — "önceki" belirsizliği
-    yoktur. `lines` `lazy="selectin"` ile birlikte gelir, ek sorgu YOK.
+    """Tamamlanmış (`approved|paid`) hakedişler, sıra ARTAN. **İKİ MODLU TEK sorgu**
+    (H6 denetimi K1) — `lines.completed_totals`'ın iki modunun SQL karşılığı:
+
+    * `before_sequence_no=N` → **sıra tabanlı**: yalnız `sequence_no < N`. §6.6'nın
+      "Önceki" tanımı + §6.3 avans mahsubu zinciri buradan okur (zincir sıralıdır:
+      N'inci hakedişin tavanı kendinden ÖNCEKİLERİN kurtardığı avansa bağlıdır).
+    * `exclude_payment_id=X` (veya ikisi de yok) → **sırasız TAM küme**: kaydın
+      KENDİSİ hariç bütün `approved|paid` kayıtlar. Kota tavanı (§6.5/2) buradan
+      okur — bir toplam kısıtı olduğu için sıraya bağlanamaz.
+
+    İki mod aynı `WHERE` gövdesinden türer; ikinci bir sorgu kopyası AÇILMAZ.
+    `lines` `lazy="selectin"` ile birlikte gelir, ek sorgu YOK.
     """
-    stmt = (
-        select(ProgressPayment)
-        .where(
-            ProgressPayment.project_id == project_id,
-            ProgressPayment.status.in_(COMPLETED_STATUSES),
-            ProgressPayment.sequence_no < before_sequence_no,
-        )
-        .order_by(ProgressPayment.sequence_no)
+    stmt = select(ProgressPayment).where(
+        ProgressPayment.project_id == project_id,
+        ProgressPayment.status.in_(COMPLETED_STATUSES),
     )
-    result = await session.execute(stmt)
+    if before_sequence_no is not None:
+        stmt = stmt.where(ProgressPayment.sequence_no < before_sequence_no)
+    if exclude_payment_id is not None:
+        stmt = stmt.where(ProgressPayment.id != exclude_payment_id)
+    result = await session.execute(stmt.order_by(ProgressPayment.sequence_no))
     return list(result.scalars().all())
 
 

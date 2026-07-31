@@ -480,24 +480,40 @@ async def test_onay_kota_kontrolu_tek_toplama_yolunu_kullanir(
     monkeypatch: pytest.MonkeyPatch,
     kota_bolusen_iki_hakedis: tuple[uuid.UUID, uuid.UUID],
 ) -> None:
-    """Kümülatif toplam `lines.prior_completed_totals`'tan okunur — İKİNCİ bir
+    """Kümülatif toplam `lines.completed_totals`'tan okunur — İKİNCİ bir
     toplama yolu açılmaz (P5'in "iki farklı doğruluk tanımı" bulgusu).
 
     Casus, gerçek fonksiyonu sarar (davranış değişmez) ve `approve` sırasında
-    çağrıldığını kanıtlar.
+    hangi MODLA çağrıldığını da sabitler: kota SIRASIZ tam kümeden okunmalıdır
+    (`exclude_payment_id` verilir, `before_sequence_no` VERİLMEZ — H6 denetimi K1).
     """
     birinci, _ = kota_bolusen_iki_hakedis
-    cagrilar: list[tuple[uuid.UUID, int]] = []
-    gercek = lines.prior_completed_totals
+    cagrilar: list[dict] = []
+    gercek = lines.completed_totals
 
-    async def casus(session, project_id, before_sequence_no):
-        cagrilar.append((project_id, before_sequence_no))
-        return await gercek(session, project_id, before_sequence_no)
+    async def casus(session, project_id, **kwargs):
+        cagrilar.append(kwargs)
+        return await gercek(session, project_id, **kwargs)
 
-    monkeypatch.setattr(transitions.lines, "prior_completed_totals", casus)
+    monkeypatch.setattr(transitions.lines, "completed_totals", casus)
     yanit = await client.post(f"/progress-payments/{birinci}/approve", headers=admin_headers)
     assert yanit.status_code == 200, yanit.text
-    assert cagrilar, "approve, kota kontrolünü `lines.prior_completed_totals` üzerinden yapmıyor"
+    assert cagrilar, "approve, kota kontrolünü `lines.completed_totals` üzerinden yapmıyor"
+    # İSTEK BOYUNCA iki çağrı olur ve MODLARI FARKLIDIR: önce geçişin kota
+    # doğrulaması (tam küme), sonra yanıt gövdesini kuran `service._line_rows`'un
+    # §6.6 "Önceki" kolonu (sıra tabanlı). Sıra bu yüzden anlamlıdır — ilk çağrı
+    # kotanınkidir.
+    kota_cagrisi = cagrilar[0]
+    assert kota_cagrisi.get("before_sequence_no") is None, (
+        f"kota tavanı SIRA TABANLI kümeden okunuyor (K1 açığı geri geldi): {kota_cagrisi}"
+    )
+    assert kota_cagrisi.get("exclude_payment_id") == birinci, (
+        f"kota tavanı kaydın KENDİSİNİ dışlamıyor: {kota_cagrisi}"
+    )
+    assert any(c.get("before_sequence_no") is not None for c in cagrilar), (
+        "§6.6 gösterim kolonları da sırasız kümeye kaymış olabilir (mod ayrımı kayboldu): "
+        f"{cagrilar}"
+    )
 
 
 # --- 7. D8 zinciri (spec §9.2) ---
@@ -524,3 +540,180 @@ async def test_approve_sonrasi_yeni_hakedis_acilabilir(
     )
     assert yeni.status_code == 201, yeni.text
     assert yeni.json()["sequence_no"] == 2
+
+
+# --- 8. H6 denetimi K1: kota tavanı ONAY SIRASINDAN bağımsızdır (KRİTİK) ---
+#
+# Bulunan açık (2026-07-31): kota "önceki" kümesi §6.6'nın `sequence_no <` tanımıyla
+# okunuyordu. Büyük sıra numaralı hakediş ÖNCE onaylanırsa küçük numaralı olan onu
+# görmez; onay sırası değiştirilerek tavan MEŞRU uçlarla aşılabiliyordu. Çözüm:
+# kota tavanı sırasız TAM kümeden (kendisi hariç tüm `approved|paid`) okur;
+# §6.6'nın GÖSTERİM kolonları sıra tabanlı kalır.
+
+
+async def test_ters_sirada_onayda_ikincisi_kotayi_asinca_422(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    seeded_db: AsyncSession,
+    kota_bolusen_iki_hakedis: tuple[uuid.UUID, uuid.UUID],
+) -> None:
+    """`test_ikinci_onay_kotayi_asinca_422`'nin TERS SIRALISI (K1).
+
+    Aynı kurulum (kota 1.000, iki hakediş × 600) önce seq 2, sonra seq 1
+    onaylanarak koşar. Sıra tabanlı kota okumasında seq 1 kendinden BÜYÜK
+    numaralı onaylı kaydı "önceki" saymaz ve İKİSİ DE 200 alırdı (toplam 1.200).
+    """
+    birinci, ikinci = kota_bolusen_iki_hakedis
+
+    onay_ikinci = await client.post(f"/progress-payments/{ikinci}/approve", headers=admin_headers)
+    assert onay_ikinci.status_code == 200, onay_ikinci.text
+
+    onay_birinci = await client.post(f"/progress-payments/{birinci}/approve", headers=admin_headers)
+    assert onay_birinci.status_code == 422, onay_birinci.text
+    assert onay_birinci.json()["detail"] == guards.QUANTITY_EXCEEDS_QUOTA
+    assert (await _durum(seeded_db, birinci)).status is ProgressPaymentStatus.pending_approval
+
+
+async def test_ters_sirada_onay_sigiyorsa_gecer(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    seeded_db: AsyncSession,
+    kota_bolusen_iki_hakedis: tuple[uuid.UUID, uuid.UUID],
+) -> None:
+    """Karşı-test: ters sırada da kural yalnız AŞIMDA koşar.
+
+    Bu olmadan yukarıdaki test, kotayı hiç okumayan bir "sıra bozuksa hep
+    reddet" hatasıyla da yeşil kalırdı.
+    """
+    birinci, ikinci = kota_bolusen_iki_hakedis
+    birinci_kayit = await seeded_db.get(ProgressPayment, birinci)
+    birinci_kayit.lines[0].quantity = Decimal("400")
+    await seeded_db.flush()
+
+    assert (
+        await client.post(f"/progress-payments/{ikinci}/approve", headers=admin_headers)
+    ).status_code == 200
+    yanit = await client.post(f"/progress-payments/{birinci}/approve", headers=admin_headers)
+    assert yanit.status_code == 200, yanit.text
+
+
+async def _onayli_toplam(session: AsyncSession, project_id: uuid.UUID) -> Decimal:
+    """Projedeki `approved|paid` hakedişlerin satır miktarı toplamı."""
+    kayitlar = (
+        (
+            await session.execute(
+                select(ProgressPayment).where(
+                    ProgressPayment.project_id == project_id,
+                    ProgressPayment.status.in_(
+                        (ProgressPaymentStatus.approved, ProgressPaymentStatus.paid)
+                    ),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return sum((line.quantity for kayit in kayitlar for line in kayit.lines), Decimal("0"))
+
+
+async def test_onay_sirasi_degistirerek_kota_asma_zinciri_kapali(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    seeded_db: AsyncSession,
+    sozlesmeli_proje: uuid.UUID,
+    hakedis_santiyesi,
+    hakedis_kalemi,
+) -> None:
+    """K1'in KANITLANMIŞ SÖMÜRÜ ZİNCİRİ — yedi adım, hepsi meşru uçlarla (kota 1.000).
+
+    Zincir (denetim raporundaki hâliyle):
+      1. P1 (seq 1) satır 600 → submit → approve
+      2. P2 (seq 2) satır 400 → submit  (600+400 = 1.000, sınırda geçer)
+      3. `unapprove` P1 → `reject` P1  (P1 taslak)
+      4. P1 satırı 1.000'e yükseltilir
+      5. submit P1
+      6. approve P2
+      7. approve P1  ← ESKİDEN 200; toplam 1.400 > 1.000, hiçbir uç hata vermezdi
+
+    Artık 7. adım 422 verir ve onaylı toplam kotayı AŞMAZ. D8 zinciri boyunca
+    korunur: P2 açılırken P1 onaylıdır (açık hakediş yoktur), `unapprove` ise
+    D8'i denetlemez — zincirin tamamı uçlardan geçer.
+    """
+    item, _ = hakedis_kalemi
+    site = hakedis_santiyesi
+    kota = Decimal("1000")
+
+    def _govde(miktar: str) -> dict:
+        return {
+            "period_year": 2026,
+            "period_month": 1,
+            "lines": [
+                {
+                    "contract_item_id": str(item.id),
+                    "site_id": str(site.id),
+                    "quantity": miktar,
+                }
+            ],
+        }
+
+    # 1 — P1: 600, onaya gönder, onayla.
+    p1_yanit = await client.post(
+        f"/projects/{sozlesmeli_proje}/progress-payments", json=_govde("600"), headers=admin_headers
+    )
+    assert p1_yanit.status_code == 201, p1_yanit.text
+    p1 = p1_yanit.json()["id"]
+    assert (
+        await client.post(f"/progress-payments/{p1}/submit", headers=admin_headers)
+    ).status_code == 200
+    assert (
+        await client.post(f"/progress-payments/{p1}/approve", headers=admin_headers)
+    ).status_code == 200
+
+    # 2 — P2: 400 (600+400 = 1.000, sınırda), onaya gönder.
+    p2_yanit = await client.post(
+        f"/projects/{sozlesmeli_proje}/progress-payments", json=_govde("400"), headers=admin_headers
+    )
+    assert p2_yanit.status_code == 201, p2_yanit.text
+    p2 = p2_yanit.json()["id"]
+    assert (
+        await client.post(f"/progress-payments/{p2}/submit", headers=admin_headers)
+    ).status_code == 200
+
+    # 3 — P1'i geri çek ve reddet: taslağa döner.
+    assert (
+        await client.post(f"/progress-payments/{p1}/unapprove", headers=admin_headers)
+    ).status_code == 200
+    assert (
+        await client.post(f"/progress-payments/{p1}/reject", headers=admin_headers)
+    ).status_code == 200
+
+    # 4 — P1 satırı 1.000'e yükseltilir. Yazma anındaki kontrol yalnız
+    # `approved|paid` kümesine baktığı için (P2 henüz `pending_approval`) bu adım
+    # HER İKİ tasarımda da geçer — sızıntı 7. adımda kapanır.
+    yukselt = await client.put(
+        f"/progress-payments/{p1}/lines",
+        json={
+            "lines": [
+                {"contract_item_id": str(item.id), "site_id": str(site.id), "quantity": "1000"}
+            ]
+        },
+        headers=admin_headers,
+    )
+    assert yukselt.status_code == 200, yukselt.text
+
+    # 5-6 — P1 yeniden onaya, P2 onaylanır (tek başına kotaya sığar).
+    assert (
+        await client.post(f"/progress-payments/{p1}/submit", headers=admin_headers)
+    ).status_code == 200
+    assert (
+        await client.post(f"/progress-payments/{p2}/approve", headers=admin_headers)
+    ).status_code == 200
+
+    # 7 — ZİNCİRİN KIRILDIĞI ADIM.
+    son_onay = await client.post(f"/progress-payments/{p1}/approve", headers=admin_headers)
+    assert son_onay.status_code == 422, son_onay.text
+    assert son_onay.json()["detail"] == guards.QUANTITY_EXCEEDS_QUOTA
+
+    assert (await _durum(seeded_db, p1)).status is ProgressPaymentStatus.pending_approval
+    seeded_db.expire_all()
+    assert await _onayli_toplam(seeded_db, sozlesmeli_proje) <= kota

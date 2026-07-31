@@ -237,8 +237,34 @@ async def test_gecis_hakedis_satirinin_kilidini_bekler() -> None:
 
     Bu test tam olarak HAKEDİŞ SATIRINI hedefler: dışarıdaki bir transaction
     yalnız o satırı `FOR UPDATE` ile tutar (sözleşmeye DOKUNMAZ) ve geçişin
-    beklediği gösterilir. `repository.get_payment_locked`'taki `with_for_update`
-    kalkarsa geçiş beklemeden ilerler ve `not task.done()` iddiası kırmızıya döner.
+    beklediği gösterilir.
+
+    ## Bu testin ÖLÇMEDİĞİ şey (H6 denetimi O2 — eski docstring YANLIŞTI)
+
+    Eskiden burada "`get_payment_locked`'taki `with_for_update` kalkarsa bu
+    iddia kırmızıya döner" yazıyordu; denetim ÖLÇTÜ: DÖNMÜYOR. Kilit kalksa bile
+    geçiş sonunda hakediş satırını `UPDATE` eder ve o yazma kilidi dışarıdaki
+    `FOR UPDATE` tutucusunu beklemek zorundadır — `not task.done()` yine yeşil
+    kalır; yalnız SQL-metin testi (`…for_update_ile_okur`) kırılır.
+
+    Yani bu test "geçiş hakediş satırının kilidine TAKILIR" davranışını sabitler
+    (ki bu da §7'nin gereğidir), `FOR UPDATE`'in KENDİSİNİ değil.
+
+    ## Davranışsal ayrım neden KURULAMIYOR (denendi, ölçüldü)
+
+    O2 denetimi "sözleşmesi olmayan projede iki eşzamanlı `approve`" senaryosunu
+    önerdi — orada sıraya sokan sözleşme kilidi olmadığı için hakediş kilidi TEK
+    koruma olurdu. Bu senaryo ŞEMA DÜZEYİNDE İMKÂNSIZ: `models.py:68-72`,
+    `progress_payments.project_id` FK'sini `project_contracts.project_id`'ye
+    bağlar — sözleşmesiz projede hakediş satırı INSERT EDİLEMEZ
+    (`ForeignKeyViolationError`, doğrudan DB kurulumuyla dahi). Dolayısıyla HER
+    hakedişin sözleşmesi vardır ve her geçiş önce o satırı kilitler; hakediş
+    satırındaki `FOR UPDATE` bugün erişilebilir hiçbir yolda TEK koruma değildir.
+
+    Kalan koruma, kilidin YERELLİĞİDİR (yukarıdaki SQL-metin testi bunu bekçiler):
+    yarın sözleşme kilidini almayan ikinci bir geçiş yolu eklenirse davranışsal
+    fark ancak o zaman doğar — ve o gün bu testler yerine yeni yolun kendi
+    yarış testi yazılmalıdır.
     """
     project_id, user_id, payment_id, ikinci_user_id = await _onay_kurulumu()
     try:
@@ -302,15 +328,16 @@ async def _onay_kurulumu() -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]:
         project = Project(code="PP-CONC-002", name="Onay Eşzamanlılık Projesi")
         session.add(project)
         await session.flush()
-        contract = ProjectContract(
-            project_id=project.id,
-            contract_no="SZL-2026-CONC2",
-            amount=Decimal("1000000"),
-            advance_pct=Decimal("10"),
-            retainage_pct=Decimal("5"),
-            vat_pct=Decimal("20"),
+        session.add(
+            ProjectContract(
+                project_id=project.id,
+                contract_no="SZL-2026-CONC2",
+                amount=Decimal("1000000"),
+                advance_pct=Decimal("10"),
+                retainage_pct=Decimal("5"),
+                vat_pct=Decimal("20"),
+            )
         )
-        session.add(contract)
         birinci = User(
             email="onay1@pp-crud.co",
             password_hash=hash_password("parola1234"),
@@ -331,9 +358,9 @@ async def _onay_kurulumu() -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]:
             status=ProgressPaymentStatus.pending_approval,
             period_year=2026,
             period_month=3,
-            vat_pct=contract.vat_pct,
-            advance_pct=contract.advance_pct,
-            retainage_pct=contract.retainage_pct,
+            vat_pct=Decimal("20"),
+            advance_pct=Decimal("10"),
+            retainage_pct=Decimal("5"),
             created_by=birinci.id,
         )
         session.add(payment)

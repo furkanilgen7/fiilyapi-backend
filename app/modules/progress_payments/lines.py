@@ -56,25 +56,52 @@ class _ResolvedLine:
     coefficient: Decimal
 
 
-async def prior_completed_totals(
-    session: AsyncSession, project_id: uuid.UUID, before_sequence_no: int
+async def completed_totals(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    before_sequence_no: int | None = None,
+    exclude_payment_id: uuid.UUID | None = None,
 ) -> dict[LineKey, tuple[Decimal, Decimal]]:
-    """(kalem, şantiye) → (önceki miktar, önceki tutar); `prev = sequence_no daha
-    küçük VE status ∈ {approved, paid}` (spec §6.6).
+    """(kalem, şantiye) → (miktar, tutar) toplamı; `status ∈ {approved, paid}`.
 
-    **Kota tavanı (§6.5/2) ile E15'in "Önceki" kolonu (§6.6) BU TEK TANIMDAN
-    okur.** GOREV-SIRASI §2/1'deki P5 bulgusu tam olarak buydu: aşım kontrolü ile
-    kullanıcıya gösterilen "kalan" farklı kümelerden toplanınca, ekranda kalan
-    görünürken kaydetmenin 422 vermesi (veya tersi) mümkün olur. `service._line_rows`
-    de buradan besleniyor; ikinci bir toplama kopyası AÇILMAZ.
+    ## TEK fonksiyon, İKİ mod — hangisi nerede (H6 denetimi K1, 2026-07-31)
+
+    * **`before_sequence_no=N` — sıra tabanlı.** Spec §6.6'nın `prev = sequence_no
+      daha küçük VE approved|paid` tanımı. E15'in "Önceki"/"Toplam" KOLONLARI
+      (`service._line_rows`) ve §6.3 avans mahsubu zinciri bu modu kullanır: ikisi
+      de tarihsel bir SIRALAMANIN ifadesidir ("bu evraktan önce ne olmuştu").
+    * **`exclude_payment_id=X` — sırasız TAM küme (kendisi hariç).** §6.5/2 kota
+      TAVANI bu modu kullanır: `satır-yazma` (`_resolve`) ve `onay yeniden
+      doğrulaması` (`transitions._revalidate_quota`).
+
+    Kota neden sıraya bağlanamaz (kapatılan KRİTİK açık): kota bir TOPLAM
+    kısıtıdır, kronolojik değildir. Sıra tabanlı okunduğunda büyük sıra numaralı
+    hakediş ÖNCE onaylanırsa, küçük numaralı olan onu "önceki" saymaz — onay
+    sırasını değiştirmek tavanı aşmanın meşru uçlarla işleyen bir yolu olurdu
+    (seq1=600 onayla → seq2=400 → seq1'i geri çek/reddet → 1.000'e yükselt →
+    ikisini de onayla = 1.400 > 1.000). Kota artık `sequence_no`'dan BAĞIMSIZDIR;
+    §6.6 gösterim kolonları ise sıra tabanlı KALIR (kullanıcıya gösterilen
+    "Önceki" evrakın tarihsel yerini anlatır).
+
+    P5'in "iki farklı doğruluk tanımı" bulgusuna karşı korunan şey burada da
+    korunur: iki mod da BU TEK gövdeden toplar, ikinci bir toplama kopyası AÇILMAZ.
     """
-    prior_payments = await repository.list_prior_completed_payments(
-        session, project_id, before_sequence_no
+    payments = await repository.list_completed_payments(
+        session,
+        project_id,
+        before_sequence_no=before_sequence_no,
+        exclude_payment_id=exclude_payment_id,
     )
     totals: dict[LineKey, tuple[Decimal, Decimal]] = {}
-    for prior in prior_payments:
+    for prior in payments:
         for line in prior.lines:
             if line.contract_item_id is None:
+                # Kalemi silinmiş satır (`SET NULL`) hücre kimliğini KAYBETMİŞTİR:
+                # hangi (kalem, şantiye) çiftine yazılacağı bilinemez. Kümülatif
+                # toplamdan kalıcı olarak düşer — ONAYLI SAPMA, spec §6.5 notu
+                # (H6 denetimi D3); `transitions._revalidate_quota` aynı satırı
+                # aynı gerekçeyle atlar.
                 continue
             key = (line.contract_item_id, line.site_id)
             prev_qty, prev_amt = totals.get(key, (_ZERO, _ZERO))
@@ -92,7 +119,7 @@ async def _resolve(
     inputs: list[ProgressPaymentLineInput],
     *,
     default_coefficient: Decimal,
-    sequence_no: int,
+    exclude_payment_id: uuid.UUID | None,
     existing: dict[LineKey, ProgressPaymentLine],
 ) -> list[_ResolvedLine]:
     """Spec §6.5'in DÖRT kuralı + FF kilidi (§10/5). **Hiçbir yazma YAPMAZ.**
@@ -104,13 +131,21 @@ async def _resolve(
     `existing` = bu hakedişte HÂLİHAZIRDA duran hücreler (yeni hakedişte boş).
     İki kural buradan okur: katsayı öntanımı (§4.1) ve kota kontrolünün ARTIŞ
     koşulu (§6.5/2) — ikisi de "satırın mevcut hâli" bilgisine muhtaçtır.
+
+    `exclude_payment_id` = düzenlenen hakediş (oluşturmada `None`, kayıt henüz
+    yoktur). Kota TAM kümeden okunur (`completed_totals`'ın sırasız modu, H6
+    denetimi K1): yazma anında da sıra tabanlı okunsaydı, büyük sıralı bir
+    hakediş onaylıyken küçük sıralı taslak onu görmez ve tavanı aşan miktar
+    SESSİZCE yazılabilirdi (zincirin sızdıran adımı buydu).
     """
     item_ids = [entry.contract_item_id for entry in inputs]
     site_ids = [entry.site_id for entry in inputs]
     items_with_group = await repository.get_employer_items_with_group_by_ids(session, item_ids)
     sites = await repository.get_sites_by_ids(session, site_ids)
     quotas = await repository.get_distributed_quotas(session, item_ids, site_ids)
-    prior_totals = await prior_completed_totals(session, project.id, sequence_no)
+    prior_totals = await completed_totals(
+        session, project.id, exclude_payment_id=exclude_payment_id
+    )
 
     seen: set[LineKey] = set()
     resolved: list[_ResolvedLine] = []
@@ -136,7 +171,7 @@ async def _resolve(
         existing_line = existing.get(key)
         current_quantity = _ZERO if existing_line is None else existing_line.quantity
 
-        # Kümülatif = ÖNCEKİ tamamlanmış hakedişler + bu satır. Bu hakedişin
+        # Kümülatif = TÜM tamamlanmış hakedişler + bu satır. Bu hakedişin
         # KENDİ eski miktarı toplama GİRMEZ: değiştirme semantiğinde eski satır
         # yerini yenisine bırakır, iki kez sayılırsa aynı taslağı yeniden
         # kaydetmek aşım verirdi.
@@ -148,8 +183,8 @@ async def _resolve(
         # Azaltma ve `0` HER ZAMAN serbest; yeni aşım (miktarı artırarak kotayı
         # geçme) yine sert 422'dir. Yeni satırda "mevcut miktar" 0'dır — yani
         # kotayı aşan YENİ satır bu inceltmeden faydalanmaz.
-        previous_quantity = prior_totals.get(key, (_ZERO, _ZERO))[0]
-        if entry.quantity > current_quantity and previous_quantity + entry.quantity > quota:
+        completed_quantity = prior_totals.get(key, (_ZERO, _ZERO))[0]
+        if entry.quantity > current_quantity and completed_quantity + entry.quantity > quota:
             raise SiteValidationError(guards.QUANTITY_EXCEEDS_QUOTA)
 
         # §4.1: öntanım YALNIZ yeni satıra iner; var olan satırın katsayısı
@@ -203,11 +238,13 @@ async def build_lines(
     inputs: list[ProgressPaymentLineInput],
     *,
     default_coefficient: Decimal,
-    sequence_no: int,
 ) -> list[ProgressPaymentLine]:
     """Oluşturma yolunun (`POST …/progress-payments` iç içe `lines[]`) satırları.
 
     `PUT …/lines` ile AYNI `_resolve` korkuluklarından geçer — tek yol.
+
+    `exclude_payment_id` YOK: hakediş henüz YAZILMADI, kimliği de yoktur; zaten
+    `draft` doğduğu için kota kümesinin (`approved|paid`) içinde olamaz.
     """
     resolved = await _resolve(
         session,
@@ -215,7 +252,7 @@ async def build_lines(
         contract,
         inputs,
         default_coefficient=default_coefficient,
-        sequence_no=sequence_no,
+        exclude_payment_id=None,
         existing={},
     )
     lines = []
@@ -258,7 +295,7 @@ async def apply_lines(
         contract,
         inputs,
         default_coefficient=payment.default_coefficient,
-        sequence_no=payment.sequence_no,
+        exclude_payment_id=payment.id,
         existing=existing,
     )
 

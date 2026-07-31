@@ -358,10 +358,35 @@ K5 kararına bağlı.
    satırı (`boq_items.contract_item_id = kalem AND site_id = şantiye`) varsa
    açılabilir — POZ 65 "şantiye ataması yapılmadan … hakediş yapılamaz".
    Hata: `ITEM_NOT_DISTRIBUTED = "Bu poz seçilen şantiyeye dağıtılmadı; önce poz dağılımını yapın."` (422)
-2. **Kota tavanı:** `quantity + Σ(önceki approved/paid aynı çiftin miktarı)` ≤ o
-   çiftin BOQ kotası (`boq_items.quantity`). POZ 37+72 zinciri: kota şantiyenin
+2. **Kota tavanı:** `quantity + Σ(diğer approved/paid hakedişlerde aynı çiftin miktarı)`
+   ≤ o çiftin BOQ kotası (`boq_items.quantity`). POZ 37+72 zinciri: kota şantiyenin
    tavanıdır. Hata: `QUANTITY_EXCEEDS_QUOTA = "Kümülatif hakediş miktarı şantiye kotasını aşamaz."` (422).
    Zeyilname dilimi gelene dek serttir (§1.2).
+
+   **Küme SIRASIZDIR — kota ≠ §6.6 "Önceki" (H6 denetimi K1, 2026-07-31):** tavanın
+   dayandığı küme, **kaydın kendisi hariç TÜM `approved|paid` hakedişlerdir**;
+   `sequence_no` GÖZETİLMEZ. §6.6'nın GÖSTERİM kolonları (`previous_*`/`cumulative_*`)
+   ise sıra tabanlı KALIR (`sequence_no <`). İki tanım BİLEREK ayrıdır ve tek
+   fonksiyonun (`lines.completed_totals`) iki modu olarak uygulanır; ikinci bir
+   toplama yolu açılmaz.
+
+   *Bulgunun gerekçesi:* kota bir TOPLAM kısıtıdır, kronolojik değildir. Sıra
+   tabanlı okunduğunda tavan **onay sırası değiştirilerek** meşru uçlarla
+   aşılabiliyordu (kota 1.000): seq1'e 600 yaz → submit → approve · seq2'ye 400 yaz
+   → submit (toplam sınırda) · seq1'i `unapprove` + `reject` ile taslağa döndür →
+   satırı 1.000'e yükselt (yazma kontrolü `seq < 1` baktığı için seq2'yi görmez) →
+   submit · seq2'yi onayla · seq1'i onayla ⇒ onaylı toplam **1.400 > 1.000**, hiçbir
+   uç hata vermiyordu. Kural hem `PUT …/lines` yazımında hem `approve` yeniden
+   doğrulamasında tam kümeyi kullanır (yalnız onayda düzeltmek yazma anındaki
+   sızıntıyı açık bırakırdı). Uçtan uca kanıt:
+   `test_transitions.py::test_onay_sirasi_degistirerek_kota_asma_zinciri_kapali`.
+
+   **Onaylı sapma — kalemi düşmüş satır kümülatiften çıkar (H6 denetimi D3):**
+   `contract_item_id IS NULL` olan satır (kalem silinmiş, FK `SET NULL`) hücre
+   kimliğini kaybettiği için hangi (kalem, şantiye) çiftine ait olduğu BİLİNEMEZ;
+   hem kota toplamasından hem `approve` yeniden doğrulamasından ATLANIR. Sonuç:
+   o miktar kümülatif muhasebeden KALICI olarak düşer. Alternatif — onayı
+   engellemek — evrakı kilitlerdi (§4.2 snapshot ilkesi). Bilinçli kabul edilmiştir.
 
    **İnceltme — kontrol yalnız ARTIŞTA koşar (kullanıcı kararı 2026-07-31, H5
    denetimi O1):** karşılaştırma satırın **mevcut kayıtlı miktarına** göre yapılır;
@@ -378,7 +403,12 @@ K5 kararına bağlı.
 
 Poz p, şantiye s için; `prev = sequence_no'su küçük VE status ∈ {approved, paid}`
 hakedişler (D8 sayesinde küme nettir — açık hakediş tek olduğundan "önceki"
-belirsizliği yoktur):
+belirsizliği yoktur).
+
+> **Bu tanım YALNIZ GÖSTERİM içindir.** §6.5/2 kota tavanı BAŞKA bir kümeden
+> okur (sırasız, kendisi hariç tüm `approved|paid`) — ayrımın gerekçesi §6.5/2'de.
+> Kolonların sıra tabanlı davranışı `test_lines.py::test_onayli_hakedisin_detayinda_kendi_miktari_onceki_sayilmaz`
+> ile sabitlenmiştir.
 
 ```
 previous_amount(p)   = Σ prev satır line_total          # E15 102 "Önceki"

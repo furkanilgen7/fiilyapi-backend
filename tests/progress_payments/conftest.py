@@ -897,6 +897,92 @@ async def kota_bolusen_iki_hakedis(
 
 
 @pytest.fixture
+async def ters_sirali_onayli_gecmis(
+    seeded_db: AsyncSession, project_factory, hakedis_olusturan: User
+) -> tuple[uuid.UUID, EmployerContractItem, Site]:
+    """H6 denetimi K1 — kota kümesinin SIRASIZ olduğunu ölçen kurulum.
+
+    Kota 1.000; `sequence_no=2` hakediş ONAYLI (600 birim), `sequence_no=1`
+    hakediş TASLAK. Sıra tabanlı bir kota okuması taslağın (seq 1) onaylı
+    kaydı (seq 2) "önceki" saymamasına yol açar ve 1.000'e kadar yazmaya izin
+    verirdi; sırasız tam küme 600 + yazılan > 1.000 olduğunda 422 verir.
+
+    Durum geçiş uçlarıyla kurulamaz (D8 tek açık hakediş kuralı ile seq 1'in
+    taslak, seq 2'nin onaylı olduğu bu diziliş meşru uçlardan ancak
+    `unapprove`+`reject` zinciriyle üretilebilir — o zinciri
+    `test_transitions.py` uçtan uca ayrıca koşar); burada doğrudan DB kurulumu
+    testin ÖLÇTÜĞÜ şey değil, ÖN KOŞULUDUR.
+    """
+    project = await project_factory(code="PP-Q04", name="Ters Sıralı Onay Projesi")
+    contract = ProjectContract(
+        project_id=project.id,
+        contract_no="SZL-PP-Q04",
+        amount=Decimal("5000000"),
+        advance_pct=Decimal("20"),
+        retainage_pct=Decimal("5"),
+        vat_pct=Decimal("20"),
+    )
+    seeded_db.add(contract)
+    await seeded_db.flush()
+    site = Site(project_id=project.id, code="SNT-PP-Q04", name="Ters Sıra Şantiyesi")
+    group = EmployerContractGroup(project_id=project.id, name="Ters Sıra Grubu", sort_order=1)
+    seeded_db.add_all([site, group])
+    await seeded_db.flush()
+    item = EmployerContractItem(
+        project_id=project.id,
+        group_id=group.id,
+        code="10.001",
+        description="Ters sıralı poz",
+        unit="m³",
+        quantity=Decimal("1000"),
+        unit_price=Decimal("100"),
+        sort_order=1,
+    )
+    seeded_db.add(item)
+    await seeded_db.flush()
+    await _dagit(seeded_db, site, item, Decimal("1000"))
+
+    taslak = ProgressPayment(
+        project_id=project.id,
+        sequence_no=1,
+        status=ProgressPaymentStatus.draft,
+        period_year=2026,
+        period_month=1,
+        vat_pct=contract.vat_pct,
+        advance_pct=contract.advance_pct,
+        retainage_pct=contract.retainage_pct,
+        created_by=hakedis_olusturan.id,
+    )
+    onayli = ProgressPayment(
+        project_id=project.id,
+        sequence_no=2,
+        status=ProgressPaymentStatus.approved,
+        period_year=2026,
+        period_month=2,
+        vat_pct=contract.vat_pct,
+        advance_pct=contract.advance_pct,
+        retainage_pct=contract.retainage_pct,
+        created_by=hakedis_olusturan.id,
+    )
+    onayli.lines = [
+        ProgressPaymentLine(
+            contract_item_id=item.id,
+            site_id=site.id,
+            code=item.code,
+            description=item.description,
+            unit=item.unit,
+            contract_unit_price=item.unit_price,
+            coefficient=Decimal("1.000"),
+            quantity=Decimal("600"),
+            group_name=group.name,
+        )
+    ]
+    seeded_db.add_all([taslak, onayli])
+    await seeded_db.flush()
+    return taslak.id, item, site
+
+
+@pytest.fixture
 async def onayli_gecmisli_ortam(
     seeded_db: AsyncSession, project_factory, hakedis_olusturan: User
 ) -> tuple[uuid.UUID, EmployerContractItem, Site, EmployerContractItem]:

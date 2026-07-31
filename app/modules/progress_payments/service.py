@@ -147,7 +147,6 @@ async def create(
             contract,
             data.lines,
             default_coefficient=default_coefficient,
-            sequence_no=sequence_no,
         )
 
     session.add(payment)
@@ -248,8 +247,8 @@ async def _history_state(
 ) -> tuple[Decimal, Decimal]:
     """`(advance_recovered, prior_gross_total)` — sıradaki hakedişin göreceği
     kümülatif durum (spec §6.3, §8 finansal ilerleme)."""
-    prior_payments = await repository.list_prior_completed_payments(
-        session, contract.project_id, before_sequence_no
+    prior_payments = await repository.list_completed_payments(
+        session, contract.project_id, before_sequence_no=before_sequence_no
     )
     recovered = _ZERO
     prior_gross_total = _ZERO
@@ -325,9 +324,13 @@ async def _line_rows(
 ) -> tuple[list[ProgressPaymentLineDetail], list[ProgressPaymentGroupSummary], Decimal]:
     """Satır detayları + grup toplulaştırması + §8 fiziksel ilerleme payı
     (`Σ cumulative_quantity × canlı unit_price`)."""
-    # E15 "Önceki" kolonu ile §6.5/2 kota tavanı AYNI tanımdan okur — kaynak
-    # `lines.prior_completed_totals` (bkz. oradaki GOREV-SIRASI §2/1 notu).
-    prior_totals = await lines.prior_completed_totals(session, project.id, payment.sequence_no)
+    # E15 "Önceki" kolonu §6.6'nın SIRA TABANLI tanımından okur — `completed_totals`'ın
+    # `before_sequence_no` modu. Kota tavanı AYNI fonksiyonun sırasız TAM küme
+    # modunu kullanır (H6 denetimi K1); tek fonksiyon, iki mod, ikinci toplama
+    # kopyası YOK (P5'in GOREV-SIRASI §2/1 bulgusu).
+    prior_totals = await lines.completed_totals(
+        session, project.id, before_sequence_no=payment.sequence_no
+    )
 
     item_ids = [
         line.contract_item_id for line in payment.lines if line.contract_item_id is not None

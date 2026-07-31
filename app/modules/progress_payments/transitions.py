@@ -28,16 +28,21 @@ de kotayı AYRI AYRI geçer, ikisi onaylanınca toplam kota SESSİZCE aşılır.
 tüketen şey satırın yazılması değil hakedişin ONAYLANMASIDIR (kümülatif küme
 `approved|paid`), bu yüzden son söz buradadır.
 
-Toplama `lines.prior_completed_totals` ÜZERİNDEN yapılır — ikinci bir toplama
-yolu AÇILMAZ (P5'in "iki farklı doğruluk tanımı" bulgusu: aşım kontrolü ile
-ekranda gösterilen "önceki" farklı kümelerden gelirse kullanıcı hangisine
-güveneceğini bilemez).
+Toplama `lines.completed_totals` ÜZERİNDEN yapılır — ikinci bir toplama yolu
+AÇILMAZ (P5'in "iki farklı doğruluk tanımı" bulgusu: aşım kontrolü ile ekranda
+gösterilen "önceki" farklı kümelerden gelirse kullanıcı hangisine güveneceğini
+bilemez).
 
-**Bilinen sınır:** "önceki" kümesi §6.6'nın tanımıyla `sequence_no` küçüklüğüne
-dayanır. İki açık hakediş TERS sırada (büyük sıra numaralı önce) onaylanırsa
-küçük numaralı olan büyüğü "önceki" saymaz. Bu, tanımı çatallamamak için bilinçli
-bırakılmıştır; D8 zaten iki açık hakedişi engeller ve bu kontrol o kuralın
-İKİNCİ savunma hattıdır.
+## Kota kümesi SIRASIZDIR (H6 denetimi K1 — kapatılan KRİTİK açık)
+
+Kota tavanı `completed_totals`'ın **tam küme** modundan okur: kendisi HARİÇ tüm
+`approved|paid` kayıtlar, `sequence_no` GÖZETMEKSİZİN. Eskiden §6.6'nın sıra
+tabanlı "önceki" tanımı kullanılıyordu ve tavan ONAY SIRASI değiştirilerek meşru
+uçlarla aşılabiliyordu: seq1'i (600) onayla → seq2'yi (400) onaya gönder → seq1'i
+geri çek + reddet → seq1'i 1.000'e yükselt (yazma kontrolü `seq < 1` baktığı için
+seq2'yi GÖRMEZ) → seq2'yi, sonra seq1'i onayla ⇒ 1.400 > 1.000, hiçbir uç hata
+vermez. Kota kronolojik değil TOPLAM bir kısıttır; sıraya bağlanması kavramsal
+hataydı. §6.6'nın gösterim kolonları sıra tabanlı KALIR (spec §6.5/§6.6 ayrımı).
 """
 
 import enum
@@ -94,33 +99,45 @@ async def _revalidate_quota(session: AsyncSession, payment: ProgressPayment) -> 
     BURADA GEÇERSİZDİR: orada amaç kotası sonradan düşürülen bir taslağın
     düzeltilebilir kalmasıdır (kilitlenmeyi önler); burada ise kayıt kümülatif
     kümeye GİRİYOR — aşmış bir hakedişin onaylanması aşımı kalıcılaştırır.
+
+    Küme SIRASIZDIR (`exclude_payment_id`, modül docstring'indeki K1) ve kaydın
+    KENDİSİ dışlanır: `unapprove` ile geri çekilip yeniden onaylanan bir hakediş
+    kendi miktarını iki kez saymamalıdır.
     """
     item_ids = [line.contract_item_id for line in payment.lines if line.contract_item_id]
     if not item_ids:
         return
     site_ids = [line.site_id for line in payment.lines if line.contract_item_id]
     quotas = await repository.get_distributed_quotas(session, item_ids, site_ids)
-    prior_totals = await lines.prior_completed_totals(
-        session, payment.project_id, payment.sequence_no
+    completed = await lines.completed_totals(
+        session, payment.project_id, exclude_payment_id=payment.id
     )
 
     for line in payment.lines:
         if line.contract_item_id is None:
             # Kalemi silinmiş satırın kotası da yoktur; onayı bu yüzden
             # engellemek evrakı kilitlerdi (snapshot'la ayakta kalır, spec §4.2).
+            # Bu satır kümülatif muhasebeden de düşer — ONAYLI SAPMA, spec §6.5
+            # notu (H6 denetimi D3); `lines.completed_totals` aynı gerekçeyle atlar.
             continue
         key = (line.contract_item_id, line.site_id)
         quota = quotas.get(key)
         if quota is None:
             raise SiteValidationError(guards.ITEM_NOT_DISTRIBUTED)
-        previous_quantity = prior_totals.get(key, (_ZERO, _ZERO))[0]
-        if previous_quantity + line.quantity > quota:
+        completed_quantity = completed.get(key, (_ZERO, _ZERO))[0]
+        if completed_quantity + line.quantity > quota:
             raise SiteValidationError(guards.QUANTITY_EXCEEDS_QUOTA)
 
 
 def _stamp(payment: ProgressPayment, action: PaymentAction, actor: User) -> None:
     """§7 tablosunun damga kolonu. `reject` damga BIRAKMAZ (gerekçe denetim
-    günlüğüne gider, H10 — ayrı kolon AÇILMAZ, K12)."""
+    günlüğüne gider, H10 — ayrı kolon AÇILMAZ, K12).
+
+    `reject`, `unapprove`'un aksine `submitted_at`'i TEMİZLEMEZ — asimetri
+    BİLİNÇLİDİR (H6 denetimi D1): `unapprove` bir onayı GERİ ALIR ve geride
+    "onaylayan" bilgisi bırakırsa denetimde yanlış kişiyi işaret eder; `reject`
+    ise gönderimin GERÇEKTEN olduğunu inkâr etmez, damga yeniden `submit`'te
+    zaten üzerine yazılır. Davranış değiştirilmeyecektir."""
     now = datetime.now(UTC)
     if action is PaymentAction.submit:
         payment.submitted_at = now

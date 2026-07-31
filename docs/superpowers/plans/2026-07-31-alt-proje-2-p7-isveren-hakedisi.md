@@ -1120,6 +1120,23 @@ async def test_hakedissiz_projede_ozet_sifirlar(client, admin_headers, sozlesmel
 **Spec:** §11.
 **Bağımlılık:** H4–H9 (tüm yazma uçları mevcut olmalı).
 
+#### ❗ H6'dan devredilen — ZORUNLU: `unapprove` SESSİZ bir tarih silme işlemidir
+
+H6 denetimi (O1, 2026-07-31): `transitions._stamp`, `unapprove`'da `approved_at`
+ve `approved_by`'ı **NULL'lar**. Bu doğrudur (onay bekleyen kayıt "onaylayan"
+bilgisi taşımamalıdır) ama bugün geriye HİÇBİR iz BIRAKMAZ — kim, ne zaman
+onaylamıştı bilgisi geri dönüşsüz kaybolur. Denetim günlüğü H10'da bağlanacağı
+için delik şu an açıktır.
+
+- [ ] `progress_payment_unapproved` mesajı **SİLİNEN DAMGA DEĞERLERİNİ** taşımalı:
+      eski `approved_by` (kullanıcı adı) + eski `approved_at`. Mesaj imzası bu
+      yüzden diğer geçişlerden FARKLIDIR (`(project_name, sequence_no)` YETMEZ).
+- [ ] Değerler `_stamp` onları NULL'lamadan ÖNCE okunmalı — `transitions.perform`
+      içinde damgadan önce yakalanıp çağırana taşınması gerekebilir.
+- [ ] Test: `test_unapprove_denetim_kaydi_eski_onay_damgalarini_tasir` —
+      onayla, geri çek, günlük metninde onaylayanın adının ve eski onay
+      tarihinin GEÇTİĞİNİ doğrula.
+
 **Dosyalar:**
 - Değiştir: `app/modules/audit/messages.py`, `router.py` (veya servis katmanı —
   mevcut `record_audit` çağrı deseni koddan doğrulanır)

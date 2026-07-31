@@ -885,3 +885,44 @@ async def test_yetkisiz_rol_lines_403(
         f"/progress-payments/{taslak_hakedis}/lines", json={"lines": []}, headers=hr_headers
     )
     assert yanit.status_code == 403
+
+
+# --- H6 denetimi K1: kota YAZMA anında da sırasız tam kümeden okunur ---
+
+
+async def test_buyuk_sirali_onayli_varken_kucuk_sirali_taslak_kotayi_asamaz(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    ters_sirali_onayli_gecmis: tuple[uuid.UUID, EmployerContractItem, Site],
+) -> None:
+    """Kota tavanı `sequence_no`'dan BAĞIMSIZDIR — yazma anında da (H6 denetimi K1).
+
+    Kurulum: kota 1.000, `sequence_no=2` hakediş ONAYLI (600), `sequence_no=1`
+    hakediş taslak. Sıra tabanlı okumada taslağın "önceki" kümesi BOŞ olurdu
+    (`seq < 1`) ve 500 birim SESSİZCE yazılırdı; sırasız tam küme 600+500 = 1.100
+    > 1.000 ile 422 verir. Sömürü zincirinin sızdıran yazma adımı buydu.
+    """
+    payment_id, item, site = ters_sirali_onayli_gecmis
+    yanit = await client.put(
+        f"/progress-payments/{payment_id}/lines",
+        json={"lines": [_satir(item.id, site.id, "500")]},
+        headers=admin_headers,
+    )
+    assert yanit.status_code == 422, yanit.text
+    assert yanit.json()["detail"] == guards.QUANTITY_EXCEEDS_QUOTA
+
+
+async def test_buyuk_sirali_onayli_varken_sigan_miktar_yazilabilir(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    ters_sirali_onayli_gecmis: tuple[uuid.UUID, EmployerContractItem, Site],
+) -> None:
+    """Karşı-test: aynı kurulumda kotaya SIĞAN miktar (400) yazılabilir — kural
+    "sıra bozuksa hep reddet" değil, gerçek bir toplam kontrolüdür."""
+    payment_id, item, site = ters_sirali_onayli_gecmis
+    yanit = await client.put(
+        f"/progress-payments/{payment_id}/lines",
+        json={"lines": [_satir(item.id, site.id, "400")]},
+        headers=admin_headers,
+    )
+    assert yanit.status_code == 200, yanit.text
