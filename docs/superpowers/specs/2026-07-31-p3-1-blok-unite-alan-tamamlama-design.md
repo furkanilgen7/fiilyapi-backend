@@ -1148,7 +1148,7 @@ deploy'u sırasında kendi migration'ını koşar. Bu blok her uygulama ajanın�
 |---|---|---|
 | **R1** | `unit_kind` enum takası | `apartment · shop` → `apartment · shop · office · warehouse · parking`. Tip takası (§4.3). **Başka hiçbir şey yok** |
 | **R2** | yeni enum tipleri | `CREATE TYPE`: `block_roof_type`, `block_ground_usage`, `block_parking_type`, `block_status`, `unit_facing`, `unit_parking_right`, `unit_sales_status` (**7 tip**) |
-| **R3** | kolon eklemeleri | `blocks` +13 kolon +1 UNIQUE +9 CHECK; `units` +8 kolon **+4 CHECK** (`ck_units_floor` **yok** — kat metin, karar 4) |
+| **R3** | kolon eklemeleri | `blocks` +13 kolon +1 UNIQUE +6 CHECK; `units` +8 kolon **+4 CHECK** (`ck_units_floor` **yok** — kat metin, karar 4) |
 
 R2 ve R3 birleştirilebilir görünür ama ayrılmalarının nedeni **downgrade'dir**: Postgres'te
 `ENUM` tablo/kolon ile birlikte silinmez; kolonları düşürüp tipleri bırakmak ikinci
@@ -1534,7 +1534,7 @@ davranışla yazılır, aksi söylenirse tek fonksiyon değişir.
 | **T0** | Bu spec → **kullanıcı onayı** (§13.1 kararları işlendi; §13.2'nin tek maddesi onay bekliyor, uygulamayı bloke etmiyor); sonra plan yaz → **onay** | — |
 | **T1** | `alembic heads` doğrulaması (**`DATABASE_URL` override'ı ile**, §10.1) + **R1** (`unit_kind` enum takası, izole) + `UnitKind` modeli. upgrade→downgrade→upgrade **yerel** DB'de yeşil | T0 |
 | **T2** | **R2** (7 yeni enum tipi, izole) + enum sınıfları (`BlockRoofType`, `BlockGroundUsage`, `BlockParkingType`, `BlockStatus`, `UnitFacing`, `UnitParkingRight`, `UnitSalesStatus`) | T1 |
-| **T3** | **R3** — `blocks` +13 kolon +1 UNIQUE +9 CHECK, `units` +8 kolon **+4 CHECK** (`floor` **metin**, `ck_units_floor` yok — karar 4); `models.py` güncellemesi; **`sales_status` P8 geçiş notu docstring'e** (§4.4). **Veri migration'ı YOK** (karar 5) | T2 |
+| **T3** | **R3** — `blocks` +13 kolon +1 UNIQUE +6 CHECK, `units` +8 kolon **+4 CHECK** (`floor` **metin**, `ck_units_floor` yok — karar 4); `models.py` güncellemesi; **`sales_status` P8 geçiş notu docstring'e** (§4.4). **Veri migration'ı YOK** (karar 5) | T2 |
 | **T4** | `_derive_block_code` saf fonksiyonu + birim testleri (§12.1/1-2) + benzersizlik korkuluğu `ensure_block_code_unique` + **kodu `NULL` blokta anlık türetme** (§3.2, §13.2) | T3 |
 | **T5** | Blok şemaları (`BlockCreate/Update/Response` +13 alan + `estimated_unit_count` türevi) + blok yazma/okuma uçlarının genişlemesi + Türkçe mesajlar | T4 |
 | **T6** | Ünite şemaları (`UnitCreate/Update/Response` +8 alan + `expected_profit` yer tutucusu; `sales_status` **gerçek** değere dönüşür) + `UnitKindBreakdown` genişlemesi | T3 |

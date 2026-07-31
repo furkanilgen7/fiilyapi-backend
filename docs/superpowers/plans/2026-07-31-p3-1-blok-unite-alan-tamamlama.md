@@ -178,7 +178,7 @@ mevcut bir ekranı sessizce kırar.
 |---|---|---|
 | `alembic/versions/<r1>_p31_unit_kind_enum.py` | **R1** — `unit_kind` enum takası, izole (YENİ) | T1 |
 | `alembic/versions/<r2>_p31_yeni_enum_tipleri.py` | **R2** — 7 yeni enum tipi, izole (YENİ) | T2 |
-| `alembic/versions/<r3>_p31_blok_unite_kolonlari.py` | **R3** — 13+8 kolon, 1 UNIQUE, 13 CHECK (YENİ) | T3 |
+| `alembic/versions/<r3>_p31_blok_unite_kolonlari.py` | **R3** — 13+8 kolon, 1 UNIQUE, 10 CHECK (YENİ) | T3 |
 | `app/modules/units/models.py` | `UnitKind` +3 değer · 7 yeni enum · 21 yeni kolon · **`sales_status` P8 geçiş notu docstring'e** | T1–T3 |
 | `app/modules/units/codes.py` | `_derive_block_code` saf fonksiyonu (YENİ dosya) | T4 |
 | `app/modules/units/guards.py` | +10 Türkçe mesaj sabiti · `ensure_block_code_unique` · `ensure_vat_rate` | T4, T5, T6 |
@@ -317,9 +317,9 @@ upgrade→downgrade→upgrade yeşil; `blocks`/`units` kolon sayısı **değişm
 
 ---
 
-### Task T3 — R3: 21 kolon + 1 UNIQUE + 13 CHECK · **L** · ⚠️ **RİSKLİ** · bağımlılık: T2
+### Task T3 — R3: 21 kolon + 1 UNIQUE + 10 CHECK · **L** · ⚠️ **RİSKLİ** · bağımlılık: T2
 
-**Amaç:** `blocks` +13 kolon (+`uq_blocks_project_code` +9 CHECK), `units` +8 kolon
+**Amaç:** `blocks` +13 kolon (+`uq_blocks_project_code` +6 CHECK), `units` +8 kolon
 (+**4** CHECK); `models.py` güncellemesi; **`sales_status` P8 geçiş notu docstring'e**
 (spec §4.4 paragrafı **birebir**).
 **Spec:** §3.1, §4.1, §7.1, §10.2/R3, §10.3, §10.4.
