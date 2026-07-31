@@ -73,10 +73,11 @@ def test_katsayili_satir_kurus_olu_137_141():
     )
 
 
-def test_yuvarlama_sirasi_onemli():
-    """Spec §6.1: line_total, quantize2 EDİLMİŞ adjusted_unit_price üstünden hesaplanır
-    (ham çarpımdan değil) — mutasyon denetimi bu sırayı bozarak doğrulanır."""
-    # 185 × 1.142 = 211.27 (tam) -> quantize2 -> 211.27; × 2880 = 608457.60
+def test_line_total_altin_regresyon_185_1142():
+    """Golden-number regresyon (H2 Bulgu 2 düzeltmesi): bu senaryoda 185 × 1,142 = 211,27
+    tam çıkar, yani ara yuvarlamaya duyarsızdır — formül SIRASINI ayırt ETMEZ (bunun için
+    bkz. `test_yuvarlama_sirasi_ara_yuvarlamayla_ayirt_edilir`). Yalnız sabit altın sayıyı
+    korur: 211,27 × 2880 = 608.457,60."""
     assert calc.adjusted_unit_price(Decimal("185"), Decimal("1.142")) == Decimal("211.27")
     assert calc.line_total(Decimal("185"), Decimal("1.142"), Decimal("2880")) == Decimal(
         "608457.60"
@@ -98,6 +99,31 @@ def test_miktar_sifir_satir_toplami_sifir():
 def test_yuvarlama_round_half_up():
     """quantize2 kenarı: .005 yukarı yuvarlanır (banker's rounding DEĞİL)."""
     assert calc.quantize2(Decimal("2.005")) == Decimal("2.01")
+
+
+def test_net_amount_bilesenler_dogru_isaretle_toplanir():
+    """H2 Bulgu 1: net_amount = gross + vat - advance - retention. Dört bileşen
+    kasıtlı olarak birbirinden farklı büyüklükte seçildi (altın senaryodaki gibi
+    vat == advance OLMASIN) — işaret takası (ör. gross - vat + advance - retention)
+    bu testte farklı bir sonuç üretir ve testi kırmızıya düşürür."""
+    gross = Decimal("1000000")
+    vat = Decimal("180000.00")
+    advance = Decimal("100000.00")
+    retention = Decimal("50000.00")
+    assert calc.net_amount(gross, vat, advance, retention) == Decimal("1030000.00")
+
+
+def test_net_amount_sifir_yuzdelerde_net_brute_esittir():
+    """H2 Bulgu 3: advance_pct=0, retainage_pct=0, vat_pct=0 sınır durumu — ilgili
+    bileşenler 0,00 çıkar ve net = gross olur."""
+    gross = Decimal("500000")
+    vat = calc.vat_amount(gross, Decimal("0"))
+    advance = calc.advance_deduction(gross, Decimal("0"), Decimal("11200000"), Decimal("0"))
+    retention = calc.retention_amount(gross, Decimal("0"))
+    assert vat == Decimal("0.00")
+    assert advance == Decimal("0.00")
+    assert retention == Decimal("0.00")
+    assert calc.net_amount(gross, vat, advance, retention) == Decimal("500000.00")
 
 
 def test_sure_pct_uc_dahil():
