@@ -216,6 +216,11 @@ class ProgressPaymentDetail(BaseModel):
     groups: list[ProgressPaymentGroupSummary]
     calculation: PaymentCalculationBlock
     progress: ProgressBlock
+    dropped_orphan_count: int = 0
+    """`PUT …/lines` yanıtında: kalemi silindiği için (`contract_item_id IS NULL`)
+    gövdeden adreslenemeyen ve bu kaydetmede DÜŞEN satır sayısı (spec §10/7 —
+    zarif düşüş + bildirim, sessiz atlama YOK). Okuma uçlarında (`GET`, `POST`,
+    `PATCH`) her zaman `0`'dır: orada düşen satır kavramı yoktur."""
 
 
 # --- Fiyat tazeleme (spec §9.3) ---

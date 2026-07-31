@@ -39,7 +39,6 @@ from app.modules.progress_payments.schemas import ProgressPaymentLineInput
 from app.modules.projects.models import Project, ProjectContract
 
 _ZERO = Decimal("0")
-_UNIT_COEFFICIENT = Decimal("1")
 
 # (contract_item_id, site_id) — hakediş satırının hücre kimliği; kısmi benzersiz
 # indeks `uq_progress_payment_lines_item_site` ile aynı üçlünün son iki alanı.
@@ -94,13 +93,17 @@ async def _resolve(
     *,
     default_coefficient: Decimal,
     sequence_no: int,
-    existing_coefficients: dict[LineKey, Decimal],
+    existing: dict[LineKey, ProgressPaymentLine],
 ) -> list[_ResolvedLine]:
     """Spec §6.5'in DÖRT kuralı + FF kilidi (§10/5). **Hiçbir yazma YAPMAZ.**
 
     Sıra plandaki sırayla birebir: gövde-içi çift → şantiye-proje → kalem-sözleşme
     → dağıtım ön şartı → kota tavanı → FF kilidi. Sorgular satır başına DEĞİL,
     gövdenin tamamı için toplu koşar (N+1 yok).
+
+    `existing` = bu hakedişte HÂLİHAZIRDA duran hücreler (yeni hakedişte boş).
+    İki kural buradan okur: katsayı öntanımı (§4.1) ve kota kontrolünün ARTIŞ
+    koşulu (§6.5/2) — ikisi de "satırın mevcut hâli" bilgisine muhtaçtır.
     """
     item_ids = [entry.contract_item_id for entry in inputs]
     site_ids = [entry.site_id for entry in inputs]
@@ -130,25 +133,39 @@ async def _resolve(
         if quota is None:
             raise SiteValidationError(guards.ITEM_NOT_DISTRIBUTED)
 
+        existing_line = existing.get(key)
+        current_quantity = _ZERO if existing_line is None else existing_line.quantity
+
         # Kümülatif = ÖNCEKİ tamamlanmış hakedişler + bu satır. Bu hakedişin
         # KENDİ eski miktarı toplama GİRMEZ: değiştirme semantiğinde eski satır
         # yerini yenisine bırakır, iki kez sayılırsa aynı taslağı yeniden
         # kaydetmek aşım verirdi.
+        #
+        # Kontrol YALNIZ ARTIŞTA koşar (kullanıcı kararı 2026-07-31, H5 denetimi
+        # O1): kota SONRADAN düşürülürse (dağıtım revize edilir) taslakta duran
+        # satır zaten aşmış olur — kural azaltmaya da uygulansaydı kullanıcı
+        # `quantity: 0` göndererek bile taslağı kurtaramaz, hakediş kilitlenirdi.
+        # Azaltma ve `0` HER ZAMAN serbest; yeni aşım (miktarı artırarak kotayı
+        # geçme) yine sert 422'dir. Yeni satırda "mevcut miktar" 0'dır — yani
+        # kotayı aşan YENİ satır bu inceltmeden faydalanmaz.
         previous_quantity = prior_totals.get(key, (_ZERO, _ZERO))[0]
-        if previous_quantity + entry.quantity > quota:
+        if entry.quantity > current_quantity and previous_quantity + entry.quantity > quota:
             raise SiteValidationError(guards.QUANTITY_EXCEEDS_QUOTA)
 
         # §4.1: öntanım YALNIZ yeni satıra iner; var olan satırın katsayısı
         # gönderilmediğinde KORUNUR (sessizce 1.000'e düşmez).
+        #
+        # FF kilidi (§10/5) GÖNDERİLEN değere uygulanır, yazılacak değere DEĞİL:
+        # saklanan ≠1 katsayılar grandfather'lanır (bkz. `guards.validate_coefficient`
+        # gerekçesi — aksi hâlde FF sonradan kapatılınca taslak kilitlenirdi).
+        guards.validate_coefficient(
+            entry.coefficient, has_price_escalation=contract.has_price_escalation
+        )
         coefficient = entry.coefficient
         if coefficient is None:
-            coefficient = existing_coefficients.get(key, default_coefficient)
-        if not contract.has_price_escalation and coefficient != _UNIT_COEFFICIENT:
-            # Spec §10/5. Kontrol GÖNDERİLEN değil SATIRA YAZILACAK katsayı
-            # üzerindedir: hakedişin `default_coefficient`'ı 1 değilken satır
-            # katsayısız gönderilirse de FF'siz sözleşmeye 1 olmayan katsayı
-            # YAZILMIŞ olurdu — kilit saklanan veriyi korur, gövde alanını değil.
-            raise SiteValidationError(guards.ESCALATION_DISABLED)
+            coefficient = (
+                default_coefficient if existing_line is None else existing_line.coefficient
+            )
 
         resolved.append(
             _ResolvedLine(
@@ -199,7 +216,7 @@ async def build_lines(
         inputs,
         default_coefficient=default_coefficient,
         sequence_no=sequence_no,
-        existing_coefficients={},
+        existing={},
     )
     lines = []
     for sort_order, plan in enumerate(resolved):
@@ -215,19 +232,26 @@ async def apply_lines(
     contract: ProjectContract,
     payment: ProgressPayment,
     inputs: list[ProgressPaymentLineInput],
-) -> None:
+) -> int:
     """`PUT …/lines` gövdesini hakedişe uygular (DEĞİŞTİRME semantiği).
 
     Var olan hücre KORUNUR (kimliği ve snapshot'ı ile), yalnız miktar/katsayı/sıra
-    güncellenir; gövdede geçmeyen hücre `delete-orphan` ile SİLİNİR. Bağı kopmuş
-    (`contract_item_id IS NULL`) satırlar gövdeden ADRESLENEMEZ — gövde tablonun
-    tamamı olduğu için onlar da silinir.
+    güncellenir; gövdede geçmeyen hücre `delete-orphan` ile SİLİNİR.
+
+    ## Bağı kopmuş satırlar: SESSİZ ATLAMA YOK (spec §10/7, H5 denetimi O3)
+
+    Kalemi silinmiş satır (`contract_item_id IS NULL`, FK `SET NULL`) gövdeden
+    ADRESLENEMEZ — gövde tablonun tamamı olduğu için ilk kaydetmede düşer. Bu
+    kaçınılmazdır ama SESSİZ OLAMAZ: düşen satır sayısı DÖNDÜRÜLÜR ve yanıtın
+    `dropped_orphan_count` alanıyla kullanıcıya bildirilir. 409 ile onay istenip
+    ikinci tura çıkılmaz (mockup'ta böyle bir adım yok — zarif düşüş + bildirim).
     """
     existing = {
         (line.contract_item_id, line.site_id): line
         for line in payment.lines
         if line.contract_item_id is not None
     }
+    dropped_orphan_count = sum(1 for line in payment.lines if line.contract_item_id is None)
     resolved = await _resolve(
         session,
         project,
@@ -235,7 +259,7 @@ async def apply_lines(
         inputs,
         default_coefficient=payment.default_coefficient,
         sequence_no=payment.sequence_no,
-        existing_coefficients={key: line.coefficient for key, line in existing.items()},
+        existing=existing,
     )
 
     # --- Buradan itibaren yazma; doğrulama YOK (yukarıdaki sıra kısıtı). ---
@@ -251,3 +275,4 @@ async def apply_lines(
         lines.append(line)
     payment.lines = lines
     await session.flush()
+    return dropped_orphan_count

@@ -19,9 +19,12 @@ GEÇERSİZ veri saklanmasını önlemek için her `PUT …/lines` yazımında ko
 uygulanır, burada yalnız metin sabitleri ve DB'siz `validate_submit` durur).
 """
 
+from decimal import Decimal
 from typing import Protocol
 
 from app.core.errors import SiteValidationError
+
+_UNIT_COEFFICIENT = Decimal("1")
 
 # --- Spec §9.7 tablosundan BİREBİR alınmıştır — yeniden yazılmaz. ---
 
@@ -67,6 +70,28 @@ DUPLICATE_CELL = "Aynı poz ve şantiye için tek satır gönderilebilir."
 OPEN_PAYMENT_EXISTS = "Bu sözleşmede açık bir hakediş var; önce onu tamamlayın."
 INVALID_STATUS_TRANSITION = "Bu durumdan bu işleme geçilemez."
 PAYMENT_NOT_DELETABLE = "Onaylanmış veya ödenmiş hakediş silinemez."
+
+
+def validate_coefficient(coefficient: Decimal | None, *, has_price_escalation: bool) -> None:
+    """FF kilidi (spec §10/5) — hakediş BAŞLIĞI ve SATIRI için TEK kopya kural.
+
+    ## Kapsam: yalnız BU İSTEKTE GELEN değer (onaylı sapma, kullanıcı kararı 2026-07-31)
+
+    Kilit `coefficient is None` iken HİÇ koşmaz. Gerekçe kilitlenme senaryosudur:
+    FF açıkken katsayılı satır yazılmış bir sözleşmede FF sonradan kapatılırsa,
+    kural SAKLANAN katsayı üzerinden koşsaydı taslak bir daha HİÇBİR şekilde
+    kaydedilemezdi (kullanıcı katsayı göndermese bile 422). Saklanan ≠1 katsayılar
+    bu yüzden KORUNUR (grandfather); kilit yalnız YENİ ≠1 değer yazılmasını önler.
+
+    Çağıran üç yol: `service.create` + `service.update` (başlık `default_coefficient`)
+    ve `lines._resolve` (satır `coefficient`). Kuralın üç kopyası OLMAZ — biri
+    değişip diğerleri unutulursa hakediş doğuştan kullanılamaz hâle gelirdi
+    (H5 denetimi Y1).
+    """
+    if coefficient is None:
+        return
+    if not has_price_escalation and coefficient != _UNIT_COEFFICIENT:
+        raise SiteValidationError(ESCALATION_DISABLED)
 
 
 class _LineLike(Protocol):

@@ -17,9 +17,15 @@ from httpx import AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.boq.models import BoqItem
 from app.modules.contracts.models import EmployerContractItem
 from app.modules.progress_payments import guards
-from app.modules.progress_payments.models import ProgressPaymentLine
+from app.modules.progress_payments.models import (
+    ProgressPayment,
+    ProgressPaymentLine,
+    ProgressPaymentStatus,
+)
+from app.modules.projects.models import Project, ProjectContract
 from app.modules.sites.models import Site
 
 pytestmark = pytest.mark.asyncio
@@ -39,6 +45,17 @@ def _satir(item_id, site_id, quantity: str, coefficient: str | None = None) -> d
 async def _satir_sayisi(session: AsyncSession, payment_id: uuid.UUID) -> int:
     stmt = select(func.count()).where(ProgressPaymentLine.payment_id == payment_id)
     return (await session.execute(stmt)).scalar_one()
+
+
+async def _kotayi_dusur(
+    session: AsyncSession, item: EmployerContractItem, site: Site, yeni_kota: str
+) -> None:
+    """Dağıtım sonradan revize edilmiş gibi (kalem, şantiye) kotasını düşürür —
+    H5 denetimi O1'in senaryosu."""
+    stmt = select(BoqItem).where(BoqItem.contract_item_id == item.id, BoqItem.site_id == site.id)
+    boq = (await session.execute(stmt)).scalar_one()
+    boq.quantity = Decimal(yeni_kota)
+    await session.flush()
 
 
 # --- Değiştirme semantiği (spec §9.2/§10-2) ---
@@ -162,6 +179,58 @@ async def test_satir_sirasi_govde_sirasini_izler(
     satirlar = yanit.json()["lines"]
     assert [s["sort_order"] for s in satirlar] == [0, 1]
     assert satirlar[0]["contract_item_id"] == str(ikinci_dagitilmis_kalem.id)
+
+
+async def test_mevcut_satirlarin_sirasi_da_govde_sirasina_gore_guncellenir(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    taslak_hakedis: uuid.UUID,
+    hakedis_santiyesi: Site,
+    hakedis_kalemi: tuple[EmployerContractItem, str],
+    ikinci_dagitilmis_kalem: EmployerContractItem,
+    seeded_db: AsyncSession,
+) -> None:
+    """D3 (H5 denetimi): kullanıcı satırları SÜRÜKLEYİP yeniden kaydettiğinde
+    MEVCUT satırların `sort_order`'ı da yeniden yazılır — kardeş test yalnız
+    YENİ satırları kapsıyordu, mevcut satırların sırası hiç doğrulanmamıştı."""
+    item, _ = hakedis_kalemi
+    ilk = await client.put(
+        f"/progress-payments/{taslak_hakedis}/lines",
+        json={
+            "lines": [
+                _satir(item.id, hakedis_santiyesi.id, "10"),
+                _satir(ikinci_dagitilmis_kalem.id, hakedis_santiyesi.id, "20"),
+            ]
+        },
+        headers=admin_headers,
+    )
+    assert [s["sort_order"] for s in ilk.json()["lines"]] == [0, 1]
+    ilk_kimlikler = [s["id"] for s in ilk.json()["lines"]]
+
+    ters = await client.put(
+        f"/progress-payments/{taslak_hakedis}/lines",
+        json={
+            "lines": [
+                _satir(ikinci_dagitilmis_kalem.id, hakedis_santiyesi.id, "20"),
+                _satir(item.id, hakedis_santiyesi.id, "10"),
+            ]
+        },
+        headers=admin_headers,
+    )
+    assert ters.status_code == 200, ters.text
+    satirlar = ters.json()["lines"]
+    # Satırlar SİLİNİP yeniden açılmadı (kimlikler aynı), yalnız sıraları döndü.
+    assert set(s["id"] for s in satirlar) == set(ilk_kimlikler)
+    assert satirlar[0]["contract_item_id"] == str(ikinci_dagitilmis_kalem.id)
+    assert [s["sort_order"] for s in satirlar] == [0, 1]
+
+    # Yanıt değil DB kanıtı: ilişki `sort_order`'a göre sıralı okunduğu için
+    # yanıttaki sıra tek başına kolonun YAZILDIĞINI kanıtlamaz.
+    stmt = select(ProgressPaymentLine.sort_order).where(
+        ProgressPaymentLine.payment_id == taslak_hakedis,
+        ProgressPaymentLine.contract_item_id == ikinci_dagitilmis_kalem.id,
+    )
+    assert (await seeded_db.execute(stmt)).scalar_one() == 0
 
 
 # --- §6.5/1 dağıtım ön şartı ---
@@ -307,6 +376,189 @@ async def test_ayni_hakedisin_kendi_eski_miktari_kotayi_tuketmez(
         assert yanit.status_code == 200, yanit.text
 
 
+async def _kotasi_dusmus_taslak(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    ortam: tuple[uuid.UUID, EmployerContractItem, Site, EmployerContractItem],
+    seeded_db: AsyncSession,
+) -> tuple[uuid.UUID, EmployerContractItem, Site]:
+    """O1 senaryosunun ortak kurulumu: 600 onaylı geçmiş + 400'lük taslak satır
+    yazılır, SONRA kota 1.000 → 500'e düşürülür. Artık satır kotayı zaten aşmış
+    durumdadır (600 + 400 > 500)."""
+    payment_id, item, site, _ = ortam
+    ilk = await client.put(
+        f"/progress-payments/{payment_id}/lines",
+        json={"lines": [_satir(item.id, site.id, "400")]},
+        headers=admin_headers,
+    )
+    assert ilk.status_code == 200, ilk.text
+    await _kotayi_dusur(seeded_db, item, site, "500")
+    return payment_id, item, site
+
+
+async def test_kota_sonradan_dusunce_azaltma_serbest(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    onayli_gecmisli_ortam: tuple[uuid.UUID, EmployerContractItem, Site, EmployerContractItem],
+    seeded_db: AsyncSession,
+) -> None:
+    """O1 (kullanıcı kararı 2026-07-31): kota kontrolü YALNIZ ARTIŞTA koşar.
+    Kota sonradan düşürülmüşse kullanıcı miktarı AZALTABİLMELİDİR — aksi hâlde
+    taslak kilitlenir, düzeltilemez."""
+    payment_id, item, site = await _kotasi_dusmus_taslak(
+        client, admin_headers, onayli_gecmisli_ortam, seeded_db
+    )
+    yanit = await client.put(
+        f"/progress-payments/{payment_id}/lines",
+        json={"lines": [_satir(item.id, site.id, "300")]},
+        headers=admin_headers,
+    )
+    assert yanit.status_code == 200, yanit.text
+    assert Decimal(yanit.json()["lines"][0]["quantity"]) == Decimal("300")
+
+
+async def test_kota_sonradan_dusunce_sifir_serbest(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    onayli_gecmisli_ortam: tuple[uuid.UUID, EmployerContractItem, Site, EmployerContractItem],
+    seeded_db: AsyncSession,
+) -> None:
+    """O1 sınır hâli: `0` her zaman serbesttir (OLU 172 ile de tutarlı)."""
+    payment_id, item, site = await _kotasi_dusmus_taslak(
+        client, admin_headers, onayli_gecmisli_ortam, seeded_db
+    )
+    yanit = await client.put(
+        f"/progress-payments/{payment_id}/lines",
+        json={"lines": [_satir(item.id, site.id, "0")]},
+        headers=admin_headers,
+    )
+    assert yanit.status_code == 200, yanit.text
+    assert Decimal(yanit.json()["lines"][0]["quantity"]) == Decimal("0")
+
+
+async def test_kota_sonradan_dusunce_artis_yine_422(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    onayli_gecmisli_ortam: tuple[uuid.UUID, EmployerContractItem, Site, EmployerContractItem],
+    seeded_db: AsyncSession,
+) -> None:
+    """O1'in SINIRI: inceltme yalnız azaltmayı serbest bırakır — miktarı ARTIRARAK
+    kotayı geçmek yine sert 422'dir."""
+    payment_id, item, site = await _kotasi_dusmus_taslak(
+        client, admin_headers, onayli_gecmisli_ortam, seeded_db
+    )
+    yanit = await client.put(
+        f"/progress-payments/{payment_id}/lines",
+        json={"lines": [_satir(item.id, site.id, "401")]},
+        headers=admin_headers,
+    )
+    assert yanit.status_code == 422, yanit.text
+    assert yanit.json()["detail"] == guards.QUANTITY_EXCEEDS_QUOTA
+
+
+# --- §6.6 "Önceki" kolonu ONAYLI evrakta (H5 denetimi Y2) ---
+
+
+async def test_onayli_hakedisin_detayinda_kendi_miktari_onceki_sayilmaz(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    onayli_gecmisli_ortam: tuple[uuid.UUID, EmployerContractItem, Site, EmployerContractItem],
+    seeded_db: AsyncSession,
+) -> None:
+    """`repository.list_prior_completed_payments` filtresi `sequence_no <` OLMALI,
+    `<=` DEĞİL. Fark yalnız ONAYLANMIŞ hakedişin DETAYINDA görünür: `<=` olsaydı
+    hakediş KENDİNİ "önceki" sayar, `previous_quantity` 600 yerine 1.000,
+    `cumulative_quantity` 1.000 yerine 1.400 olurdu (§6.6 ihlali).
+
+    Durum geçiş ucu H6'da olduğu için durum doğrudan DB üzerinden ayarlanır —
+    meşru kurulumdur, test edilen davranış geçiş değil türev hesaptır.
+    """
+    payment_id, item, site, _ = onayli_gecmisli_ortam
+    yazma = await client.put(
+        f"/progress-payments/{payment_id}/lines",
+        json={"lines": [_satir(item.id, site.id, "400")]},
+        headers=admin_headers,
+    )
+    assert yazma.status_code == 200, yazma.text
+
+    payment = await seeded_db.get(ProgressPayment, payment_id)
+    assert payment is not None
+    payment.status = ProgressPaymentStatus.approved
+    await seeded_db.flush()
+    # `updated_at` sunucu tarafında `onupdate` ile tazelenir; flush onu EXPIRE
+    # eder. Açık `refresh` olmadan yanıt kurulurken senkron bağlamda lazy IO
+    # denenir (`MissingGreenlet`).
+    await seeded_db.refresh(payment)
+
+    detay = await client.get(f"/progress-payments/{payment_id}", headers=admin_headers)
+    assert detay.status_code == 200, detay.text
+    satir = detay.json()["lines"][0]
+    assert Decimal(satir["previous_quantity"]) == Decimal("600")
+    assert Decimal(satir["cumulative_quantity"]) == Decimal("1000")
+
+
+# --- Bağı kopmuş satır: sessiz atlama YOK (spec §10/7, H5 denetimi O3) ---
+
+
+async def test_bagi_kopmus_satir_dusunce_yanitta_bildirilir(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    taslak_hakedis: uuid.UUID,
+    hakedis_santiyesi: Site,
+    hakedis_kalemi: tuple[EmployerContractItem, str],
+    ikinci_dagitilmis_kalem: EmployerContractItem,
+    seeded_db: AsyncSession,
+) -> None:
+    """Kalemi silinmiş satır (`contract_item_id IS NULL`) gövdeden ADRESLENEMEZ
+    ve ilk kaydetmede düşer — bu kaçınılmazdır ama SESSİZ OLAMAZ: yanıt kaç
+    satırın düştüğünü bildirir (spec §10/7)."""
+    item, _ = hakedis_kalemi
+    await client.put(
+        f"/progress-payments/{taslak_hakedis}/lines",
+        json={
+            "lines": [
+                _satir(item.id, hakedis_santiyesi.id, "100"),
+                _satir(ikinci_dagitilmis_kalem.id, hakedis_santiyesi.id, "50"),
+            ]
+        },
+        headers=admin_headers,
+    )
+    stmt = select(ProgressPaymentLine).where(
+        ProgressPaymentLine.payment_id == taslak_hakedis,
+        ProgressPaymentLine.contract_item_id == ikinci_dagitilmis_kalem.id,
+    )
+    kopan = (await seeded_db.execute(stmt)).scalar_one()
+    kopan.contract_item_id = None
+    await seeded_db.flush()
+
+    yanit = await client.put(
+        f"/progress-payments/{taslak_hakedis}/lines",
+        json={"lines": [_satir(item.id, hakedis_santiyesi.id, "120")]},
+        headers=admin_headers,
+    )
+    assert yanit.status_code == 200, yanit.text
+    assert yanit.json()["dropped_orphan_count"] == 1
+    assert len(yanit.json()["lines"]) == 1
+
+
+async def test_bagi_kopmus_satir_yokken_bildirim_sifir(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    taslak_hakedis: uuid.UUID,
+    hakedis_santiyesi: Site,
+    hakedis_kalemi: tuple[EmployerContractItem, str],
+) -> None:
+    """Normal kaydetmede alan `0`'dır — frontend her yanıtta uyarı göstermez."""
+    item, _ = hakedis_kalemi
+    yanit = await client.put(
+        f"/progress-payments/{taslak_hakedis}/lines",
+        json={"lines": [_satir(item.id, hakedis_santiyesi.id, "10")]},
+        headers=admin_headers,
+    )
+    assert yanit.status_code == 200, yanit.text
+    assert yanit.json()["dropped_orphan_count"] == 0
+
+
 # --- §6.5/3-4 sahiplik (IDOR yüzeyi) ---
 
 
@@ -422,6 +674,105 @@ async def test_ff_acik_sozlesmede_katsayi_kabul(
     assert Decimal(satir["coefficient"]) == Decimal("1.142")
     # 1850 × 1,142 = 2.112,70 (K5 kuruş kuralı, spec §6.1)
     assert Decimal(satir["adjusted_unit_price"]) == Decimal("2112.70")
+
+
+async def test_ff_kapali_sozlesmede_baslik_katsayisi_post_422(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    ff_kapali_hakedissiz_proje: uuid.UUID,
+) -> None:
+    """Y1 (kullanıcı kararı 2026-07-31): kilit BAŞLIĞA da uygulanır. Aksi hâlde
+    FF'siz sözleşmede `default_coefficient=1.4` kabul edilir, sonra o hakedişin
+    HER satırı kilide takılırdı — hakediş doğuştan kullanılamaz olurdu."""
+    yanit = await client.post(
+        f"/projects/{ff_kapali_hakedissiz_proje}/progress-payments",
+        json={"default_coefficient": "1.400"},
+        headers=admin_headers,
+    )
+    assert yanit.status_code == 422, yanit.text
+    assert yanit.json()["detail"] == guards.ESCALATION_DISABLED
+
+
+async def test_ff_kapali_sozlesmede_baslik_katsayisi_patch_422(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    ff_kapali_ortam: tuple[uuid.UUID, EmployerContractItem, Site],
+) -> None:
+    """Y1: PATCH yolu POST'la AYNI kurala tabidir — arka kapı bırakılmaz."""
+    payment_id, _, _ = ff_kapali_ortam
+    yanit = await client.patch(
+        f"/progress-payments/{payment_id}",
+        json={"default_coefficient": "1.400"},
+        headers=admin_headers,
+    )
+    assert yanit.status_code == 422, yanit.text
+    assert yanit.json()["detail"] == guards.ESCALATION_DISABLED
+
+
+async def test_ff_sonradan_kapatilinca_taslak_kilitlenmez(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    taslak_hakedis: uuid.UUID,
+    hakedis_sozlesmesi: tuple[Project, ProjectContract],
+    hakedis_santiyesi: Site,
+    hakedis_kalemi: tuple[EmployerContractItem, str],
+    seeded_db: AsyncSession,
+) -> None:
+    """Y1 kilitlenme senaryosu (kullanıcı kararı 2026-07-31): FF açıkken yazılmış
+    ≠1 katsayı, FF sonradan kapatılınca KORUNUR (grandfather) ve satır katsayı
+    GÖNDERİLMEDEN güncellenebilir. Kilit saklanan değere geriye dönük uygulansaydı
+    taslak bir daha HİÇBİR şekilde kaydedilemezdi."""
+    _, contract = hakedis_sozlesmesi
+    item, _ = hakedis_kalemi
+    ilk = await client.put(
+        f"/progress-payments/{taslak_hakedis}/lines",
+        json={"lines": [_satir(item.id, hakedis_santiyesi.id, "10", coefficient="1.142")]},
+        headers=admin_headers,
+    )
+    assert ilk.status_code == 200, ilk.text
+
+    contract.has_price_escalation = False
+    await seeded_db.flush()
+
+    yanit = await client.put(
+        f"/progress-payments/{taslak_hakedis}/lines",
+        json={"lines": [_satir(item.id, hakedis_santiyesi.id, "20")]},
+        headers=admin_headers,
+    )
+    assert yanit.status_code == 200, yanit.text
+    satir = yanit.json()["lines"][0]
+    assert Decimal(satir["quantity"]) == Decimal("20")
+    assert Decimal(satir["coefficient"]) == Decimal("1.142")
+
+
+async def test_ff_sonradan_kapatilinca_yeni_katsayi_gonderimi_422(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    taslak_hakedis: uuid.UUID,
+    hakedis_sozlesmesi: tuple[Project, ProjectContract],
+    hakedis_santiyesi: Site,
+    hakedis_kalemi: tuple[EmployerContractItem, str],
+    seeded_db: AsyncSession,
+) -> None:
+    """Grandfather kuralının SINIRI: eski değer korunur ama YENİ ≠1 katsayı
+    gönderimi FF kapalıyken yine 422'dir."""
+    _, contract = hakedis_sozlesmesi
+    item, _ = hakedis_kalemi
+    await client.put(
+        f"/progress-payments/{taslak_hakedis}/lines",
+        json={"lines": [_satir(item.id, hakedis_santiyesi.id, "10", coefficient="1.142")]},
+        headers=admin_headers,
+    )
+    contract.has_price_escalation = False
+    await seeded_db.flush()
+
+    yanit = await client.put(
+        f"/progress-payments/{taslak_hakedis}/lines",
+        json={"lines": [_satir(item.id, hakedis_santiyesi.id, "10", coefficient="1.300")]},
+        headers=admin_headers,
+    )
+    assert yanit.status_code == 422, yanit.text
+    assert yanit.json()["detail"] == guards.ESCALATION_DISABLED
 
 
 # --- Katsayı öntanımı (spec §4.1) ---

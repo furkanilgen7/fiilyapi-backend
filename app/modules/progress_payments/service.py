@@ -97,6 +97,13 @@ async def create(
     if await repository.get_open_payment(session, project_id) is not None:
         raise ConflictError(guards.OPEN_PAYMENT_EXISTS)
 
+    # FF kilidi BAŞLIKTA da koşar (kullanıcı kararı 2026-07-31, H5 denetimi Y1):
+    # FF'siz sözleşmede `default_coefficient != 1` kabul edilseydi hakediş
+    # DOĞUŞTAN kullanılamaz olurdu — her yeni satır kilide takılırdı.
+    guards.validate_coefficient(
+        data.default_coefficient, has_price_escalation=contract.has_price_escalation
+    )
+
     sequence_no = await repository.get_next_sequence_no(session, project_id)
     default_coefficient = data.default_coefficient or _DEFAULT_COEFFICIENT
 
@@ -138,6 +145,15 @@ async def update(
     if payment.status != ProgressPaymentStatus.draft:
         raise ConflictError(guards.INVALID_STATUS_TRANSITION)
 
+    # `create` ile AYNI başlık kilidi (Y1): kural iki yazma yolunda da tek
+    # kopyadan (`guards.validate_coefficient`) okunur — biri unutulursa PATCH
+    # sessiz bir arka kapı olurdu.
+    if project.contract is not None:
+        guards.validate_coefficient(
+            data.default_coefficient,
+            has_price_escalation=project.contract.has_price_escalation,
+        )
+
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(payment, field, value)
 
@@ -148,7 +164,7 @@ async def update(
 
 async def save_lines(
     session: AsyncSession, actor: User, payment_id: uuid.UUID, data: ProgressPaymentLinesSave
-) -> tuple[ProgressPayment, Project]:
+) -> tuple[ProgressPayment, int]:
     """`PUT /progress-payments/{id}/lines` — DEĞİŞTİRME semantiği (spec §9.2/§10-2).
 
     Bu katman YALNIZ kapsam (§9.0) ve durum kapısını (§7) kurar; gövdenin
@@ -156,6 +172,9 @@ async def save_lines(
     `lines.py` görünürlük katmanını (`_visible_payment`) çağırsaydı
     `service → lines → service` döngüsel importu doğardı (plan bu fonksiyonu
     `lines.save_lines` diye adlandırıyordu — sapma ve gerekçesi budur).
+
+    İkinci öğe: gövdeden adreslenemediği için düşen **bağı kopmuş satır sayısı**
+    (O3) — router bunu yanıtın `dropped_orphan_count` alanına taşır.
     """
     payment, project = await _visible_payment(session, actor, payment_id)
     if payment.status != ProgressPaymentStatus.draft:
@@ -164,9 +183,9 @@ async def save_lines(
     if contract is None:
         raise SiteValidationError(guards.NO_EMPLOYER_CONTRACT)
 
-    await lines.apply_lines(session, project, contract, payment, data.lines)
+    dropped_orphan_count = await lines.apply_lines(session, project, contract, payment, data.lines)
     await session.refresh(payment)
-    return payment, project
+    return payment, dropped_orphan_count
 
 
 # --- Hesap türevleri (spec §6.2-§6.4, §6.6, §8) — DB'den okunan tarihsel zincir ---

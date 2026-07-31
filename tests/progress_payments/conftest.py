@@ -502,6 +502,29 @@ async def ff_kapali_ortam(
     return payment.id, item, site
 
 
+@pytest.fixture
+async def ff_kapali_hakedissiz_proje(seeded_db: AsyncSession, project_factory) -> uuid.UUID:
+    """FF'siz sözleşmeli, HENÜZ HAKEDİŞİ OLMAYAN proje.
+
+    Başlık FF kilidinin (H5 denetimi Y1) `POST …/progress-payments` yolunu test
+    eder. `ff_kapali_ortam` bunun için KULLANILAMAZ: orada zaten açık bir taslak
+    vardır ve D8 409'u (`OPEN_PAYMENT_EXISTS`) FF 422'sinden ÖNCE koşar.
+    """
+    project = await project_factory(code="PP-FF1", name="Hakedişsiz FF'siz Proje")
+    contract = ProjectContract(
+        project_id=project.id,
+        contract_no="SZL-2026-031",
+        amount=Decimal("1500000"),
+        advance_pct=Decimal("20"),
+        retainage_pct=Decimal("5"),
+        vat_pct=Decimal("20"),
+        has_price_escalation=False,
+    )
+    seeded_db.add(contract)
+    await seeded_db.flush()
+    return project.id
+
+
 async def _gecmisli_ortam(
     seeded_db: AsyncSession,
     project_factory,

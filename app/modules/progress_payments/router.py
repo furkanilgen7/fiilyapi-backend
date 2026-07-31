@@ -124,6 +124,12 @@ async def save_progress_payment_lines_endpoint(
 
     Yalnız `status=draft` (409 `INVALID_STATUS_TRANSITION`); §6.5 korkulukları
     (dağıtım ön şartı, kota tavanı, sahiplik, FF kilidi) her yazımda koşar.
+
+    Kalemi silinmiş satırlar gövdeden adreslenemediği için düşer; sayıları
+    yanıtın `dropped_orphan_count` alanında BİLDİRİLİR (spec §10/7, sessiz
+    atlama yok). `get_detail` bu bilgiyi bilemez — `model_copy` ile üzerine
+    yazılır (mutasyon yok, yeni nesne).
     """
-    payment, _ = await service.save_lines(session, user, payment_id, data)
-    return await service.get_detail(session, user, payment.id)
+    payment, dropped_orphan_count = await service.save_lines(session, user, payment_id, data)
+    detail = await service.get_detail(session, user, payment.id)
+    return detail.model_copy(update={"dropped_orphan_count": dropped_orphan_count})

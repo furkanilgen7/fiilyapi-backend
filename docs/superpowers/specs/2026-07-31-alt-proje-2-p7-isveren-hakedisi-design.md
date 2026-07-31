@@ -362,6 +362,15 @@ K5 kararına bağlı.
    çiftin BOQ kotası (`boq_items.quantity`). POZ 37+72 zinciri: kota şantiyenin
    tavanıdır. Hata: `QUANTITY_EXCEEDS_QUOTA = "Kümülatif hakediş miktarı şantiye kotasını aşamaz."` (422).
    Zeyilname dilimi gelene dek serttir (§1.2).
+
+   **İnceltme — kontrol yalnız ARTIŞTA koşar (kullanıcı kararı 2026-07-31, H5
+   denetimi O1):** karşılaştırma satırın **mevcut kayıtlı miktarına** göre yapılır;
+   miktar azaltılıyorsa (ve `0` gönderiliyorsa) kontrol HİÇ koşmaz. Gerekçe
+   kilitlenmedir: kota sonradan düşürülürse (dağıtım revize edilir) taslakta duran
+   satır zaten aşmış olur — kural azaltmaya da uygulansaydı kullanıcı `quantity: 0`
+   göndererek bile taslağı kurtaramaz, hakediş düzeltilemez hâle gelirdi. **Yeni
+   satırda "mevcut miktar" 0'dır**, yani kotayı aşan yeni satır bu inceltmeden
+   faydalanmaz ve yine 422 alır; miktarı artırarak kotayı geçmek de yine 422'dir.
 3. Şantiye projeye ait olmalı: `SITE_PROJECT_MISMATCH` (P5 metni aynen).
 4. Kalem bu projenin sözleşmesine ait olmalı — aksi 422 (IDOR yüzeyi, §9.0).
 
@@ -548,11 +557,39 @@ riskini ortadan kaldırma fırsatıdır — şema tarafında alan tipi düz değ
 5. FF toggle'ı (OLU 56): `project_contracts.has_price_escalation = false` olan
    sözleşmede frontend katsayı kolonunu kilitler (1,000); backend yine de gelen
    katsayıyı kabul eder mi? **Hayır** — tutarlılık kuralı: `has_price_escalation =
-   false` iken `coefficient ≠ 1` gönderimi 422
+   false` iken `≠ 1` katsayı gönderimi 422
    (`ESCALATION_DISABLED = "Bu sözleşmede fiyat farkı şartı yok."`).
+
+   **Onaylı sapma — kullanıcı kararı 2026-07-31 (H5 denetimi Y1).** İlk metin
+   yalnız satır `coefficient` "gönderimi"nden söz ediyordu; kural iki yönde
+   düzeltildi:
+
+   * **Başlık da kapsanır.** `default_coefficient ≠ 1` gönderimi de aynı 422'yi
+     alır — hem `POST /projects/{id}/progress-payments` hem
+     `PATCH /progress-payments/{id}` yolunda. Aksi hâlde FF'siz sözleşmede
+     `default_coefficient = 1.4` kabul edilir, sonra o hakedişin her satırı kilide
+     takılırdı: hakediş **doğuştan kullanılamaz** olurdu.
+   * **Saklanan değerler grandfather'lanır.** Kilit YALNIZ bu istekte **gelen**
+     değere uygulanır, saklanan eski katsayılara geriye dönük UYGULANMAZ. Gerekçe
+     yine kilitlenmedir: FF açıkken katsayılı satır yazılmış bir sözleşmede FF
+     sonradan kapatılırsa, kural "satıra yazılacak katsayı" üzerinden koşsaydı
+     taslak bir daha hiçbir şekilde kaydedilemezdi (kullanıcı katsayı göndermese
+     bile 422). Artık katsayısız gövde 200 döner ve eski katsayı korunur; FF
+     kapalıyken **yeni** `≠ 1` katsayı gönderimi yine 422'dir.
+
+   Kural tek kopya `guards.validate_coefficient`'tadır; üç çağıran (`service.create`,
+   `service.update`, `lines._resolve`) onu ÇAĞIRIR, kopyalamaz.
 6. Sunucu uzunluk sınırlı alanlara `maxLength` (sessiz 422 sınıfı).
 7. E15 70 "PDF" ve OLU 203-222 kar analizi bu dilimde boş — zarif düşüş +
    kullanıcıya bildirim, sessiz atlama yok.
+
+   **Aynı kuralın satır tarafındaki izdüşümü (H5 denetimi O3):** kalemi silinmiş
+   satır (`contract_item_id IS NULL`, FK `SET NULL`) `PUT …/lines` gövdesinden
+   ADRESLENEMEZ — gövde tablonun tamamı olduğu için ilk kaydetmede düşer. Bu
+   kaçınılmazdır ama sessiz olamaz: yanıt (`ProgressPaymentDetail`) **`dropped_orphan_count`**
+   alanıyla kaç satırın düştüğünü bildirir; frontend `> 0` iken kullanıcıya uyarı
+   gösterir. Okuma uçlarında (`GET`/`POST`/`PATCH`) alan her zaman `0`'dır.
+   409 ile önden onay istenip ikinci tura çıkılmaz — mockup'ta böyle bir adım yok.
 
 ---
 

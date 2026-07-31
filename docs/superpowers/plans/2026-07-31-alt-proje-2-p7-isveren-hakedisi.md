@@ -790,6 +790,30 @@ kapılı yazmak.
 **Spec:** §7 (tamamı), §9.4.
 **Bağımlılık:** H4, H5 (submit zorunlulukları satırlara bakar).
 
+#### ❗ H5'ten devredilen — ZORUNLU (H5 denetimi O2)
+
+**`approve` geçişi kota tavanını (§6.5/2) YENİDEN DOĞRULAMALI ve bunu geçiş
+kilidinin ALTINDA yapmalıdır.**
+
+Bulgu: kota kontrolü bugün YALNIZ satır-yazma anındadır (`lines._resolve`) ve
+`save_lines` `create`'in aldığı `SELECT … FOR UPDATE` sözleşme kilidini ALMAZ.
+D8'in ("tek açık hakediş") DB karşılığı da yoktur — yalnız `get_open_payment`
+uygulama kontrolü vardır. Sonuç: iki taslak bir şekilde aynı anda açıksa
+(yarış, elle veri, ileride D8'in gevşetilmesi) ikisi de kotayı **ayrı ayrı**
+kontrol eder ve ayrı ayrı geçer; ikisi onaylandığında toplam kota AŞILMIŞ olur.
+Aşım sessizdir — hiçbir uç hata vermez.
+
+Karşılık H5'te değil burada: kotanın nihai bekçisi yazma anı değil **onay
+anıdır** (onaylanan hakediş kümülatif kümeye girer). H6 uygulanırken:
+
+1. `approve` hakedişi + sözleşme satırını kilitle (`get_contract_locked` deseni).
+2. Kilit altında hakedişin TÜM satırları için `lines.prior_completed_totals` +
+   `repository.get_distributed_quotas` ile kotayı yeniden hesapla.
+3. Aşım varsa 422 `QUANTITY_EXCEEDS_QUOTA` — geçiş YAPILMAZ.
+
+Testi: iki taslak (biri DB üzerinden kurulur) aynı çiftte kotayı bölüşür, ikisi
+de tek başına geçerlidir; birinci approve 200, ikinci approve 422.
+
 **Dosyalar:**
 - Oluştur: `app/modules/progress_payments/transitions.py`
 - Değiştir: `router.py`
