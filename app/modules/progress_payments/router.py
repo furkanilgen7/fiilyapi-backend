@@ -260,3 +260,31 @@ async def unapprove_progress_payment_endpoint(
         session, user, payment_id, transitions.PaymentAction.unapprove
     )
     return await service.get_detail(session, user, payment.id)
+
+
+# --- Silme (spec §7.1, §9.5, task H8) ---
+
+
+@router.delete(
+    "/progress-payments/{payment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[_DRAFT],
+)
+async def delete_progress_payment_endpoint(
+    payment_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """K8 iki katmanlı kural (spec §7.1). Kapı `_DRAFT`dir — `_ADMIN` olsaydı
+
+    taslağı üreten şef/saha rollerinin (draft seviyesi) KENDİ taslaklarını
+    silme istisnası ölü kural olurdu (`subcontracts.delete_subcontractor_
+    contract`in `_FULL` kapı kararının aynı gerekçesi, spec §7.1 girişi).
+    Kesin karar `service.delete_payment`'tadır: `approved`/`paid` ADMİN DAHİL
+    kimseye açık değildir; kalanında `can_delete` (admin koşulsuz, aksi hâlde
+    yalnız kaydı açan aktörün KENDİ taslağı).
+
+    Denetim günlüğü BİLİNÇLİ OLARAK YOK — H10'da merkezileşir (router.py'nin
+    tepesindeki genel not).
+    """
+    await service.delete_payment(session, user, payment_id)

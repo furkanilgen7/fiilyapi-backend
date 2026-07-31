@@ -662,6 +662,8 @@ async def delete_site(session: AsyncSession, actor: User, site_id: uuid.UUID) ->
         raise RelatedRecordsExistError(guards.SITE_HAS_BLOCKS)
     if await repository.site_has_contracts(session, site.id):
         raise RelatedRecordsExistError(guards.SITE_HAS_CONTRACTS)
+    if await repository.site_has_progress_payment_lines(session, site.id):
+        raise RelatedRecordsExistError(guards.SITE_HAS_PROGRESS_PAYMENTS)
     detail = messages.site_deleted(project.name, site.name)
     await session.delete(site)
     await session.flush()

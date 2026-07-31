@@ -13,7 +13,8 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import ConflictError, NotFoundError, SiteValidationError
+from app.core.access import AccessLevel, can_delete
+from app.core.errors import ConflictError, DeleteNotAllowedError, NotFoundError, SiteValidationError
 from app.core.timezone import today
 from app.modules.progress_payments import calculations, guards, lines, repository
 from app.modules.progress_payments.models import (
@@ -35,6 +36,7 @@ from app.modules.progress_payments.schemas import (
 )
 from app.modules.projects.models import Project, ProjectContract
 from app.modules.projects.service import visible_projects
+from app.modules.roles.repository import get_permission
 from app.modules.users.models import User
 
 _ZERO = Decimal("0")
@@ -554,3 +556,45 @@ async def get_detail(
         calculation=calc,
         progress=progress,
     )
+
+
+# --- Silme (spec §7.1, §9.5, K8) ---
+
+
+async def delete_payment(session: AsyncSession, actor: User, payment_id: uuid.UUID) -> None:
+    """`DELETE /progress-payments/{id}` — K8'in İKİ KATMANLI kuralı.
+
+    Katman 1 (§7.1/1): `status ∈ {approved, paid}` → 409 `PAYMENT_NOT_DELETABLE`
+    — ADMİN DAHİL kimse silemez (kalıcı karar 2'nin "silme = admin" ilkesinin
+    DARALTILMASI, admin ihlali değil: kalan silinebilir kümede admin koşulsuz
+    siler). Muhasebeleşmiş evrak yok edilmez; admin gerekirse önce `unapprove`
+    ile (H6) durumu `pending_approval`'a geri çeker — denetim izli iki adım.
+
+    Katman 2 (§7.1/2): `status ∈ {draft, pending_approval}` → `can_delete`
+    (`app/core/access.py:55`): admin koşulsuz; aksi hâlde yalnız kaydı AÇAN
+    aktör + kayıt hâlâ TASLAK (`is_draft` property, H1) + aktörün en az `draft`
+    seviyesi varsa silinebilir. `pending_approval` (`is_draft=False`) admin
+    dışında KİMSEYE açık değildir — taslak istisnası orada ölü kuraldır.
+
+    Aktörün GERÇEK erişim seviyesi `subcontracts.delete_subcontractor_contract`
+    deseninin aynısıyla (`get_permission`) okunur: router kapısı (`_DRAFT`)
+    yalnız "bu modüle hiç erişimi yok" durumunu (403) eler, kesin karar burada.
+
+    Kapsam (§9.0) `_visible_payment` ile İLK adımda kurulur: görünmeyen
+    projedeki GERÇEK kayıt ile var olmayan kimlik burada da AYIRT EDİLEMEZ
+    404'tür — durum/yetki kontrolleri görünürlükten SONRA çalışır.
+    """
+    payment, _ = await _visible_payment(session, actor, payment_id)
+
+    if payment.status in (ProgressPaymentStatus.approved, ProgressPaymentStatus.paid):
+        raise ConflictError(guards.PAYMENT_NOT_DELETABLE)
+
+    permission = await get_permission(session, actor.role_id, "progress_payments")
+    level = permission.access_level if permission is not None else AccessLevel.none
+    if not can_delete(actor.id, level, payment):
+        raise DeleteNotAllowedError(guards.DELETE_NOT_ALLOWED)
+
+    # `ProgressPayment.lines` cascade="all, delete-orphan" (H1) — satırlar
+    # bu `session.delete` ile BİRLİKTE gider, ayrı bir silme çağrısı gerekmez.
+    await session.delete(payment)
+    await session.flush()

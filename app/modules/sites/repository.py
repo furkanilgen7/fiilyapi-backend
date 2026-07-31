@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # da tek `app.` importu `Base`). Fonksiyon ici import'a gerek kalmadi.
 from app.modules.boq.models import BoqGroup, BoqItem
 from app.modules.contracts.models import SubcontractorContract
+from app.modules.progress_payments.models import ProgressPaymentLine
 from app.modules.sites.models import Section, Site
 from app.modules.units.models import Block
 from app.modules.users.models import User, UserStatus
@@ -177,6 +178,24 @@ async def site_has_contracts(session: AsyncSession, site_id: uuid.UUID) -> bool:
             select(SubcontractorContract.id)
             .where(SubcontractorContract.site_id == site_id)
             .exists()
+        )
+    )
+    return bool(result.scalar_one())
+
+
+async def site_has_progress_payment_lines(session: AsyncSession, site_id: uuid.UUID) -> bool:
+    """Santiyede hakedis satiri var mi (`progress_payment_lines.site_id` ->
+
+    RESTRICT, Alt-Proje 2 P7 spec §4.2/§7.1, task H8). `site_has_contracts`
+    deseninin BIREBIRI: FK RESTRICT'tir (CASCADE DEGIL), korkuluk yine de
+    burada erken calisir — aksi halde kullanici DB'nin `IntegrityError` -> 409
+    emniyet agina duser ve "Veri butunlugu hatasi" gibi eyleme donuk OLMAYAN
+    generic bir metin gorur (bu servis korkulugu SPESIFIK, EYLEME DONUK metni
+    erken doner).
+    """
+    result = await session.execute(
+        select(
+            select(ProgressPaymentLine.id).where(ProgressPaymentLine.site_id == site_id).exists()
         )
     )
     return bool(result.scalar_one())
