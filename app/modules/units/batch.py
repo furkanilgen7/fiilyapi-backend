@@ -24,7 +24,6 @@ from app.core.errors import (
 from app.modules.audit import messages
 from app.modules.projects.models import Project, ProjectType
 from app.modules.units import bulk, codes, guards, repository, service
-from app.modules.units.bulk import generate_unit_numbers
 from app.modules.units.importer import (
     IMPORT_ROW_ERRORS,
     MAX_REPORTED_ERRORS,
@@ -79,6 +78,11 @@ async def bulk_create_units(
     `owner_side` UYGULANMAZ: `UnitBulkCreate` semasinda boyle bir alan YOKTUR
     (spec §6.3) — uretilen tum uniteler pay atanmamis baslar (§5.3), bu da §3.3
     korkulugunu her proje tipinde yapisal olarak saglar.
+
+    T10: satirlar `preview` ile AYNI saf fonksiyondan (`bulk.generate_units`)
+    gelir — yalniz numaralar degil, slot alanlari ve kat artisi uygulanmis
+    fiyatlar da. Burada ikinci bir uretim dali acilsaydi kullanici onizlemede
+    gordugunden BASKA bir sey kaydeder ve bunu fark edemezdi (spec §12.4/34).
     """
     project = await guards.visible_project(session, actor, project_id)
     block = await guards.block_in_project(session, project, data.block_id)
@@ -88,7 +92,8 @@ async def bulk_create_units(
     # `effective_block_code` ile ANLIK turetilir ve SAKLANMAZ (karar 8, §0.B):
     # ikinci bir otorite dogmaz, cunku cagrilan fonksiyon kod uretiminin ta
     # kendisidir. Blok bir kez duzenlenip kodu kalicilastiginda cikti aynidir.
-    numbers = generate_unit_numbers(data, codes.effective_block_code(block.code, block.name))
+    generated = bulk.generate_units(data, codes.effective_block_code(block.code, block.name))
+    numbers = [unit.unit_no for unit in generated]
     taken = await repository.existing_unit_nos(session, block.id, numbers)
     if taken:
         # Uretim sirasi KORUNUR (kume sirasi degil): kullanici hangi araligin
@@ -103,16 +108,23 @@ async def bulk_create_units(
             Unit(
                 project_id=project.id,
                 block_id=block.id,
-                unit_no=number,
+                unit_no=unit.unit_no,
                 unit_kind=data.unit_kind,
-                layout=data.layout,
-                gross_area_m2=data.gross_area_m2,
-                net_area_m2=data.net_area_m2,
-                list_price=data.list_price,
+                layout=unit.layout,
+                gross_area_m2=unit.gross_area_m2,
+                net_area_m2=unit.net_area_m2,
+                list_price=unit.list_price,
+                # `appraisal_value` SLOTTA YOKTUR (TU tablosunda bu sutun hic
+                # gecmiyor, spec §5.5) — ortak varsayilandan gelir.
                 appraisal_value=data.appraisal_value,
+                # Sutuna kat ETIKETI yazilir (METIN, karar 4); onizlemedeki
+                # sayisal `floor` yalniz numaralandirmanin girdisidir ve
+                # HICBIR sutuna yazilmaz.
+                floor=unit.floor_label,
+                facing=unit.facing,
                 sort_order=next_sort_order + offset,
             )
-            for offset, number in enumerate(numbers)
+            for offset, unit in enumerate(generated)
         ]
     )
     await session.flush()

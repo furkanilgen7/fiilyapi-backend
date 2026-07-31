@@ -39,6 +39,11 @@ from tests.modules.units.test_units_api import (
     _unit,
 )
 
+# TU govdesi TEK yerde durur (`test_units_bulk_preview.py`): T10'un asil iddiasi
+# "onizleme ile uretim AYNI govdeden AYNI sonucu verir"dir ve govde kopyalanirsa
+# biri degistiginde digeri sessizce bayatlar — iddia da bosa duser.
+from tests.modules.units.test_units_bulk_preview import _TU_SLOT_ROWS, _tu_payload
+
 _ANY_BLOCK = uuid.uuid4()
 
 # TU 107-133 "Kat Sablonu" tablosunun UC SATIRI, mockup'tan BIREBIR. Onizleme
@@ -893,3 +898,173 @@ async def test_bulk_appends_after_existing_units(client, db_session, user_factor
     assert [u["unit_no"] for u in units] == ["A", "1", "2"]
     assert units[0]["gross_area_m2"] is None
     assert units[1]["gross_area_m2"] == "80.00"
+
+
+# --- P3.1 T10: slot + kat artisi GERCEK URETIME baglanir (spec §12.4/34-39) ---
+
+
+async def _bulk_post(client, project_id, token, payload):
+    return await client.post(
+        f"/projects/{project_id}/units/bulk", json=payload, headers=_auth(token)
+    )
+
+
+async def test_bulk_preview_ile_ayni_numara_ve_fiyat(
+    client, db_session, user_factory, project_factory
+):
+    """Spec §12.4/34 — TEK KAYNAK KANITI.
+
+    Ayni govde once `preview`'a, sonra `bulk`'a gonderilir; uretilen numaralar,
+    fiyatlar VE slot alanlari BIREBIR ayni olmalidir. Ayrisirlarsa kullanici
+    onizlemede gordugunden baska bir sey kaydetmis olur ve bunu FARK EDEMEZ —
+    iki yolun da `bulk.generate_units` saf fonksiyonundan besleniyor olmasinin
+    tek gozlemlenebilir kaniti budur.
+
+    `floor` sutununa yazilan deger `floor_label`'dir (METIN, karar 4), onizleme
+    satirindaki sayisal `floor` DEGILDIR.
+    """
+    project = await project_factory("T10-1")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site, name="C Blok")
+    token = await _login(client, user_factory, "system_admin")
+    payload = _tu_payload(block.id)
+
+    preview = await client.post(
+        f"/projects/{project.id}/units/bulk/preview", json=payload, headers=_auth(token)
+    )
+    created = await _bulk_post(client, project.id, token, payload)
+
+    assert preview.status_code == 200
+    assert created.status_code == 201
+    rows = preview.json()["rows"]
+    units = created.json()["blocks"][0]["units"]
+    assert len(units) == len(rows) == 24
+    assert [(u["unit_no"], u["list_price"]) for u in units] == [
+        (r["unit_no"], r["list_price"]) for r in rows
+    ]
+    assert [
+        (u["floor"], u["layout"], u["gross_area_m2"], u["net_area_m2"], u["facing"]) for u in units
+    ] == [
+        (r["floor_label"], r["layout"], r["gross_area_m2"], r["net_area_m2"], r["facing"])
+        for r in rows
+    ]
+
+
+async def test_bulk_cakisma_409_hicbir_satir_yazilmaz(
+    client, db_session, user_factory, project_factory
+):
+    """Spec §12.4/35 — P3 karari KORUNUYOR: uretimde cakisma HEP-YA-HICtir.
+
+    Onizleme ayni cakismayi `conflict=true` ile 200 doner (§5.6); blokaj yalniz
+    KAYDETMEDEDIR. Slot'lu uretimde de kural degismez: 24 satirin 1'i cakisiyorsa
+    23'u de yazilmaz.
+    """
+    project = await project_factory("T10-2")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site, name="C Blok")
+    await _unit(db_session, project, block, "C-13")
+    token = await _login(client, user_factory, "system_admin")
+    before = await _count_units_in_block(db_session, block.id)
+
+    resp = await _bulk_post(client, project.id, token, _tu_payload(block.id))
+
+    assert resp.status_code == 409
+    assert "C-13" in resp.json()["detail"]
+    assert before == 1
+    assert await _count_units_in_block(db_session, block.id) == before
+
+
+async def test_bulk_slots_bos_eski_davranis(client, db_session, user_factory, project_factory):
+    """Spec §12.4/36: `slots` bos → P3'un davranisi (ortak varsayilanlar) KORUNUR.
+
+    Geriye donuk uyum: mevcut cagiranlar slot gondermiyor ve kirilmamalidir.
+    `facing` ortak varsayilanlarda YOKTUR (mockup vermiyor) → `None` dogar.
+    """
+    project = await project_factory("T10-3")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await _bulk_post(
+        client,
+        project.id,
+        token,
+        {
+            "block_id": str(block.id),
+            "unit_kind": "apartment",
+            "start_floor": 1,
+            "end_floor": 1,
+            "units_per_floor": 2,
+            "layout": "3+1",
+            "gross_area_m2": "142.00",
+            "list_price": "1150000.00",
+        },
+    )
+
+    assert resp.status_code == 201
+    units = resp.json()["blocks"][0]["units"]
+    assert [u["unit_no"] for u in units] == ["1", "2"]
+    assert all(u["layout"] == "3+1" for u in units)
+    assert all(u["gross_area_m2"] == "142.00" for u in units)
+    assert all(u["list_price"] == "1150000.00" for u in units)
+    assert all(u["facing"] is None for u in units)
+    # Kat etiketi slot'suz uretimde de YAZILIR: kat turu her hâlde vardir.
+    assert all(u["floor"] == "1. Kat" for u in units)
+
+
+async def test_bulk_slot_count_mismatch_422(client, db_session, user_factory, project_factory):
+    """Spec §12.4/37: `len(slots) != units_per_floor` → 422, hicbir satir yazilmaz."""
+    project = await project_factory("T10-4")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site, name="C Blok")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await _bulk_post(client, project.id, token, _tu_payload(block.id, units_per_floor=4))
+
+    assert resp.status_code == 422
+    assert "Kat şablonu satır sayısı kat başına daire sayısıyla eşleşmiyor" in resp.text
+    assert await _count_units_in_block(db_session, block.id) == 0
+
+
+async def test_bulk_slot_sequence_tekrarli_422(client, db_session, user_factory, project_factory):
+    """Spec §12.4/38: tekrarli `sequence` → 422, hicbir satir yazilmaz.
+
+    Tekrar sessiz gecseydi ayni kat ici sira iki kez uretilir ve
+    `floor_sequence` deseninde AYNI numara iki unite dogururdu.
+    """
+    project = await project_factory("T10-5")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site, name="C Blok")
+    token = await _login(client, user_factory, "system_admin")
+    slots = [{**_TU_SLOT_ROWS[0]}, {**_TU_SLOT_ROWS[1], "sequence": 1}, {**_TU_SLOT_ROWS[2]}]
+
+    resp = await _bulk_post(client, project.id, token, _tu_payload(block.id, slots=slots))
+
+    assert resp.status_code == 422
+    assert "Kat şablonunda sıra numaraları geçersiz veya tekrarlı" in resp.text
+    assert await _count_units_in_block(db_session, block.id) == 0
+
+
+async def test_bulk_owner_side_yok_sayilir(client, db_session, user_factory, project_factory):
+    """Spec §12.4/39: slot'lu uretimde de `owner_side` govdeden GECMEZ.
+
+    `test_bulk_never_sets_owner_side_in_kendi_yatirim` slot'suz yolu kilitler;
+    bu test slot yolunun ayni garantiyi tasidigini kilitler (§3.3 korkulugu
+    yapisaldir, kod yoluna bagli degildir).
+    """
+    project = await project_factory("T10-6", project_type="kat_karsiligi")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site, name="C Blok")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await _bulk_post(
+        client,
+        project.id,
+        token,
+        _tu_payload(block.id, end_floor=1, owner_side="landowner"),
+    )
+
+    assert resp.status_code == 201
+    units = resp.json()["blocks"][0]["units"]
+    assert len(units) == 3
+    assert all(u["owner_side"] is None for u in units)
