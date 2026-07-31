@@ -349,7 +349,10 @@ class SubcontractorContractItemCreate(BaseModel):
     # NULL bilinçli (spec §3.6): işverenden yüklenen kalem fiyatsız gelir;
     # "girilmedi" ile "0 TL" ayrımı korunur.
     unit_price: Decimal | None = Field(default=None, ge=0)
-    sort_order: int = 0
+    # `None` = "istemci göndermedi" (İÇ İÇE yazma yolunda satır sırasına göre
+    # otomatik atanır); bilinçli `0` bundan AYIRT edilmeli — `int = 0` iken
+    # ikisi ayrışamazdı (dal geneli son inceleme, falsy `or` tuzağı).
+    sort_order: int | None = Field(default=None, ge=0)
     source_contract_item_id: uuid.UUID | None = None
 
 

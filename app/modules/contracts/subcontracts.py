@@ -125,6 +125,7 @@ async def create_subcontractor_contract(
         is_draft=data.is_draft,
     )
     await _ensure_contract_no_unique(session, data.contract_no)
+    await _ensure_nested_items_valid(session, project_id, data.items)
 
     contract = SubcontractorContract(
         project_id=project_id,
@@ -161,7 +162,7 @@ async def create_subcontractor_contract(
                 unit=item.unit,
                 quantity=item.quantity,
                 unit_price=item.unit_price,
-                sort_order=item.sort_order or index,
+                sort_order=item.sort_order if item.sort_order is not None else index,
             )
         )
     await session.flush()
@@ -231,6 +232,31 @@ async def _ensure_item_code_unique(
         raise DuplicateError(guards.DUPLICATE_ITEM_CODE)
 
 
+async def _ensure_nested_items_valid(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    items: list[SubcontractorContractItemCreate],
+) -> None:
+    """İÇ İÇE kalem yazma yolu için "önce doğrula sonra yaz" bloğu — dal geneli
+
+    son inceleme (CRITICAL + IMPORTANT bulguları): `create_subcontract_item`
+    (tekil `POST .../items` ucu) hem `_ensure_source_item_in_project` hem
+    `_ensure_item_code_unique` çağırıyordu, bu iç içe yol (C10) hiçbirini
+    çağırmıyordu. `source_contract_item_id` doğrulanmadan yazılırsa başka
+    projenin işveren kalemine bağlanabilir ve yanıt `_item_groups` üzerinden o
+    projenin grup adını sızdırır (IDOR). Kod çakışması da DB'ye hiç gitmeden
+    (henüz kayıt yokken, yalnız gövde İÇİ tekrar) yakalanır — sözleşme YENİ
+    oluşturulduğu için mevcut kalemlerle çakışma yoktur, yalnız gövde
+    içi tekrar mümkündür.
+    """
+    seen_codes: set[str] = set()
+    for item in items:
+        await _ensure_source_item_in_project(session, item.source_contract_item_id, project_id)
+        if item.code in seen_codes:
+            raise DuplicateError(guards.DUPLICATE_ITEM_CODE)
+        seen_codes.add(item.code)
+
+
 async def _ensure_source_item_in_project(
     session: AsyncSession, source_contract_item_id: uuid.UUID | None, project_id: uuid.UUID
 ) -> None:
@@ -268,7 +294,9 @@ async def create_subcontract_item(
         unit=data.unit,
         quantity=data.quantity,
         unit_price=data.unit_price,
-        sort_order=data.sort_order,
+        # Tekil uçta gövde içi sıra türetimi YOK (`index` kavramı yok) — istemci
+        # göndermezse model kolonunun kendi varsayılanıyla (0) aynı davranış.
+        sort_order=data.sort_order if data.sort_order is not None else 0,
     )
     session.add(item)
     await session.flush()

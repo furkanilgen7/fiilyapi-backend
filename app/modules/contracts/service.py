@@ -82,15 +82,22 @@ def _employer_item(project: Project, contract: ProjectContract) -> ContractListI
 
 
 def _subcontractor_amount(contract: SubcontractorContract) -> Decimal:
-    """`Σ(quantity × unit_price)` — `unit_price IS NULL` olan satır 0 katkı verir
+    """`Σ(line_total)` — her satır ÖNCE kuruşa yuvarlanır, SONRA toplanır
 
-    (task brief kararı). Kalemler zaten `lazy="selectin"` ile yüklü, ek sorgu YOK.
+    (dal geneli son inceleme kararı: `Numeric(14,3) × Numeric(18,2)` beş
+    ondalık üretebildiği için ham çarpımların toplamını TEK SEFERDE
+    yuvarlamak `Σ line_total != contract_total` sapmasına yol açabilirdi —
+    `schemas.SubcontractorContractItemResponse.line_total` ve
+    `distribution.py`nin zaten kullandığı kuralla hizalanır). `unit_price IS
+    NULL` olan satır 0 katkı verir (task brief kararı). Kalemler zaten
+    `lazy="selectin"` ile yüklü, ek sorgu YOK.
     """
-    total = sum(
-        (item.quantity * item.unit_price for item in contract.items if item.unit_price is not None),
-        Decimal("0"),
+    line_totals = (
+        _quantize_money(item.quantity * item.unit_price)
+        for item in contract.items
+        if item.unit_price is not None
     )
-    return _quantize_money(total)
+    return sum(line_totals, Decimal("0.00"))
 
 
 def _subcontractor_title(contract: SubcontractorContract) -> str:

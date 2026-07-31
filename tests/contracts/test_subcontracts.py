@@ -13,8 +13,46 @@ from decimal import Decimal
 import pytest
 
 from app.modules.contracts import guards
-from app.modules.contracts.models import SubcontractorContract
+from app.modules.contracts.models import (
+    EmployerContractGroup,
+    EmployerContractItem,
+    SubcontractorContract,
+)
+from app.modules.projects.models import ProjectContract
 from app.modules.sites.models import Site
+
+
+async def _employer_contract(session, project_id, **kwargs) -> ProjectContract:
+    defaults = {"contract_no": "SZL-2026-TSZ", "amount": Decimal("11200000")}
+    defaults.update(kwargs)
+    contract = ProjectContract(project_id=project_id, **defaults)
+    session.add(contract)
+    await session.flush()
+    return contract
+
+
+async def _group(session, project_id, **kwargs) -> EmployerContractGroup:
+    defaults = {"name": "A — Betonarme İşleri", "sort_order": 0}
+    defaults.update(kwargs)
+    group = EmployerContractGroup(project_id=project_id, **defaults)
+    session.add(group)
+    await session.flush()
+    return group
+
+
+async def _item(session, project_id, group_id, **kwargs) -> EmployerContractItem:
+    defaults = {
+        "code": "04.001",
+        "description": "Demir donatı",
+        "unit": "Ton",
+        "quantity": Decimal("200"),
+        "unit_price": Decimal("21500"),
+    }
+    defaults.update(kwargs)
+    item = EmployerContractItem(project_id=project_id, group_id=group_id, **defaults)
+    session.add(item)
+    await session.flush()
+    return item
 
 
 @pytest.fixture
@@ -346,3 +384,196 @@ async def test_patch_ile_yayina_gecis_basarili(client, admin_headers, proje, tas
     )
     assert guncelle.status_code == 200, guncelle.text
     assert guncelle.json()["is_draft"] is False
+
+
+# --- Dal geneli son inceleme: iç içe kalem yazma yolundaki korkuluklar ---
+
+
+@pytest.fixture
+async def baska_projenin_kalemi(seeded_db, project_factory) -> uuid.UUID:
+    """Başka bir projenin işveren sözleşmesi kalemi — İÇ İÇE yazılan taşeron
+
+    kalemi buna bağlanamamalı (`test_delete.py.test_source_item_baska_
+    projeden_baglanamaz`'ın nested karşılığı, tekil POST kalem ucu korunuyordu
+    ama `POST /projects/{id}/subcontractor-contracts` gövdesindeki `items`
+    hiç doğrulanmıyordu — IDOR).
+    """
+    project = await project_factory(code="TSZ-IDOR-01", name="Gizli Proje")
+    await _employer_contract(seeded_db, project.id, contract_no="SZL-2026-TSZIDOR")
+    group = await _group(seeded_db, project.id, name="Gizli Grup")
+    item = await _item(seeded_db, project.id, group.id, code="99.001")
+    return item.id
+
+
+@pytest.mark.asyncio
+async def test_ic_ice_source_item_baska_projeden_baglanamaz(
+    client, admin_headers, proje, taseron, baska_projenin_kalemi
+):
+    yanit = await client.post(
+        f"/projects/{proje}/subcontractor-contracts",
+        json={
+            "is_draft": True,
+            "subcontractor_id": str(taseron),
+            "items": [
+                {
+                    "code": "77.001",
+                    "description": "Sızıntı denemesi",
+                    "unit": "m³",
+                    "quantity": 10,
+                    "source_contract_item_id": str(baska_projenin_kalemi),
+                }
+            ],
+        },
+        headers=admin_headers,
+    )
+    assert yanit.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_ic_ice_source_item_baska_projeden_baglanamazsa_sozlesme_de_yazilmaz(
+    client, admin_headers, proje, taseron, baska_projenin_kalemi
+):
+    """Atomiklik: IDOR reddedilince sözleşmenin KENDİSİ de yazılmamalı —
+
+    aksi hâlde aynı `contract_no` ile tekrar denemek 409'a düşer.
+    """
+    govde = {
+        "is_draft": True,
+        "subcontractor_id": str(taseron),
+        "contract_no": "TSZ-IDOR-ATOMIK",
+        "items": [
+            {
+                "code": "77.001",
+                "description": "Sızıntı denemesi",
+                "unit": "m³",
+                "quantity": 10,
+                "source_contract_item_id": str(baska_projenin_kalemi),
+            }
+        ],
+    }
+    ilk = await client.post(
+        f"/projects/{proje}/subcontractor-contracts", json=govde, headers=admin_headers
+    )
+    assert ilk.status_code == 404
+
+    yeniden = await client.post(
+        f"/projects/{proje}/subcontractor-contracts",
+        json={"is_draft": True, "subcontractor_id": str(taseron), "contract_no": "TSZ-IDOR-ATOMIK"},
+        headers=admin_headers,
+    )
+    assert yeniden.status_code == 201, yeniden.text
+
+
+@pytest.mark.asyncio
+async def test_ic_ice_govde_ici_kod_cakismasi_409(client, admin_headers, proje, taseron):
+    """Gövde içinde aynı `code` iki kez geçerse DB'ye hiç gitmeden anlaşılır
+
+    409 `DUPLICATE_ITEM_CODE` dönmeli — ham `IntegrityError` DEĞİL.
+    """
+    yanit = await client.post(
+        f"/projects/{proje}/subcontractor-contracts",
+        json={
+            "is_draft": True,
+            "subcontractor_id": str(taseron),
+            "items": [
+                {
+                    "code": "01.001",
+                    "description": "Kazı",
+                    "unit": "m³",
+                    "quantity": 10,
+                    "unit_price": 50,
+                },
+                {
+                    "code": "01.001",
+                    "description": "Kazı (tekrar)",
+                    "unit": "m³",
+                    "quantity": 5,
+                    "unit_price": 50,
+                },
+            ],
+        },
+        headers=admin_headers,
+    )
+    assert yanit.status_code == 409
+    assert yanit.json()["detail"] == guards.DUPLICATE_ITEM_CODE
+
+
+@pytest.mark.asyncio
+async def test_ic_ice_sort_order_bilincli_sifir_ezilmez(client, admin_headers, proje, taseron):
+    """İstemci ikinci kalem için bilinçli `sort_order: 0` gönderirse `index`
+
+    ile SESSİZCE ezilmemeli (falsy `or` tuzağı).
+    """
+    yanit = await client.post(
+        f"/projects/{proje}/subcontractor-contracts",
+        json={
+            "is_draft": True,
+            "subcontractor_id": str(taseron),
+            "items": [
+                {
+                    "code": "01.001",
+                    "description": "Kazı",
+                    "unit": "m³",
+                    "quantity": 10,
+                    "unit_price": 50,
+                    "sort_order": 5,
+                },
+                {
+                    "code": "01.002",
+                    "description": "Dolgu",
+                    "unit": "m³",
+                    "quantity": 8,
+                    "unit_price": 40,
+                    "sort_order": 0,
+                },
+            ],
+        },
+        headers=admin_headers,
+    )
+    assert yanit.status_code == 201, yanit.text
+    items_by_code = {item["code"]: item for item in yanit.json()["items"]}
+    assert items_by_code["01.001"]["sort_order"] == 5
+    assert items_by_code["01.002"]["sort_order"] == 0
+
+
+@pytest.mark.asyncio
+async def test_contract_total_satir_bazinda_yuvarlanmis_toplamla_esit(
+    client, admin_headers, proje, taseron
+):
+    """Karar (P5 dal geneli son inceleme): `contract_total` = Σ (kuruşa
+
+    yuvarlanmış `line_total`), satırların çarpımlarının HAM toplamı DEĞİL —
+    aksi hâlde `Σ line_total != contract_total` olabilir. İki satır, her
+    biri tam kuruş sınırında (`1.005`) yuvarlanacak şekilde seçildi: satır
+    bazında yuvarlarsa her biri `1.01`'e yuvarlanıp toplam `2.02` olur; ham
+    toplam ÖNCE alınıp SONRA yuvarlanırsa `2.01` çıkar (yanlış).
+    """
+    yanit = await client.post(
+        f"/projects/{proje}/subcontractor-contracts",
+        json={
+            "is_draft": True,
+            "subcontractor_id": str(taseron),
+            "items": [
+                {
+                    "code": "01.001",
+                    "description": "Kazı",
+                    "unit": "m³",
+                    "quantity": "1.005",
+                    "unit_price": "1.00",
+                },
+                {
+                    "code": "01.002",
+                    "description": "Dolgu",
+                    "unit": "m³",
+                    "quantity": "1.005",
+                    "unit_price": "1.00",
+                },
+            ],
+        },
+        headers=admin_headers,
+    )
+    assert yanit.status_code == 201, yanit.text
+    govde = yanit.json()
+    line_total_sum = sum(Decimal(item["line_total"]) for item in govde["items"])
+    assert line_total_sum == Decimal("2.02")
+    assert Decimal(govde["contract_total"]) == line_total_sum

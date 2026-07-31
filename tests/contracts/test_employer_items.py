@@ -268,6 +268,28 @@ async def test_gorunmeyen_projeye_grup_id_ile_dolayli_erisim_404(
 
 
 @pytest.mark.asyncio
+async def test_gorunmeyen_projeye_kalem_id_ile_dolayli_erisim_404(
+    client, kisitli_headers, gorunmeyen_proje, seeded_db
+):
+    """C6'dan devredildi (dal geneli son inceleme): grup PATCH'inin dolaylı-
+
+    kimlik IDOR testi vardı, kalem PATCH'inin yoktu — kod yolu
+    (`service._visible_item`) zaten doğru, burada yalnız regresyon güvencesi
+    ekleniyor.
+    """
+    await _contract(seeded_db, gorunmeyen_proje.id, contract_no="SZL-HIDDEN-ITEM")
+    group = await _group(seeded_db, gorunmeyen_proje.id)
+    item = await _item(seeded_db, gorunmeyen_proje.id, group.id)
+
+    yanit = await client.patch(
+        f"/contracts/employer/items/{item.id}",
+        json={"description": "Değişti"},
+        headers=kisitli_headers,
+    )
+    assert yanit.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_grup_baska_projeye_ait_kalem_eklenemez(
     client, admin_headers, sozlesmeli_proje, project_factory, seeded_db
 ):

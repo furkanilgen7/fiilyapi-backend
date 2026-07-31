@@ -420,7 +420,7 @@ async def create_subcontractor_contract_endpoint(
         action=AuditAction.create,
         detail=messages.subcontract_created(
             project.name,
-            messages._subcontract_label(contract.contract_no, contract.subcontractor_name),
+            messages.subcontract_label(contract.contract_no, contract.subcontractor_name),
         ),
         actor_user_id=user.id,
         ip_address=client_ip(request),
@@ -457,7 +457,7 @@ async def update_subcontractor_contract_endpoint(
     contract, project, is_publishing = await subcontracts.update_subcontractor_contract(
         session, user, contract_id, data
     )
-    label = messages._subcontract_label(contract.contract_no, contract.subcontractor_name)
+    label = messages.subcontract_label(contract.contract_no, contract.subcontractor_name)
     detail = (
         messages.subcontract_published(project.name, label)
         if is_publishing
@@ -508,7 +508,7 @@ async def delete_subcontractor_contract_endpoint(
         session,
         action=AuditAction.delete,
         detail=messages.subcontract_deleted(
-            project_name, messages._subcontract_label(contract_no, subcontractor_name)
+            project_name, messages.subcontract_label(contract_no, subcontractor_name)
         ),
         actor_user_id=user.id,
         ip_address=client_ip(request),

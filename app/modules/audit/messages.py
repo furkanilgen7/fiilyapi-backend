@@ -243,7 +243,7 @@ def subcontractor_deleted(name: str) -> str:
     return f"Taşeron silindi: {name}"
 
 
-def _subcontract_label(contract_no: str | None, subcontractor_name: str | None) -> str:
+def subcontract_label(contract_no: str | None, subcontractor_name: str | None) -> str:
     """Sözleşme no yoksa taşeron adı, o da yoksa "taslak" — taslak aşamasında
 
     henüz doldurulmamış alanlar için anlamlı bir denetim etiketi üretir.
