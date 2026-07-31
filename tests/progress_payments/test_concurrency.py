@@ -36,13 +36,36 @@ _SessionFactory = async_sessionmaker(test_engine, class_=AsyncSession, expire_on
 
 
 async def test_iki_esZamanli_olusturma_yalniz_biri_gecer() -> None:
+    """`.with_for_update()` kaldırılırsa bu test hâlâ 3/3 yeşil kalabilirdi çünkü
+    eski hâliyle `asyncio.gather` iki görevi kritik anda KESİŞTİRMİYORDU — yarış
+    penceresi hiç açılmıyordu (H4 denetimi Y3). Burada bilerek bir `asyncio.Event`
+    bariyeriyle tx1'in kilidi ALIP TUTARKEN tx2'nin bloke olduğu doğrudan
+    kanıtlanır: `asyncio.sleep` sonrası tx2 görevi hâlâ `done()` DEĞİLSE kilit
+    tutuyor demektir; kilit YOKSA tx2 hemen ilerler (ya biter ya da başka bir
+    hatayla patlar) ve bu iddia KIRMIZI döner.
+    """
     project_id, user_id = await _kurulum()
     try:
-        results = await asyncio.gather(
-            _attempt_create(project_id, user_id), _attempt_create(project_id, user_id)
+        lock_acquired = asyncio.Event()
+        release_lock = asyncio.Event()
+
+        task1 = asyncio.create_task(
+            _attempt_create_and_hold(project_id, user_id, lock_acquired, release_lock)
+        )
+        await asyncio.wait_for(lock_acquired.wait(), timeout=5)
+
+        task2 = asyncio.create_task(_attempt_create(project_id, user_id))
+        await asyncio.sleep(0.3)
+        assert not task2.done(), (
+            "tx2, tx1 kilidi serbest bırakmadan ilerleyebildi — "
+            "`get_contract_locked` artık satırı KİLİTLEMİYOR olabilir"
         )
 
-        assert sorted(results) == ["conflict", "created"]
+        release_lock.set()
+        result1 = await asyncio.wait_for(task1, timeout=5)
+        result2 = await asyncio.wait_for(task2, timeout=5)
+
+        assert sorted([result1, result2]) == ["conflict", "created"]
 
         async with _SessionFactory() as verify_session:
             actor = await verify_session.get(User, user_id)
@@ -53,6 +76,25 @@ async def test_iki_esZamanli_olusturma_yalniz_biri_gecer() -> None:
         assert listed.items[0].sequence_no == 1
     finally:
         await _temizle(project_id, user_id)
+
+
+async def _attempt_create_and_hold(
+    project_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    lock_acquired: asyncio.Event,
+    release_lock: asyncio.Event,
+) -> str:
+    """tx1: `service.create`'i tamamlar (satır kilidi + D8 + flush) ama
+    `release_lock` sinyali gelene kadar COMMIT ETMEZ — `SELECT … FOR UPDATE`
+    kilidi bu süre boyunca AÇIK kalır (commit/rollback'e kadar sürer, `flush`
+    kilidi bırakmaz)."""
+    async with _SessionFactory() as session:
+        actor = await session.get(User, actor_id)
+        await service.create(session, actor, project_id, schemas.ProgressPaymentCreate())
+        lock_acquired.set()
+        await release_lock.wait()
+        await session.commit()
+        return "created"
 
 
 async def _kurulum() -> tuple[uuid.UUID, uuid.UUID]:

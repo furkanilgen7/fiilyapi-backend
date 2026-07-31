@@ -55,7 +55,10 @@ ESCALATION_DISABLED = "Bu sözleşmede fiyat farkı şartı yok."
 # sözleşmesine ait olmalı — H4'te satır snapshot'ı kurulurken (POST'un iç içe
 # `lines[]`'ı) ve H5'in `PUT …/lines`'ında ORTAK kullanılır.
 ITEM_PROJECT_MISMATCH = "Bu poz bu projenin sözleşmesine ait değil"
-# Kısmi benzersiz indeksin (payment, item, site) gövde-içi ön kontrolü —
+# 409 (D1, H4 denetimi) — bu satır yukarıdaki "422 — miktar korkulukları" başlığı
+# ALTINDA duruyor ama `DuplicateError` üzerinden fırlatılır (`service._build_lines`),
+# `SiteValidationError` DEĞİL: yanıt kodu 422 değil 409'dur (spec §9.7). Kısmi
+# benzersiz indeksin (payment, item, site) gövde-içi ön kontrolü —
 # `contracts/distribution.py` `DUPLICATE_ALLOCATION` deseninin aynısı:
 # IntegrityError'a düşmeden ÖNCE guards'ta yakalanır.
 DUPLICATE_CELL = "Aynı poz ve şantiye için tek satır gönderilebilir."

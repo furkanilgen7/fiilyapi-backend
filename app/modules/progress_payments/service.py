@@ -238,10 +238,15 @@ async def _history_state(
 
 
 async def _calculation_block(
-    session: AsyncSession, payment: ProgressPayment, contract: ProjectContract
+    payment: ProgressPayment, contract: ProjectContract, advance_recovered: Decimal
 ) -> PaymentCalculationBlock:
-    """E15 151-172 / OLU 179-196 ödeme hesabı — liste VE detay tarafından paylaşılır."""
-    advance_recovered, _ = await _history_state(session, contract, payment.sequence_no)
+    """E15 151-172 / OLU 179-196 ödeme hesabı — liste VE detay tarafından paylaşılır.
+
+    `advance_recovered` çağıran tarafından `_history_state`'ten önceden okunur
+    (O2, H4 denetimi): `get_detail` hem bunu hem `_progress_block`'un ihtiyaç
+    duyduğu `prior_gross_total`'ı AYNI `_history_state` çağrısından karşılar —
+    aynı argümanlarla iki kez sorgu koşmaz.
+    """
     gross = _gross_total(payment.lines)
     vat = calculations.vat_amount(gross, payment.vat_pct)
     advance = _advance_or_uncapped(gross, payment.advance_pct, contract.amount, advance_recovered)
@@ -269,7 +274,8 @@ async def list_payments(
     )
     items = []
     for payment, project in rows:
-        calc = await _calculation_block(session, payment, project.contract)
+        advance_recovered, _ = await _history_state(session, project.contract, payment.sequence_no)
+        calc = await _calculation_block(payment, project.contract, advance_recovered)
         items.append(
             ProgressPaymentListItem(
                 id=payment.id,
@@ -389,12 +395,16 @@ async def _progress_block(
     session: AsyncSession,
     project: Project,
     contract: ProjectContract,
-    payment: ProgressPayment,
     gross: Decimal,
     physical_numerator: Decimal,
+    prior_gross_total: Decimal,
 ) -> ProgressBlock:
-    """E15 177-190 (spec §8). Eksik veri → `None` (zarif düşüş)."""
-    _, prior_gross_total = await _history_state(session, contract, payment.sequence_no)
+    """E15 177-190 (spec §8). Eksik veri → `None` (zarif düşüş).
+
+    `prior_gross_total` çağıran tarafından geçirilir (O2, H4 denetimi) — `get_detail`
+    aynı `_history_state` sonucunu `_calculation_block`'un `advance_recovered`'ıyla
+    PAYLAŞIR, burada YENİDEN sorgulanmaz.
+    """
     cumulative_gross = prior_gross_total + gross
 
     financial_pct = None
@@ -422,9 +432,12 @@ async def get_detail(
     contract = project.contract
 
     line_rows, groups, physical_numerator = await _line_rows(session, project, payment)
-    calc = await _calculation_block(session, payment, contract)
+    advance_recovered, prior_gross_total = await _history_state(
+        session, contract, payment.sequence_no
+    )
+    calc = await _calculation_block(payment, contract, advance_recovered)
     progress = await _progress_block(
-        session, project, contract, payment, calc.gross, physical_numerator
+        session, project, contract, calc.gross, physical_numerator, prior_gross_total
     )
 
     return ProgressPaymentDetail(

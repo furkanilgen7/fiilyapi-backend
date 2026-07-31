@@ -247,6 +247,62 @@ async def gorunmeyen_hakedis(
 
 
 @pytest.fixture
+async def ikinci_sozlesmeli_proje(
+    seeded_db: AsyncSession, project_factory
+) -> tuple[Project, ProjectContract]:
+    """Y1 (H4 denetimi): `sozlesmeli_proje`'den TAMAMEN ayrı bir ikinci proje —
+    çapraz-proje `contract_item_id`/`site_id` IDOR testlerinde "B projesi" olarak
+    kullanılır. `admin_headers` (system_admin) HER İKİ projeyi de görür; testin
+    amacı yetki DEĞİL, `service._build_lines`'taki sahiplik korkuluğudur."""
+    project = await project_factory(code="PP-002", name="İkinci Proje")
+    contract = ProjectContract(
+        project_id=project.id,
+        contract_no="SZL-2026-020",
+        amount=Decimal("5000000"),
+        advance_pct=Decimal("10"),
+        retainage_pct=Decimal("5"),
+        vat_pct=Decimal("20"),
+    )
+    seeded_db.add(contract)
+    await seeded_db.flush()
+    return project, contract
+
+
+@pytest.fixture
+async def ikinci_proje_santiyesi(
+    seeded_db: AsyncSession, ikinci_sozlesmeli_proje: tuple[Project, ProjectContract]
+) -> Site:
+    project, _ = ikinci_sozlesmeli_proje
+    site = Site(project_id=project.id, code="SNT-2026-002", name="İkinci Proje Şantiyesi")
+    seeded_db.add(site)
+    await seeded_db.flush()
+    return site
+
+
+@pytest.fixture
+async def ikinci_proje_kalemi(
+    seeded_db: AsyncSession, ikinci_sozlesmeli_proje: tuple[Project, ProjectContract]
+) -> EmployerContractItem:
+    project, _ = ikinci_sozlesmeli_proje
+    group = EmployerContractGroup(project_id=project.id, name="İkinci Proje Grubu", sort_order=1)
+    seeded_db.add(group)
+    await seeded_db.flush()
+    item = EmployerContractItem(
+        project_id=project.id,
+        group_id=group.id,
+        code="03.002",
+        description="İkinci proje kalemi",
+        unit="m³",
+        quantity=Decimal("500"),
+        unit_price=Decimal("2000"),
+        sort_order=1,
+    )
+    seeded_db.add(item)
+    await seeded_db.flush()
+    return item
+
+
+@pytest.fixture
 async def hakedis_kalemi(
     seeded_db: AsyncSession, hakedis_sozlesmesi: tuple[Project, ProjectContract]
 ) -> tuple[EmployerContractItem, str]:

@@ -5,8 +5,11 @@ from decimal import Decimal
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.progress_payments import guards
+from app.modules.progress_payments.models import ProgressPayment, ProgressPaymentStatus
 
 pytestmark = pytest.mark.asyncio
 
@@ -21,6 +24,50 @@ async def test_olusturma_sequence_no_uretir(
     assert ilk.status_code == 201, ilk.text
     assert ilk.json()["sequence_no"] == 1
     assert ilk.json()["status"] == "draft"
+
+
+async def test_ikinci_hakedis_sequence_no_iki_alir(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    sozlesmeli_proje: uuid.UUID,
+    seeded_db: AsyncSession,
+) -> None:
+    """Y2 (H4 denetimi): `repository.get_next_sequence_no` proje içi GERÇEK
+    maks+1 üretir — sabit `1` döndürülseydi ikinci hakediş
+    `uq_progress_payments_project_sequence` ihlaliyle 500 IntegrityError verirdi.
+
+    Durum geçişi ucu (H6) henüz yazılmadığı için ilk hakedişi `approved` yapmak
+    burada doğrudan DB üzerinden yapılır (D8 açık-hakediş kilidini açmak için
+    meşru bir test kurulumu — status makinesi kuralı test EDİLMİYOR, yalnız
+    `sequence_no` üretimi)."""
+    ilk = await client.post(
+        f"/projects/{sozlesmeli_proje}/progress-payments", json={}, headers=admin_headers
+    )
+    assert ilk.status_code == 201, ilk.text
+    assert ilk.json()["sequence_no"] == 1
+
+    ilk_kayit = await seeded_db.get(ProgressPayment, uuid.UUID(ilk.json()["id"]))
+    ilk_kayit.status = ProgressPaymentStatus.approved
+    await seeded_db.flush()
+
+    ikinci = await client.post(
+        f"/projects/{sozlesmeli_proje}/progress-payments", json={}, headers=admin_headers
+    )
+    assert ikinci.status_code == 201, ikinci.text
+    assert ikinci.json()["sequence_no"] == 2
+
+    kayitlar = (
+        (
+            await seeded_db.execute(
+                select(ProgressPayment.sequence_no)
+                .where(ProgressPayment.project_id == sozlesmeli_proje)
+                .order_by(ProgressPayment.sequence_no)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert kayitlar == [1, 2]
 
 
 async def test_snapshot_yuzdeler_sozlesmeden_kopyalanir(

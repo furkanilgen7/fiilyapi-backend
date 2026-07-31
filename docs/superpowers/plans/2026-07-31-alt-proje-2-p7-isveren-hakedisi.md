@@ -1068,6 +1068,26 @@ async def test_hakedissiz_projede_ozet_sifirlar(client, admin_headers, sozlesmel
 `pending_modules` işveren tarafında `progress_payments` içermiyor, taşeron tarafında
 `subcontractor_progress_payments` var.
 
+**H4'ten devredilen (H4 denetimi, kod DEĞİŞTİRİLMEDİ — yalnız kayıt):**
+
+- **O1 (N+1):** liste ucu 5 hakediş için 27 sorgu, detay 18 sorgu üretiyor;
+  ~60 hakedişli bir projede ~300 sorguya çıkar. `list_payments`/`get_detail`'in
+  `_history_state` çağrıları her hakediş için önceki tamamlanmış hakedişleri
+  AYRI AYRI çekiyor — görünen projeler için önceki tamamlanmış hakedişler TEK
+  sorguda toplu çekilip bellekte `project_id`'ye göre gruplanmalı (H9'un özet
+  sorgusuyla aynı aile).
+- **O3:** `router.py`'deki `create`/`update` uçları yanıtı `get_detail`'i
+  YENİDEN çağırarak kuruyor (`create_progress_payment_endpoint`/
+  `update_progress_payment_endpoint`) — bu da `visible_projects` sorgusunun
+  istek başına İKİ KEZ koşmasına yol açıyor (`_visible_project`/`_visible_payment`
+  içinden). `get_detail` çözülmüş `(payment, project)` çiftini kabul edecek
+  şekilde ikiye ayrılabilir: iç detay-inşa fonksiyonu + dıştan görünürlük
+  kontrolü yapan ince sarmalayıcı.
+- **O5:** `service.py:293-385` `_line_rows` 93 satır — coding-style kuralındaki
+  <50 satır sınırını aşıyor. Üç yardımcıya bölünmeli: (1) önceki tamamlanmış
+  hakedişlerden `prior_totals` haritası kurma, (2) tek satır için `LineDetail`
+  inşası, (3) grup toplamlarının biriktirilmesi.
+
 ---
 
 ### Task H10 — Denetim günlüğü
