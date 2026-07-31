@@ -192,7 +192,10 @@ async def test_bulk_writes_exactly_one_audit_row_for_24_units(
         f"/projects/{project.id}/units/bulk",
         json={
             "block_id": str(block.id),
-            "numbering": UnitNumberingPattern.floor_based.value,
+            # P3.1 T8: `floor_based` → `floor_sequence` (spec §5.2). Yeniden
+            # ADLANDIRMA; bu testin olctugu sey (istek basina TEK denetim
+            # satiri) degismedi.
+            "numbering": UnitNumberingPattern.floor_sequence.value,
             "start_floor": 1,
             "end_floor": 12,
             "units_per_floor": 2,

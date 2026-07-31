@@ -54,6 +54,10 @@ NET_GT_GROSS = "Net alan brüt alandan büyük olamaz"
 # metin diger tum alan mesajlariyla birlikte BURADA durur.
 INVALID_VAT_RATE = "KDV oranı yalnızca %1, %10 veya %20 olabilir"
 DUPLICATE_IN_PAYLOAD = "Aynı ünite listede birden çok kez var"
+# Spec §8.3 — kat sablonu (TU 96-133). Kural `UnitBulkCreate.model_validator`'da
+# zorlanir; METIN diger tum alan mesajlariyla birlikte BURADA durur.
+SLOT_COUNT_MISMATCH = "Kat şablonu satır sayısı kat başına daire sayısıyla eşleşmiyor"
+SLOT_SEQUENCE_INVALID = "Kat şablonunda sıra numaraları geçersiz veya tekrarlı"
 
 
 # --- Gorunurluk (spec §8) ---

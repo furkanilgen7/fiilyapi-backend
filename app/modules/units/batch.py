@@ -18,7 +18,7 @@ from app.core.errors import (
 )
 from app.modules.audit import messages
 from app.modules.projects.models import Project, ProjectType
-from app.modules.units import guards, repository, service
+from app.modules.units import codes, guards, repository, service
 from app.modules.units.bulk import generate_unit_numbers
 from app.modules.units.importer import (
     IMPORT_ROW_ERRORS,
@@ -77,7 +77,11 @@ async def bulk_create_units(
     block = await guards.block_in_project(session, project, data.block_id)
     guards.ensure_net_le_gross(data.gross_area_m2, data.net_area_m2)
 
-    numbers = generate_unit_numbers(data)
+    # `{Blok}` jetonu blok KODUDUR (karar 4). Kodu NULL olan canli blokta
+    # `effective_block_code` ile ANLIK turetilir ve SAKLANMAZ (karar 8, §0.B):
+    # ikinci bir otorite dogmaz, cunku cagrilan fonksiyon kod uretiminin ta
+    # kendisidir. Blok bir kez duzenlenip kodu kalicilastiginda cikti aynidir.
+    numbers = generate_unit_numbers(data, codes.effective_block_code(block.code, block.name))
     taken = await repository.existing_unit_nos(session, block.id, numbers)
     if taken:
         # Uretim sirasi KORUNUR (kume sirasi degil): kullanici hangi araligin

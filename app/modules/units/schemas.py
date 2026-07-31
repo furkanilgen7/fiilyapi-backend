@@ -9,7 +9,12 @@ from pydantic import AfterValidator, BaseModel, Field, computed_field, model_val
 # Yer tutucu sozlesmesi TEK yerde tanimlidir (B6/P1, spec §6): kopyalanmaz,
 # projects modulunden import edilir (BOQ `schemas.py:8` deseninin aynisi).
 from app.modules.projects.schemas import CountPlaceholder, MetricPlaceholder
-from app.modules.units.guards import INVALID_VAT_RATE
+from app.modules.units.guards import (
+    INVALID_VAT_RATE,
+    SLOT_COUNT_MISMATCH,
+    SLOT_SEQUENCE_INVALID,
+    ensure_net_le_gross,
+)
 from app.modules.units.models import (
     BlockGroundUsage,
     BlockParkingType,
@@ -37,6 +42,7 @@ __all__ = [
     "UnitAllocationRequest",
     "UnitBlockGroup",
     "UnitBulkCreate",
+    "UnitBulkSlot",
     "UnitCreate",
     "UnitFacing",
     "UnitImportResult",
@@ -411,8 +417,42 @@ class UnitAllocationRequest(BaseModel):
 
 
 class UnitNumberingPattern(str, enum.Enum):
-    sequential = "sequential"  # 1, 2, 3, ... N     — SY 76-99 deseni
-    floor_based = "floor_based"  # 101, 102, 201, 202
+    """TU 79'un DORT deseni + korunan `sequential` (plan §0.C, koordinator karari).
+
+    Mockup dort desen listeliyor ama hicbiri CIPLAK SAYI uretmiyor
+    (`label_sequence` → "Daire 1"). SY 76-99/132-135 ekrani ciplak sayi ve
+    `prefix + sayi` (D1..D4) uretiyor ve bu ekran bugun CALISIYOR — dort desene
+    indirgemek onu sessizce kirardi. Bu yuzden enum BES degerlidir.
+
+    `floor_based` → `floor_sequence` olarak yeniden ADLANDIRILDI: davranisi
+    karar 1 ile zaten degisti (basa sifir kalkti), eski ad yeni davranisi
+    yanlis tarif ediyordu.
+    """
+
+    sequential = "sequential"  # 1, 2, 3, ... N          — SY 76-99
+    block_sequence = "block_sequence"  # C-1, C-2, C-3   — TU 79 `{Blok}-{Sira}`
+    floor_sequence = "floor_sequence"  # 11, 12, 13, 21  — TU 79 `{Kat}{Sira}`
+    label_sequence = "label_sequence"  # Daire 1, Daire 2 — TU 79 `Daire {Sira}`
+    block_floor_sequence = "block_floor_sequence"  # C11, C12 — TU 79 `{Blok}{Kat}{Sira}`
+
+
+class UnitBulkSlot(BaseModel):
+    """TU 107-133 "Kat Sablonu" tablosunun BIR satiri. Her katta tekrarlanir (TU 94).
+
+    Ortak varsayilanlardan (bir alt siniftaki `layout`/`gross_area_m2`/…) farki:
+    ortak varsayilan TUM uretilen uniteye ayni degeri verir, slot ise KAT ICI
+    her daireye ayrisik deger verir (TU 96-133 uc farkli oda tipi/m²/cephe/fiyat
+    gosteriyor ve mevcut uc bunu HIC karsilayamiyordu, spec §5.1).
+    """
+
+    sequence: int = Field(ge=1, le=20)  # TU 98 "Sira"
+    layout: str | None = Field(default=None, max_length=20)  # TU 99
+    gross_area_m2: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=2)
+    net_area_m2: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=2)
+    facing: UnitFacing | None = None  # TU 102
+    list_price: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=2)
+    # TU 104 "Maliyet" sutunu BILEREK YOKTUR — kullanici karari 3 (spec §4.5):
+    # maliyet elle girilmez, kolon acilmaz.
 
 
 class UnitBulkCreate(BaseModel):
@@ -420,11 +460,19 @@ class UnitBulkCreate(BaseModel):
     unit_kind: UnitKind
     start_floor: int = Field(ge=-5, le=100)  # bodrum katlar icin negatif serbest
     end_floor: int = Field(ge=-5, le=100)
+    # TU 71: "Bitis Kati" seceneklerinden biri "Cati Kati"dir. `end_floor` tam
+    # sayi oldugu icin bu secenek AYRI bir bayrakla tasinir (karar 4, spec §5.3).
+    roof_floor: bool = False
     units_per_floor: int = Field(ge=1, le=20)
     numbering: UnitNumberingPattern = UnitNumberingPattern.sequential
     prefix: str = Field(default="", max_length=10)  # "D" → D1..D4 (SY 132-135)
-    start_number: int = Field(default=1, ge=0)  # sequential icin baslangic (SY 76 "1")
-    # Uretilen TUM unitelere uygulanacak ortak varsayilanlar.
+    start_number: int = Field(default=1, ge=0)  # global sira baslangici (TU 84, SY 76)
+    slots: list[UnitBulkSlot] = Field(default_factory=list, max_length=20)  # TU 96-133
+    floor_price_increase_pct: Decimal | None = Field(  # TU 138 "Kat basina %1.5"
+        default=None, ge=0, le=100, max_digits=5, decimal_places=2
+    )
+    # Uretilen TUM unitelere uygulanacak ortak varsayilanlar. `slots` BOS
+    # birakilirsa bunlar uygulanir (P3 davranisi KORUNUR, spec §5.3).
     layout: str | None = Field(default=None, max_length=20)
     gross_area_m2: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=2)
     net_area_m2: Decimal | None = Field(default=None, ge=0, max_digits=10, decimal_places=2)
@@ -433,11 +481,25 @@ class UnitBulkCreate(BaseModel):
 
     @model_validator(mode="after")
     def _validate_range(self) -> "UnitBulkCreate":
+        """DOGRULAMA TEK YERDEDIR (burada); `bulk.py` saf kalir ve kural
+        KOPYALANMAZ — ayni kurali iki yerde tutmak zamanla ayrisir (spec §6.3).
+        """
         if self.end_floor < self.start_floor:
             raise ValueError("Bitiş katı başlangıç katından küçük olamaz")
-        total = (self.end_floor - self.start_floor + 1) * self.units_per_floor
-        if total > _MAX_BULK_UNITS:
+        # Cati turu de sinira DAHILDIR: sayilmasaydi kullanici 500 sinirini
+        # fazladan bir kat kadar sessizce asardi.
+        rounds = self.end_floor - self.start_floor + 1 + (1 if self.roof_floor else 0)
+        if rounds * self.units_per_floor > _MAX_BULK_UNITS:
             raise ValueError(f"Tek seferde en fazla {_MAX_BULK_UNITS} ünite üretilebilir")
+        if self.slots:
+            if len(self.slots) != self.units_per_floor:
+                raise ValueError(SLOT_COUNT_MISMATCH)
+            sequences = {slot.sequence for slot in self.slots}
+            if len(sequences) != len(self.slots) or max(sequences) > self.units_per_floor:
+                raise ValueError(SLOT_SEQUENCE_INVALID)
+            for slot in self.slots:
+                # Tekil POST ile AYNI kural: `guards`tan CAGRILIR, kopyalanmaz.
+                ensure_net_le_gross(slot.gross_area_m2, slot.net_area_m2)
         return self
 
 
