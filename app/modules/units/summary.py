@@ -12,7 +12,6 @@ from app.modules.projects.models import ProjectType
 from app.modules.units.models import Block, Unit, UnitKind, UnitOwnerSide, UnitSalesStatus
 from app.modules.units.schemas import (
     BlockResponse,
-    CountPlaceholder,
     MetricPlaceholder,
     UnitKindBreakdown,
     UnitResponse,
@@ -52,10 +51,6 @@ def _quantize_money(value: Decimal) -> Decimal:
 
 def _metric(pending_module: str) -> MetricPlaceholder:
     return MetricPlaceholder(pending_module=pending_module)
-
-
-def _count(pending_module: str) -> CountPlaceholder:
-    return CountPlaceholder(pending_module=pending_module)
 
 
 def _sum(values: list[Decimal | None]) -> Decimal:
@@ -179,15 +174,20 @@ def _side_summary(
         if project_total
         else None
     )
+    # Satis sayaclari `totals` ile AYNI kaynaktan (`_by_sales_status`) turer ve
+    # ZATEN BELLEKTE olan liste uzerinde sayilir — taraf basina ayri bir
+    # `GROUP BY` sorgusu ucuncu bir gidis-donus demek olurdu (`_by_sales_status`
+    # notunun aynisi).
+    by_status = _by_sales_status(selected)
     return UnitSideSummary(
         side=side,
         counts=_counts(selected),
         total_value=total_value,
         average_value=_average(total_value, len(selected)),
         share_pct=share_pct,
-        sold=_count(_UNIT_SALES),
-        reserved=_count(_UNIT_SALES),
-        listed=_count(_UNIT_SALES),
+        sold=by_status[UnitSalesStatus.sold],
+        reserved=by_status[UnitSalesStatus.reserved],
+        listed=by_status[UnitSalesStatus.listed],
     )
 
 

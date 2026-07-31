@@ -1821,6 +1821,77 @@ async def test_by_sales_status_dort_degeri_de_sayar(
     assert totals["available_units"] == 1  # `listed` — `closed` BOS DEGILDIR
 
 
+async def test_taraf_satis_sayaclari_gercektir(client, db_session, user_factory, project_factory):
+    """T7 SONRASI TUTARSIZLIK DUZELTMESI (spec §8.2).
+
+    `totals.by_sales_status` / `sold_units` / `reserved_units` /
+    `available_units` T7'de GERCEK sayaca dondu, ama `sides[*].sold/reserved/
+    listed` (yuklenici · arsa sahibi kirilimi) YER TUTUCU kalmisti. Ikisi de
+    AYNI veriden — `sales_status` sutunundan — beslendigi icin bu ayrim
+    savunulamazdi: ekran proje toplaminda "34 satildi" gorup taraf tablosunda
+    "veri yok" basardi (KKP 161-168 tfoot).
+
+    Sayaclar T7'nin TEK `SELECT`'inden turer; yeni sorgu EKLENMEZ.
+    """
+    project = await project_factory("T7-6", project_type="kat_karsiligi")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site)
+    plan = [
+        (UnitOwnerSide.contractor, UnitSalesStatus.sold),
+        (UnitOwnerSide.contractor, UnitSalesStatus.sold),
+        (UnitOwnerSide.contractor, UnitSalesStatus.reserved),
+        (UnitOwnerSide.contractor, UnitSalesStatus.listed),
+        (UnitOwnerSide.contractor, UnitSalesStatus.closed),
+        (UnitOwnerSide.landowner, UnitSalesStatus.sold),
+        (UnitOwnerSide.landowner, UnitSalesStatus.listed),
+        (None, UnitSalesStatus.reserved),
+    ]
+    for index, (side, status) in enumerate(plan):
+        await _unit(
+            db_session, project, block, str(index + 1), owner_side=side, sales_status=status
+        )
+    token = await _login(client, user_factory, "system_admin")
+
+    totals = (await client.get(f"/projects/{project.id}/units", headers=_auth(token))).json()[
+        "totals"
+    ]
+    by_side = {side["side"]: side for side in totals["sides"]}
+
+    assert (by_side["contractor"]["sold"], by_side["contractor"]["reserved"]) == (2, 1)
+    assert by_side["contractor"]["listed"] == 1  # `closed` SAYILMAZ: bos ama satista degil
+    assert (by_side["landowner"]["sold"], by_side["landowner"]["reserved"]) == (1, 0)
+    assert by_side["landowner"]["listed"] == 1
+    assert (by_side[None]["sold"], by_side[None]["reserved"], by_side[None]["listed"]) == (0, 1, 0)
+    # Taraf sayaclarinin toplami proje toplamiyla TUTMALI — iki hesap ayrisirsa
+    # ekran hangisine guvenecegini bilemez.
+    assert sum(side["sold"] for side in totals["sides"]) == totals["sold_units"]
+    assert sum(side["reserved"] for side in totals["sides"]) == totals["reserved_units"]
+    assert sum(side["listed"] for side in totals["sides"]) == totals["available_units"]
+
+
+async def test_taraf_satis_sayaclari_artik_yer_tutucu_degil(
+    client, db_session, user_factory, project_factory
+):
+    """Yer tutucu zarfi (`{"available": false, "pending_module": …}`) GITTI.
+
+    Sayilar dogru ama zarf duruyor olsaydi frontend hâlâ "veri yok" basardi;
+    bu yuzden TIP de kilitlenir.
+    """
+    project = await project_factory("T7-7", project_type="kat_karsiligi")
+    site = await _site(db_session, project)
+    await _block(db_session, project, site)
+    token = await _login(client, user_factory, "system_admin")
+
+    totals = (await client.get(f"/projects/{project.id}/units", headers=_auth(token))).json()[
+        "totals"
+    ]
+
+    for side in totals["sides"]:
+        for field in ("sold", "reserved", "listed"):
+            assert side[field] == 0, field
+            assert isinstance(side[field], int), field
+
+
 async def test_floor_suzgeci_tam_eslesme(client, db_session, user_factory, project_factory):
     """Karar 4: kat METINDIR → suzgec TAM ESLESMEDIR. "3" ile "3. Kat" AYRI
     degerlerdir; parcali eslesme sessiz veri karisikligi olurdu."""

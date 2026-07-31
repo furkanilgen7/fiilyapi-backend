@@ -246,9 +246,15 @@ class UnitSideSummary(BaseModel):
     total_value: Decimal  # value_basis sutununun toplami (NULL'lar 0 sayilir)
     average_value: Decimal | None  # KK 121 "Ortalama ₺1,32M"
     share_pct: Decimal | None  # turev adet orani (spec §5.2)
-    sold: CountPlaceholder  # P8 (KKP 163)
-    reserved: CountPlaceholder  # P8
-    listed: CountPlaceholder  # P8
+    # P3'te yer tutucuydular; `totals`'taki sayaclarla AYNI veriden (`sales_status`
+    # sutunu) beslendikleri icin onlarla birlikte GERCEK sayaca dondular (spec
+    # §8.2). Ayri kalsalardi ekran proje toplaminda "34 satildi" gorup taraf
+    # tablosunda "veri yok" basardi. GERCEKLESEN satis TUTARI hâlâ P8'indir ve
+    # `UnitTotals.sales_revenue` yer tutucu KALIR — durum sutunu acildi diye
+    # ciro uydurulmaz.
+    sold: int  # KKP 163
+    reserved: int
+    listed: int  # `closed` (Satisa Kapali) SAYILMAZ: bos olsa bile satista degil
 
 
 class UnitTotals(BaseModel):
