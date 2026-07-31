@@ -128,10 +128,6 @@ async def list_prior_completed_payments(
     return list(result.scalars().all())
 
 
-async def get_site(session: AsyncSession, site_id: uuid.UUID) -> Site | None:
-    return await session.get(Site, site_id)
-
-
 async def get_sites_by_ids(
     session: AsyncSession, site_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, Site]:
