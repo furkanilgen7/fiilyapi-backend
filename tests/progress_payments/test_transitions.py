@@ -233,6 +233,23 @@ async def test_reject_gerekcesi_kabul_edilir_kolon_acilmaz(
     assert not hasattr(await _durum(seeded_db, payment_id), "reason")
 
 
+async def test_reject_reason_500_karakteri_asinca_422(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    hakedis_fabrikasi,
+) -> None:
+    """H10 denetimi Y3 (spec §10/6): `RejectBody.reason` sunucu sınırı
+    `max_length=500` — DB kolonu yok, sınırsız gövde günlüğe keyfi uzunlukta
+    metin yazardı. 501 karakter Pydantic doğrulamasında 422 döner."""
+    payment_id = await hakedis_fabrikasi(ProgressPaymentStatus.pending_approval)
+    yanit = await client.post(
+        f"/progress-payments/{payment_id}/reject",
+        json={"reason": "a" * 501},
+        headers=admin_headers,
+    )
+    assert yanit.status_code == 422, yanit.text
+
+
 # --- 3. Submit zorunluluk kuralları (spec §7, `guards.validate_submit`) ---
 
 

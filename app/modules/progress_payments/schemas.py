@@ -101,9 +101,19 @@ class ProgressPaymentUpdate(BaseModel):
 
 class RejectBody(BaseModel):
     """`POST …/reject` gövdesi (spec §7, K12: ek form YOK) — yalnız isteğe
-    bağlı gerekçe, denetim günlüğüne taşınır (ayrı kolon AÇILMAZ)."""
+    bağlı gerekçe, denetim günlüğüne taşınır (ayrı kolon AÇILMAZ).
 
-    reason: str | None = None
+    `max_length=500` (H10 denetimi Y3, spec §10/6): DB kolonu yok, TEK kalıcı
+    iz denetim metnidir (`audit/messages.py.progress_payment_rejected`) —
+    sınırsız gövde keyfi uzunlukta metni günlüğe yazardı. Modülde bu deseni
+    (kalıcı kolonu olmayan, yalnız günlüğe taşınan serbest metin) paylaşan
+    başka bir alan yok; en yakın emsaller (`roles.RoleCreate.description`
+    max_length=2000, uzun biçim rol açıklaması) amaç bakımından farklı — 500,
+    tek satırlık kısa bir ret gerekçesi için yeterli ve günlük okunabilirliğini
+    (çok satırlı/şişirilmiş metin) koruyan bir üst sınırdır.
+    """
+
+    reason: str | None = Field(default=None, max_length=500)
 
 
 # --- Okuma şemaları: liste (spec §9.1) ---

@@ -659,6 +659,11 @@ riskini ortadan kaldırma fırsatıdır — şema tarafında alan tipi düz değ
    Kural tek kopya `guards.validate_coefficient`'tadır; üç çağıran (`service.create`,
    `service.update`, `lines._resolve`) onu ÇAĞIRIR, kopyalamaz.
 6. Sunucu uzunluk sınırlı alanlara `maxLength` (sessiz 422 sınıfı).
+
+   **H10 denetimi Y3 (2026-07-31):** `RejectBody.reason` sunucuda
+   `max_length=500` aldı (DB kolonu yok, TEK kalıcı iz denetim metnidir) —
+   frontend ret formunun (eklenirse) `maxLength=500` ile hizalanması gerekir;
+   sınırı aşan gövde 422 döner.
 7. E15 70 "PDF" ve OLU 203-222 kar analizi bu dilimde boş — zarif düşüş +
    kullanıcıya bildirim, sessiz atlama yok.
 
