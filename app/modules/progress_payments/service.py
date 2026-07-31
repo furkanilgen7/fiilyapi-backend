@@ -1,0 +1,454 @@
+"""İşveren hakedişi (P7) CRUD servis katmanı — task H4.
+
+İki katmanlı koruma (`contracts/service.py` deseninin birebiri, spec §9.0):
+`progress_payments` izni router'da (`_VIEW`/`_DRAFT`/…) YETKİYİ verir, bu modül
+`projects.service.visible_projects` ile KAPSAMI belirler — görünmeyen projenin
+hakedişi hiçbir uçtan asla görünmez/düzenlenmez. Görünmeyen projedeki GERÇEK
+hakediş ile var OLMAYAN kimlik AYIRT EDİLEMEZ 404 döner (P5 IDOR dersi, GOREV-SIRASI
+§3): ikisi de `guards.PAYMENT_MISSING` ile aynı gövdeyi üretir.
+"""
+
+import uuid
+from decimal import Decimal
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.errors import ConflictError, DuplicateError, NotFoundError, SiteValidationError
+from app.core.timezone import today
+from app.modules.progress_payments import calculations, guards, repository
+from app.modules.progress_payments.models import (
+    ProgressPayment,
+    ProgressPaymentLine,
+    ProgressPaymentStatus,
+)
+from app.modules.progress_payments.schemas import (
+    PaymentCalculationBlock,
+    ProgressBlock,
+    ProgressPaymentCreate,
+    ProgressPaymentDetail,
+    ProgressPaymentGroupSummary,
+    ProgressPaymentLineDetail,
+    ProgressPaymentLineInput,
+    ProgressPaymentListItem,
+    ProgressPaymentListResponse,
+    ProgressPaymentUpdate,
+)
+from app.modules.projects.models import Project, ProjectContract
+from app.modules.projects.service import visible_projects
+from app.modules.users.models import User
+
+_ZERO = Decimal("0")
+_HUNDRED = Decimal("100")
+_DEFAULT_COEFFICIENT = Decimal("1.000")
+
+
+# --- Kapsam (spec §9.0) ---
+
+
+async def _visible_project(session: AsyncSession, actor: User, project_id: uuid.UUID) -> Project:
+    """`contracts/service.py._visible_project` deseninin birebiri: görünmeyen proje
+    ile var olmayan proje AYNI 404 gövdesini (`guards.PAYMENT_MISSING`) üretir —
+    bu modülün TEK "bulunamadı" metni vardır (spec §9.0)."""
+    visible = await visible_projects(session, actor)
+    project = next((p for p in visible if p.id == project_id), None)
+    if project is None:
+        raise NotFoundError(guards.PAYMENT_MISSING)
+    return project
+
+
+async def _visible_payment(
+    session: AsyncSession, actor: User, payment_id: uuid.UUID
+) -> tuple[ProgressPayment, Project]:
+    """Dolaylı kimlikle erişim de görünürlük süzgecinden geçmek ZORUNDA — kayıt
+    var ama projesi görünmüyorsa da `_visible_project` AYNI `PAYMENT_MISSING`
+    404'ünü fırlatır (403 sızdırmaz, spec §9.0)."""
+    payment = await repository.get_payment(session, payment_id)
+    if payment is None:
+        raise NotFoundError(guards.PAYMENT_MISSING)
+    project = await _visible_project(session, actor, payment.project_id)
+    return payment, project
+
+
+# --- Satır snapshot inşası (spec §4.2/§5, §6.5-3/4) ---
+#
+# YALNIZ H4'ün kapsadığı iki IDOR/tutarlılık kuralı burada uygulanır: şantiye
+# projeye ait olmalı (SITE_PROJECT_MISMATCH) ve kalem bu projenin sözleşmesine
+# ait olmalı (ITEM_PROJECT_MISMATCH). Dağıtım ön şartı / kota tavanı / FF kilidi
+# (§6.5 kuralları 1-2 + spec §10/5) BİLİNÇLİ OLARAK burada YOK — H5'in "EN
+# RİSKLİ" `lines.py`'si bunları `PUT …/lines` üzerinde uygular (plan §Task H5).
+
+
+async def _build_lines(
+    session: AsyncSession,
+    project: Project,
+    inputs: list[ProgressPaymentLineInput],
+    default_coefficient: Decimal,
+) -> list[ProgressPaymentLine]:
+    seen_cells: set[tuple[uuid.UUID, uuid.UUID]] = set()
+    item_ids = [entry.contract_item_id for entry in inputs]
+    items_with_group = await repository.get_employer_items_with_group_by_ids(session, item_ids)
+
+    lines: list[ProgressPaymentLine] = []
+    for entry in inputs:
+        cell = (entry.contract_item_id, entry.site_id)
+        if cell in seen_cells:
+            raise DuplicateError(guards.DUPLICATE_CELL)
+        seen_cells.add(cell)
+
+        site = await repository.get_site(session, entry.site_id)
+        if site is None or site.project_id != project.id:
+            raise SiteValidationError(guards.SITE_PROJECT_MISMATCH)
+
+        item_and_group = items_with_group.get(entry.contract_item_id)
+        if item_and_group is None or item_and_group[0].project_id != project.id:
+            raise SiteValidationError(guards.ITEM_PROJECT_MISMATCH)
+        item, group_name = item_and_group
+
+        lines.append(
+            ProgressPaymentLine(
+                contract_item_id=item.id,
+                site_id=site.id,
+                code=item.code,
+                description=item.description,
+                unit=item.unit,
+                contract_unit_price=item.unit_price,
+                coefficient=entry.coefficient
+                if entry.coefficient is not None
+                else default_coefficient,
+                quantity=entry.quantity,
+                group_name=group_name,
+            )
+        )
+    return lines
+
+
+# --- Oluşturma (spec §9.2, D8, kalıcı karar 4/9) ---
+
+
+async def create(
+    session: AsyncSession, actor: User, project_id: uuid.UUID, data: ProgressPaymentCreate
+) -> tuple[ProgressPayment, Project]:
+    """D8 + `sequence_no` üretimi AYNI kilit altında (spec §7 eşzamanlılık notu):
+
+    `repository.get_contract_locked` sözleşme satırını `SELECT … FOR UPDATE` ile
+    kilitler; bu transaction commit/rollback OLANA kadar aynı projede başka bir
+    `create` çağrısı burada BEKLER — iki eşzamanlı `POST` aynı `sequence_no`'yu
+    üretemez, ikisi de D8 kontrolünü boşken geçemez.
+    """
+    project = await _visible_project(session, actor, project_id)
+
+    contract = await repository.get_contract_locked(session, project_id)
+    if contract is None:
+        raise SiteValidationError(guards.NO_EMPLOYER_CONTRACT)
+
+    if await repository.get_open_payment(session, project_id) is not None:
+        raise ConflictError(guards.OPEN_PAYMENT_EXISTS)
+
+    sequence_no = await repository.get_next_sequence_no(session, project_id)
+    default_coefficient = data.default_coefficient or _DEFAULT_COEFFICIENT
+
+    payment = ProgressPayment(
+        project_id=project.id,
+        sequence_no=sequence_no,
+        period_year=data.period_year,
+        period_month=data.period_month,
+        description=data.description,
+        vat_pct=contract.vat_pct,
+        advance_pct=contract.advance_pct,
+        retainage_pct=contract.retainage_pct,
+        default_coefficient=default_coefficient,
+        created_by=actor.id,
+    )
+    if data.lines:
+        payment.lines = await _build_lines(session, project, data.lines, default_coefficient)
+
+    session.add(payment)
+    await session.flush()
+    await session.refresh(payment)
+    return payment, project
+
+
+# --- Düzenleme (spec §9.2, §7: yalnız draft) ---
+
+
+async def update(
+    session: AsyncSession, actor: User, payment_id: uuid.UUID, data: ProgressPaymentUpdate
+) -> tuple[ProgressPayment, Project]:
+    payment, project = await _visible_payment(session, actor, payment_id)
+    if payment.status != ProgressPaymentStatus.draft:
+        raise ConflictError(guards.INVALID_STATUS_TRANSITION)
+
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(payment, field, value)
+
+    await session.flush()
+    await session.refresh(payment)
+    return payment, project
+
+
+# --- Hesap türevleri (spec §6.2-§6.4, §6.6, §8) — DB'den okunan tarihsel zincir ---
+#
+# Avans mahsubu KÜMÜLATİF TAVANLIDIR (spec §6.3): payment N'in tavanı, N'DEN
+# ÖNCEKİ TÜM tamamlanmış hakedişlerin KENDİ tavanına göre kurtardığı avansa
+# bağlıdır — basit toplam DEĞİL, `calculations.advance_deduction`'ın sıra ile
+# zincirleme çağrısı (her adım bir öncekinin sonucunu besler).
+
+
+def _gross_total(lines: list[ProgressPaymentLine]) -> Decimal:
+    return sum(
+        (
+            calculations.line_total(line.contract_unit_price, line.coefficient, line.quantity)
+            for line in lines
+        ),
+        Decimal("0.00"),
+    )
+
+
+def _advance_or_uncapped(
+    gross: Decimal,
+    advance_pct: Decimal,
+    contract_amount: Decimal | None,
+    advance_recovered: Decimal,
+) -> Decimal:
+    """`contract.amount` NULL iken (taslak sözleşme) tavan uygulanamaz — görüntüleme
+    amaçlı tavansız kesinti döner (spec §6.3: bu durumda hakediş zaten ONAYA
+    GÖNDERİLEMEZ, `CONTRACT_AMOUNT_REQUIRED`; burada yalnız taslak GÖRÜNTÜLEMESİ
+    için zarif düşüş)."""
+    if contract_amount is None:
+        return calculations.quantize2(gross * advance_pct / _HUNDRED)
+    return calculations.advance_deduction(gross, advance_pct, contract_amount, advance_recovered)
+
+
+async def _history_state(
+    session: AsyncSession, contract: ProjectContract, before_sequence_no: int
+) -> tuple[Decimal, Decimal]:
+    """`(advance_recovered, prior_gross_total)` — sıradaki hakedişin göreceği
+    kümülatif durum (spec §6.3, §8 finansal ilerleme)."""
+    prior_payments = await repository.list_prior_completed_payments(
+        session, contract.project_id, before_sequence_no
+    )
+    recovered = _ZERO
+    prior_gross_total = _ZERO
+    for prior in prior_payments:
+        gross_i = _gross_total(prior.lines)
+        prior_gross_total += gross_i
+        advance_i = _advance_or_uncapped(gross_i, prior.advance_pct, contract.amount, recovered)
+        recovered += advance_i
+    return recovered, prior_gross_total
+
+
+async def _calculation_block(
+    session: AsyncSession, payment: ProgressPayment, contract: ProjectContract
+) -> PaymentCalculationBlock:
+    """E15 151-172 / OLU 179-196 ödeme hesabı — liste VE detay tarafından paylaşılır."""
+    advance_recovered, _ = await _history_state(session, contract, payment.sequence_no)
+    gross = _gross_total(payment.lines)
+    vat = calculations.vat_amount(gross, payment.vat_pct)
+    advance = _advance_or_uncapped(gross, payment.advance_pct, contract.amount, advance_recovered)
+    retention = calculations.retention_amount(gross, payment.retainage_pct)
+    net = calculations.net_amount(gross, vat, advance, retention)
+    return PaymentCalculationBlock(
+        gross=gross, vat=vat, advance_deduction=advance, retention=retention, net=net
+    )
+
+
+# --- Liste (spec §9.1) ---
+
+
+async def list_payments(
+    session: AsyncSession,
+    actor: User,
+    *,
+    project_id: uuid.UUID | None,
+    site_id: uuid.UUID | None,
+    status_filter: ProgressPaymentStatus | None,
+) -> ProgressPaymentListResponse:
+    visible_ids = [p.id for p in await visible_projects(session, actor)]
+    rows = await repository.list_payments(
+        session, visible_ids, project_id=project_id, site_id=site_id, status_filter=status_filter
+    )
+    items = []
+    for payment, project in rows:
+        calc = await _calculation_block(session, payment, project.contract)
+        items.append(
+            ProgressPaymentListItem(
+                id=payment.id,
+                project_id=payment.project_id,
+                project_name=project.name,
+                sequence_no=payment.sequence_no,
+                period_year=payment.period_year,
+                period_month=payment.period_month,
+                description=payment.description,
+                status=payment.status,
+                gross_total=calc.gross,
+                net_total=calc.net,
+            )
+        )
+    return ProgressPaymentListResponse(items=items)
+
+
+# --- Detay (spec §9.1, §6.6, §8, §5.1) ---
+
+
+async def _line_rows(
+    session: AsyncSession, project: Project, payment: ProgressPayment
+) -> tuple[list[ProgressPaymentLineDetail], list[ProgressPaymentGroupSummary], Decimal]:
+    """Satır detayları + grup toplulaştırması + §8 fiziksel ilerleme payı
+    (`Σ cumulative_quantity × canlı unit_price`)."""
+    prior_payments = await repository.list_prior_completed_payments(
+        session, project.id, payment.sequence_no
+    )
+    prior_totals: dict[tuple[uuid.UUID, uuid.UUID], tuple[Decimal, Decimal]] = {}
+    for prior in prior_payments:
+        for line in prior.lines:
+            if line.contract_item_id is None:
+                continue
+            key = (line.contract_item_id, line.site_id)
+            prev_qty, prev_amt = prior_totals.get(key, (_ZERO, _ZERO))
+            line_amt = calculations.line_total(
+                line.contract_unit_price, line.coefficient, line.quantity
+            )
+            prior_totals[key] = (prev_qty + line.quantity, prev_amt + line_amt)
+
+    item_ids = [
+        line.contract_item_id for line in payment.lines if line.contract_item_id is not None
+    ]
+    live_items = await repository.get_employer_items_by_ids(session, item_ids)
+
+    line_rows: list[ProgressPaymentLineDetail] = []
+    group_totals: dict[str | None, dict[str, Decimal]] = {}
+    physical_numerator = _ZERO
+
+    for line in payment.lines:
+        adjusted = calculations.adjusted_unit_price(line.contract_unit_price, line.coefficient)
+        this_total = calculations.line_total(
+            line.contract_unit_price, line.coefficient, line.quantity
+        )
+        key = (line.contract_item_id, line.site_id) if line.contract_item_id is not None else None
+        prev_qty, prev_amt = (
+            prior_totals.get(key, (_ZERO, _ZERO)) if key is not None else (_ZERO, _ZERO)
+        )
+        cumulative_qty = prev_qty + line.quantity
+        cumulative_amt = prev_amt + this_total
+
+        live_item = (
+            live_items.get(line.contract_item_id) if line.contract_item_id is not None else None
+        )
+        is_stale = None if live_item is None else line.contract_unit_price != live_item.unit_price
+        contract_amount_for_item = (
+            live_item.quantity * live_item.unit_price if live_item is not None else _ZERO
+        )
+        if live_item is not None:
+            physical_numerator += cumulative_qty * live_item.unit_price
+
+        line_rows.append(
+            ProgressPaymentLineDetail(
+                id=line.id,
+                contract_item_id=line.contract_item_id,
+                site_id=line.site_id,
+                code=line.code,
+                description=line.description,
+                unit=line.unit,
+                contract_unit_price=line.contract_unit_price,
+                coefficient=line.coefficient,
+                quantity=line.quantity,
+                group_name=line.group_name,
+                sort_order=line.sort_order,
+                adjusted_unit_price=adjusted,
+                line_total=this_total,
+                previous_quantity=prev_qty,
+                previous_amount=prev_amt,
+                cumulative_quantity=cumulative_qty,
+                cumulative_amount=cumulative_amt,
+                is_price_stale=is_stale,
+            )
+        )
+
+        group = group_totals.setdefault(
+            line.group_name,
+            {
+                "previous_amount": _ZERO,
+                "this_amount": _ZERO,
+                "cumulative_amount": _ZERO,
+                "contract_amount": _ZERO,
+            },
+        )
+        group["previous_amount"] += prev_amt
+        group["this_amount"] += this_total
+        group["cumulative_amount"] += cumulative_amt
+        group["contract_amount"] += contract_amount_for_item
+
+    groups = [
+        ProgressPaymentGroupSummary(group_name=group_name, **totals)
+        for group_name, totals in group_totals.items()
+    ]
+    return line_rows, groups, physical_numerator
+
+
+async def _progress_block(
+    session: AsyncSession,
+    project: Project,
+    contract: ProjectContract,
+    payment: ProgressPayment,
+    gross: Decimal,
+    physical_numerator: Decimal,
+) -> ProgressBlock:
+    """E15 177-190 (spec §8). Eksik veri → `None` (zarif düşüş)."""
+    _, prior_gross_total = await _history_state(session, contract, payment.sequence_no)
+    cumulative_gross = prior_gross_total + gross
+
+    financial_pct = None
+    if contract.amount is not None and contract.amount > 0:
+        financial_pct = calculations.quantize2(cumulative_gross / contract.amount * _HUNDRED)
+
+    physical_pct = None
+    denominator = await repository.get_contract_items_total_value(session, project.id)
+    if denominator > 0:
+        physical_pct = calculations.quantize2(physical_numerator / denominator * _HUNDRED)
+
+    duration = calculations.duration_pct(project.start_date, project.end_date, today())
+    return ProgressBlock(
+        financial_pct=financial_pct, physical_pct=physical_pct, duration_pct=duration
+    )
+
+
+async def get_detail(
+    session: AsyncSession, actor: User, payment_id: uuid.UUID
+) -> ProgressPaymentDetail:
+    payment, project = await _visible_payment(session, actor, payment_id)
+    # D8 sayesinde bir hakedişin var olması sözleşmenin de var olduğunu garanti
+    # eder (`project_contracts` CASCADE'i hakedişleri de götürür) — `contract`
+    # burada asla None DEĞİLDİR.
+    contract = project.contract
+
+    line_rows, groups, physical_numerator = await _line_rows(session, project, payment)
+    calc = await _calculation_block(session, payment, contract)
+    progress = await _progress_block(
+        session, project, contract, payment, calc.gross, physical_numerator
+    )
+
+    return ProgressPaymentDetail(
+        id=payment.id,
+        project_id=payment.project_id,
+        project_name=project.name,
+        sequence_no=payment.sequence_no,
+        period_year=payment.period_year,
+        period_month=payment.period_month,
+        description=payment.description,
+        status=payment.status,
+        vat_pct=payment.vat_pct,
+        advance_pct=payment.advance_pct,
+        retainage_pct=payment.retainage_pct,
+        default_coefficient=payment.default_coefficient,
+        submitted_at=payment.submitted_at,
+        approved_at=payment.approved_at,
+        approved_by=payment.approved_by,
+        paid_at=payment.paid_at,
+        created_by=payment.created_by,
+        created_at=payment.created_at,
+        updated_at=payment.updated_at,
+        lines=line_rows,
+        groups=groups,
+        calculation=calc,
+        progress=progress,
+    )

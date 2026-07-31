@@ -1,19 +1,40 @@
-"""Task H1 test yardımcıları — `progress_payments` modülüne özgü fixture'lar.
+"""`progress_payments` modülüne özgü fixture'lar — H1 (model) + H4 (CRUD/IDOR).
 
 Kök `tests/conftest.py`'deki `db_session`/`seeded_db`/`user_factory`/`project_factory`
-üzerine kurulur (`tests/contracts/conftest.py` deseni). Bu task yalnız model/migration
-testlerini kapsadığı için burada henüz HTTP login fixture'ları (`admin_headers` vb.)
-YOKTUR — onlar H4'te eklenir.
+üzerine kurulur. Login/erişim fixture'ları `tests/contracts/conftest.py` deseninin
+BİREBİRİDİR — pytest sibling `tests/contracts/conftest.py`'yi OTOMATİK yüklemez
+(yalnız üst dizin ağacındaki conftest'ler yüklenir), bu yüzden aynı desen burada
+YENİDEN kurulur (fixture adları doğrulanır, uydurulmaz).
 """
 
+import uuid
+from collections.abc import AsyncGenerator
 from decimal import Decimal
 
 import pytest
+from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.contracts.models import EmployerContractGroup, EmployerContractItem
+from app.modules.progress_payments.models import ProgressPayment, ProgressPaymentStatus
 from app.modules.projects.models import Project, ProjectContract
 from app.modules.sites.models import Site
-from app.modules.users.models import User
+from app.modules.users.models import User, UserProjectAccess
+
+
+async def _login(client: AsyncClient, user_factory, role_key: str, email: str) -> str:
+    await user_factory(email=email, password="parola1234", role_key=role_key)
+    resp = await client.post("/auth/login", json={"email": email, "password": "parola1234"})
+    assert resp.status_code == 200, resp.text
+    return resp.json()["access_token"]
+
+
+def _auth(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+# --- H1 fixture'ları (mevcut, model/migration testleri) ---
 
 
 @pytest.fixture
@@ -49,3 +70,205 @@ async def hakedis_olusturan(seeded_db: AsyncSession, user_factory) -> User:
     return await user_factory(
         email="olusturan@progress-payments.co", password="parola1234", role_key="system_admin"
     )
+
+
+# --- H4 fixture'ları: login/erişim (`tests/contracts/conftest.py` deseni) ---
+
+
+@pytest.fixture
+async def admin_headers(
+    client: AsyncClient, seeded_db: AsyncSession, user_factory
+) -> dict[str, str]:
+    """`system_admin` — `projects=_A` admin istisnası sayesinde tüm projeleri görür."""
+    token = await _login(client, user_factory, "system_admin", "admin@pp-crud.co")
+    return _auth(token)
+
+
+@pytest.fixture
+async def hr_headers(client: AsyncClient, seeded_db: AsyncSession, user_factory) -> dict[str, str]:
+    """`hr_manager` — matriste `progress_payments=_N`: 403 beklenir (kapı, görünürlükten ÖNCE)."""
+    token = await _login(client, user_factory, "hr_manager", "ik@pp-crud.co")
+    return _auth(token)
+
+
+@pytest.fixture
+async def kisitli_proje(seeded_db: AsyncSession, project_factory) -> Project:
+    return await project_factory(code="PP-K01", name="Kısıtlı Erişim Projesi")
+
+
+@pytest.fixture
+async def gorunmeyen_proje(seeded_db: AsyncSession, project_factory) -> uuid.UUID:
+    """`kisitli_headers`/`site_chief_headers` kullanıcılarına ASLA görünürlük verilmeyen proje."""
+    project = await project_factory(code="PP-K02", name="Görünmeyen Proje")
+    return project.id
+
+
+@pytest.fixture
+async def kisitli_headers(
+    client: AsyncClient,
+    seeded_db: AsyncSession,
+    user_factory,
+    kisitli_proje: Project,
+    gorunmeyen_proje: uuid.UUID,
+) -> AsyncGenerator[dict[str, str], None]:
+    """`project_manager` (`progress_payments=_APR`) ama `user_project_access`
+
+    yalnız `kisitli_proje`'yi kapsar; `gorunmeyen_proje` kapsam DIŞI (spec §9.0
+    iki katman: izin=yetki, `user_project_access`=kapsam).
+    """
+    email = "kisitli@pp-crud.co"
+    await user_factory(email=email, password="parola1234", role_key="project_manager")
+    user = (await seeded_db.execute(select(User).where(User.email == email))).scalar_one()
+    seeded_db.add(
+        UserProjectAccess(user_id=user.id, project_id=kisitli_proje.id, all_projects=False)
+    )
+    await seeded_db.flush()
+    resp = await client.post("/auth/login", json={"email": email, "password": "parola1234"})
+    assert resp.status_code == 200, resp.text
+    yield _auth(resp.json()["access_token"])
+
+
+@pytest.fixture
+async def site_chief_headers(
+    client: AsyncClient,
+    seeded_db: AsyncSession,
+    user_factory,
+    kisitli_proje: Project,
+    gorunmeyen_proje: uuid.UUID,
+) -> AsyncGenerator[dict[str, str], None]:
+    """`site_chief` (`progress_payments=_DRF`, draft/scope=project) — yalnız
+
+    `kisitli_proje`'ye atanmış; `gorunmeyen_proje`de oluşturma denemesi 404
+    dönmelidir (403 DEĞİL — spec §9.0, varlık sızdırmaz).
+    """
+    email = "sefi@pp-crud.co"
+    await user_factory(email=email, password="parola1234", role_key="site_chief")
+    user = (await seeded_db.execute(select(User).where(User.email == email))).scalar_one()
+    seeded_db.add(
+        UserProjectAccess(user_id=user.id, project_id=kisitli_proje.id, all_projects=False)
+    )
+    await seeded_db.flush()
+    resp = await client.post("/auth/login", json={"email": email, "password": "parola1234"})
+    assert resp.status_code == 200, resp.text
+    yield _auth(resp.json()["access_token"])
+
+
+# --- H4 fixture'ları: P7'ye özgü veri kurulumu ---
+
+
+@pytest.fixture
+async def sozlesmeli_proje(hakedis_sozlesmesi: tuple[Project, ProjectContract]) -> uuid.UUID:
+    project, _ = hakedis_sozlesmesi
+    return project.id
+
+
+@pytest.fixture
+async def sozlesmesiz_proje(seeded_db: AsyncSession, project_factory) -> uuid.UUID:
+    """Sözleşme kaydı YOK — `NO_EMPLOYER_CONTRACT` 422 testinde kullanılır."""
+    project = await project_factory(code="PP-005", name="Sözleşmesiz Proje")
+    return project.id
+
+
+@pytest.fixture
+async def taslak_hakedisli_proje(
+    seeded_db: AsyncSession,
+    hakedis_sozlesmesi: tuple[Project, ProjectContract],
+    hakedis_olusturan: User,
+) -> uuid.UUID:
+    """Zaten AÇIK (draft) bir hakedişi olan proje — D8/409 testinde kullanılır."""
+    project, contract = hakedis_sozlesmesi
+    payment = ProgressPayment(
+        project_id=project.id,
+        sequence_no=1,
+        status=ProgressPaymentStatus.draft,
+        vat_pct=contract.vat_pct,
+        advance_pct=contract.advance_pct,
+        retainage_pct=contract.retainage_pct,
+        created_by=hakedis_olusturan.id,
+    )
+    seeded_db.add(payment)
+    await seeded_db.flush()
+    return project.id
+
+
+@pytest.fixture
+async def onay_bekleyen_hakedis(
+    seeded_db: AsyncSession,
+    hakedis_sozlesmesi: tuple[Project, ProjectContract],
+    hakedis_olusturan: User,
+) -> uuid.UUID:
+    """`pending_approval` durumunda — `PATCH` 409 testinde kullanılır."""
+    project, contract = hakedis_sozlesmesi
+    payment = ProgressPayment(
+        project_id=project.id,
+        sequence_no=1,
+        status=ProgressPaymentStatus.pending_approval,
+        vat_pct=contract.vat_pct,
+        advance_pct=contract.advance_pct,
+        retainage_pct=contract.retainage_pct,
+        created_by=hakedis_olusturan.id,
+    )
+    seeded_db.add(payment)
+    await seeded_db.flush()
+    return payment.id
+
+
+@pytest.fixture
+async def gorunmeyen_hakedis(
+    seeded_db: AsyncSession, project_factory, hakedis_olusturan: User
+) -> uuid.UUID:
+    """Kendi başına bir proje+sözleşme+taslak hakediş — `kisitli_headers`/
+
+    `site_chief_headers` kullanıcılarına HİÇBİR ZAMAN görünmeyen bir projededir.
+    """
+    project = await project_factory(code="PP-006", name="Görünmeyen Hakedişli Proje")
+    contract = ProjectContract(
+        project_id=project.id,
+        contract_no="SZL-2026-011",
+        amount=Decimal("1000000"),
+        advance_pct=Decimal("10"),
+        retainage_pct=Decimal("5"),
+        vat_pct=Decimal("20"),
+    )
+    seeded_db.add(contract)
+    await seeded_db.flush()
+    payment = ProgressPayment(
+        project_id=project.id,
+        sequence_no=1,
+        status=ProgressPaymentStatus.draft,
+        vat_pct=contract.vat_pct,
+        advance_pct=contract.advance_pct,
+        retainage_pct=contract.retainage_pct,
+        created_by=hakedis_olusturan.id,
+    )
+    seeded_db.add(payment)
+    await seeded_db.flush()
+    return payment.id
+
+
+@pytest.fixture
+async def hakedis_kalemi(
+    seeded_db: AsyncSession, hakedis_sozlesmesi: tuple[Project, ProjectContract]
+) -> tuple[EmployerContractItem, str]:
+    """OLU 114/116/119/100 satırı: `03.001` betonarme kalemi — snapshot testinde
+
+    kullanılır. Dağıtım (`boq_items`) BİLİNÇLİ OLARAK YOK — H4'te dağıtım ön
+    şartı UYGULANMAZ (H5'in işi, plan §Task H5).
+    """
+    project, _ = hakedis_sozlesmesi
+    group = EmployerContractGroup(project_id=project.id, name="Betonarme İşleri", sort_order=1)
+    seeded_db.add(group)
+    await seeded_db.flush()
+    item = EmployerContractItem(
+        project_id=project.id,
+        group_id=group.id,
+        code="03.001",
+        description="Beton C30/37 dökümü",
+        unit="m³",
+        quantity=Decimal("1000"),
+        unit_price=Decimal("1850"),
+        sort_order=1,
+    )
+    seeded_db.add(item)
+    await seeded_db.flush()
+    return item, group.name

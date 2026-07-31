@@ -87,3 +87,15 @@ class BoqGroupSiteMismatchError(DomainError):
     (Alt-Proje 2 P4 spec §3.3 invariant 1, §5.4) — 422. DB'de bileşik FK
     açılmadığı için (P1 §3.5 gerekçesi) tek yazma yolunda servis korkuluğu.
     """
+
+
+class ConflictError(DomainError):
+    """Durum makinesi / iş kuralı çakışması — 409 (P7 hakediş spec §7, §9.2, §9.7).
+
+    `DuplicateError`'dan (benzersizlik ihlali) kasıtlı olarak AYRI: burada
+    çakışan şey bir alan değeri değil, kaydın MEVCUT DURUMU — açık hakediş
+    varken ikincisinin açılamaması (D8/`OPEN_PAYMENT_EXISTS`), taslak
+    dışındayken yazılamaması (`INVALID_STATUS_TRANSITION`), onaylanmış/ödenmiş
+    kaydın silinememesi (`PAYMENT_NOT_DELETABLE`) gibi. `RelatedRecordsExistError`
+    (bağlı alt kayıt) semantiğine de UYMADIĞI için P7 ile birlikte açılır.
+    """

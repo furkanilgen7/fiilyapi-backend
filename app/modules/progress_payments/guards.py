@@ -51,6 +51,14 @@ QUANTITY_EXCEEDS_QUOTA = "Kümülatif hakediş miktarı şantiye kotasını aşa
 SITE_PROJECT_MISMATCH = "Seçilen şantiye bu projeye ait değil"
 NO_EMPLOYER_CONTRACT = "Bu projenin işveren sözleşmesi yok."
 ESCALATION_DISABLED = "Bu sözleşmede fiyat farkı şartı yok."
+# §6.5-4 IDOR yüzeyi (spec §9.0): satırdaki kalem bu projenin işveren
+# sözleşmesine ait olmalı — H4'te satır snapshot'ı kurulurken (POST'un iç içe
+# `lines[]`'ı) ve H5'in `PUT …/lines`'ında ORTAK kullanılır.
+ITEM_PROJECT_MISMATCH = "Bu poz bu projenin sözleşmesine ait değil"
+# Kısmi benzersiz indeksin (payment, item, site) gövde-içi ön kontrolü —
+# `contracts/distribution.py` `DUPLICATE_ALLOCATION` deseninin aynısı:
+# IntegrityError'a düşmeden ÖNCE guards'ta yakalanır.
+DUPLICATE_CELL = "Aynı poz ve şantiye için tek satır gönderilebilir."
 
 # 409 — durum makinesi + D8 (spec §7, §9.2).
 OPEN_PAYMENT_EXISTS = "Bu sözleşmede açık bir hakediş var; önce onu tamamlayın."
