@@ -84,6 +84,21 @@ def to_block(block: Block, site_name: str, units: list[Unit]) -> BlockResponse:
         site_name=site_name,
         sort_order=block.sort_order,
         counts=_counts(units),
+        # Blok formu (BE) — 13 alan aynen doner; `estimated_unit_count`
+        # BlockResponse'ta TUREVDIR ve burada hesaplanmaz (spec §3.3).
+        code=block.code,
+        basement_floor_count=block.basement_floor_count,
+        floor_count=block.floor_count,
+        roof_type=block.roof_type,
+        units_per_floor=block.units_per_floor,
+        ground_floor_usage=block.ground_floor_usage,
+        shop_count=block.shop_count,
+        construction_area_m2=block.construction_area_m2,
+        elevator_count=block.elevator_count,
+        parking_type=block.parking_type,
+        estimated_delivery_date=block.estimated_delivery_date,
+        status=block.status,
+        notes=block.notes,
     )
 
 

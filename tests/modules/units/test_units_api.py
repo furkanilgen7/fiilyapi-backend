@@ -215,6 +215,7 @@ async def test_get_units_happy_path_matches_spec_envelope(
         "listed",
     }
     assert set(body["blocks"][0]) == {"block", "units"}
+    # P3.1 T5: blok formunun 13 alani + turev `estimated_unit_count` EKLENDI.
     assert set(body["blocks"][0]["block"]) == {
         "id",
         "name",
@@ -222,6 +223,20 @@ async def test_get_units_happy_path_matches_spec_envelope(
         "site_name",
         "sort_order",
         "counts",
+        "code",
+        "basement_floor_count",
+        "floor_count",
+        "roof_type",
+        "units_per_floor",
+        "ground_floor_usage",
+        "shop_count",
+        "construction_area_m2",
+        "elevator_count",
+        "parking_type",
+        "estimated_delivery_date",
+        "status",
+        "notes",
+        "estimated_unit_count",
     }
     unit = body["blocks"][0]["units"][0]
     assert set(unit) == {
@@ -1354,3 +1369,209 @@ async def test_null_kodlu_blokta_anlik_turetme_saklanmaz(db_session, project_fac
     db_session.expire_all()
     stored = (await db_session.execute(select(Block.code).where(Block.id == block_id))).scalar_one()
     assert stored is None
+
+
+# --- P3.1 T5: blok formunun 13 yeni alani (spec §2.1, §3.1, §3.2, §3.3) ---
+
+_BLOK_FORMU = {
+    "code": "YV-C",  # BE 71
+    "basement_floor_count": 2,  # BE 78
+    "floor_count": 8,  # BE 79
+    "roof_type": "duplex",  # BE 80
+    "units_per_floor": 3,  # BE 81
+    "ground_floor_usage": "commercial",  # BE 82
+    "shop_count": 2,  # BE 83
+    "construction_area_m2": "3200.00",  # BE 84
+    "elevator_count": 1,  # BE 85
+    "parking_type": "closed",  # BE 86
+    "estimated_delivery_date": "2027-06-30",  # BE 100
+    "status": "construction",  # BE 101
+    "notes": "Zemin katta iki dükkan",  # BE 102
+}
+
+
+async def test_blok_13_alan_yazilir_ve_doner(client, db_session, user_factory, project_factory):
+    """BE formunun 13 alani da yazilir ve GET'te geri doner (spec §3.1)."""
+    project = await project_factory("T5-1")
+    await _site(db_session, project)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.post(
+        f"/projects/{project.id}/blocks",
+        json={"name": "C Blok"} | _BLOK_FORMU,
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 201
+    body = resp.json()
+    for field, value in _BLOK_FORMU.items():
+        assert body[field] == value, field
+
+    listed = await client.get(f"/projects/{project.id}/blocks", headers=_auth(token))
+    assert listed.json()["blocks"][0]["code"] == "YV-C"
+    assert listed.json()["blocks"][0]["notes"] == "Zemin katta iki dükkan"
+
+
+async def test_blok_kodu_bos_ise_uretilir(client, db_session, user_factory, project_factory):
+    """BE 71 ipucu "Boş bırakılırsa otomatik": "C Blok" → `C` (spec §3.2)."""
+    project = await project_factory("T5-2")
+    await _site(db_session, project)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.post(
+        f"/projects/{project.id}/blocks", json={"name": "C Blok"}, headers=_auth(token)
+    )
+
+    assert resp.status_code == 201
+    assert resp.json()["code"] == "C"
+
+
+async def test_ayni_koda_cozulen_ikinci_blok_kod_eki_alir(
+    client, db_session, user_factory, project_factory
+):
+    """Blok ADI proje icinde benzersizdir, ama iki ayri ad AYNI koda cozulebilir
+    ("A Blok" ve "A" → ikisi de `A`). Ikincisi `A-2` alir (spec §3.2 adim 5)."""
+    project = await project_factory("T5-3")
+    await _site(db_session, project)
+    token = await _login(client, user_factory, "system_admin")
+
+    first = await client.post(
+        f"/projects/{project.id}/blocks", json={"name": "A Blok"}, headers=_auth(token)
+    )
+    second = await client.post(
+        f"/projects/{project.id}/blocks", json={"name": "A"}, headers=_auth(token)
+    )
+
+    assert first.json()["code"] == "A"
+    assert second.status_code == 201
+    assert second.json()["code"] == "A-2"
+
+
+async def test_elle_verilen_kod_cakisirsa_409(client, db_session, user_factory, project_factory):
+    """Kullanici kodu elle girerse aynen kabul edilir; yalniz benzersizlik
+    dogrulanir → cakisma 409 (spec §3.2)."""
+    project = await project_factory("T5-4")
+    await _site(db_session, project)
+    token = await _login(client, user_factory, "system_admin")
+    await client.post(
+        f"/projects/{project.id}/blocks",
+        json={"name": "A Blok", "code": "YV-A"},
+        headers=_auth(token),
+    )
+
+    resp = await client.post(
+        f"/projects/{project.id}/blocks",
+        json={"name": "B Blok", "code": "YV-A"},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "Bu blok kodu bu projede zaten kullanılıyor"
+
+
+async def test_farkli_projede_ayni_kod_201(client, db_session, user_factory, project_factory):
+    """`uq_blocks_project_code` PROJE ICIDIR."""
+    first = await project_factory("T5-5")
+    second = await project_factory("T5-6")
+    await _site(db_session, first)
+    await _site(db_session, second, code="SANTIYE-2")
+    token = await _login(client, user_factory, "system_admin")
+    await client.post(
+        f"/projects/{first.id}/blocks",
+        json={"name": "A Blok", "code": "YV-A"},
+        headers=_auth(token),
+    )
+
+    resp = await client.post(
+        f"/projects/{second.id}/blocks",
+        json={"name": "A Blok", "code": "YV-A"},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 201
+    assert resp.json()["code"] == "YV-A"
+
+
+async def test_blok_patch_kismi_guncelleme_notes_null_bosaltir(
+    client, db_session, user_factory, project_factory
+):
+    """GONDERILMEYEN alan degismez; `null` GONDERILEN nullable alan bosalir."""
+    project = await project_factory("T5-7")
+    site = await _site(db_session, project)
+    block = await _block(
+        db_session, project, site, name="A Blok", code="A", floor_count=8, notes="ilk not"
+    )
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.patch(
+        f"/blocks/{block.id}", json={"notes": None, "elevator_count": 2}, headers=_auth(token)
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["notes"] is None
+    assert body["elevator_count"] == 2
+    assert body["floor_count"] == 8  # gonderilmedi → degismedi
+    assert body["code"] == "A"
+
+
+async def test_patch_kodu_bos_blokta_kod_uretir(client, db_session, user_factory, project_factory):
+    """Karar 8: canli bloklarin kodu NULL dogar; BACKFILL MIGRATION'I YOKTUR —
+    kod bir sonraki PATCH'te uretilir (uretim tek yerdedir, spec §3.2)."""
+    project = await project_factory("T5-8")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site, name="C Blok")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.patch(
+        f"/blocks/{block.id}", json={"notes": "kat planı"}, headers=_auth(token)
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["code"] == "C"
+
+
+async def test_estimated_unit_count_8x3_arti_2_esittir_26(
+    client, db_session, user_factory, project_factory
+):
+    """BE 90-93 BIREBIR: "8 kat × 3 daire + 2 dükkan" = 26. SAKLANMAZ, turevdir."""
+    project = await project_factory("T5-9")
+    site = await _site(db_session, project)
+    await _block(
+        db_session, project, site, name="C Blok", floor_count=8, units_per_floor=3, shop_count=2
+    )
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.get(f"/projects/{project.id}/blocks", headers=_auth(token))
+
+    assert resp.json()["blocks"][0]["estimated_unit_count"] == 26
+
+
+async def test_estimated_unit_count_uc_girdi_none_ise_none(
+    client, db_session, user_factory, project_factory
+):
+    """Uc girdi de bossa `None` doner — **0 DEGIL**: 0 "hesaplandi ve sifir" der
+    ve bu yanlis bilgidir (spec §3.3)."""
+    project = await project_factory("T5-10")
+    site = await _site(db_session, project)
+    await _block(db_session, project, site, name="A Blok")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.get(f"/projects/{project.id}/blocks", headers=_auth(token))
+
+    assert resp.json()["blocks"][0]["estimated_unit_count"] is None
+
+
+async def test_blok_negatif_sayac_422(client, db_session, user_factory, project_factory):
+    """`floor_count = -1` → 422 (Pydantic, DB CHECK'ine DUSMEDEN)."""
+    project = await project_factory("T5-11")
+    await _site(db_session, project)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.post(
+        f"/projects/{project.id}/blocks",
+        json={"name": "A Blok", "floor_count": -1},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 422

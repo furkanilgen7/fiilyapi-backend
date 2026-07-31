@@ -15,10 +15,11 @@ from app.modules.sites import repository as sites_repository
 # Gorunurluk suzgeci P1'DEN GELIR (spec §8): kopya bir erisim mantigi YAZILMAZ.
 # `guards` uzerinden yeniden disa acilir — mevcut cagiranlar `service.visible_projects`
 # adini kullanir ve bu ad korunur.
-from app.modules.units import guards, repository
+from app.modules.units import codes, guards, repository
 from app.modules.units.guards import visible_projects
 from app.modules.units.models import Block, Unit, UnitKind
 from app.modules.units.schemas import (
+    BLOCK_FORM_FIELDS,
     BlockCreate,
     BlockListResponse,
     BlockResponse,
@@ -32,6 +33,9 @@ from app.modules.units.schemas import (
 )
 from app.modules.units.summary import VALUE_BASIS_BY_TYPE, to_block, to_unit, totals
 from app.modules.users.models import User
+
+# `Block`'un NOT NULL sutunlari: PATCH'te `null` ile bosaltilamazlar.
+_BLOCK_NOT_NULL_FIELDS = ("name", "sort_order")
 
 __all__ = [
     "block_response",
@@ -166,14 +170,40 @@ async def unit_response(session: AsyncSession, unit: Unit) -> UnitResponse:
 # --- Blok yazma uclari (spec §7.2, §7.3) ---
 
 
+async def _resolve_block_code(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    code: str | None,
+    name: str,
+    exclude_block_id: uuid.UUID | None = None,
+) -> str:
+    """Spec §3.2. Elle girilen kod AYNEN kabul edilir (yalniz benzersizligi
+    dogrulanir → 409); bos birakilirsa addan URETILIR.
+
+    Uretim TEK YERDEDIR: yazma yolu. Okuma yolunda gizli bir geri dusus yoktur
+    ve canli bloklara `UPDATE` yazan bir veri migration'i da yoktur (karar 8).
+    """
+    if code:
+        await guards.ensure_block_code_unique(session, project_id, code, exclude_block_id)
+        return code
+    taken = await repository.project_block_codes(session, project_id)
+    return codes.resolve_block_code(name, taken)
+
+
 async def create_block(
     session: AsyncSession, actor: User, project_id: uuid.UUID, data: BlockCreate
 ) -> tuple[Block, str]:
     project = await guards.visible_project(session, actor, project_id)
     site = await guards.resolve_site(session, project.id, data.site_id)
     await guards.ensure_block_name_unique(session, project.id, data.name)
+    form = data.model_dump(include=set(BLOCK_FORM_FIELDS))
+    form["code"] = await _resolve_block_code(session, project.id, data.code, data.name)
     block = Block(
-        project_id=project.id, site_id=site.id, name=data.name, sort_order=data.sort_order
+        project_id=project.id,
+        site_id=site.id,
+        name=data.name,
+        sort_order=data.sort_order,
+        **form,
     )
     session.add(block)
     await session.flush()
@@ -200,9 +230,18 @@ async def update_block(
         updates.pop("site_id", None)
     if updates.get("name") is not None:
         await guards.ensure_block_name_unique(session, project.id, updates["name"], block.id)
+    if updates.get("code"):
+        await guards.ensure_block_code_unique(session, project.id, updates["code"], block.id)
     for field, value in updates.items():
-        if value is not None:
-            setattr(block, field, value)
+        # NOT NULL sutunlar `null` ile bosaltilamaz; nullable olanlar bosalir
+        # (`update_unit` ile ayni ayrim — BE 102 "Not" alani temizlenebilmeli).
+        if value is None and field in _BLOCK_NOT_NULL_FIELDS:
+            continue
+        setattr(block, field, value)
+    if not block.code:
+        # Karar 8: canli bloklarin kodu NULL dogar ve ILK PATCH'te uretilir —
+        # backfill migration'i YOKTUR (spec §3.2).
+        block.code = await _resolve_block_code(session, project.id, None, block.name)
     await session.flush()
     await session.refresh(block)
     return block, messages.block_updated(project.name, block.name)

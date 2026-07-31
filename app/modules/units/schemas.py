@@ -1,5 +1,6 @@
 import enum
 import uuid
+from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 
 from pydantic import BaseModel, Field, computed_field, model_validator
@@ -7,10 +8,21 @@ from pydantic import BaseModel, Field, computed_field, model_validator
 # Yer tutucu sozlesmesi TEK yerde tanimlidir (B6/P1, spec §6): kopyalanmaz,
 # projects modulunden import edilir (BOQ `schemas.py:8` deseninin aynisi).
 from app.modules.projects.schemas import CountPlaceholder, MetricPlaceholder
-from app.modules.units.models import UnitKind, UnitOwnerSide
+from app.modules.units.models import (
+    BlockGroundUsage,
+    BlockParkingType,
+    BlockRoofType,
+    BlockStatus,
+    UnitKind,
+    UnitOwnerSide,
+)
 
 __all__ = [
     "BlockCreate",
+    "BlockGroundUsage",
+    "BlockParkingType",
+    "BlockRoofType",
+    "BlockStatus",
     "BlockListResponse",
     "BlockResponse",
     "BlockUpdate",
@@ -99,6 +111,34 @@ class BlockResponse(BaseModel):
     site_name: str  # blok basliginda santiye gosterilebilsin diye (join)
     sort_order: int
     counts: UnitKindBreakdown  # SY 74 "A Blok — 24 Daire"
+    # --- Blok formu (BE), spec §3.1 ---
+    code: str | None  # BE 71
+    basement_floor_count: int | None  # BE 78
+    floor_count: int | None  # BE 79
+    roof_type: BlockRoofType | None  # BE 80
+    units_per_floor: int | None  # BE 81
+    ground_floor_usage: BlockGroundUsage | None  # BE 82
+    shop_count: int | None  # BE 83
+    construction_area_m2: Decimal | None  # BE 84
+    elevator_count: int | None  # BE 85
+    parking_type: BlockParkingType | None  # BE 86
+    estimated_delivery_date: date | None  # BE 100
+    status: BlockStatus | None  # BE 101
+    notes: str | None  # BE 102
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def estimated_unit_count(self) -> int | None:
+        """BE 90-93: "8 kat × 3 daire + 2 dükkan" = 26 (spec §3.3).
+
+        SAKLANMAZ: saklansaydi uc girdiden biri degistiginde sessizce bayatlardi.
+        Uc girdi de bossa **None** doner — 0 "hesaplandi ve sifir" der ve bu
+        yanlis bilgidir. `counts` (GERCEK unite adedi) ile karistirilmamalidir:
+        biri plan, digeri gercektir ve ikisi bilerek ayri alanlardir.
+        """
+        if self.floor_count is None and self.units_per_floor is None and self.shop_count is None:
+            return None
+        return (self.floor_count or 0) * (self.units_per_floor or 0) + (self.shop_count or 0)
 
 
 class UnitResponse(BaseModel):
@@ -194,7 +234,41 @@ class BlockListResponse(BaseModel):
 # --- Yazma semalari ---
 
 
-class BlockCreate(BaseModel):
+class _BlockFormFields(BaseModel):
+    """BE formunun 13 alani — `Create` ve `Update` icin TEK kopya (spec §3.1).
+
+    KARAR 11: **HICBIRI ZORUNLU DEGILDIR.** Mockup'taki kirmizi `*` (BE 79
+    `floor_count`) yalniz UI ipucudur; ne DB'de `NOT NULL`, ne burada
+    zorunluluk dogurur — taslak destegi (Kalici Karar 4) bunu gerektirir.
+
+    `code` bos birakilirsa serviste URETILIR (BE 71 ipucu, spec §3.2).
+    """
+
+    code: str | None = Field(default=None, max_length=20)
+    basement_floor_count: int | None = Field(default=None, ge=0)
+    floor_count: int | None = Field(default=None, ge=0)
+    roof_type: BlockRoofType | None = None
+    units_per_floor: int | None = Field(default=None, ge=0)
+    ground_floor_usage: BlockGroundUsage | None = None
+    shop_count: int | None = Field(default=None, ge=0)
+    construction_area_m2: Decimal | None = Field(
+        default=None, ge=0, max_digits=12, decimal_places=2
+    )
+    elevator_count: int | None = Field(default=None, ge=0)
+    parking_type: BlockParkingType | None = None
+    estimated_delivery_date: date | None = None
+    status: BlockStatus | None = None
+    # `Text` degil: sinirsiz metin frontend'de `maxLength` konamamasina ve
+    # sessiz 422 sinifina yol acar (spec §3.1).
+    notes: str | None = Field(default=None, max_length=500)
+
+
+# Servis, 13 alani TEK TEK YAZMAK yerine bu kumeyi kullanir: yeni bir alan
+# eklendiginde `Create` ile yazma yolunun ayrisma ihtimali kalmaz.
+BLOCK_FORM_FIELDS = frozenset(_BlockFormFields.model_fields)
+
+
+class BlockCreate(_BlockFormFields):
     name: str = Field(min_length=1, max_length=50)
     # Tek santiyeli projede opsiyoneldir, otomatik atanir (spec §4.5): mockup'ta
     # santiye secici yoktur (KY 38 / KK 39 tekil "📍 Santiye" girdisi).
@@ -202,7 +276,7 @@ class BlockCreate(BaseModel):
     sort_order: int = Field(default=0, ge=0)
 
 
-class BlockUpdate(BaseModel):
+class BlockUpdate(_BlockFormFields):
     name: str | None = Field(default=None, min_length=1, max_length=50)
     site_id: uuid.UUID | None = None
     sort_order: int | None = Field(default=None, ge=0)
