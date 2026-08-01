@@ -247,12 +247,9 @@ async def update_section_endpoint(
     current_user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> SectionResponse:
-    section = await service.update_section(session, current_user, section_id, data)
-    await _audit(
-        request,
-        session,
-        current_user,
-        AuditAction.update,
-        messages.section_updated(await _owning_site_name(session, section), section.name),
-    )
+    # Metin SERVISTEN gelir (`update_site` deseni): `is_draft: true -> false`
+    # gecisi ("yayına alındı") duz guncellemeden ayirt edilebilsin diye — onceki
+    # `is_draft` degeri yalniz orada gorunur.
+    section, detail = await service.update_section(session, current_user, section_id, data)
+    await _audit(request, session, current_user, AuditAction.update, detail)
     return service.to_section(section)

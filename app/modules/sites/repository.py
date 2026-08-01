@@ -75,7 +75,10 @@ async def list_section_codes_with_prefix(
 
 
 async def get_section_by_code(
-    session: AsyncSession, site_id: uuid.UUID, code: str
+    session: AsyncSession,
+    site_id: uuid.UUID,
+    code: str,
+    exclude_section_id: uuid.UUID | None = None,
 ) -> Section | None:
     """`(site_id, code)` cakismasini IntegrityError'a DUSMEDEN once yakalar.
 
@@ -83,8 +86,14 @@ async def get_section_by_code(
     ozel Turkce mesaj ("Bu bölüm kodu bu şantiyede zaten kullanılıyor") verilsin,
     genel "Veri bütünlüğü hatası" degil. Kismi indeks `uq_sections_site_code`
     (yalniz `code IS NOT NULL`) YARIS DURUMU emniyet agi olarak KALIR.
+
+    `exclude_section_id` PATCH icindir (`exclude_site_id` ile ayni gerekce):
+    kendi kodunu yeniden gondermek cakisma DEGILDIR, aksi hâlde formun tum
+    alanlarini birlikte gonderen her PATCH 409 verirdi.
     """
     stmt = select(Section).where(Section.site_id == site_id, Section.code == code)
+    if exclude_section_id is not None:
+        stmt = stmt.where(Section.id != exclude_section_id)
     return (await session.execute(stmt)).scalar_one_or_none()
 
 

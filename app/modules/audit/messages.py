@@ -129,6 +129,13 @@ def section_updated(site_name: str, name: str) -> str:
     return f"Bölüm güncellendi: {site_name} · {name}"
 
 
+def section_published(site_name: str, name: str) -> str:
+    """`site_published` deseninin birebiri: `is_draft: true -> false` gecisi
+    (spec §5.3) duz guncellemeden AYRI metindir. YENI `AuditAction` ACILMAZ —
+    ayrim METINDEDIR, aksiyon `update` olarak kalir."""
+    return f"Bölüm taslaktan yayına alındı: {site_name} · {name}"
+
+
 def section_deleted(site_name: str, name: str) -> str:
     """`site_deleted` ile ayni kural: metin `session.delete`ten ONCE kurulur."""
     return f"Bölüm silindi: {site_name} · {name}"
