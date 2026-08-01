@@ -741,12 +741,16 @@ Denetim **yazmaz**. Veri satırı **yoktur**.
   (**döngü testi**: şablon indirilir, bir satır doldurulur, `import`'a verilir → 200.
   Başlık listesi iki yerde ayrışırsa bunu yakalar)
 
-- [ ] Adım 1–2: testler + **KIRMIZI GÖR** · Adım 3: `template.py` +
-      `importer.COLUMNS`'tan **türetilen** başlıklar (elle liste **YAZILMAZ** — ikinci otorite)
-- [ ] Adım 4: mutasyon · Adım 5: commit
+- [x] Adım 1–2: testler + **KIRMIZI GÖR** (11 kırmızı: 6 şablon + 4 IDOR + 1 denetim)
+      · Adım 3: `template.py` + `importer.COLUMNS`'tan **türetilen** başlıklar
+      (elle liste **YAZILMADI** — ikinci otorite yasağı)
+- [x] Adım 4: mutasyon (T17 openapi kapısıyla birlikte) · Adım 5: commit `f225bc3`
 
 **Kabul kriteri:** 6 test yeşil; başlık listesi `importer.COLUMNS`'tan türetiliyor
-(`grep` ile doğrulanır); yeni bağımlılık yok.
+(`grep` ile doğrulanır); yeni bağımlılık yok. → **KARŞILANDI** (2026-08-01).
+`template.py`'de tek otorite `from app.modules.units.importer import COLUMNS`;
+döngü testi (şablonu indir → doldur → `import` 200) ayrışmayı uçtan uca kilitler.
+`openpyxl` zaten bağımlılıktı — yeni paket yok.
 
 **Kapı komutu:** `p31_t14`, `pytest tests/modules/units -q`.
 
@@ -811,22 +815,27 @@ doğrulanması + modül sayısının **18'de kaldığının** kanıtı + tam kap
 `openapi.json` üretimi.
 **Spec:** §12.7.
 
-- [ ] **Adım 1:** §4'ün **7 grubunun tamamı** tek tek gözden geçirilir; her biri için
-      "neden değişti" commit mesajında **spec bölümüne atıfla** yazılır
-- [ ] **Adım 2:** `pytest tests/modules/test_seed_matrix.py tests/modules/test_roles_*.py`
-      → **dokunulmamış ve yeşil** (18×8 = 144)
-- [ ] **Adım 3:** migration turu — R1 → R2 → R3 `upgrade → downgrade → upgrade`
-      **açık revizyon id'leriyle**; `alembic heads` **tek** head
-- [ ] **Adım 4:** **tüm takım** koşulur (P7 sonrası taban **1411** test) —
-      beklenen: taban + ~110 yeni test, kırmızı **sıfır**
-- [ ] **Adım 5:** `.venv/bin/ruff check .` + `.venv/bin/ruff format --check .`
-      (**KAPI TÜM REPODUR** — `app tests` ile sınırlama `alembic/`'i kaçırır)
-- [ ] **Adım 6:** `openapi.json` üretilir (**commit EDİLMEZ**, gitignore'lu);
-      14 ucun tamamı ve `sales_status` enum'u şemada doğrulanır
-- [ ] **Adım 7:** commit
+- [x] **Adım 1:** §4'ün **10 grubunun tamamı** gözden geçirildi; her biri ilgili
+      task'ın commit mesajında spec bölümüne atıfla gerekçelendi
+      (10. grup — openapi 11 → 14 uç — `f65deea`)
+- [x] **Adım 2:** `test_seed_matrix.py` + `test_roles_*.py` → **dokunulmamış ve
+      yeşil** (18×8 = 144); `seed_data.py` diff'i **boş**
+- [x] **Adım 3:** migration turu `test_units_migration.py`'de açık revizyon
+      id'leriyle yeşil; `alembic heads` → **`c3d4e5f6a7b8` (tek head)**
+- [x] **Adım 4:** tüm takım: **1578 passed**, kırmızı **sıfır**
+      (taban 1411 + 167 yeni)
+- [x] **Adım 5:** `ruff check .` → *All checks passed* · `ruff format --check .`
+      → 260 dosya biçimli (`alembic/` dahil)
+- [x] **Adım 6:** `openapi.json` üretildi (**commit EDİLMEDİ**); 14 ucun tamamı,
+      `UnitSalesStatus`/`UnitFacing`/`UnitBulkPreview*`/`UnitImportValidation`
+      şemaları ve `UnitNumberingPattern`'ın **beş** değeri doğrulandı
+- [x] **Adım 7:** commit
 
 **Kabul kriteri:** tüm takım yeşil · ruff temiz (tüm repo) · tek head ·
 migration turu yeşil · modül sayısı 18 · `openapi.json`'da 14 units/blocks ucu.
+→ **KARŞILANDI** (2026-08-01). Tek çekince §7'de kayıtlı: `alembic check`
+gürültüsü `boq`/`contracts` modellerinin `env.py`'de import edilmemesinden gelir,
+**P3.1 öncesinden vardır** ve `units`/`blocks` için diff **boştur**.
 
 **Kapı komutu:**
 ```bash
@@ -899,77 +908,144 @@ ama bağımlılık zorlamaz): T4→T5 · T7 · T11→T12→T13 · T14.
 ## 6. Frontend'e devredilen iş (bu dilimde YAPILMAZ)
 
 > Bu bölüm frontend diliminin **brifingidir**; backend ajanı buraya dokunmaz.
+> **T17'de dilim kapanırken gerçekleşen hâline göre güncellendi** — aşağıdaki
+> maddeler tahmin değil, üretilen `openapi.json`'dan doğrulanmış sözleşmedir.
 
-1. **Yeni BFF kökü GEREKMEZ.** Kök yolları değişmiyor (`projects`, `blocks`, `units`) —
-   üç yeni uç mevcut köklerin altında. **Yine de `grep`'le doğrulanır**
-   (`src/app/api/backend/[...path]/route.ts` → `ALLOWED_ROOTS`); "zaten var" varsayılmaz.
-   Bu tuzak atlanırsa modül **yalnız canlıda** 404 verir.
-2. **`openapi.json` senkronu ZORUNLU.** `UnitResponse.sales_status` tipi **kırıcı**
-   biçimde değişiyor (`MetricPlaceholder` → `UnitSalesStatus` enum'u);
-   `UnitImportResult.errors` **kaldırıldı**. Backend merge + deploy sonrası
-   `openapi.json` elle kopyalanır ve `gen:api` yeniden koşulur.
-   `openapi.json` gitignore'lu — backend commit'inde **aranmaz**.
-3. **Ertelenen iki formun sekmeleri BASILMAZ** (karar 12 / onaylı sapma §11.4):
+1. **Yeni BFF kökü GEREKMEZ — ama `units` ve `blocks` köklerinin ikisi de listede
+   OLMALIDIR.** P3.1'in dört yeni yolu (`units/bulk/preview`, `units/import/validate`,
+   `units/import/template` ve genişleyen `units/import`) **`projects` kökü** altındadır;
+   `blocks` kökü değişmedi. Yine de `src/app/api/backend/[...path]/route.ts` →
+   `ALLOWED_ROOTS` **`grep`'le doğrulanır**: "zaten var" varsayılmaz, çünkü bu tuzak
+   atlanırsa modül **yalnız canlıda** 404 verir.
+2. **`openapi.json` senkronu ZORUNLU — `gen:api` koşulmadan istemci KIRIKTIR.**
+   Backend merge + deploy sonrası `openapi.json` elle kopyalanır ve `gen:api`
+   yeniden koşulur. `openapi.json` gitignore'lu — backend commit'inde **aranmaz**.
+   **Kırıcı değişikliklerin tam listesi:**
+   - **`UnitNumberingPattern.floor_based` → `floor_sequence` YENİDEN ADLANDIRILDI**
+     (T8, spec §5.2). Enum artık **beş** değerlidir: `sequential`, `block_sequence`,
+     `floor_sequence`, `label_sequence`, `block_floor_sequence`. `gen:api` yenilenmeden
+     `floor_based` gönderen istemci **422** alır — sessiz değil, gürültülü bir kırılma.
+   - **`UnitImportResult.errors` KALDIRILDI** (T12, §6.3). Yerine üç alan geldi:
+     `summary` (`total_rows`/`valid`/`warning`/`error`), `rows`
+     (`UnitImportRowReport` listesi — hata **ve** uyarı **ve** başarı satırları) ve
+     `skipped`. `created + skipped == summary.total_rows` **her zaman** doğrudur.
+   - **`UnitResponse.sales_status` yer tutucudan gerçek enum'a döndü**
+     (`MetricPlaceholder` → `UnitSalesStatus`: `listed`/`reserved`/`sold`/`closed`).
+   - **`UnitResponse.facing` YENİ** (`UnitFacing`: beş yön — `south`, `southwest`,
+     `east`, `north`, `west`; **pusulanın kalan üç yönü İCAT EDİLMEDİ**, karar 7).
+3. **`import` ve `import/validate` multipart'ta ÜÇ alan kabul eder:** `file`,
+   **`site_id`** (EI 61 "Hedef Şantiye", opsiyonel — yalnız **yeni blok açarken**
+   kullanılır) ve **`include_warnings`** (EI 192 kutucuğu, varsayılan **işaretli**).
+   Çok şantiyeli projede `site_id` **gönderilmezse 422** gelir; bugüne kadar bu yol
+   tamamen kapalıydı. `site_id` başka projenin şantiyesini gösterirse **404**.
+4. **Ünite numarası biçimi `C-04` → `C-4`** (T8, karar 1): başa sıfır dolgusu
+   **kaldırıldı**; genişlik `units_per_floor`'dan türer. Mockup TU 159-165 (`C-1 … C-7`)
+   kazandı. Ekranda `C-04` bekleyen bir sabit/format varsa **düzeltilir**.
+5. **`sales_status` ve üç sayaç (`sold_units`/`reserved_units`/`available_units`)
+   yer tutucudan GERÇEĞE döndü** (T6/T7): artık `CountPlaceholder` değil `int`'tir ve
+   `sales_status` sütunundan sayılır. **Buna karşılık `UnitTotals.sales_revenue` ve
+   `average_sale_price` HÂLÂ yer tutucudur** (P8'e ait) — "durum sütunu açıldı" diye
+   onları da gerçek sanıp biçimlendirmek yanlış veri gösterir.
+6. **`UnitKindBreakdown` artık BEŞ sayaçlıdır** (`apartment`, `shop`, `office`,
+   `warehouse`, `parking` + `total`) ama **ekran etiketleri DEĞİŞMEZ** (karar 13):
+   KY 71 / KK 72 / SY 74 hâlâ "Daire + Dükkan" der. Yeni üç sayaç **sıfırsa ekranda
+   hiç görünmez**. Mevcut ekran metinlerini "eksik" sanıp genişletmek bu kararın
+   **ihlalidir**.
+7. **"Şablon İndir" ARTIK GERÇEK BİR SUNUCU UCUDUR** (T14, §6.7):
+   `GET /projects/{id}/units/import/template` → 12 başlıklı **boş** `.xlsx`.
+   İzni **`view`**'dır (modülün tek "view yeter" yazma-akışı ucu) — `full` olmayan
+   kullanıcı da şablonu indirebilir. Yanıt **ikilidir**; `GOREV-SIRASI.md` §3'ün
+   `Content-Type` tabanlı indirme kuralı **burada geçerlidir** (6. maddedeki hata
+   raporunun tersine). Görünmeyen proje **404** verir.
+8. **Ertelenen iki formun sekmeleri BASILMAZ** (karar 12 / onaylı sapma §11.4):
    "Bölüm Ekle" ve "Paylaşım Girişi" sekmeleri **hiç eklenmez** — ne gizli-devre-dışı,
    ne "yakında" rozeti, ne tıklanınca boş sayfa. Şerit **dört** sekmeyle çıkar.
    **Eklenmemesi eksiklik değildir.**
-4. **`UnitKindBreakdown` etiketleri DEĞİŞMEZ** (karar 13): KY 71 / KK 72 / SY 74 hâlâ
-   "Daire + Dükkan" der. Yeni üç sayaç (`office`, `warehouse`, `parking`) yalnız
-   **sayaçlara** eklenir; sayaç **sıfırsa ekranda hiç görünmez**. Mevcut ekran metinlerini
-   "eksik" sanıp genişletmek bu kararın **ihlalidir**.
-5. **Excel yükleme metni düzeltilir** (onaylı sapma §11.3): `accept` özniteliği ve
+9. **Excel yükleme metni düzeltilir** (onaylı sapma §11.3): `accept` özniteliği ve
    yardım metni **`.xlsx · Maks 2 MB`** olur — mockup'ın "XLSX, XLS veya CSV · Maks 10 MB"
    metni **yanıltıcıdır**.
-6. **"Hata Raporunu İndir" istemci tarafında üretilir** (§6.6) — sunucu ucu **yok**;
-   rapor zaten `rows` içinde. `Content-Type` tabanlı ikili indirme kuralı burada
-   **geçerli değildir** (ağ isteği yok).
-7. **"Yeniden Doğrula" → "Aktar" akışında dosya iki kez POST edilir** (§6.2) — dosya
-   sunucuda saklanmıyor. Kullanıcı dosyayı **yeniden seçmez**; aynı `File` nesnesi gönderilir.
-8. **Maliyet alanları** (UE 91, TU 104) sunucuya **gitmez** (onaylı sapma §11.2):
-   UE 91 salt-okunur yer tutucu; TU 104 ya istemci-yerel hesap alanı kalır ya kaldırılır.
-9. **`notes` `String(500)`** → frontend'de `maxLength` **konur** (sessiz 422 sınıfı,
-   `GOREV-SIRASI.md` §3).
+10. **"Hata Raporunu İndir" istemci tarafında üretilir** (§6.6) — sunucu ucu **yok**;
+    rapor zaten `rows` içinde. `Content-Type` tabanlı ikili indirme kuralı burada
+    **geçerli değildir** (ağ isteği yok) — 7. maddedeki şablon ucuyla **karıştırılmaz**.
+11. **"Yeniden Doğrula" → "Aktar" akışında dosya iki kez POST edilir** (§6.2) — dosya
+    sunucuda saklanmıyor. Kullanıcı dosyayı **yeniden seçmez**; aynı `File` nesnesi gönderilir.
+12. **`Maliyet` sütunu okunur, UYARI üretir, ATILIR** (karar 10, §4.5): Excel'de sütun
+    **vardır** ve şablonda da basılır, ama `units`'te **kolonu yoktur**.
+    `Liste Fiyatı < Maliyet` satırı **uyarı** döner (EI 173 biçimi, tutar binlik
+    ayraçlı: `₺860.000`). Ayrıca **maliyet alanları** (UE 91, TU 104) sunucuya
+    **gitmez** (onaylı sapma §11.2): UE 91 salt-okunur yer tutucu; TU 104 ya
+    istemci-yerel hesap alanı kalır ya kaldırılır.
+13. **`notes` `String(500)`** → frontend'de `maxLength` **konur** (sessiz 422 sınıfı,
+    `GOREV-SIRASI.md` §3).
 
 ---
 
 ## 7. "Bitti" tanımı — kontrol listesi
 
+> **T17'de (2026-08-01) madde madde işaretlendi.** Her kutunun yanındaki kanıt
+> koşulan komuttur; "yapıldı sanıyorum" ile işaretlenen kutu YOKTUR.
+
 **Kod / test**
-- [ ] T1–T17 tamamlandı, her task'ın kabul kriteri karşılandı
-- [ ] Tüm takım yeşil (taban 1411 + ~110 yeni), kırmızı **sıfır**
-- [ ] §4'teki **10 grubun** her biri bilerek güncellendi ve commit mesajında gerekçelendi
-- [ ] §4'ün "kırılmayacağı garanti edilenler" listesi **dokunulmadan** yeşil
-- [ ] Her task'ta "KIRMIZI GÖR" adımı **koşuldu**; ilk koşuda yeşil gelen testte
-      **mutasyon denetimi** yapıldı
+- [x] T1–T17 tamamlandı, her task'ın kabul kriteri karşılandı
+      (T14 bu turda kapandı — önceki tur onu atlamıştı)
+- [x] Tüm takım yeşil: **1578 passed**, kırmızı **sıfır**
+      (`p31_t17` yerel DB'si; P3.1 öncesi taban 1411 → +167 test)
+- [x] §4'teki **10 grubun** her biri bilerek güncellendi ve commit mesajında
+      gerekçelendi (10. grup — openapi 11 → 14 uç — T17 commit'inde)
+- [x] §4'ün "kırılmayacağı garanti edilenler" listesi **dokunulmadan** yeşil
+      (`test_seed_matrix.py`, `test_roles_*.py`, `test_units_allocation.py`,
+      P3'ün 14 IDOR senaryosu)
+- [x] Her task'ta "KIRMIZI GÖR" adımı **koşuldu**; T17'nin openapi testleri ilk
+      koşuda yeşil geldiği için **mutasyon denetimi** yapıldı (şablon yolu
+      bozuldu → 3 test kırmızı; `validate`'ten `site_id` düşürüldü → 1 test
+      kırmızı; ikisi de geri alındı)
 
 **Şema / migration**
-- [ ] R1 → R2 → R3 `upgrade → downgrade → upgrade` **yerel** DB'de yeşil,
-      **açık revizyon id'leriyle** (`head`/`-1` **kullanılmadı**)
-- [ ] `alembic heads` **tek** head
-- [ ] Her revizyonun `downgrade`'inde ilgili `DROP TYPE IF EXISTS` var (8 tip)
-- [ ] **Hiçbir yeni kolon `NOT NULL` değil** (13/13 + 8/8 doğrulandı)
-- [ ] **Veri migration'ı YOK** (`blocks.code` backfill'i yazılmadı — karar 5/8)
-- [ ] **Canlı DB'ye migration KOŞULMADI**; her alembic komutu `DATABASE_URL` override'lı
-- [ ] `--autogenerate` diff'i boş (model ↔ migration uyumu)
+- [x] R1 → R2 → R3 `upgrade → downgrade → upgrade` **yerel** DB'de yeşil,
+      **açık revizyon id'leriyle** (`test_units_migration.py`: `test_r1_*`,
+      `test_r2_*`, `test_r3_*` + tam tur testi)
+- [x] `alembic heads` **tek** head: `c3d4e5f6a7b8`
+- [x] Her revizyonun `downgrade`'inde ilgili `DROP TYPE IF EXISTS` var (8 tip)
+      (`test_r1_downgrade_eski_tipi_birakmaz`, `test_r2_downgrade_yedi_tipi_de_dusurur`,
+      `test_r2_ikinci_upgrade_patlamaz`)
+- [x] **Hiçbir yeni kolon `NOT NULL` değil** (13/13 + 8/8 doğrulandı, T3 testleri)
+- [x] **Veri migration'ı YOK** (`blocks.code` backfill'i yazılmadı — karar 5/8)
+- [x] **Canlı DB'ye migration KOŞULMADI**; her alembic komutu `DATABASE_URL`
+      override'lı yerel DB'ye vurdu (`.env` **canlıyı** gösteriyor, dokunulmadı)
+- [x] `--autogenerate` diff'i **`units`/`blocks` için boş** — `alembic check`
+      yerel head DB'sinde bu iki tablo için **sıfır** işlem üretti.
+      **BİLİNEN ve P3.1 DIŞI gürültü:** `alembic/env.py` `boq` ve
+      `contracts`/`progress_payments` modellerini import etmediği için
+      `alembic check` o dört tabloyu "removed table" sanır. Bu **P3.1'den
+      ÖNCE de vardı**, bu dilimde açılmadı ve burada **kapatılmadı** —
+      düzeltmesi (env.py'ye iki import) ayrı bir dilimin işidir.
 
 **Kurallar**
-- [ ] İzin modülü sayısı **18**, matris **144**; `seed_data.py`'ye dokunulmadı
-- [ ] Yeni izin modülü **yok**; okuma `projects:view`, yazma `full`, silme `admin`
-- [ ] Görünmeyen kayıt → **404**, var olmayan kimlikle **ayırt edilemez**
-- [ ] `boq_items` / `sections` / `contracts` tablolarına **dokunulmadı**
-- [ ] Hiçbir yeni FK açılmadı (`sales_status` bir **enum sütunudur**, bağ değil)
-- [ ] `sales_status` P8 geçiş notu `models.py` docstring'inde **birebir** duruyor
+- [x] İzin modülü sayısı **18**, matris **144**; `seed_data.py`'ye dokunulmadı
+      (`test_seed_matrix.py` dokunulmadan yeşil)
+- [x] Yeni izin modülü **yok**; okuma `projects:view`, yazma `full`, silme `admin`.
+      **Tek istisna bilinçlidir:** `import/template` bir yazma-akışı ucu olmasına
+      rağmen `view` ile açılır (§6.2 kararı, §12.6/I6)
+- [x] Görünmeyen kayıt → **404**, var olmayan kimlikle **ayırt edilemez**
+      (`test_units_idor.py`; I1–I8'in tamamı + P3'ün 14 senaryosu)
+- [x] `boq_items` / `sections` / `contracts` tablolarına **dokunulmadı**
+- [x] Hiçbir yeni FK açılmadı (`sales_status` bir **enum sütunudur**, bağ değil)
+- [x] `sales_status` P8 geçiş notu `models.py` docstring'inde **birebir** duruyor
 
 **Kapılar**
-- [ ] `.venv/bin/ruff check .` + `.venv/bin/ruff format --check .` temiz
-      (**tüm repo**, `alembic/` dahil)
-- [ ] `openapi.json` üretildi, **commit edilmedi**, 14 uç doğrulandı
-- [ ] Her task sonunda **commit** var; **push YOK**
+- [x] `.venv/bin/ruff check .` + `.venv/bin/ruff format --check .` temiz
+      (**tüm repo**, `alembic/` dahil — 260 dosya)
+- [x] `openapi.json` üretildi, **commit edilmedi** (gitignore'lu), **14 ucun
+      tamamı** + T6/T8/T9/T13 şemaları doğrulandı; `UnitNumberingPattern` beş
+      değerli (`floor_sequence`), `UnitKindBreakdown` beş sayaçlı,
+      `UnitImportResult` alanları `summary/created/skipped/blocks_created/rows`
+- [x] Her task sonunda **commit** var; **push YOK**
 
 **Teslim**
-- [ ] Spec ve plan `backend/docs/superpowers/{specs,plans}/` altına taşındı
+- [x] Spec ve plan `backend/docs/superpowers/{specs,plans}/` altına taşındı
 - [ ] `GOREV-SIRASI.md`'ye dilim özeti + alınan kararlar eklendi
-      (§0.C'nin cevabı **kalıcı karar** olarak yazılır)
+      (§0.C'nin cevabı **kalıcı karar** olarak yazılır) — **AÇIK**
 - [ ] Kullanıcıya bildirilecekler: push/PR/merge/deploy kararı bekliyor ·
       **merge ≠ deploy** (`railway up --detach` elle) · canlı doğrulama
       `/openapi.json` üzerinden · **canlı DB'ye migration elle koşulmaz**
+      — **AÇIK** (kullanıcı kararı)
