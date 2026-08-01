@@ -38,7 +38,8 @@ from tests.modules.units.test_units_api import (
 )
 
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-_HEADERS = ["Blok", "Ünite No", "Tür"]
+# P3.1 T11: `Oda Tipi` ve `Brüt m²` ZORUNLU sutun oldu (EI 161, spec §6.5).
+_HEADERS = ["Blok", "Ünite No", "Tür", "Oda Tipi", "Brüt m²"]
 
 _PROJECT_MISSING = "Proje bulunamadı"
 _BLOCK_MISSING = "Blok bulunamadı"
@@ -157,7 +158,7 @@ async def test_idor_post_units_blocks_bulk_import_invisible_404(
 
     if endpoint == "units/import":
         resp = await client.post(
-            url, files=_file(_xlsx([["A Blok", "9", "Daire"]])), headers=_auth(token)
+            url, files=_file(_xlsx([["A Blok", "9", "Daire", "3+1", 120]])), headers=_auth(token)
         )
     elif endpoint == "units/bulk":
         payload = {
@@ -359,7 +360,7 @@ async def test_idor_import_block_name_collision_creates_in_own_project(
 
     resp = await client.post(
         f"/projects/{project_a.id}/units/import",
-        files=_file(_xlsx([[block_b.name, "1", "Daire"]])),
+        files=_file(_xlsx([[block_b.name, "1", "Daire", "3+1", 120]])),
         headers=_auth(token),
     )
 

@@ -255,7 +255,9 @@ async def import_units(
     """
     project = await guards.visible_project(session, actor, project_id)
     try:
-        rows, parse_errors = parse_units_file(content)
+        # Uyarilar T12'de raporlanacak; T11'de cozumleme ONLARI URETIR ama
+        # hep-ya-hic yolu henuz kullanmaz (kismi aktarim T12'nin isidir).
+        rows, parse_errors, _warnings = parse_units_file(content)
     except ImportFileError as exc:
         # Dosyanin TAMAMINI reddeden hata: satir listesi yok, tek Turkce mesaj.
         raise UnitValidationError(str(exc)) from exc
@@ -314,6 +316,10 @@ async def import_units(
                 list_price=row.list_price,
                 appraisal_value=row.appraisal_value,
                 owner_side=row.owner_side,
+                # P3.1 T11: `Kat` METIN olarak AYNEN yazilir (karar 4), `Cephe`
+                # bes degerli sozlukten gelir.
+                floor=row.floor,
+                facing=row.facing,
                 sort_order=offset,
             )
         )

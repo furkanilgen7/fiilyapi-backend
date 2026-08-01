@@ -18,7 +18,7 @@ from decimal import ROUND_HALF_UP, Decimal, DecimalException
 
 from openpyxl import load_workbook
 
-from app.modules.units.models import UnitKind, UnitOwnerSide
+from app.modules.units.models import UnitFacing, UnitKind, UnitOwnerSide
 
 # Spec §7.8 sinir tablosu — sihirli sayi birakilmaz.
 # 1000 satirlik bir `.xlsx` ~50 KB'tir; 2 MB fazlasiyla yeterlidir ve bellek
@@ -37,6 +37,21 @@ IMPORT_TOO_LARGE = "Dosya çok büyük (en fazla 2 MB)"
 IMPORT_TOO_MANY_ROWS = f"Dosyada en fazla {MAX_IMPORT_ROWS} satır olabilir"
 IMPORT_MISSING_HEADERS = "Excel başlıkları eksik: {fields}"
 IMPORT_ROW_ERRORS = "Dosya işlenemedi, {count} satırda hata var"
+# P3.1 T11 satir metinleri (spec §6.5, §8.3). Spec bunlari `guards.py`'de
+# listeliyor; COZUMLEME duzeyinde uretildikleri icin BURADA duruyorlar —
+# `guards` DB'ye ve `projects.service`'e bagimlidir ve bu modulun saf kalmasi
+# (DB'siz, servis-ithalsiz) modul docstring'inin acik sozudur. Metinler spec'ten
+# BIREBIRDIR; yalniz dosya yeri farklidir.
+IMPORT_ROW_GROSS_REQUIRED = "Brüt m² sıfır olamaz"
+IMPORT_ROW_FLOOR_TOO_LONG = "Kat bilgisi en fazla 20 karakter olabilir"
+# EI 173 — mockup'taki TEK uyari kurali. Uyari kumesi KAPALIDIR (spec §6.5):
+# `min_sale_price` karsilastirmasi, m² basina fiyat sapmasi gibi kurallar
+# ICAT EDILMEZ.
+IMPORT_ROW_PRICE_BELOW_COST = "Fiyat maliyetin altında (₺{cost}) — kontrol edin"
+
+# `units.floor` METINDIR (karar 4) ve sutun `String(20)`; sinir COZUMLEMEDE
+# uygulanir ki kullanici DB'nin anlamsiz hatasini degil Turkce mesaji gorsun.
+MAX_FLOOR_LENGTH = 20
 
 _XLSX_SUFFIX = ".xlsx"
 _MONEY = Decimal("0.01")
@@ -62,33 +77,67 @@ class ImportColumn:
     required: bool
 
 
-# Spec §7.8 sutun tablosu — A `Blok` … I `Pay`. Sira DEGISTIRILEMEZ: eksik
-# baslik mesaji bu sirayla uretilir.
+# Spec §6.4 sutun tablosu (EI 85) — A `Blok` … L `Sahiplik`. Sira
+# DEGISTIRILEMEZ: eksik baslik mesaji ve `.xlsx` sablonu bu sirayla uretilir.
+#
+# P3.1 T11: 9 → 12 sutun. `Kat`, `Cephe`, `Maliyet` YENI; `Tip` → `Oda Tipi` ve
+# `Pay` → `Sahiplik` YENIDEN ADLANDIRILDI (eskiler `_HEADER_SYNONYMS` ile
+# esanlamli kabul edilir). `Oda Tipi` ve `Brüt m²` ZORUNLU oldu (EI 161).
 COLUMNS: tuple[ImportColumn, ...] = (
     ImportColumn("Blok", "block_name", True),
+    ImportColumn("Kat", "floor", False),
     ImportColumn("Ünite No", "unit_no", True),
     ImportColumn("Tür", "unit_kind", True),
-    ImportColumn("Tip", "layout", False),
-    ImportColumn("Brüt m²", "gross_area_m2", False),
+    ImportColumn("Oda Tipi", "layout", True),
+    ImportColumn("Brüt m²", "gross_area_m2", True),
     ImportColumn("Net m²", "net_area_m2", False),
+    ImportColumn("Cephe", "facing", False),
     ImportColumn("Liste Fiyatı", "list_price", False),
     ImportColumn("Rayiç Değer", "appraisal_value", False),
-    ImportColumn("Pay", "owner_side", False),
+    # KARAR 10: okunur → uyariyi uretir → ATILIR. `ImportRow`'da karsiligi
+    # YOKTUR ve `units`'te kolonu ACILMAZ (spec §4.5).
+    ImportColumn("Maliyet", "cost", False),
+    ImportColumn("Sahiplik", "owner_side", False),
 )
 
-_DECIMAL_FIELDS = ("gross_area_m2", "net_area_m2", "list_price", "appraisal_value")
+# Geriye donuk uyum (spec §6.4): P3 CANLIDADIR ve kullanicinin elinde eski
+# sablonla doldurulmus dosyalar olabilir. Esanlamli kabul etmemek sessiz bir
+# "baslik eksik" 422'si uretirdi.
+_HEADER_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "layout": ("Tip",),
+    "owner_side": ("Pay",),
+}
+
+_DECIMAL_FIELDS = ("gross_area_m2", "net_area_m2", "list_price", "appraisal_value", "cost")
 
 _KIND_BY_LABEL = {
     normalize_header("Daire"): UnitKind.apartment,
     normalize_header("Dükkan"): UnitKind.shop,
+    # P3.1 §4.3 (UE 74): uc yeni deger. Enum genislemesi migration `c1d2e3f4a5b6`.
+    normalize_header("Ofis"): UnitKind.office,
+    normalize_header("Depo"): UnitKind.warehouse,
+    normalize_header("Otopark"): UnitKind.parking,
 }
 _OWNER_SIDE_BY_LABEL = {
     normalize_header("BİZ"): UnitOwnerSide.contractor,
     normalize_header("ARSA"): UnitOwnerSide.landowner,
+    # UE 95 etiketleri: kullanici FORMDA GORDUGU metni Excel'e yazacaktir.
+    normalize_header("Yüklenici (Biz)"): UnitOwnerSide.contractor,
+    normalize_header("Arsa Sahibi Payı"): UnitOwnerSide.landowner,
+}
+# Karar 7 (spec §4.2): mockup'ta gecen TAM OLARAK bes deger. Pusulanin kalan uc
+# yonu ICAT EDILMEZ.
+_FACING_BY_LABEL = {
+    normalize_header("Güney"): UnitFacing.south,
+    normalize_header("Güney-Batı"): UnitFacing.southwest,
+    normalize_header("Doğu"): UnitFacing.east,
+    normalize_header("Kuzey"): UnitFacing.north,
+    normalize_header("Batı"): UnitFacing.west,
 }
 
-_KIND_CHOICES = "Daire, Dükkan"
+_KIND_CHOICES = "Daire, Dükkan, Ofis, Depo, Otopark"
 _OWNER_SIDE_CHOICES = "BİZ, ARSA"
+_FACING_CHOICES = "Güney, Güney-Batı, Doğu, Kuzey, Batı"
 
 
 @dataclass(frozen=True)
@@ -106,11 +155,31 @@ class ImportRow:
     list_price: Decimal | None
     appraisal_value: Decimal | None
     owner_side: UnitOwnerSide | None
+    # P3.1 T11 (spec §6.4): `floor` METINDIR ve DONUSTURULMEZ; `facing` bes
+    # degerli sozlukten gelir. `cost` ALANI BILEREK YOKTUR (karar 10): maliyet
+    # yalniz uyariyi uretmek icin okunur, hicbir yere sizmaz.
+    floor: str | None = None
+    facing: UnitFacing | None = None
 
 
 @dataclass(frozen=True)
 class RowError:
     """`UnitImportRowError` semasinin saf karsiligi — importer Pydantic'e bagimli degildir."""
+
+    row: int
+    column: str | None
+    message: str
+
+
+@dataclass(frozen=True)
+class RowWarning:
+    """UYARI — satir GECERLIDIR, kullanici isterse yazilir (EI 192, spec §6.5).
+
+    `RowError` ile AYNI sekilde olmasina ragmen AYRI bir tiptir: tek listede
+    tasinsalardi bir uyarinin satiri sessizce atlatmasi (ya da bir hatanin
+    yazilmasi) tek bir `if` hatasi kadar yakin olurdu — kismi aktarimin en
+    pahali hata sinifi tam olarak budur (plan T12 risk notu).
+    """
 
     row: int
     column: str | None
@@ -139,8 +208,19 @@ def parse_owner_side(raw: object) -> UnitOwnerSide | None:
         return None
     side = _OWNER_SIDE_BY_LABEL.get(key)
     if side is None:
-        raise ValueError(f"Pay tanınmıyor ({_OWNER_SIDE_CHOICES})")
+        raise ValueError(f"Sahiplik tanınmıyor ({_OWNER_SIDE_CHOICES})")
     return side
+
+
+def parse_facing(raw: object) -> UnitFacing | None:
+    """Bos hucre `None` doner (cephe zorunlu degil); tanınmayan deger SATIR HATASI."""
+    key = normalize_header(raw)
+    if not key:
+        return None
+    facing = _FACING_BY_LABEL.get(key)
+    if facing is None:
+        raise ValueError(f"Cephe tanınmıyor ({_FACING_CHOICES})")
+    return facing
 
 
 def _text(raw: object) -> str:
@@ -191,14 +271,20 @@ def ensure_size(size: int | None) -> None:
 
 
 def _header_index(sheet) -> dict[str, int]:
-    """Ilk satir basliktir. Beklenmeyen ek sutunlar YOK SAYILIR (spec §7.8)."""
+    """Ilk satir basliktir. Beklenmeyen ek sutunlar YOK SAYILIR (spec §7.8).
+
+    Kanonik baslik once denenir, YOKSA esanlamlisi (spec §6.4 geriye donuk
+    uyum): kullanicinin elindeki P3 sablonu `Tip`/`Pay` tasiyor.
+    """
     header_row = next(sheet.iter_rows(min_row=1, max_row=1, values_only=True), None) or ()
     positions = {normalize_header(cell): index for index, cell in enumerate(header_row)}
-    index = {
-        column.field: positions[normalize_header(column.label)]
-        for column in COLUMNS
-        if normalize_header(column.label) in positions
-    }
+    index: dict[str, int] = {}
+    for column in COLUMNS:
+        for label in (column.label, *_HEADER_SYNONYMS.get(column.field, ())):
+            key = normalize_header(label)
+            if key in positions:
+                index[column.field] = positions[key]
+                break
     missing = [column.label for column in COLUMNS if column.required and column.field not in index]
     if missing:
         raise ImportFileError(IMPORT_MISSING_HEADERS.format(fields=", ".join(missing)))
@@ -212,22 +298,35 @@ def _cell(row: tuple, index: dict[str, int], field: str) -> object:
     return row[position]
 
 
+def _label(field: str) -> str:
+    return next(column.label for column in COLUMNS if column.field == field)
+
+
 def _parse_row(
     number: int, row: tuple, index: dict[str, int]
-) -> tuple[ImportRow | None, list[RowError]]:
+) -> tuple[ImportRow | None, list[RowError], list[RowWarning]]:
     """Bir satirin TUM hatalari toplanir — ilk hatada durulmaz.
 
     Kullanici 48 satirlik bir dosyayi hata basina bir kez yuklemek zorunda
-    kalmamalidir (spec §7.8 gerekcesi).
+    kalmamalidir (spec §7.8 gerekcesi) ve EI 161 bir satirda IKI mesaj gosteriyor.
+
+    `Maliyet` YEREL bir degiskendir (karar 10): yalniz EI 173 uyarisini uretir,
+    donen `ImportRow`'a girmez ve hicbir sutuna yazilmaz.
     """
     errors: list[RowError] = []
+    warnings: list[RowWarning] = []
     values: dict[str, object] = {}
 
-    for column in (COLUMNS[0], COLUMNS[1], COLUMNS[3]):  # Blok, Ünite No, Tip
-        text = _text(_cell(row, index, column.field))
-        if column.required and not text:
-            errors.append(RowError(number, column.label, f"{column.label} boş olamaz"))
-        values[column.field] = text or None
+    for field in ("block_name", "floor", "unit_no", "layout"):
+        label = _label(field)
+        text = _text(_cell(row, index, field))
+        required = next(column.required for column in COLUMNS if column.field == field)
+        if required and not text:
+            errors.append(RowError(number, label, f"{label} boş olamaz"))
+        # KARAR 4: `Kat` METINDIR — sozluk YOKTUR, tek kural uzunluktur.
+        if field == "floor" and len(text) > MAX_FLOOR_LENGTH:
+            errors.append(RowError(number, label, IMPORT_ROW_FLOOR_TOO_LONG))
+        values[field] = text or None
 
     try:
         values["unit_kind"] = parse_kind(_cell(row, index, "unit_kind"))
@@ -235,19 +334,35 @@ def _parse_row(
         errors.append(RowError(number, "Tür", str(exc)))
 
     for field in _DECIMAL_FIELDS:
-        label = next(column.label for column in COLUMNS if column.field == field)
+        label = _label(field)
         try:
             values[field] = parse_decimal(_cell(row, index, field), label)
         except ValueError as exc:
             errors.append(RowError(number, label, str(exc)))
+    # EI 161 "Brüt m² sıfır olamaz": bos DA sifir DA hatadir (spec §6.5).
+    if values.get("gross_area_m2") in (None, Decimal(0)):
+        errors.append(RowError(number, _label("gross_area_m2"), IMPORT_ROW_GROSS_REQUIRED))
+
+    try:
+        values["facing"] = parse_facing(_cell(row, index, "facing"))
+    except ValueError as exc:
+        errors.append(RowError(number, "Cephe", str(exc)))
 
     try:
         values["owner_side"] = parse_owner_side(_cell(row, index, "owner_side"))
     except ValueError as exc:
-        errors.append(RowError(number, "Pay", str(exc)))
+        errors.append(RowError(number, "Sahiplik", str(exc)))
+
+    cost = values.pop("cost", None)
+    list_price = values.get("list_price")
+    if isinstance(cost, Decimal) and isinstance(list_price, Decimal) and list_price < cost:
+        warnings.append(
+            RowWarning(number, _label("list_price"), IMPORT_ROW_PRICE_BELOW_COST.format(cost=cost))
+        )
 
     if errors:
-        return None, errors
+        # Satirin durumu TEKTIR (EI 119): hatali satir ayrica "uyarili" olmaz.
+        return None, errors, []
     return (
         ImportRow(
             row=number,
@@ -260,8 +375,11 @@ def _parse_row(
             list_price=values["list_price"],  # type: ignore[arg-type]
             appraisal_value=values["appraisal_value"],  # type: ignore[arg-type]
             owner_side=values["owner_side"],  # type: ignore[arg-type]
+            floor=values["floor"],  # type: ignore[arg-type]
+            facing=values["facing"],  # type: ignore[arg-type]
         ),
         [],
+        warnings,
     )
 
 
@@ -285,12 +403,19 @@ def _duplicate_errors(rows: list[ImportRow]) -> list[RowError]:
     return errors
 
 
-def parse_units_file(content: bytes) -> tuple[list[ImportRow], list[RowError]]:
-    """`bytes` → cozumlenmis satirlar + satir bazli hatalar.
+def parse_units_file(
+    content: bytes,
+) -> tuple[list[ImportRow], list[RowError], list[RowWarning]]:
+    """`bytes` → cozumlenmis satirlar + satir hatalari + satir UYARILARI.
 
     Dosyanin tamamini reddeden durumlar `ImportFileError` firlatir; satir bazli
     hatalar DONDURULUR, cunku cagiran onlari DB kaynakli hatalarla BIRLESTIRIP
-    tek raporda sunar (hep-ya-hic + satir bazli rapor, spec §7.8).
+    tek raporda sunar (spec §6.3).
+
+    Uyarilar (EI 173) hatalardan AYRI listede doner: hata satiri YAZILMAZ, uyari
+    satiri kullanici isterse YAZILIR (EI 192) — ikisini tek listede tasimak
+    kismi aktarimin en pahali hata sinifini (yanlis satirin yazilmasi) davet
+    ederdi.
     """
     if len(content) > MAX_IMPORT_BYTES:
         raise ImportFileError(IMPORT_TOO_LARGE)
@@ -303,6 +428,7 @@ def parse_units_file(content: bytes) -> tuple[list[ImportRow], list[RowError]]:
         index = _header_index(sheet)
         rows: list[ImportRow] = []
         errors: list[RowError] = []
+        warnings: list[RowWarning] = []
         processed = 0
         # Satir numarasi Excel'in kendi numarasidir: baslik 1, veri 2'den baslar.
         for number, raw in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
@@ -313,11 +439,12 @@ def parse_units_file(content: bytes) -> tuple[list[ImportRow], list[RowError]]:
             # dosyayi bellege alip sonra saymak sinirin amacini bozardi.
             if processed > MAX_IMPORT_ROWS:
                 raise ImportFileError(IMPORT_TOO_MANY_ROWS)
-            parsed, row_errors = _parse_row(number, raw, index)
+            parsed, row_errors, row_warnings = _parse_row(number, raw, index)
             if parsed is not None:
                 rows.append(parsed)
             errors.extend(row_errors)
+            warnings.extend(row_warnings)
     finally:
         # `read_only` modunda acik kalan dosya tanitici birakilmaz.
         workbook.close()
-    return rows, [*errors, *_duplicate_errors(rows)]
+    return rows, [*errors, *_duplicate_errors(rows)], warnings

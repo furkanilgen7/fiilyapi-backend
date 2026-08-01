@@ -28,16 +28,21 @@ _IP = "203.0.113.42"
 _IP_HEADER = {"x-forwarded-for": _IP}
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
+# P3.1 T11 (spec §6.4): 12 kanonik sutun. `Oda Tipi` ve `Brüt m²` ZORUNLU
+# oldugu icin satir uretecinin varsayilanlari da dolu gelir (EI 161).
 _IMPORT_HEADERS = [
     "Blok",
+    "Kat",
     "Ünite No",
     "Tür",
-    "Tip",
+    "Oda Tipi",
     "Brüt m²",
     "Net m²",
+    "Cephe",
     "Liste Fiyatı",
     "Rayiç Değer",
-    "Pay",
+    "Maliyet",
+    "Sahiplik",
 ]
 
 
@@ -222,7 +227,10 @@ async def test_import_writes_exactly_one_audit_row_for_10_units(
     await _block(db_session, project, site, name="A Blok")
     headers = await _admin(client, db_session, user_factory)
     content = _xlsx(
-        [["A Blok", str(no), "Daire", None, None, None, None, None, None] for no in range(1, 11)]
+        [
+            ["A Blok", None, str(no), "Daire", "3+1", 120, None, None, None, None, None, None]
+            for no in range(1, 11)
+        ]
     )
 
     resp = await client.post(
