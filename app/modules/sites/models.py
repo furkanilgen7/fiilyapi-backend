@@ -14,6 +14,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
     func,
     text,
@@ -41,9 +42,27 @@ class SiteStatus(str, enum.Enum):
 
 
 class SectionStatus(str, enum.Enum):
+    """Sira `Form - Bolum Ekle` satir 71'den gelir: Planlandi · Aktif · Beklemede.
+    `on_hold` P6'da eklendi (spec §4 / §7 S1 onayi); `completed` KALIR."""
+
     planned = "planned"
     active = "active"
+    on_hold = "on_hold"
     completed = "completed"
+
+
+class SectionType(str, enum.Enum):
+    """Bolum turu (`Form - Bolum Ekle` satir 70, spec §3). Etiketler:
+    Temel & Altyapi · Kaba Insaat · Ince Isler · Cephe & Cati · Mekanik-Elektrik ·
+    Peyzaj · Teslimat & Kabul. Nullable — taslak destegi (kalici karar 4)."""
+
+    foundation_infra = "foundation_infra"
+    structural = "structural"
+    finishing = "finishing"
+    facade_roof = "facade_roof"
+    mep = "mep"
+    landscape = "landscape"
+    handover = "handover"
 
 
 class Site(Base):
@@ -204,7 +223,13 @@ class Section(Base):
     """Bolum — santiyenin ic kirilimi (spec §2.2). ISTEGE BAGLI katmandir:
     santiye sifir bolumle gecerlidir, otomatik "Genel" bolumu ACILMAZ (spec §2.4).
 
-    `budget` sutunu YOK — bolum bedeli BOQ kalemlerinin toplamidir, turevdir.
+    BOLUM BEDELI — karar DEGISTI (P6 spec §7 S2a, kullanici onayi 2026-08-02):
+    eskiden `budget` sutunu bilincli olarak YOKTU, cunku bolum bedeli BOQ
+    kalemlerinin toplami sayiliyordu. Ama BOQ-bolum bagi ACILMADI (P6 kalici
+    karar 1), yani bugun turetilecek bir kaynak YOK — mockup'in zorunlu
+    "Bolum Bedeli" alani (Form 110) hicbir sekilde doldurulamazdi. Bu yuzden
+    ELLE girilen `budget_amount` acildi. Bag geldiginde bu kolon turev degere
+    cevrilecek; o gune kadar TEK kaynak budur.
     """
 
     __tablename__ = "sections"
@@ -217,6 +242,14 @@ class Section(Base):
             "code",
             unique=True,
             postgresql_where=text("code IS NOT NULL"),
+        ),
+        CheckConstraint(
+            "planned_worker_count IS NULL OR planned_worker_count >= 0",
+            name="ck_sections_planned_worker_count",
+        ),
+        CheckConstraint(
+            "budget_amount IS NULL OR budget_amount >= 0",
+            name="ck_sections_budget_amount",
         ),
     )
 
@@ -236,9 +269,8 @@ class Section(Base):
         server_default="planned",
     )
     # Bolum sorumlusu (mockup 111): FK + `manager_name` anlik goruntusu. `SET NULL`
-    # cunku kullanici silinse de ad kalmali. `estimated_amount` EKLENMEZ (spec §3.4):
-    # bolum bedeli BOQ kalemlerinin toplamidir, elle girilen ikinci bir kaynak
-    # kacinilmaz olarak ayrisir.
+    # cunku kullanici silinse de ad kalmali. (P2'deki "estimated_amount EKLENMEZ"
+    # notu P6'da gecersiz kaldi — bkz. sinif docstring'i, `budget_amount`.)
     manager_user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -249,6 +281,35 @@ class Section(Base):
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+
+    # ----------------------------------------------------------------- #
+    # P6 — `Form - Bolum Ekle` alanlari (spec §3). `is_draft` DISINDA hepsi
+    # nullable: taslak destegi, mockup'taki `*` yalniz UI ipucudur; zorunluluk
+    # uygulama katmaninda ve YALNIZ taslak-disi POST'ta uygulanir.
+    # ----------------------------------------------------------------- #
+    section_type: Mapped[SectionType | None] = mapped_column(
+        Enum(SectionType, name="section_type"), nullable=True
+    )
+    # Aciklama / Kapsam (Form 74-75): uzunluk siniri YOK, `Text`.
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Yardimci Sorumlu (Form 84): `manager_user_id` deseni — FK `SET NULL` +
+    # ad anlik goruntusu, kullanici silinse de evraktaki referans KALIR.
+    deputy_manager_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    deputy_manager_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # Form 85 — `sites.planned_worker_count` deseni.
+    planned_worker_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Bolum Bedeli (Form 110) — elle girilir, bkz. sinif docstring'i.
+    budget_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
+    # Taslak (Form 242 "Taslak Kaydet"). Mevcut satirlar `false` = yayinda sayilir.
+    is_draft: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
