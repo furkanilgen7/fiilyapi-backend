@@ -315,7 +315,13 @@ async def test_section_created_updated_messages_unchanged(
     headers = await _admin(client, db_session, user_factory)
 
     created = await client.post(
-        f"/sites/{site.id}/sections", json={"name": "Kaba İnşaat"}, headers=headers
+        # `is_draft` P6 T3'te eklendi: denetim METNI taslak/yayin ayrimi TASIMAZ
+        # (T3 karari — taslak icin ayri `AuditAction` acilmaz), dolayisiyla bu
+        # test icin taslak govdesi yeterlidir ve `Form - Bolum Ekle`in zorunlu
+        # alanlarini buraya tasimaz.
+        f"/sites/{site.id}/sections",
+        json={"name": "Kaba İnşaat", "is_draft": True},
+        headers=headers,
     )
     section_id = created.json()["id"]
     updated = await client.patch(

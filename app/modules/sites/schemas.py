@@ -318,8 +318,19 @@ class SiteUpdate(BaseModel):
 
 
 class SectionCreate(BaseModel):
-    """`budget` YOK (spec §2.2) — bolum bedeli BOQ kalemlerinin toplamidir."""
+    """`Form - Bolum Ekle`in tam govdesi (P6 §5, T3).
 
+    Yer tutucu `budget` alani BURADA DA YOKTUR (spec §2.2): o BOQ turevidir ve
+    girdi olarak alinmaz. Elle girilen `budget_amount` onun yerine GECMEZ, ayri
+    bir kolondur (bkz. `Section` docstring'i, §7 S2a).
+
+    Mockup'ta gorunup burada OLMAYANLAR — spec §6, bu dilimde ARA COZUM
+    YAZILMAZ: BOQ atamalari (Form 131-211), taseron/makine (88-98),
+    bagimlilik/milestone/Gantt (115-123, 237), belgeler (214-233).
+    "Süre (Gün)" (Form 109) `readonly` bir TUREVDIR, saklanmaz.
+    """
+
+    # Bossa `BLM-NN` uretilir (Form 68 ipucu: "Boş bırakılırsa otomatik").
     code: str | None = Field(default=None, min_length=1, max_length=50)
     name: str = Field(min_length=1, max_length=150)
     # Varsayilan `planned` (spec §2.3): yeni bolum kural olarak planlanmis dogar.
@@ -330,7 +341,25 @@ class SectionCreate(BaseModel):
     manager_name: str | None = Field(default=None, max_length=200)
     start_date: date | None = None
     end_date: date | None = None
+    # Form 69 "Bölüm Sırası" mockup'ta `*` tasir ama VARSAYILANI oldugu icin
+    # govdeden hic gelmese bile ASLA bos kalmaz — bu yuzden `guards`ta ayrica
+    # zorunlu kilinmaz (`P3.1` sira deseni korunur, davranis DEGISMEDI).
     sort_order: int = Field(default=0, ge=0)
+
+    # --- P6 · T3 genislemesi (spec §3/§5). Tipler `SectionUpdate` ile BIREBIR
+    # AYNIDIR (`ge=0` dahil): iki govde arasinda ayrisan bir kural, ayni alani
+    # POST'ta kabul edip PATCH'te reddeden sessiz bir tutarsizlik olurdu.
+    section_type: SectionType | None = None
+    description: str | None = None
+    # `manager_user_id` ile AYNI kural: FK verilirse servis `deputy_manager_name`i
+    # `users.full_name` ile EZER; ad FK'nin turevidir.
+    deputy_manager_user_id: uuid.UUID | None = None
+    deputy_manager_name: str | None = Field(default=None, max_length=200)
+    planned_worker_count: int | None = Field(default=None, ge=0)
+    budget_amount: Decimal | None = Field(default=None, ge=0)
+    # Form 242 "Taslak Kaydet" / 243 "Bölümü Oluştur". Varsayilan YAYINDIR:
+    # zorunluluklar yalniz burada `False` iken kosar (kalici karar 4).
+    is_draft: bool = False
 
 
 class SectionUpdate(BaseModel):

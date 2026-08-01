@@ -194,7 +194,11 @@ async def test_create_section_and_audit(client, db_session, user_factory, projec
 
     resp = await client.post(
         f"/sites/{site.id}/sections",
-        json={"name": "Kat 6-10 Kaba İnşaat", "sort_order": 2},
+        # `is_draft` P6 T3'te eklendi: bu test DURUM VARSAYILANINI ve denetim
+        # satirini olcer, `Form - Bolum Ekle`in zorunluluklarini DEGIL — taslak
+        # govdesi o kurallari kapsam disi birakir (zorunluluklari
+        # `test_section_create.py` sabitler).
+        json={"name": "Kat 6-10 Kaba İnşaat", "sort_order": 2, "is_draft": True},
         headers=_auth(token),
     )
 

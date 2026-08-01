@@ -59,6 +59,12 @@ _BOQ = "boq"
 # Santiye kodu oneki (spec §3.2, mockup satir 67 yer tutucusu `SNT-2026-003`).
 _SITE_CODE_PREFIX = "SNT"
 
+# Bolum kodu oneki + hane sayisi (P6 §5, `Form - Bolum Ekle` satir 68 yer
+# tutucusu `BLM-06`). Iki hane MUCBIR SINIR DEGILDIR: 99'u asan bir santiyede
+# `:02d` kendiliginden uc haneye tasar, kod uretimi durmaz.
+_SECTION_CODE_PREFIX = "BLM"
+_SECTION_CODE_DIGITS = 2
+
 # ISG "Dış Kaynak — OSGB" secilince `safety_officer_name`e yazilan SABIT etiket
 # (spec §3.3). Bu bir HATA METNI degil bir VERI DEGERIDIR, bu yuzden `guards.py`de
 # degil burada durur. OSGB FIRMA ADI alani ICAT EDILMEZ: mockup'ta boyle bir input
@@ -99,6 +105,31 @@ async def _next_site_code(session: AsyncSession) -> str:
         if suffix.isdigit():
             max_seq = max(max_seq, int(suffix))
     return f"{prefix}{max_seq + 1:03d}"
+
+
+async def _next_section_code(session: AsyncSession, site_id: uuid.UUID) -> str:
+    """`BLM-NN` uretir (P6 §5): SANTIYE ICINDEKI en buyuk sira + 1, 2 hane, 1'den.
+
+    `_next_site_code` deseninin birebiri — ayni uc ozellik gecerlidir:
+
+    * **Sayimla DEGIL maksimum+1** — silinen kod yeniden kullanilmaz ve elle
+      verilmis `BLM-06` sayaci ilerletir (sonraki otomatik kod `BLM-07`'dir).
+    * Sayisal soneki ayristirilamayan kodlar (canlidaki ad-turevi `GENEL`)
+      sessizce ATLANIR — hata uretmez, sayaci kaydirmaz, `UPDATE` almazlar.
+    * Yaris durumunda kismi indeks `uq_sections_site_code` ihlali mevcut
+      IntegrityError -> 409 isleyicisine duser; otomatik yeniden deneme YAPILMAZ.
+
+    TEK FARK kapsamdir: santiye sayaci sirket geneli, bolum sayaci SANTIYE
+    ICIDIR — gerekcesi `repository.list_section_codes_with_prefix` docstring'inde.
+    """
+    prefix = f"{_SECTION_CODE_PREFIX}-"
+    codes = await repository.list_section_codes_with_prefix(session, site_id, prefix)
+    max_seq = 0
+    for code in codes:
+        suffix = code[len(prefix) :]
+        if suffix.isdigit():
+            max_seq = max(max_seq, int(suffix))
+    return f"{prefix}{max_seq + 1:0{_SECTION_CODE_DIGITS}d}"
 
 
 def _remaining_days(site: Site) -> int | None:
@@ -622,25 +653,71 @@ async def update_site(
     return site, detail
 
 
+# Bolumun IKI sorumlu alani ve ad anlik goruntuleri. FK -> ad esleme TEK yerde
+# durur; POST (T3) ve PATCH (T2) bunu KOPYALAMAZ, PAYLASIR — iki kopya zamanla
+# ayrisir ve ayrisan taraf, adi FK'sindan farkli bir kayit uretir.
+_SECTION_MANAGER_FIELDS = (
+    ("manager_user_id", "manager_name"),
+    ("deputy_manager_user_id", "deputy_manager_name"),
+)
+
+
+async def _resolved_manager_names(session: AsyncSession, values: dict) -> dict[str, str]:
+    """Verilen govdedeki sorumlu FK'lerinin ad anlik goruntulerini cozer.
+
+    Kosul `is not None`dir: FK'yi acikca NULL'lamak ad anlik goruntusunu SILMEZ
+    (kullanici silinse bile evrakta kalmasiyla ayni gerekce). Cozum 422
+    (`Seçilen kullanıcı bulunamadı`) uretebildigi icin cagiran taraf bunu HER
+    ZAMAN ilk `session.add`den ONCE calistirir; gecersiz kullanici hicbir alani
+    degistirmemelidir. Izinli (`on_leave`) personel atanabilir, pasif olan 422 —
+    gerekcesi `repository.get_assignable_user` docstring'inde.
+    """
+    return {
+        name_field: await _resolve_user_name(session, values[fk_field])
+        for fk_field, name_field in _SECTION_MANAGER_FIELDS
+        if values.get(fk_field) is not None
+    }
+
+
 async def create_section(
     session: AsyncSession, actor: User, site_id: uuid.UUID, data: SectionCreate
 ) -> Section:
+    """P6 §5 — `Form - Bolum Ekle`. Sira `create_site`in adimlarinin aynisidir:
+    gorunurluk -> dogrulama -> kullanici cozumu -> kod -> YAZMA.
+
+    422 ureten her adim ilk `session.add`den ONCE biter (§8.2): eksik alanli ya
+    da pasif kullanicili bir istek YARIM bir bolum satiri birakmaz.
+    """
     site, _ = await _visible_site(session, actor, site_id)
+    # Taslak-farkindalikli dogrulama (kalici karar 4): "Taslak Kaydet" (Form 242)
+    # zorunlulugu kaldirir, TUTARLILIGI kaldirmaz.
+    guards.validate_section(data, is_draft=data.is_draft)
     # FK verilmisse ad govdedeki serbest metnin UZERINE yazilir (create_site ile
     # ayni kural): ad FK'nin turevidir, ikinci bir gercek kaynak degildir.
-    manager_name = data.manager_name
-    if data.manager_user_id is not None:
-        manager_name = await _resolve_user_name(session, data.manager_user_id)
+    names = {"manager_name": data.manager_name, "deputy_manager_name": data.deputy_manager_name}
+    names.update(await _resolved_manager_names(session, data.model_dump()))
+    # Kod uretimi (bossa) + cakisma on-kontrolu -> 409 alanina ozel Turkce mesajla;
+    # santiye kodununkiyle AYNI desen, yeni bir desen icat edilmez.
+    code = data.code or await _next_section_code(session, site.id)
+    if await repository.get_section_by_code(session, site.id, code) is not None:
+        raise DuplicateError(guards.DUPLICATE_SECTION_CODE)
     section = Section(
         site_id=site.id,
-        code=data.code,
+        code=code,
         name=data.name,
         status=data.status,
         manager_user_id=data.manager_user_id,
-        manager_name=manager_name,
         start_date=data.start_date,
         end_date=data.end_date,
         sort_order=data.sort_order,
+        # --- P6 · T3: `Form - Bolum Ekle` alanlari ---
+        section_type=data.section_type,
+        description=data.description,
+        deputy_manager_user_id=data.deputy_manager_user_id,
+        planned_worker_count=data.planned_worker_count,
+        budget_amount=data.budget_amount,
+        is_draft=data.is_draft,
+        **names,
     )
     session.add(section)
     await session.flush()
@@ -654,17 +731,9 @@ async def update_section(
     section, _ = await _visible_section(session, actor, section_id)
     changes = data.model_dump(exclude_unset=True)
     # Kullanici cozumu YAZMADAN ONCE (update_site ile ayni sira): gecersiz
-    # kullanici govdedeki HICBIR alani degistirmez. `deputy_manager_user_id`
-    # `manager_user_id` deseninin birebiridir — ayni `_resolve_user_name`,
-    # dolayisiyla IZINLI (`on_leave`) personel de atanabilir, pasif olan 422.
-    # Kosul `is not None`dir: FK'yi acikca NULL'lamak ad anlik goruntusunu
-    # SILMEZ (kullanici silinse bile evrakta kalmasiyla ayni gerekce).
-    for fk_field, name_field in (
-        ("manager_user_id", "manager_name"),
-        ("deputy_manager_user_id", "deputy_manager_name"),
-    ):
-        if changes.get(fk_field) is not None:
-            changes[name_field] = await _resolve_user_name(session, changes[fk_field])
+    # kullanici govdedeki HICBIR alani degistirmez. Esleme POST ile PAYLASILIR
+    # (`_resolved_manager_names`), kopyalanmaz.
+    changes.update(await _resolved_manager_names(session, changes))
     for field, value in changes.items():
         setattr(section, field, value)
     await session.flush()

@@ -507,7 +507,9 @@ async def test_post_section_manager_user_id(client, db_session, user_factory, pr
 
     resp = await client.post(
         f"/sites/{site.id}/sections",
-        json={"name": "Kaba İnşaat", "manager_user_id": str(manager.id)},
+        # `is_draft` P6 T3'te eklendi: burada olculen sey SORUMLU FK -> ad anlik
+        # goruntusudur, `Form - Bolum Ekle`in zorunluluklari degil.
+        json={"name": "Kaba İnşaat", "manager_user_id": str(manager.id), "is_draft": True},
         headers=_auth(token),
     )
 

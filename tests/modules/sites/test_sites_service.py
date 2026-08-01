@@ -362,7 +362,12 @@ async def test_create_section_defaults_to_planned(seeded_db, user_factory, proje
     site = await _site(seeded_db, project)
     user = await _patron(seeded_db, user_factory, "s23@t.co")
 
-    section = await service.create_section(seeded_db, user, site.id, SectionCreate(name="Kat 6-10"))
+    # `is_draft=True`: bu test yalnizca DURUM VARSAYILANINI olcer. P6 T3'ten beri
+    # taslak-disi bir bolum `Form - Bolum Ekle`in `*` alanlarini ister; onlari
+    # buraya tasimak testin konusunu degistirirdi (bkz. `test_section_create.py`).
+    section = await service.create_section(
+        seeded_db, user, site.id, SectionCreate(name="Kat 6-10", is_draft=True)
+    )
 
     assert section.status is SectionStatus.planned
     assert section.site_id == site.id

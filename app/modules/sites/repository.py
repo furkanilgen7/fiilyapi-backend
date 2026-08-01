@@ -56,6 +56,38 @@ async def get_section(session: AsyncSession, section_id: uuid.UUID) -> Section |
     return await session.get(Section, section_id)
 
 
+async def list_section_codes_with_prefix(
+    session: AsyncSession, site_id: uuid.UUID, prefix: str
+) -> list[str]:
+    """Bir SANTIYEDEKI, verilen onekle baslayan bolum kodlari (P6 §5, `BLM-NN`).
+
+    `list_codes_with_prefix` (santiye) deseninin birebiri, TEK FARKLA: burada
+    `site_id` SUZGECI VARDIR. Santiye kodu evrakta (irsaliye, puantaj, hakedis)
+    kurumsal kimlik gibi okundugu icin sayaci sirket genelidir; bolum kodu ise
+    yalniz kendi santiyesinin ic siralamasinda okunur — her santiyenin kendi
+    `BLM-01`inden baslamasi kullaniciyi yaniltmaz, aksine beklenendir. Kisit da
+    zaten santiye ici tekildir (`uq_sections_site_code`).
+
+    Kodsuz bolumler (kismi indeks onlara izin verir) `LIKE` suzgecine takilmaz.
+    """
+    stmt = select(Section.code).where(Section.site_id == site_id, Section.code.like(f"{prefix}%"))
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def get_section_by_code(
+    session: AsyncSession, site_id: uuid.UUID, code: str
+) -> Section | None:
+    """`(site_id, code)` cakismasini IntegrityError'a DUSMEDEN once yakalar.
+
+    `get_site_by_code` deseninin birebiri ve ayni gerekce: kullaniciya alanina
+    ozel Turkce mesaj ("Bu bölüm kodu bu şantiyede zaten kullanılıyor") verilsin,
+    genel "Veri bütünlüğü hatası" degil. Kismi indeks `uq_sections_site_code`
+    (yalniz `code IS NOT NULL`) YARIS DURUMU emniyet agi olarak KALIR.
+    """
+    stmt = select(Section).where(Section.site_id == site_id, Section.code == code)
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
 async def get_site_by_code(
     session: AsyncSession,
     project_id: uuid.UUID,
