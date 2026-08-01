@@ -730,7 +730,7 @@ def test_maliyet_okunur_ama_dondurulen_satirda_kolon_yok():
     assert "cost" not in {field for field in rows[0].__dataclass_fields__}
     # Uyari YALNIZ fiyat maliyetin ALTINDA kalan satirda dogar (EI 173).
     assert [(w.row, w.message) for w in warnings] == [
-        (3, "Fiyat maliyetin altında (₺860000.00) — kontrol edin")
+        (3, "Fiyat maliyetin altında (₺860.000) — kontrol edin")
     ]
 
 
@@ -1010,7 +1010,7 @@ async def test_import_fiyat_maliyetin_altinda_warning(
     body = (await _post_import(client, project, content, token)).json()
 
     assert body["rows"][0]["status"] == "warning"
-    assert body["rows"][0]["messages"] == ["Fiyat maliyetin altında (₺860000.00) — kontrol edin"]
+    assert body["rows"][0]["messages"] == ["Fiyat maliyetin altında (₺860.000) — kontrol edin"]
     assert body["rows"][0]["imported"] is True
 
 

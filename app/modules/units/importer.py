@@ -49,6 +49,22 @@ IMPORT_ROW_FLOOR_TOO_LONG = "Kat bilgisi en fazla 20 karakter olabilir"
 # ICAT EDILMEZ.
 IMPORT_ROW_PRICE_BELOW_COST = "Fiyat maliyetin altında (₺{cost}) — kontrol edin"
 
+
+def _lira(amount: Decimal) -> str:
+    """Tutari BINLIK AYRACLI yazar: `860000.00` → `860.000` (koordinator karari).
+
+    Ham `Decimal` gomulurse kullanici mesajda `₺860000.00` gorur ve rakamlari
+    gozle saymak zorunda kalir. Mockup'taki `₺860K` KISALTMASI ise EKRAN
+    gosterimidir: mesaj metnine gomulseydi frontend tutari bir daha kendi
+    para birimi bicimlendiricisinden geciremezdi (metinden sayi geri
+    okunamaz). Bu yuzden metne TAM sayi, binlik ayracli girer.
+
+    Kurus BASAMAKLARI GOSTERILMEZ — bu bir UYARI ipucudur, muhasebe satiri
+    degil; dosyadaki ham deger rapor satirinin `RowEcho`'sunda AYNEN durur.
+    """
+    return f"{amount:,.0f}".replace(",", ".")
+
+
 # `units.floor` METINDIR (karar 4) ve sutun `String(20)`; sinir COZUMLEMEDE
 # uygulanir ki kullanici DB'nin anlamsiz hatasini degil Turkce mesaji gorsun.
 MAX_FLOOR_LENGTH = 20
@@ -399,7 +415,9 @@ def _parse_row(number: int, row: tuple, index: dict[str, int]) -> ParsedRow:
     list_price = values.get("list_price")
     if isinstance(cost, Decimal) and isinstance(list_price, Decimal) and list_price < cost:
         warnings.append(
-            RowWarning(number, _label("list_price"), IMPORT_ROW_PRICE_BELOW_COST.format(cost=cost))
+            RowWarning(
+                number, _label("list_price"), IMPORT_ROW_PRICE_BELOW_COST.format(cost=_lira(cost))
+            )
         )
 
     # EI 118-125: rapor satiri dosyadaki degerleri HATALI satirda da tasir —
