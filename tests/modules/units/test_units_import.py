@@ -23,8 +23,9 @@ import uuid
 
 import pytest
 from openpyxl import Workbook
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
+from app.modules.audit.models import AuditLog
 from app.modules.units.importer import (
     COLUMNS,
     normalize_header,
@@ -1011,3 +1012,145 @@ async def test_import_fiyat_maliyetin_altinda_warning(
     assert body["rows"][0]["status"] == "warning"
     assert body["rows"][0]["messages"] == ["Fiyat maliyetin altında (₺860000.00) — kontrol edin"]
     assert body["rows"][0]["imported"] is True
+
+
+# --- P3.1 T13: POST /projects/{id}/units/import/validate (spec §6.2, §12.5/40-41) ---
+#
+# `bulk/preview` ile AYNI garanti: **HICBIR SEY YAZMAZ**. Garanti sessizce
+# bozulabilecegi icin testler durum koduyla yetinmez; unite, blok VE denetim
+# satiri sayimlarini olcer.
+
+
+async def _post_validate(client, project, content: bytes, token: str, **form):
+    return await client.post(
+        f"/projects/{project.id}/units/import/validate",
+        files={"file": ("uniteler.xlsx", content, _XLSX_MIME)},
+        data={key: str(value) for key, value in form.items()},
+        headers=_auth(token),
+    )
+
+
+async def test_validate_EI_senaryosu_summary_birebir(
+    client, db_session, user_factory, project_factory
+):
+    """Spec §12.5/40: EI 95-98 kutulari 24 / 22 / 1 / 1; `rows` 24 satir."""
+    project = await project_factory("T13-1", project_type="kendi_yatirim")
+    site = await _site(db_session, project)
+    await _block(db_session, project, site, name="A Blok")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await _post_validate(client, project, _xlsx(_ei_rows()), token)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["summary"] == {"total_rows": 24, "valid": 22, "warning": 1, "error": 1}
+    assert len(body["rows"]) == 24
+    assert body["blocks_to_create"] == []
+    error_row = next(r for r in body["rows"] if r["status"] == "error")
+    assert error_row["messages"] == ["Oda Tipi boş olamaz", "Brüt m² sıfır olamaz"]
+
+
+async def test_validate_hicbir_satir_yazilmaz(client, db_session, user_factory, project_factory):
+    """Spec §12.5/41: oncesi/sonrasi unite VE blok sayimi ESIT.
+
+    `blocks_to_create` dolu OLSA BILE hicbir blok acilmaz — dogrulama yalniz
+    "acilacak" der, acmaz.
+    """
+    project = await project_factory("T13-2", project_type="kendi_yatirim")
+    await _site(db_session, project)
+    token = await _login(client, user_factory, "system_admin")
+    content = _xlsx([_row(block="Yeni Blok", unit_no="1")])
+
+    resp = await _post_validate(client, project, content, token)
+
+    assert resp.status_code == 200
+    assert resp.json()["blocks_to_create"] == ["Yeni Blok"]
+    assert await _count_units(db_session, project.id) == 0
+    assert await _count_blocks(db_session, project.id) == 0
+
+
+async def test_validate_denetim_yazmaz(client, db_session, user_factory, project_factory):
+    """Spec §9: dogrulama bir OKUMA ucudur → denetim satiri URETMEZ (P4 T7).
+
+    Sayim MUTLAKTIR (`== 0`): tek satir bile "yazan uc denetim yazar" kuralini
+    bir bayraga bagli hâle getirirdi.
+    """
+    project = await project_factory("T13-3", project_type="kendi_yatirim")
+    site = await _site(db_session, project)
+    await _block(db_session, project, site, name="A Blok")
+    token = await _login(client, user_factory, "system_admin")
+    await db_session.execute(delete(AuditLog))
+
+    resp = await _post_validate(client, project, _xlsx(_ei_rows()), token)
+
+    assert resp.status_code == 200
+    assert (
+        int((await db_session.execute(select(func.count()).select_from(AuditLog))).scalar_one())
+        == 0
+    )
+
+
+async def test_validate_ve_import_ayni_rapor_uretir(
+    client, db_session, user_factory, project_factory
+):
+    """TEK KAYNAK KANITI (spec §6.2): iki uc de `_plan_rows`'tan beslenir.
+
+    Ayni dosya icin `rows` BIREBIR aynidir; tek fark `imported` bayragidir.
+    Ayrisirlarsa "dogrulamada gecerli gorunup aktarimda atlanan satir" sinifi
+    dogar ve kullanici bunu ancak eksik unitelerden fark ederdi.
+    """
+    project = await project_factory("T13-4", project_type="kendi_yatirim")
+    site = await _site(db_session, project)
+    await _block(db_session, project, site, name="A Blok")
+    token = await _login(client, user_factory, "system_admin")
+    content = _xlsx(_ei_rows())
+
+    validated = (await _post_validate(client, project, content, token)).json()
+    imported = (await _post_import(client, project, content, token)).json()
+
+    assert validated["summary"] == imported["summary"]
+    assert [{**r, "imported": None} for r in validated["rows"]] == [
+        {**r, "imported": None} for r in imported["rows"]
+    ]
+
+
+async def test_validate_imported_daima_false(client, db_session, user_factory, project_factory):
+    """Spec §6.3: dogrulamada `imported` DAIMA `False` — "gecerli" ile "yazildi"
+    ayri sorulardir ve tek alana indirilseydi dogrulama sonucu aktarim sonucu
+    gibi okunabilirdi."""
+    project = await project_factory("T13-5", project_type="kendi_yatirim")
+    site = await _site(db_session, project)
+    await _block(db_session, project, site, name="A Blok")
+    token = await _login(client, user_factory, "system_admin")
+
+    body = (await _post_validate(client, project, _xlsx(_ei_rows()), token)).json()
+
+    assert all(row["imported"] is False for row in body["rows"])
+    assert any(row["status"] == "ok" for row in body["rows"])
+
+
+async def test_validate_requires_full_permission(client, db_session, user_factory, project_factory):
+    """Spec §6.2 / IDOR-13: `view` YETMEZ — dogrulama yazma akisinin parcasidir."""
+    project = await project_factory("T13-6", project_type="kendi_yatirim")
+    token = await _login_with_access(client, db_session, user_factory, "site_chief")
+
+    resp = await _post_validate(client, project, _xlsx([_row()]), token)
+
+    assert resp.status_code == 403
+
+
+async def test_validate_baska_projenin_site_id_404(
+    client, db_session, user_factory, project_factory
+):
+    """`site_id` dogrulama ucunda da denetlenir: kullanici gecersiz hedef
+    santiyeyi AKTARIMDAN ONCE ogrenmelidir (spec §6.2)."""
+    project = await project_factory("T13-7A", project_type="kendi_yatirim")
+    await _site(db_session, project, code="S-OWN")
+    other = await project_factory("T13-7B", project_type="kendi_yatirim")
+    foreign = await _site(db_session, other, code="S-FOREIGN")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await _post_validate(client, project, _xlsx([_row()]), token, site_id=foreign.id)
+
+    assert resp.status_code == 404
+    assert resp.json() == {"detail": "Şantiye bulunamadı"}

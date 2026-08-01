@@ -25,6 +25,7 @@ from app.modules.units.schemas import (
     UnitBulkPreview,
     UnitCreate,
     UnitImportResult,
+    UnitImportValidation,
     UnitListResponse,
     UnitOwnerSideFilter,
     UnitResponse,
@@ -303,6 +304,48 @@ async def update_allocation_endpoint(
     result, detail = await batch.update_allocation(session, user, project_id, data)
     await _audit(request, session, user, AuditAction.update, detail)
     return result
+
+
+@router.post(
+    "/projects/{project_id}/units/import/validate",
+    response_model=UnitImportValidation,
+    dependencies=[_FULL],
+)
+async def validate_import_endpoint(
+    project_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    file: Annotated[UploadFile, File()],
+    site_id: Annotated[uuid.UUID | None, Form()] = None,
+    include_warnings: Annotated[bool, Form()] = True,
+) -> UnitImportValidation:
+    """Spec §6.2 (EI 92-197, "Yeniden Doğrula"). **HICBIR SEY YAZMAZ.**
+
+    `bulk/preview` ile AYNI uc gerekceyle ayri uctur (`dry_run` bayragi DEGIL):
+    1. Yanit sekli farklidir (`UnitImportValidation` != `UnitImportResult`); tek
+       uc `response_model`'i bir `Union`'a zorlar ve `gen:api` ciktisinda sessiz
+       `undefined` sinifi dogar.
+    2. Denetim ayrimi temiz kalir: bu fonksiyon `_audit` CAGIRMAZ ve `Request`
+       parametresi bile ALMAZ — denetim yazmak icin gereken IP burada YOKTUR.
+    3. Kural TEK KOPYADIR: iki uc de `batch._plan_rows`'tan beslenir.
+
+    DOSYA SAKLANMADIGI ICIN (P3 §7.8'in degismeyen siniri) "Yeniden Doğrula →
+    Aktar" akisinda dosya IKI KEZ yuklenir. Tarayicida bu bedavadir: `File`
+    nesnesi zaten istemcinin bellegindedir. Frontend dilimi bunu bilerek yazar.
+    """
+    try:
+        importer.ensure_xlsx(file.filename)
+        importer.ensure_size(file.size)
+    except importer.ImportFileError as exc:
+        raise UnitValidationError(str(exc)) from exc
+    return await batch.validate_import(
+        session,
+        user,
+        project_id,
+        await file.read(),
+        site_id=site_id,
+        include_warnings=include_warnings,
+    )
 
 
 @router.post(
