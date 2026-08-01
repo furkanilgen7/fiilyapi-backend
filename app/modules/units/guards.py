@@ -41,6 +41,7 @@ BLOCK_MISSING = "Blok bulunamadı"
 UNIT_MISSING = "Ünite bulunamadı"
 SITE_MISSING = "Şantiye bulunamadı"
 DUPLICATE_BLOCK = "Bu blok adı bu projede zaten kullanılıyor"
+DUPLICATE_BLOCK_CODE = "Bu blok kodu bu projede zaten kullanılıyor"
 DUPLICATE_UNIT = "Bu ünite numarası bu blokta zaten kullanılıyor"
 BLOCK_HAS_UNITS = "Bu blokta ünite var, önce üniteleri silin"
 BULK_NUMBERS_TAKEN = "Üretilecek ünite numaralarından bazıları blokta zaten var"
@@ -49,7 +50,18 @@ SITE_REQUIRED = "Birden fazla şantiye var, blok için şantiye seçilmelidir"
 OWNER_SIDE_NOT_ALLOWED = "Ünite payı yalnızca kat karşılığı projelerde belirlenebilir"
 ALLOCATION_WRONG_TYPE = "Paylaşım yalnızca kat karşılığı projelerde kaydedilebilir"
 NET_GT_GROSS = "Net alan brüt alandan büyük olamaz"
+# Karar 9 (spec §4.2, §8.3): kume KODDA sabittir ve `schemas.VatRate` zorlar —
+# metin diger tum alan mesajlariyla birlikte BURADA durur.
+INVALID_VAT_RATE = "KDV oranı yalnızca %1, %10 veya %20 olabilir"
 DUPLICATE_IN_PAYLOAD = "Aynı ünite listede birden çok kez var"
+# Spec §8.3 / §6.1: kismi aktarimda dosya artik "islenemedi" durumuna DUSMEZ;
+# yalniz HIC gecerli satir yoksa 422 doner. `created=0` ile 200 donmek
+# kullanicinin "aktarildi" sanmasina yol acardi.
+IMPORT_NOTHING_TO_WRITE = "Aktarılabilecek geçerli satır yok"
+# Spec §8.3 — kat sablonu (TU 96-133). Kural `UnitBulkCreate.model_validator`'da
+# zorlanir; METIN diger tum alan mesajlariyla birlikte BURADA durur.
+SLOT_COUNT_MISMATCH = "Kat şablonu satır sayısı kat başına daire sayısıyla eşleşmiyor"
+SLOT_SEQUENCE_INVALID = "Kat şablonunda sıra numaraları geçersiz veya tekrarlı"
 
 
 # --- Gorunurluk (spec §8) ---
@@ -154,6 +166,21 @@ async def ensure_block_name_unique(
     """`uq_blocks_project_name` — acik SELECT ile ONDEN (spec §4.3, P4 deseni)."""
     if await repository.get_block_by_name(session, project_id, name, exclude_block_id) is not None:
         raise DuplicateError(DUPLICATE_BLOCK)
+
+
+async def ensure_block_code_unique(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    code: str,
+    exclude_block_id: uuid.UUID | None = None,
+) -> None:
+    """`uq_blocks_project_code` — acik SELECT ile ONDEN (spec §3.2).
+
+    Kullanici kodu ELLE girerse aynen kabul edilir (BE 71 alani serbest
+    yazilabilir); yalniz benzersizlik dogrulanir → cakisma **409**.
+    """
+    if await repository.get_block_by_code(session, project_id, code, exclude_block_id) is not None:
+        raise DuplicateError(DUPLICATE_BLOCK_CODE)
 
 
 async def ensure_unit_no_unique(

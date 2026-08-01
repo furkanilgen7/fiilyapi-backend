@@ -1,7 +1,8 @@
 import uuid
 from typing import Annotated
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel
@@ -13,8 +14,8 @@ from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
-from app.modules.units import batch, importer, service
-from app.modules.units.models import UnitKind
+from app.modules.units import batch, guards, importer, service
+from app.modules.units.models import UnitKind, UnitSalesStatus
 from app.modules.units.schemas import (
     BlockCreate,
     BlockListResponse,
@@ -22,14 +23,21 @@ from app.modules.units.schemas import (
     BlockUpdate,
     UnitAllocationRequest,
     UnitBulkCreate,
+    UnitBulkPreview,
     UnitCreate,
     UnitImportResult,
+    UnitImportValidation,
     UnitListResponse,
     UnitOwnerSideFilter,
     UnitResponse,
     UnitUpdate,
 )
+from app.modules.units.template import build_template_workbook
 from app.modules.users.models import User
+
+# `boq/router.py` ve `audit/router.py` ile AYNI sabit: uc modul de kendi
+# kopyasini tutar (mevcut desen), ortak bir `core` sabiti ACILMAZ.
+XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 # Uclar iki ayri kok altina dagilir (P4 deseni): proje baglamli uclar
 # `/projects/...`, kimligi yukari cozumleyen tekil uclar `/blocks/...` ve
@@ -95,6 +103,8 @@ async def list_units_endpoint(
     site_id: Annotated[uuid.UUID | None, Query()] = None,
     kind: Annotated[UnitKind | None, Query()] = None,
     owner_side: Annotated[UnitOwnerSideFilter | None, Query()] = None,
+    floor: Annotated[str | None, Query(max_length=20)] = None,
+    sales_status: Annotated[UnitSalesStatus | None, Query()] = None,
 ) -> UnitListResponse:
     """Spec §7.4. Suzgecler YALNIZ listeyi daraltir; `totals` daima projenin
     tamamini sayar. `site_id` blok uzerinden cozulur (`units`'te `site_id` yok)."""
@@ -106,6 +116,8 @@ async def list_units_endpoint(
         site_id=site_id,
         kind=kind,
         owner_side=owner_side,
+        floor=floor,
+        sales_status=sales_status,
     )
 
 
@@ -244,6 +256,35 @@ async def bulk_create_units_endpoint(
     return result
 
 
+@router.post(
+    "/projects/{project_id}/units/bulk/preview",
+    response_model=UnitBulkPreview,
+    dependencies=[_FULL],
+)
+async def preview_bulk_units_endpoint(
+    project_id: uuid.UUID,
+    data: UnitBulkCreate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> UnitBulkPreview:
+    """Spec §5.4 (TU 159-182). **HICBIR SEY YAZMAZ** ve **DENETIM URETMEZ**.
+
+    `dry_run` bayragi yerine AYRI UC olmasinin uc gerekcesi (spec §5.4):
+    1. Yanit sekilleri farklidir — gercek uretim `201 UnitListResponse` doner;
+       onizlemede `id`'si olan unite yoktur. Tek uc `response_model`'i bir
+       `Union`'a zorlar ve `gen:api` ciktisinda sessiz `undefined` sinifi dogar.
+    2. Denetim ayrimi temiz kalir: "yazan uc denetim yazar" kurali bir bayraga
+       BAGLI HALE GELMEZ. Bu yuzden bu fonksiyon `_audit` CAGIRMAZ ve `Request`
+       parametresi bile ALMAZ — denetim yazmak icin gereken IP bu ucta yoktur.
+    3. Uretim mantigi tek kopyadir: iki uc da `bulk.generate_units`'i cagirir.
+
+    Izin `full` KALIR: onizleme yazma akisinin parcasidir ve `view` kullanicisina
+    fiyat uretim kurallarini acmaz. Cakisma HATA DEGILDIR (TU 177) — satirlar
+    `conflict=true` ile 200 doner; blokaj yalniz `POST …/units/bulk`'tadir (409).
+    """
+    return await batch.preview_bulk_units(session, user, project_id, data)
+
+
 @router.patch(
     "/projects/{project_id}/units/allocation",
     response_model=UnitListResponse,
@@ -272,6 +313,48 @@ async def update_allocation_endpoint(
 
 
 @router.post(
+    "/projects/{project_id}/units/import/validate",
+    response_model=UnitImportValidation,
+    dependencies=[_FULL],
+)
+async def validate_import_endpoint(
+    project_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    file: Annotated[UploadFile, File()],
+    site_id: Annotated[uuid.UUID | None, Form()] = None,
+    include_warnings: Annotated[bool, Form()] = True,
+) -> UnitImportValidation:
+    """Spec §6.2 (EI 92-197, "Yeniden Doğrula"). **HICBIR SEY YAZMAZ.**
+
+    `bulk/preview` ile AYNI uc gerekceyle ayri uctur (`dry_run` bayragi DEGIL):
+    1. Yanit sekli farklidir (`UnitImportValidation` != `UnitImportResult`); tek
+       uc `response_model`'i bir `Union`'a zorlar ve `gen:api` ciktisinda sessiz
+       `undefined` sinifi dogar.
+    2. Denetim ayrimi temiz kalir: bu fonksiyon `_audit` CAGIRMAZ ve `Request`
+       parametresi bile ALMAZ — denetim yazmak icin gereken IP burada YOKTUR.
+    3. Kural TEK KOPYADIR: iki uc de `batch._plan_rows`'tan beslenir.
+
+    DOSYA SAKLANMADIGI ICIN (P3 §7.8'in degismeyen siniri) "Yeniden Doğrula →
+    Aktar" akisinda dosya IKI KEZ yuklenir. Tarayicida bu bedavadir: `File`
+    nesnesi zaten istemcinin bellegindedir. Frontend dilimi bunu bilerek yazar.
+    """
+    try:
+        importer.ensure_xlsx(file.filename)
+        importer.ensure_size(file.size)
+    except importer.ImportFileError as exc:
+        raise UnitValidationError(str(exc)) from exc
+    return await batch.validate_import(
+        session,
+        user,
+        project_id,
+        await file.read(),
+        site_id=site_id,
+        include_warnings=include_warnings,
+    )
+
+
+@router.post(
     "/projects/{project_id}/units/import",
     response_model=UnitImportResult,
     dependencies=[_FULL],
@@ -282,10 +365,19 @@ async def import_units_endpoint(
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
     file: Annotated[UploadFile, File()],
+    site_id: Annotated[uuid.UUID | None, Form()] = None,
+    include_warnings: Annotated[bool, Form()] = True,
 ) -> UnitImportResult:
-    """Spec §7.8. BELGE SAKLAMA ALTYAPISI GEREKMEZ ve kurulmayacaktir: dosya
+    """Spec §6.1-§6.5. BELGE SAKLAMA ALTYAPISI GEREKMEZ ve kurulmayacaktir: dosya
     bellekte okunur, uniteler yaratilir, dosya ATILIR. Diske, S3'e, veritabanina
     hicbir sey yazilmaz — P3'e sigmasinin tek sebebi budur.
+
+    KISMI AKTARIM (P3'un hep-ya-hic karari BILEREK tersine cevrildi, spec §6.1):
+    gecerli satirlar yazilir, hatalilar raporlanir. Hic gecerli satir yoksa 422 —
+    `created=0` ile 200 donmek kullanicinin "aktarildi" sanmasina yol acardi.
+
+    `site_id` (EI 61 "Hedef Şantiye", karar 3) YALNIZ yeni blok acarken kullanilir.
+    `include_warnings` EI 192 kutucugudur; varsayilani mockup'taki gibi ISARETLIDIR.
 
     Boyut IKI KEZ olculur: once istemcinin bildirdigi `size` ile (henuz govde
     bellege alinmadan), sonra GERCEKTEN okunan `bytes` uzunluguyla
@@ -296,6 +388,54 @@ async def import_units_endpoint(
         importer.ensure_size(file.size)
     except importer.ImportFileError as exc:
         raise UnitValidationError(str(exc)) from exc
-    result, detail = await batch.import_units(session, user, project_id, await file.read())
+    result, detail = await batch.import_units(
+        session,
+        user,
+        project_id,
+        await file.read(),
+        site_id=site_id,
+        include_warnings=include_warnings,
+    )
     await _audit(request, session, user, AuditAction.create, detail)
     return result
+
+
+def _content_disposition(filename: str) -> str:
+    """`boq/router.py` ile ayni kural: RFC 5987 `filename*` (UTF-8) yaninda
+    ASCII-guvenli bir `filename` de yollanir — proje kodu Turkce karakter
+    icerebilir ve eski istemciler `filename*` okumaz."""
+    ascii_fallback = filename.encode("ascii", errors="ignore").decode("ascii").replace('"', "")
+    if not ascii_fallback:
+        ascii_fallback = "unite-sablonu.xlsx"
+    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(filename)}"
+
+
+@router.get(
+    "/projects/{project_id}/units/import/template",
+    dependencies=[_VIEW],
+    response_class=Response,
+    responses={200: {"content": {XLSX_MEDIA_TYPE: {}}, "description": "Excel sablonu"}},
+)
+async def units_import_template_endpoint(
+    project_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> Response:
+    """Spec §6.7 (EI 37, 87 "Şablon İndir"). 12 baslikli BOS `.xlsx`.
+
+    IZIN `view`'DIR ve bu, modulun tek "view yeter" yazma-akisi ucudur (spec
+    §6.2 karari): sablon hicbir proje verisi tasimaz, `full`'a kapatmak veri
+    GIRECEK kullaniciyi akisin ilk adimindan mahrum birakirdi.
+
+    GORUNURLUK KAPISI YINE DE VARDIR (spec §12.6/I3): govde proje verisi
+    tasimasa da 200/404 farki tek basina bir PROJE VARLIK ORAKULUDUR.
+
+    Okuma ucudur — `_audit` CAGIRMAZ ve `Request` parametresi bile ALMAZ
+    (P4 T7 kurali; `validate` ucuyle ayni gerekce).
+    """
+    project = await guards.visible_project(session, user, project_id)
+    return Response(
+        content=build_template_workbook().getvalue(),
+        media_type=XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": _content_disposition(f"unite-sablonu-{project.code}.xlsx")},
+    )

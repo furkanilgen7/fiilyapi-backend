@@ -9,10 +9,9 @@ olmamalidir: bu modul yalnizca ORM nesnelerini semalara cevirir.
 from decimal import ROUND_HALF_UP, Decimal
 
 from app.modules.projects.models import ProjectType
-from app.modules.units.models import Block, Unit, UnitKind, UnitOwnerSide
+from app.modules.units.models import Block, Unit, UnitKind, UnitOwnerSide, UnitSalesStatus
 from app.modules.units.schemas import (
     BlockResponse,
-    CountPlaceholder,
     MetricPlaceholder,
     UnitKindBreakdown,
     UnitResponse,
@@ -54,10 +53,6 @@ def _metric(pending_module: str) -> MetricPlaceholder:
     return MetricPlaceholder(pending_module=pending_module)
 
 
-def _count(pending_module: str) -> CountPlaceholder:
-    return CountPlaceholder(pending_module=pending_module)
-
-
 def _sum(values: list[Decimal | None]) -> Decimal:
     """NULL'lar 0 SAYILIR (spec §6.1) ve toplama Decimal ile yapilir — float ASLA."""
     return _quantize_money(sum((value for value in values if value is not None), Decimal("0")))
@@ -67,7 +62,27 @@ def _counts(units: list[Unit]) -> UnitKindBreakdown:
     return UnitKindBreakdown(
         apartment=sum(1 for u in units if u.unit_kind is UnitKind.apartment),
         shop=sum(1 for u in units if u.unit_kind is UnitKind.shop),
+        # UE 74 (spec §4.3) — karar 13: sayaclar eklenir, EKRAN ETIKETLERI DEGIL.
+        office=sum(1 for u in units if u.unit_kind is UnitKind.office),
+        warehouse=sum(1 for u in units if u.unit_kind is UnitKind.warehouse),
+        parking=sum(1 for u in units if u.unit_kind is UnitKind.parking),
     )
+
+
+def _by_sales_status(units: list[Unit]) -> dict[UnitSalesStatus, int]:
+    """UE 94'un dort degerinin sayimi (spec §8.2).
+
+    Sayim BURADA, zaten bellekte olan liste uzerinde yapilir: ayri bir
+    `GROUP BY` sorgusu ikinci bir gidis-donus demek olurdu ve `totals` zaten
+    projenin TUM unitelerini alan tek sorgudan besleniyor. Dort anahtar da her
+    zaman doner; `sales_status` NULL olan (migration oncesi) satirlar hicbir
+    sayaca girmez — uydurulmus bir durum atanmaz.
+    """
+    counts = dict.fromkeys(UnitSalesStatus, 0)
+    for unit in units:
+        if unit.sales_status is not None:
+            counts[unit.sales_status] += 1
+    return counts
 
 
 def _basis_value(unit: Unit, basis: UnitValueBasis) -> Decimal | None:
@@ -84,12 +99,28 @@ def to_block(block: Block, site_name: str, units: list[Unit]) -> BlockResponse:
         site_name=site_name,
         sort_order=block.sort_order,
         counts=_counts(units),
+        # Blok formu (BE) — 13 alan aynen doner; `estimated_unit_count`
+        # BlockResponse'ta TUREVDIR ve burada hesaplanmaz (spec §3.3).
+        code=block.code,
+        basement_floor_count=block.basement_floor_count,
+        floor_count=block.floor_count,
+        roof_type=block.roof_type,
+        units_per_floor=block.units_per_floor,
+        ground_floor_usage=block.ground_floor_usage,
+        shop_count=block.shop_count,
+        construction_area_m2=block.construction_area_m2,
+        elevator_count=block.elevator_count,
+        parking_type=block.parking_type,
+        estimated_delivery_date=block.estimated_delivery_date,
+        status=block.status,
+        notes=block.notes,
     )
 
 
 def to_unit(unit: Unit, block_name: str) -> UnitResponse:
-    """Satis alanlari (KY 275-277, KKP 91-92) P8/P9/P10'un isidir ve yer tutucu
-    doner — `units`'te saklanmaz (spec §4.6)."""
+    """Satis FIYATI/ALICISI (KY 275/277, KKP 91) hâlâ P8/P9'un isidir ve yer
+    tutucu doner. Satis DURUMU (UE 94) P3.1'de gercek sutuna dondu — kullanici
+    karari 2, P3 §4.6'dan bilincli donus (spec §4.4)."""
     return UnitResponse(
         id=unit.id,
         block_id=unit.block_id,
@@ -103,11 +134,21 @@ def to_unit(unit: Unit, block_name: str) -> UnitResponse:
         appraisal_value=unit.appraisal_value,
         owner_side=unit.owner_side,
         sort_order=unit.sort_order,
-        sales_status=_metric(_UNIT_SALES),
+        floor=unit.floor,
+        facing=unit.facing,
+        balcony_area_m2=unit.balcony_area_m2,
+        bathroom_count=unit.bathroom_count,
+        parking_right=unit.parking_right,
+        min_sale_price=unit.min_sale_price,
+        vat_rate=unit.vat_rate,
+        # UE 94 artik GERCEK degerdir (kullanici karari 2, spec §4.4).
+        sales_status=unit.sales_status,
         sale_price=_metric(_UNIT_SALES),
         buyer_name=_metric(_UNIT_SALES),
         shareholder=_metric(_SHAREHOLDER_UNITS),
+        # Maliyet kolonu ACILMAZ (karar 3): maliyet yoksa kâr da yoktur.
         unit_cost=_metric(_PROJECT_COSTS),
+        expected_profit=_metric(_PROJECT_COSTS),
     )
 
 
@@ -133,15 +174,20 @@ def _side_summary(
         if project_total
         else None
     )
+    # Satis sayaclari `totals` ile AYNI kaynaktan (`_by_sales_status`) turer ve
+    # ZATEN BELLEKTE olan liste uzerinde sayilir — taraf basina ayri bir
+    # `GROUP BY` sorgusu ucuncu bir gidis-donus demek olurdu (`_by_sales_status`
+    # notunun aynisi).
+    by_status = _by_sales_status(selected)
     return UnitSideSummary(
         side=side,
         counts=_counts(selected),
         total_value=total_value,
         average_value=_average(total_value, len(selected)),
         share_pct=share_pct,
-        sold=_count(_UNIT_SALES),
-        reserved=_count(_UNIT_SALES),
-        listed=_count(_UNIT_SALES),
+        sold=by_status[UnitSalesStatus.sold],
+        reserved=by_status[UnitSalesStatus.reserved],
+        listed=by_status[UnitSalesStatus.listed],
     )
 
 
@@ -149,6 +195,7 @@ def totals(units: list[Unit], basis: UnitValueBasis) -> UnitTotals:
     """Spec §7.4: toplamlar SUZGECTEN ETKILENMEZ — cagiran daima projenin TUM
     unitelerini verir (P1 `list_projects_overview` kuralinin birebir tekrari)."""
     total_value = _sum([_basis_value(u, basis) for u in units])
+    by_status = _by_sales_status(units)
     return UnitTotals(
         counts=_counts(units),
         value_basis=basis,
@@ -158,9 +205,10 @@ def totals(units: list[Unit], basis: UnitValueBasis) -> UnitTotals:
         total_appraisal_value=_sum([u.appraisal_value for u in units]),
         total_gross_area_m2=_sum([u.gross_area_m2 for u in units]),
         sides=[_side_summary(side, units, basis, len(units)) for side in _SIDE_ORDER],
-        sold_units=_count(_UNIT_SALES),
-        reserved_units=_count(_UNIT_SALES),
-        available_units=_count(_UNIT_SALES),
+        by_sales_status=by_status,
+        sold_units=by_status[UnitSalesStatus.sold],
+        reserved_units=by_status[UnitSalesStatus.reserved],
+        available_units=by_status[UnitSalesStatus.listed],
         sales_revenue=_metric(_UNIT_SALES),
         average_sale_price=_metric(_UNIT_SALES),
     )

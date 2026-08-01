@@ -52,6 +52,35 @@ async def get_block_by_name(
     return result.scalar_one_or_none()
 
 
+async def get_block_by_code(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    code: str,
+    exclude_block_id: uuid.UUID | None = None,
+) -> Block | None:
+    """`uq_blocks_project_code` cakismasini `get_block_by_name` ile ayni gerekceyle
+    IntegrityError'a DUSMEDEN yakalar (spec §3.2): kullanici alanina ozel Turkce
+    mesaj (`DUPLICATE_BLOCK_CODE`) gorur, "Veri butunlugu hatasi" degil."""
+    stmt = select(Block).where(Block.project_id == project_id, Block.code == code)
+    if exclude_block_id is not None:
+        stmt = stmt.where(Block.id != exclude_block_id)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def project_block_codes(session: AsyncSession, project_id: uuid.UUID) -> set[str]:
+    """Projede KULLANILAN blok kodlari — kod uretiminin tek sorgusu (spec §3.2).
+
+    `codes.resolve_block_code` saf kalabilsin diye kume BURADA toplanir. NULL
+    kodlar disarida kalir: `None` bir kod degildir ve cakisma kontrolunu
+    kirletirdi (canli bloklarin kodu NULL dogar ve NULL kalir — karar 8).
+    """
+    result = await session.execute(
+        select(Block.code).where(Block.project_id == project_id, Block.code.is_not(None))
+    )
+    return {code for code in result.scalars().all() if code}
+
+
 async def get_unit(session: AsyncSession, unit_id: uuid.UUID) -> Unit | None:
     return await session.get(Unit, unit_id)
 

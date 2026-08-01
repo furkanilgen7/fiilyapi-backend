@@ -18,7 +18,7 @@ from app.core.errors import NotFoundError
 from app.modules.projects.models import Project
 from app.modules.sites.models import Site
 from app.modules.units import service
-from app.modules.units.models import Block, Unit, UnitKind, UnitOwnerSide
+from app.modules.units.models import Block, Unit, UnitKind, UnitOwnerSide, UnitSalesStatus
 from app.modules.units.schemas import UnitOwnerSideFilter, UnitValueBasis
 from app.modules.users.models import UserProjectAccess
 
@@ -349,24 +349,26 @@ async def test_placeholders_carry_correct_pending_module(seeded_db, user_factory
     unit = response.blocks[0].units[0]
     totals = response.totals
 
-    assert unit.sales_status.pending_module == "unit_sales"
+    # P3.1 §4.4: `sales_status` ARTIK YER TUTUCU DEGIL — gercek sutun degeri.
+    assert unit.sales_status is UnitSalesStatus.listed
     assert unit.sale_price.pending_module == "unit_sales"
     assert unit.buyer_name.pending_module == "unit_sales"
     assert unit.shareholder.pending_module == "shareholder_units"
     assert unit.unit_cost.pending_module == "project_costs"
-    assert totals.sold_units.pending_module == "unit_sales"
+    # UE 97-99: maliyet yoksa kâr da yok (karar 3).
+    assert unit.expected_profit.pending_module == "project_costs"
+    # P3.1 §8.2: uc sayac GERCEK oldu; GERCEKLESEN satis tutari P8'de KALDI.
+    assert totals.sold_units == 0
+    assert totals.available_units == 1
     assert totals.sales_revenue.pending_module == "unit_sales"
     assert all(
         placeholder.available is False
         for placeholder in (
-            unit.sales_status,
             unit.sale_price,
             unit.buyer_name,
             unit.shareholder,
             unit.unit_cost,
-            totals.sold_units,
-            totals.reserved_units,
-            totals.available_units,
+            unit.expected_profit,
             totals.sales_revenue,
             totals.average_sale_price,
         )

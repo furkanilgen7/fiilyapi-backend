@@ -181,8 +181,19 @@ def units_bulk_created(project_name: str, block_name: str, count: int) -> str:
     return f"Toplu ünite üretildi: {project_name} · {block_name} · {count} ünite"
 
 
-def units_imported(project_name: str, count: int) -> str:
-    return f"Üniteler Excel'den içe aktarıldı: {project_name} · {count} ünite"
+def units_imported(project_name: str, created: int, skipped: int = 0) -> str:
+    """DEGISTI (P3.1 §6.1, §9): kismi aktarimda ATLANAN satir sayisi da yazilir.
+
+    Yazilmasaydi denetim gunlugu "kac unite geldi" sorusuna yaniltici cevap
+    verirdi: 24 satirlik dosyadan 22 unite gelmesi ile 22 satirlik dosyadan 22
+    unite gelmesi gunlukte AYNI gorunurdu.
+    """
+    if skipped:
+        return (
+            f"Üniteler Excel'den içe aktarıldı: {project_name} · "
+            f"{created} ünite ({skipped} satır atlandı)"
+        )
+    return f"Üniteler Excel'den içe aktarıldı: {project_name} · {created} ünite"
 
 
 def unit_allocation_updated(project_name: str, count: int) -> str:

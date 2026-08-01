@@ -112,8 +112,9 @@ def _validate_sections(data: _SiteLike) -> None:
     """Bolum satirlari — TUTARLILIK, dolayisiyla taslakta da kosar.
 
     ILK hatada durur: cok satirli hata listesi URETILMEZ (§8.2). Form 2-5
-    satirliktir; `UnitImportError`'in satir bazli raporu (yuzlerce satirlik Excel
-    icin tasarlandi) burada kullaniciya yardim etmez, yalnizca govdeyi sisirir.
+    satirliktir; Excel ice aktarmanin satir bazli raporu (`UnitImportRowReport`,
+    yuzlerce satir icin tasarlandi) burada kullaniciya yardim etmez, yalnizca
+    govdeyi sisirir.
     """
     for index, section in enumerate(getattr(data, "sections", None) or [], start=1):
         if not (section.name or "").strip():

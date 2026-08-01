@@ -1,5 +1,6 @@
 """B2 — units/blocks Pydantic semalari (spec §6.1-6.4)."""
 
+import inspect
 import uuid
 from decimal import Decimal
 
@@ -7,8 +8,8 @@ import pytest
 from pydantic import ValidationError
 
 from app.modules.projects.schemas import CountPlaceholder, MetricPlaceholder
-from app.modules.units import schemas
-from app.modules.units.models import UnitKind, UnitOwnerSide
+from app.modules.units import schemas, service
+from app.modules.units.models import UnitKind, UnitOwnerSide, UnitSalesStatus
 from app.modules.units.schemas import (
     UnitAllocationItem,
     UnitAllocationRequest,
@@ -38,11 +39,21 @@ def _unit(**overrides) -> UnitResponse:
         "appraisal_value": None,
         "owner_side": None,
         "sort_order": 1,
-        "sales_status": _metric(),
+        # P3.1 §4.1: unite formunun 8 yeni alani.
+        "floor": None,
+        "facing": None,
+        "balcony_area_m2": None,
+        "bathroom_count": None,
+        "parking_right": None,
+        "min_sale_price": None,
+        "vat_rate": None,
+        # P3.1 §4.4: ARTIK YER TUTUCU DEGIL — kullanici karari 2.
+        "sales_status": UnitSalesStatus.listed,
         "sale_price": _metric(),
         "buyer_name": _metric(),
         "shareholder": _metric("shareholder_units"),
         "unit_cost": _metric("project_costs"),
+        "expected_profit": _metric("project_costs"),
     }
     defaults.update(overrides)
     return UnitResponse(**defaults)
@@ -160,4 +171,79 @@ def test_metric_placeholder_imported_not_redefined():
     """Yer tutucu sozlesmesi TEK yerde tanimlidir (P1); kopyalanmaz."""
     assert schemas.MetricPlaceholder is MetricPlaceholder
     assert schemas.CountPlaceholder is CountPlaceholder
-    assert UnitResponse.model_fields["sales_status"].annotation is MetricPlaceholder
+    # `sales_status` P3.1'de gercek degere dondu (spec §4.4); yer tutucu
+    # sozlesmesinin kanitini `sale_price` tasir.
+    assert UnitResponse.model_fields["sale_price"].annotation is MetricPlaceholder
+
+
+# --- P3.1 T6: unite formunun yeni alanlari (spec §4.1-§4.4) ---
+
+
+def test_vat_rate_yalniz_1_10_20():
+    """Karar 9: KDV listesi KODDA SABITTIR (UE 93). Sutun `Numeric(5,2)` serbest
+    kalir (DB CHECK yalniz 0..100), kumeyi Pydantic zorlar — %8 eklenirse
+    migration degil TEK SATIR kod degisir."""
+    for rate in ("1", "10", "20"):
+        assert UnitCreate(
+            block_id=uuid.uuid4(),
+            unit_no="1",
+            unit_kind=UnitKind.apartment,
+            vat_rate=Decimal(rate),
+        ).vat_rate == Decimal(rate)
+
+    with pytest.raises(ValidationError) as excinfo:
+        UnitCreate(
+            block_id=uuid.uuid4(),
+            unit_no="1",
+            unit_kind=UnitKind.apartment,
+            vat_rate=Decimal("15"),
+        )
+    assert "KDV oranı yalnızca %1, %10 veya %20 olabilir" in str(excinfo.value)
+
+
+def test_min_sale_price_list_price_ustunde_serbest():
+    """Karar 2 (kesin): `min_sale_price <= list_price` HICBIR katmanda zorlanmaz —
+    ne DB CHECK, ne servis, ne `model_validator`. Mockup boyle bir kural
+    soylemiyor ve iki alan da nullable oldugu icin kisit taslak satirlari
+    bloklardi."""
+    unit = UnitCreate(
+        block_id=uuid.uuid4(),
+        unit_no="1",
+        unit_kind=UnitKind.apartment,
+        list_price=Decimal("1000000.00"),
+        min_sale_price=Decimal("1380000.00"),
+    )
+
+    assert unit.min_sale_price > unit.list_price
+
+
+def test_min_sale_price_hicbir_katmanda_zorlanmaz():
+    """Karar 2'nin YAPISAL KANITI: sema tarafinda taban fiyati liste fiyatina
+    baglayan bir `model_validator` YOKTUR ve servis de bir kural islemez.
+    Boyle bir kural eklenirse bu test kirmiziya doner."""
+    assert UnitCreate.__pydantic_decorators__.model_validators == {}
+    assert UnitUpdate.__pydantic_decorators__.model_validators == {}
+    assert "min_sale_price" not in inspect.getsource(service)
+
+
+def test_unit_kind_breakdown_bes_sayac_total():
+    """Spec §4.3: `total` BES sayacin toplamidir."""
+    breakdown = UnitKindBreakdown(apartment=48, shop=4, office=2, warehouse=1, parking=5)
+    assert breakdown.total == 60
+
+
+def test_breakdown_yeni_sayaclar_sifirken_eski_davranis():
+    """Karar 13: ekran etiketleri DEGISMEZ; yeni sayaclar sifirken eski
+    davranis birebir korunur (KY 71 "48 Daire + 4 Dukkan" → 52)."""
+    breakdown = UnitKindBreakdown(apartment=48, shop=4)
+    assert breakdown.total == 52
+    assert (breakdown.office, breakdown.warehouse, breakdown.parking) == (0, 0, 0)
+
+
+def test_sales_status_artik_yer_tutucu_degil():
+    """Kullanici karari 2 — P3 §4.6'dan BILINCLI DONUS (spec §4.4).
+
+    Bir sonraki ajan bunu "P3 ihlali" sanip yer tutucuya geri cevirmemelidir.
+    """
+    assert UnitResponse.model_fields["sales_status"].annotation is not MetricPlaceholder
+    assert _unit(sales_status=UnitSalesStatus.sold).sales_status is UnitSalesStatus.sold

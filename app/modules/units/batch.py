@@ -1,11 +1,17 @@
-"""Toplu yazma yollari: toplu uretim, Excel ice aktarma, paylasim (spec §7.7, §7.8, §7.10).
+"""Toplu yollar: toplu uretim, uretim ONIZLEMESI, Excel ice aktarma, paylasim
+(spec §5.4, §7.7, §7.8, §7.10).
 
-Tekil CRUD'dan (`service.py`) AYRI dosyada tutulur: ucunun de ortak sinifi
-ATOMIKLIK'tir ("hep-ya-hic, kismi yazma OLMAZ") ve ucu de tek istekte yuzlerce
+Tekil CRUD'dan (`service.py`) AYRI dosyada tutulur: yazan ucunun ortak sinifi
+ATOMIKLIK'tir ("hep-ya-hic, kismi yazma OLMAZ") ve hepsi tek istekte yuzlerce
 satira dokunur. Kurallar `guards.py`'den CAGRILIR, kopyalanmaz.
+
+`preview_bulk_units` bu dosyadaki TEK OKUMA yoludur ve bilerek buradadir:
+onizleme ile gercek uretimin AYNI saf fonksiyondan (`bulk.generate_units`)
+beslendigi ancak yan yana dururken gorunur kalir.
 """
 
 import uuid
+from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,19 +19,15 @@ from app.core.errors import (
     DuplicateError,
     NotFoundError,
     ProjectTypeMismatchError,
-    UnitImportError,
     UnitValidationError,
 )
 from app.modules.audit import messages
 from app.modules.projects.models import Project, ProjectType
-from app.modules.units import guards, repository, service
-from app.modules.units.bulk import generate_unit_numbers
+from app.modules.units import bulk, codes, guards, repository, service
 from app.modules.units.importer import (
-    IMPORT_ROW_ERRORS,
-    MAX_REPORTED_ERRORS,
     ImportFileError,
     ImportRow,
-    RowError,
+    ParsedRow,
     normalize_header,
     parse_units_file,
 )
@@ -33,8 +35,13 @@ from app.modules.units.models import Block, Unit
 from app.modules.units.schemas import (
     UnitAllocationRequest,
     UnitBulkCreate,
+    UnitBulkPreview,
+    UnitBulkPreviewRow,
     UnitImportResult,
-    UnitImportRowError,
+    UnitImportRowReport,
+    UnitImportRowStatus,
+    UnitImportSummary,
+    UnitImportValidation,
     UnitListResponse,
 )
 from app.modules.users.models import User
@@ -72,12 +79,22 @@ async def bulk_create_units(
     `owner_side` UYGULANMAZ: `UnitBulkCreate` semasinda boyle bir alan YOKTUR
     (spec §6.3) — uretilen tum uniteler pay atanmamis baslar (§5.3), bu da §3.3
     korkulugunu her proje tipinde yapisal olarak saglar.
+
+    T10: satirlar `preview` ile AYNI saf fonksiyondan (`bulk.generate_units`)
+    gelir — yalniz numaralar degil, slot alanlari ve kat artisi uygulanmis
+    fiyatlar da. Burada ikinci bir uretim dali acilsaydi kullanici onizlemede
+    gordugunden BASKA bir sey kaydeder ve bunu fark edemezdi (spec §12.4/34).
     """
     project = await guards.visible_project(session, actor, project_id)
     block = await guards.block_in_project(session, project, data.block_id)
     guards.ensure_net_le_gross(data.gross_area_m2, data.net_area_m2)
 
-    numbers = generate_unit_numbers(data)
+    # `{Blok}` jetonu blok KODUDUR (karar 4). Kodu NULL olan canli blokta
+    # `effective_block_code` ile ANLIK turetilir ve SAKLANMAZ (karar 8, §0.B):
+    # ikinci bir otorite dogmaz, cunku cagrilan fonksiyon kod uretiminin ta
+    # kendisidir. Blok bir kez duzenlenip kodu kalicilastiginda cikti aynidir.
+    generated = bulk.generate_units(data, codes.effective_block_code(block.code, block.name))
+    numbers = [unit.unit_no for unit in generated]
     taken = await repository.existing_unit_nos(session, block.id, numbers)
     if taken:
         # Uretim sirasi KORUNUR (kume sirasi degil): kullanici hangi araligin
@@ -92,16 +109,23 @@ async def bulk_create_units(
             Unit(
                 project_id=project.id,
                 block_id=block.id,
-                unit_no=number,
+                unit_no=unit.unit_no,
                 unit_kind=data.unit_kind,
-                layout=data.layout,
-                gross_area_m2=data.gross_area_m2,
-                net_area_m2=data.net_area_m2,
-                list_price=data.list_price,
+                layout=unit.layout,
+                gross_area_m2=unit.gross_area_m2,
+                net_area_m2=unit.net_area_m2,
+                list_price=unit.list_price,
+                # `appraisal_value` SLOTTA YOKTUR (TU tablosunda bu sutun hic
+                # gecmiyor, spec §5.5) — ortak varsayilandan gelir.
                 appraisal_value=data.appraisal_value,
+                # Sutuna kat ETIKETI yazilir (METIN, karar 4); onizlemedeki
+                # sayisal `floor` yalniz numaralandirmanin girdisidir ve
+                # HICBIR sutuna yazilmaz.
+                floor=unit.floor_label,
+                facing=unit.facing,
                 sort_order=next_sort_order + offset,
             )
-            for offset, number in enumerate(numbers)
+            for offset, unit in enumerate(generated)
         ]
     )
     await session.flush()
@@ -110,82 +134,174 @@ async def bulk_create_units(
     return await service.list_units(session, actor, project_id), detail
 
 
-# --- Excel ice aktarma (spec §6.4, §7.8) — HEP-YA-HIC + SATIR BAZLI RAPOR ---
+async def preview_bulk_units(
+    session: AsyncSession, actor: User, project_id: uuid.UUID, data: UnitBulkCreate
+) -> UnitBulkPreview:
+    """Spec §5.4. **HICBIR SEY YAZMAZ** — bu fonksiyonun tek sozlesmesi budur.
 
+    Burada `session.add`, `flush`, `commit` ya da herhangi bir `UPDATE` YOKTUR
+    ve olmamalidir; tek DB erisimi cakisma sorgusudur (`existing_unit_nos`, saf
+    `SELECT`). Denetim satiri da yazilmaz: onizleme bir OKUMA ucudur (spec §9,
+    P4 T7 kurali) ve router bu fonksiyondan denetim METNI almaz — imzasinin
+    `bulk_create_units`'ten farkli olmasi (tek deger, `tuple` degil) bu ayrimi
+    YAPISAL kilar, unutulabilir bir konvansiyona birakmaz.
 
-def _row_error(error: RowError) -> UnitImportRowError:
-    return UnitImportRowError(row=error.row, column=error.column, message=error.message)
+    Uretim mantigi TEK KOPYADIR: `bulk.generate_units` saf fonksiyonu hem burada
+    hem `bulk_create_units`'te cagrilir. `POST …/units/bulk` onizlemeden gelen
+    satirlari KABUL ETMEZ, ayni girdiden yeniden uretir — aksi hâlde istemci
+    govdesi fiyat uydurabilirdi (TU 182 "Onizlemeyi Yenile").
 
-
-def _raise_row_errors(errors: list[RowError]) -> None:
-    """Spec §7.8: HICBIR satir yazilmaz, ama kullanici tum hatalari TEK seferde gorur.
-
-    "Ilk hatada dur" 48 satirlik bir dosyayi 48 kez yuklemeye zorlardi; yarim
-    yazma ise dosyayi duzeltip yeniden yuklemeyi imkânsiz kilardi (basarili
-    satirlar artik cakisir). Ikisi birlikte uygulanir.
+    Cakisma HATA DEGILDIR (spec §5.6, TU 177): satirlar `conflict=True` ile
+    doner ve kullanici `start_number`'i degistirip yeniden onizler. Blokaj
+    yalniz kaydetmededir (409).
     """
-    if not errors:
-        return
-    ordered = sorted(errors, key=lambda error: error.row)
-    remaining = len(ordered) - MAX_REPORTED_ERRORS
-    raise UnitImportError(
-        IMPORT_ROW_ERRORS.format(count=len({error.row for error in ordered})),
-        [_row_error(error).model_dump() for error in ordered[:MAX_REPORTED_ERRORS]],
-        f"Ve {remaining} hata daha" if remaining > 0 else None,
+    project = await guards.visible_project(session, actor, project_id)
+    block = await guards.block_in_project(session, project, data.block_id)
+    guards.ensure_net_le_gross(data.gross_area_m2, data.net_area_m2)
+
+    generated = bulk.generate_units(data, codes.effective_block_code(block.code, block.name))
+    numbers = [unit.unit_no for unit in generated]
+    taken = await repository.existing_unit_nos(session, block.id, numbers)
+    return UnitBulkPreview(
+        total_units=len(generated),
+        total_list_value=bulk.total_list_value(generated),
+        # Uretim sirasi KORUNUR (kume sirasi degil): kullanici hangi araligin
+        # cakistigini ancak sirali listede gorebilir (409 mesajiyla ayni gerekce).
+        conflicting_unit_nos=[number for number in numbers if number in taken],
+        rows=[
+            UnitBulkPreviewRow(
+                unit_no=unit.unit_no,
+                floor=unit.floor,
+                floor_label=unit.floor_label,
+                layout=unit.layout,
+                gross_area_m2=unit.gross_area_m2,
+                net_area_m2=unit.net_area_m2,
+                facing=unit.facing,
+                list_price=unit.list_price,
+                conflict=unit.unit_no in taken,
+            )
+            for unit in generated
+        ],
     )
 
 
-def _domain_row_errors(
-    project: Project, rows: list[ImportRow], taken: dict[str, set[str]]
-) -> list[RowError]:
+# --- Excel ice aktarma (spec §6.1-§6.5) — KISMI AKTARIM ---
+#
+# P3'un HEP-YA-HIC karari BILEREK TERSINE CEVRILDI (kullanici karari, spec §6.1):
+# EI 38/202 "22 Gecerli Satiri Aktar" ve EI 101 "veya sadece gecerli satirlari
+# aktarin" hep-ya-hicle uzlasmiyordu.
+#
+# ISLEM SINIRI — bu dosyanin en pahali hata sinifi:
+#   * Gecerli satirlar KALICI yazilir; hatali satirlar HIC `session`'a girmez
+#     (`ParsedRow.data is None` ⇔ satir hatali, tip duzeyinde imkânsizlik).
+#   * HIC gecerli satir yoksa `_IMPORT_NOTHING_TO_WRITE` 422'si ILK `session.add`
+#     ONCESINDE atilir; ustelik istisna istek transaction'ini geri alir, yani
+#     "hicbir sey yazilmadi" garantisi IKI KATLIDIR.
+#   * `created + skipped == summary.total_rows` her zaman saglanir — bu esitlik
+#     "sessizce kaybolan satir" sinifinin tek gozlemlenebilir korkulugudur.
+
+
+@dataclass(frozen=True)
+class _RowPlan:
+    """Bir Excel satirinin RAPORU + yazilacak verisi.
+
+    Rapor ile veri AYNI nesnede durur: iki ayri listede tasinsalardi "raporda
+    hatali gorunen satir yazilmis" durumu iki listenin sirasi kaydiginda sessizce
+    dogardi.
+    """
+
+    report: UnitImportRowReport
+    data: ImportRow | None  # yalniz YAZILACAK satirlarda dolu
+
+
+def _domain_messages(project: Project, row: ImportRow, taken: dict[str, set[str]]) -> list[str]:
     """Tekil `POST` ile AYNI alan kurallari, satir satir uygulanir.
 
     Bu kurallar bilerek `importer.py`'de DEGIL: `net > brut` ve `owner_side`
     korkulugu tek yazma yolunun kurallaridir (`guards.ensure_net_le_gross`,
     `guards.ensure_owner_side_allowed`) ve ice aktarma onlari KOPYALAMAZ, CAGIRIR.
+
+    Blokta zaten var olan `unit_no` artik dosyayi REDDETMEZ (spec §6.1/2):
+    satir atlanir ve raporlanir — "duzelt ve yeniden yukle" dongusu boylece tek
+    adimda tekrarlanabilir kalir.
     """
-    errors: list[RowError] = []
-    for row in rows:
-        try:
-            guards.ensure_net_le_gross(row.gross_area_m2, row.net_area_m2)
-        except UnitValidationError as exc:
-            errors.append(RowError(row.row, "Net m²", str(exc)))
-        try:
-            guards.ensure_owner_side_allowed(project, row.owner_side)
-        except ProjectTypeMismatchError as exc:
-            errors.append(RowError(row.row, "Pay", str(exc)))
-        if row.unit_no in taken.get(normalize_header(row.block_name), set()):
-            errors.append(RowError(row.row, "Ünite No", guards.DUPLICATE_UNIT))
-    return errors
+    messages: list[str] = []
+    try:
+        guards.ensure_net_le_gross(row.gross_area_m2, row.net_area_m2)
+    except UnitValidationError as exc:
+        messages.append(str(exc))
+    try:
+        guards.ensure_owner_side_allowed(project, row.owner_side)
+    except ProjectTypeMismatchError as exc:
+        messages.append(str(exc))
+    if row.unit_no in taken.get(normalize_header(row.block_name), set()):
+        messages.append(guards.DUPLICATE_UNIT)
+    return messages
 
 
-async def import_units(
-    session: AsyncSession, actor: User, project_id: uuid.UUID, content: bytes
-) -> tuple[UnitImportResult, str]:
-    """Spec §7.8. Dosya BELLEKTE islenir ve ATILIR — diske/S3'e/DB'ye yazilmaz.
+def _row_plan(
+    parsed: ParsedRow, messages: list[str], *, importable: bool, imported: bool
+) -> _RowPlan:
+    if messages:
+        status = UnitImportRowStatus.error
+    elif parsed.warnings:
+        status = UnitImportRowStatus.warning
+        messages = [warning.message for warning in parsed.warnings]
+    else:
+        status = UnitImportRowStatus.ok
+    return _RowPlan(
+        report=UnitImportRowReport(
+            row=parsed.row,
+            status=status,
+            unit_no=parsed.echo.unit_no,
+            block_name=parsed.echo.block_name,
+            floor=parsed.echo.floor,
+            layout=parsed.echo.layout,
+            gross_area_m2=parsed.echo.gross_area_m2,
+            list_price=parsed.echo.list_price,
+            messages=messages,
+            imported=imported,
+        ),
+        data=parsed.data if importable else None,
+    )
 
-    Sira KATIDIR (bulk ile ayni gerekce): her dogrulama ilk `session.add`'DEN
-    ONCE biter, boylece reddedilen bir dosya tek satir bile — tek BLOK bile —
-    yazmaz:
 
-    1. proje gorunurlugu (404)
-    2. dosya duzeyi kontroller (tip/boyut/satir sayisi/eksik baslik) → 422
-    3. satir cozumleme hatalari (saf, DB'siz)
-    4. alan kurallari + blokta mevcut `unit_no` (tek `SELECT`'ten gelen kume)
-    5. yeni blok adlari icin §4.5 santiye kurali
-    6. bloklar ve uniteler tek `add_all` + tek `flush`
+def _summary(plans: list[_RowPlan]) -> UnitImportSummary:
+    """EI 94-99. `valid + warning + error == total_rows` YAPISAL olarak saglanir:
+    her satirin durumu TEKTIR ve sayaclar tek gecisten uretilir."""
+    statuses = [plan.report.status for plan in plans]
+    return UnitImportSummary(
+        total_rows=len(statuses),
+        valid=statuses.count(UnitImportRowStatus.ok),
+        warning=statuses.count(UnitImportRowStatus.warning),
+        error=statuses.count(UnitImportRowStatus.error),
+    )
 
-    Blok adi NORMALLESTIRILEREK eslesir (`normalize_header`): dosyada "a blok"
-    yazan kullanici mevcut "A Blok"a yazar. Aksi hâlde `uq_blocks_project_name`
-    ihlaline dusup anlamsiz bir 409 alirdi.
+
+async def _plan_rows(
+    session: AsyncSession,
+    actor: User,
+    project_id: uuid.UUID,
+    content: bytes,
+    *,
+    include_warnings: bool,
+    dry_run: bool,
+) -> tuple[Project, dict[str, Block], list[Unit], list[_RowPlan]]:
+    """`import` ve `import/validate` ucunun ORTAK cekirdegi (spec §6.2).
+
+    Iki uc de BU fonksiyondan beslenir; kural KOPYALANMAZ. Ayrisan iki kopya,
+    "dogrulamada gecerli gorunup aktarimda atlanan satir" sinifini dogururdu ve
+    kullanici bunu ancak eksik unitelerden fark ederdi.
+
+    `dry_run` yalniz `imported` bayragini belirler — dogrulama ucu hicbir sey
+    yazmadigi icin o bayrak DAIMA `False` olmalidir (spec §6.3).
     """
     project = await guards.visible_project(session, actor, project_id)
     try:
-        rows, parse_errors = parse_units_file(content)
+        parsed_rows = parse_units_file(content)
     except ImportFileError as exc:
         # Dosyanin TAMAMINI reddeden hata: satir listesi yok, tek Turkce mesaj.
         raise UnitValidationError(str(exc)) from exc
-    _raise_row_errors(parse_errors)
 
     blocks = {
         normalize_header(block.name): block
@@ -197,21 +313,116 @@ async def import_units(
     for unit in units:
         taken[by_block_id[unit.block_id]].add(unit.unit_no)
 
-    _raise_row_errors(_domain_row_errors(project, rows, taken))
+    plans: list[_RowPlan] = []
+    for parsed in parsed_rows:
+        messages = [error.message for error in parsed.errors]
+        if parsed.data is not None:
+            messages += _domain_messages(project, parsed.data, taken)
+        # Uyarili satir kullanici isterse yazilir (EI 192); hatali satir ASLA.
+        importable = not messages and (include_warnings or not parsed.warnings)
+        plans.append(
+            _row_plan(parsed, messages, importable=importable, imported=importable and not dry_run)
+        )
+    return project, blocks, units, plans
 
-    new_names = [row.block_name for row in rows if normalize_header(row.block_name) not in blocks]
+
+def _blocks_to_create(blocks: dict[str, Block], plans: list[_RowPlan]) -> list[str]:
+    """Blok olusturma YALNIZ yazilacak satirlara baglidir (spec §12.5/47).
+
+    Hatali satirin blogu acilsaydi kullanici hicbir unitesi olmayan hayalet bir
+    blokla kalir ve bunu ancak blok listesinde fark ederdi.
+    """
+    names: list[str] = []
+    seen = set(blocks)
+    for plan in plans:
+        if plan.data is None:
+            continue
+        key = normalize_header(plan.data.block_name)
+        if key not in seen:
+            seen.add(key)
+            names.append(plan.data.block_name)
+    return names
+
+
+async def validate_import(
+    session: AsyncSession,
+    actor: User,
+    project_id: uuid.UUID,
+    content: bytes,
+    *,
+    site_id: uuid.UUID | None = None,
+    include_warnings: bool = True,
+) -> UnitImportValidation:
+    """Spec §6.2 (EI 92-197). **HICBIR SEY YAZMAZ** — tek sozlesmesi budur.
+
+    `bulk/preview` ile AYNI gerekcelerle ayri uctur (spec §5.4): yanit sekli
+    farklidir (`UnitImportValidation` != `UnitImportResult`), denetim gunlugune
+    YAZMAZ ve iki uc de ayni saf cekirdekten (`_plan_rows`) beslenir.
+
+    `site_id` burada da dogrulanir: kullanici aktarimdan ONCE, dogrulama
+    adiminda ogrenmelidir ki hedef santiyesi gecersiz.
+    """
+    _, blocks, _, plans = await _plan_rows(
+        session, actor, project_id, content, include_warnings=include_warnings, dry_run=True
+    )
+    names = _blocks_to_create(blocks, plans)
+    if names or site_id is not None:
+        await guards.resolve_site(session, project_id, site_id)
+    return UnitImportValidation(
+        summary=_summary(plans),
+        rows=[plan.report for plan in plans],
+        blocks_to_create=names,
+    )
+
+
+async def import_units(
+    session: AsyncSession,
+    actor: User,
+    project_id: uuid.UUID,
+    content: bytes,
+    *,
+    site_id: uuid.UUID | None = None,
+    include_warnings: bool = True,
+) -> tuple[UnitImportResult, str]:
+    """Spec §6.1-§6.5. Dosya BELLEKTE islenir ve ATILIR — diske/S3'e/DB'ye yazilmaz.
+
+    Sira KATIDIR ve degistirilemez; her karar ilk `session.add`'DEN ONCE biter:
+
+    1. proje gorunurlugu (404)
+    2. dosya duzeyi kontroller (tip/boyut/satir sayisi/eksik baslik) → 422
+    3. satir raporu: cozumleme hatalari + alan kurallari + blokta mevcut `unit_no`
+    4. YAZILACAK satir yoksa 422 — buraya kadar hicbir sey yazilmadi
+    5. yeni blok adlari icin §4.5 santiye kurali (`site_id`, karar 3)
+    6. bloklar ve uniteler tek `add_all` + tek `flush`
+
+    `site_id` YALNIZ yeni blok acarken kullanilir: dosyadaki blok projede zaten
+    varsa o blok aynen kullanilir ve santiyesi DEGISTIRILMEZ — blok tasimak bu
+    ucun isi degildir ve kullanici uniteye ekleme yaparken bloğunu tasidigini
+    fark edemezdi (SESSIZ VERI TASIMA riski, spec §6.2).
+
+    Blok adi NORMALLESTIRILEREK eslesir (`normalize_header`): dosyada "a blok"
+    yazan kullanici mevcut "A Blok"a yazar. Aksi hâlde `uq_blocks_project_name`
+    ihlaline dusup anlamsiz bir 409 alirdi.
+    """
+    project, blocks, units, plans = await _plan_rows(
+        session, actor, project_id, content, include_warnings=include_warnings, dry_run=False
+    )
+    writable = [plan.data for plan in plans if plan.data is not None]
+    if not writable:
+        # `created=0` ile 200 donmek kullanicinin "aktarildi" sanmasina yol acardi.
+        raise UnitValidationError(guards.IMPORT_NOTHING_TO_WRITE)
+
     created_blocks: list[Block] = []
-    if new_names:
+    new_names = _blocks_to_create(blocks, plans)
+    if new_names or site_id is not None:
         # Santiye TEK KEZ cozulur: dosyada santiye sutunu yoktur, dolayisiyla tum
-        # yeni bloklar ayni §4.5 kuralina tabidir (cok santiyeli projede 422).
-        site = await guards.resolve_site(session, project.id, None)
+        # yeni bloklar ayni §4.5 kuralina tabidir. `site_id` verilmisse yeni blok
+        # gerekmese bile DOGRULANIR — gecersiz kimlik sessizce yutulmaz.
+        site = await guards.resolve_site(session, project.id, site_id)
         for name in new_names:
-            key = normalize_header(name)
-            if key in blocks:
-                continue
             block = Block(project_id=project.id, site_id=site.id, name=name)
             session.add(block)
-            blocks[key] = block
+            blocks[normalize_header(name)] = block
             created_blocks.append(block)
         await session.flush()
 
@@ -219,12 +430,13 @@ async def import_units(
     # sifirdan baslasaydi yari dolu bir blokta eski ve yeni uniteler ic ice
     # gecerdi — `unit_no` metin oldugu icin ikincil sira "10 < 2" verir.
     next_sort: dict[str, int] = {}
+    by_block_id = {block.id: key for key, block in blocks.items()}
     for unit in units:
         key = by_block_id[unit.block_id]
         next_sort[key] = max(next_sort.get(key, 0), int(unit.sort_order) + 1)
 
     new_units: list[Unit] = []
-    for row in rows:
+    for row in writable:
         key = normalize_header(row.block_name)
         offset = next_sort.get(key, 0)
         next_sort[key] = offset + 1
@@ -240,14 +452,28 @@ async def import_units(
                 list_price=row.list_price,
                 appraisal_value=row.appraisal_value,
                 owner_side=row.owner_side,
+                # P3.1 T11: `Kat` METIN olarak AYNEN yazilir (karar 4), `Cephe`
+                # bes degerli sozlukten gelir. `Maliyet` YAZILMAZ (karar 10).
+                floor=row.floor,
+                facing=row.facing,
                 sort_order=offset,
             )
         )
     session.add_all(new_units)
     await session.flush()
-    result = UnitImportResult(created=len(rows), blocks_created=len(created_blocks), errors=[])
-    # Spec §9: dosyada kac satir olursa olsun TEK denetim satiri.
-    return result, messages.units_imported(project.name, result.created)
+    summary = _summary(plans)
+    result = UnitImportResult(
+        summary=summary,
+        created=len(new_units),
+        skipped=summary.total_rows - len(new_units),
+        blocks_created=len(created_blocks),
+        rows=[plan.report for plan in plans],
+    )
+    # Spec §9: dosyada kac satir olursa olsun TEK denetim satiri; mesaj ATLANAN
+    # satir sayisini da tasir, yoksa gunluk "kac unite geldi" sorusuna yaniltici
+    # cevap verirdi (spec §6.1).
+    detail = messages.units_imported(project.name, result.created, result.skipped)
+    return result, detail
 
 
 # --- Paylasim (spec §7.10, §5.3) — ATOMIKLIK + IDOR SINIFI ---

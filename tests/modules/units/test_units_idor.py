@@ -38,7 +38,8 @@ from tests.modules.units.test_units_api import (
 )
 
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-_HEADERS = ["Blok", "Ünite No", "Tür"]
+# P3.1 T11: `Oda Tipi` ve `Brüt m²` ZORUNLU sutun oldu (EI 161, spec §6.5).
+_HEADERS = ["Blok", "Ünite No", "Tür", "Oda Tipi", "Brüt m²"]
 
 _PROJECT_MISSING = "Proje bulunamadı"
 _BLOCK_MISSING = "Blok bulunamadı"
@@ -157,7 +158,7 @@ async def test_idor_post_units_blocks_bulk_import_invisible_404(
 
     if endpoint == "units/import":
         resp = await client.post(
-            url, files=_file(_xlsx([["A Blok", "9", "Daire"]])), headers=_auth(token)
+            url, files=_file(_xlsx([["A Blok", "9", "Daire", "3+1", 120]])), headers=_auth(token)
         )
     elif endpoint == "units/bulk":
         payload = {
@@ -359,12 +360,15 @@ async def test_idor_import_block_name_collision_creates_in_own_project(
 
     resp = await client.post(
         f"/projects/{project_a.id}/units/import",
-        files=_file(_xlsx([[block_b.name, "1", "Daire"]])),
+        files=_file(_xlsx([[block_b.name, "1", "Daire", "3+1", 120]])),
         headers=_auth(token),
     )
 
     assert resp.status_code == 200
-    assert resp.json() == {"created": 1, "blocks_created": 1, "errors": []}
+    # BILEREK DEGISTI (P3.1 T12, spec §6.3): `errors` alani kaldirildi, yerini
+    # `summary`/`rows`/`skipped` aldi. IDDIA degismedi: bir unite ve bir blok.
+    assert (resp.json()["created"], resp.json()["blocks_created"]) == (1, 1)
+    assert resp.json()["skipped"] == 0
     result = await db_session.execute(
         select(Block).where(Block.project_id == project_a.id, Block.name == block_b.name)
     )
@@ -373,6 +377,166 @@ async def test_idor_import_block_name_collision_creates_in_own_project(
     # B projesi DOKUNULMAMIS: tek blogu ve tek unitesi aynen duruyor.
     assert await _block_count(db_session, project_b.id) == 1
     assert list(await _assigned_sides(db_session, project_b.id)) == [unit_b.id]
+
+
+# --- P3.1 T15 (spec §12.6): P3.1'in YENI YUZEYLERI ---
+#
+# Bu bolumun konusu, P3.1'in actigi uc yeni saldiri yuzeyidir:
+#   1. `POST .../units/bulk/preview` — hicbir sey YAZMAYAN, ama yazma
+#      mantiginin TAMAMINI (fiyat uretimi, cakisma tespiti) calistiran uc.
+#      "Yazmiyor" olmasi onu zararsiz YAPMAZ: gorunmeyen bir projenin blok
+#      kimligiyle cagrilirsa o blogun VARLIGINI dogrular.
+#   2. `POST .../units/import/validate` — ayni sinif, dosya uzerinden.
+#   3. `site_id` FORM ALANI — hem `import` hem `validate` govdesinde tasinan,
+#      yol disindan gelen IKINCI bir kimlik. Yol proje A'yi gosterirken
+#      `site_id` B'nin santiyesini gosterebilir (`block_id` tuzaginin ikizi).
+#
+#   4. `GET .../units/import/template` — P3.1 T14'te acilan sablon ucu. Izni
+#      `view`'dir (spec §6.2 karari), yani BU DILIMDEKI TEK "view yeter" yeni
+#      uctur; gorunurluk kapisi ise diger uclarla AYNIDIR (I3 vs I6).
+
+
+async def test_idor_preview_invisible_project_404(
+    client, db_session, user_factory, project_factory
+):
+    """Spec §12.6/I1. `patron` YAZMA iznine sahiptir (`projects`=full), dolayisiyla
+    403 uretecek bir izin engeli yoktur — geriye yalniz gorunurluk kalir ve o da
+    404 vermek ZORUNDADIR (403 "bu proje var" demek olurdu)."""
+    project, block, _ = await _fixture_project_with_unit(db_session, project_factory, "IDOR-P1")
+    token = await _login(client, user_factory, "patron")
+
+    resp = await client.post(
+        f"/projects/{project.id}/units/bulk/preview",
+        json={
+            "block_id": str(block.id),
+            "unit_kind": "apartment",
+            "start_floor": 1,
+            "end_floor": 1,
+            "units_per_floor": 2,
+        },
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == _PROJECT_MISSING
+    _assert_no_leak(resp, str(project.id), str(block.id), project.code, block.name)
+
+
+async def test_idor_validate_invisible_project_404(
+    client, db_session, user_factory, project_factory
+):
+    """Spec §12.6/I2. `validate` HICBIR SEY YAZMAZ; yine de gorunurluk kapisi
+    `import` ile AYNIDIR — "yazmayan uc" gorunurluk muafiyeti DEGILDIR."""
+    project, _, _ = await _fixture_project_with_unit(db_session, project_factory, "IDOR-P2")
+    token = await _login(client, user_factory, "patron")
+
+    resp = await client.post(
+        f"/projects/{project.id}/units/import/validate",
+        files=_file(_xlsx([["A Blok", "9", "Daire", "3+1", 120]])),
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == _PROJECT_MISSING
+    _assert_no_leak(resp, str(project.id), project.code)
+
+
+async def test_idor_preview_with_foreign_block_404(
+    client, db_session, user_factory, project_factory
+):
+    """Spec §12.6/I4. `test_idor_post_unit_with_foreign_block_404`'un onizleme
+    ikizi: yol proje A'yi, GOVDE B'nin blogunu gosterir.
+
+    Onizleme icin AYRICA onemlidir: yanit satirlari yabanci blogun kat/fiyat
+    duzenini ele verirdi — hicbir sey YAZILMASA DA sizinti tamdir."""
+    project_a = await project_factory("IDOR-P4A")
+    await _site(db_session, project_a)
+    project_b, block_b, _ = await _fixture_project_with_unit(
+        db_session, project_factory, "IDOR-P4B"
+    )
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.post(
+        f"/projects/{project_a.id}/units/bulk/preview",
+        json={
+            "block_id": str(block_b.id),
+            "unit_kind": "apartment",
+            "start_floor": 1,
+            "end_floor": 1,
+            "units_per_floor": 2,
+        },
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == _BLOCK_MISSING
+    _assert_no_leak(resp, str(block_b.id), block_b.name, str(project_b.id))
+
+
+async def test_idor_template_invisible_project_404(client, user_factory, project_factory):
+    """Spec §12.6/I3. Sablon ucu `view` izniyle acilir (I6) ama GORUNURLUK
+    muafiyeti YOKTUR: gorunmeyen bir projenin sablonu 404 doner.
+
+    Ayrimi kacirmak kolaydir — "sablonda proje verisi yok, kapiya ne gerek var"
+    denirse yol bir PROJE VARLIK ORAKULUNE doner: elinde UUID olan kullanici
+    200/404 farkindan projenin var oldugunu okur.
+    """
+    project = await project_factory("IDOR-I3")
+    token = await _login(client, user_factory, "patron")
+
+    resp = await client.get(f"/projects/{project.id}/units/import/template", headers=_auth(token))
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == _PROJECT_MISSING
+    _assert_no_leak(resp, str(project.id), project.code, project.name)
+
+
+async def test_idor_template_with_view_permission_200(
+    client, db_session, user_factory, project_factory
+):
+    """Spec §12.6/I6 + §6.2 karari. `site_chief` (`projects`=view) sablonu
+    INDIREBILIR.
+
+    Bu, dosyadaki TEK "view yeter" yeni uctur ve bilinclidir: sablon bos bir
+    baslik satiridir, proje verisi tasimaz; `full`'a kapatmak veri GIRECEK
+    kullaniciyi akisin ilk adimindan mahrum birakirdi. Ayni rol `preview` ve
+    `validate`'te 403 alir (I5) — fark ASAGIDAKI `view` tablosunda kilitli.
+    """
+    project, _, _ = await _fixture_project_with_unit(db_session, project_factory, "IDOR-I6")
+    token = await _login_with_access(client, db_session, user_factory, "site_chief")
+
+    resp = await client.get(f"/projects/{project.id}/units/import/template", headers=_auth(token))
+
+    assert resp.status_code == 200
+
+
+@pytest.mark.parametrize("endpoint", ["units/import", "units/import/validate"])
+async def test_idor_site_id_from_other_project_404(
+    client, db_session, user_factory, project_factory, endpoint
+):
+    """P3.1 T15 — `site_id` HEDEFI (spec §12.5/47c, §6.2 karar 3).
+
+    `site_id` yoldan DEGIL govdeden gelir ve `block_id` tuzaginin ikizidir:
+    gorunur proje A uzerinden B'nin santiyesine blok actirabilirdi. IKI ucta
+    da kapali olmasi gerekir — `validate` yazmasa bile yabanci santiyenin
+    varligini dogrulamamalidir.
+    """
+    project_a = await project_factory("IDOR-P5A")
+    await _site(db_session, project_a)
+    project_b = await project_factory("IDOR-P5B")
+    foreign_site = await _site(db_session, project_b, code="SANTIYE-B")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.post(
+        f"/projects/{project_a.id}/{endpoint}",
+        files=_file(_xlsx([["Z Blok", "1", "Daire", "3+1", 120]])),
+        data={"site_id": str(foreign_site.id)},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 404
+    _assert_no_leak(resp, str(foreign_site.id), str(project_b.id), project_b.code)
+    assert await _block_count(db_session, project_a.id) == 0
 
 
 # --- §11.4-11: token yok → 401 (TUM uclar) ---
@@ -392,11 +556,19 @@ async def test_idor_import_block_name_collision_creates_in_own_project(
         ("post", "/projects/{project}/units/bulk"),
         ("post", "/projects/{project}/units/import"),
         ("patch", "/projects/{project}/units/allocation"),
+        # P3.1 T15 (spec §12.6/I8): iki yeni uc. Kimlik dogrulama, uclarin
+        # "yazip yazmadigina" BAKMAZ — onizleme de token ister.
+        ("post", "/projects/{project}/units/bulk/preview"),
+        ("post", "/projects/{project}/units/import/validate"),
+        # P3.1 T14: sablon ucu. Izni `view`'dir (I6) ama KIMLIK yine sarttir —
+        # "herkese acik sablon" diye bir kapi acilmaz.
+        ("get", "/projects/{project}/units/import/template"),
     ],
 )
 async def test_idor_no_token_401(client, db_session, user_factory, project_factory, method, path):
-    """§11.4-11. Spec §7 tablosundaki ON BIR ucun HEPSI. Yeni bir uc eklenip bu
-    listeye yazilmazsa eksik oldugu B12 openapi karsilastirmasinda gorulur."""
+    """§11.4-11 + spec §12.6/I8. P3.1 sonrasi ON DORT ucun HEPSI. Yeni bir uc
+    eklenip bu listeye yazilmazsa eksik oldugu B12 openapi karsilastirmasinda
+    gorulur."""
     project, block, unit = await _fixture_project_with_unit(db_session, project_factory, "IDOR-11")
     url = path.format(project=project.id, block=block.id, unit=unit.id)
 
@@ -416,6 +588,11 @@ async def test_idor_no_token_401(client, db_session, user_factory, project_facto
         ("post", "/projects/{project}/units"),
         ("patch", "/units/{unit}"),
         ("patch", "/projects/{project}/units/allocation"),
+        # P3.1 T15 (spec §12.6/I7): iki yeni uc de `none` izniyle 403.
+        ("post", "/projects/{project}/units/bulk/preview"),
+        ("post", "/projects/{project}/units/import/validate"),
+        # P3.1 T14: sablon `view` ISTER — `none` yetmez (spec §12.6/I7 "ucu de").
+        ("get", "/projects/{project}/units/import/template"),
     ],
 )
 async def test_idor_projects_permission_none_403(
@@ -444,12 +621,18 @@ async def test_idor_projects_permission_none_403(
         ("post", "/projects/{project}/units/bulk"),
         ("post", "/projects/{project}/units/import"),
         ("patch", "/projects/{project}/units/allocation"),
+        # P3.1 T15 (spec §12.6/I5): onizleme ve dogrulama da `full` ister.
+        # HICBIR SEY YAZMAMALARI onlari okuma ucu YAPMAZ: ikisi de yazma
+        # akisinin parcasidir ve `view` kullanicisina fiyat uretim kurallarini
+        # (kat artisi, slot sablonu) ACMAZ (spec §5.4 son paragraf).
+        ("post", "/projects/{project}/units/bulk/preview"),
+        ("post", "/projects/{project}/units/import/validate"),
     ],
 )
 async def test_idor_view_permission_rejects_all_writes_403(
     client, db_session, user_factory, project_factory, method, path
 ):
-    """§11.4-13. ALTI yazma ucu (spec §8: yazma `full` ister). `site_chief`
+    """§11.4-13 + spec §12.6/I5. SEKIZ yazma ucu (spec §8: yazma `full` ister). `site_chief`
     projeyi GORUR (`projects`=view + erisim satiri) ama yazamaz — okuma izniyle
     yazma izninin ayni dependency'ye baglanmadigi burada kilitlenir."""
     project, block, unit = await _fixture_project_with_unit(db_session, project_factory, "IDOR-13")
@@ -512,6 +695,25 @@ async def test_idor_error_bodies_do_not_leak_record_existence(
         await client.patch(
             f"/projects/{project.id}/units/allocation",
             json={"items": [{"unit_id": str(unit.id), "owner_side": "contractor"}]},
+            headers=_auth(token),
+        ),
+        # P3.1 T15: iki yeni uc de ayni suzgecten gecer. Onizleme/dogrulama
+        # yanitlari normalde SATIR SATIR veri tasir; negatif dalda o govdenin
+        # hicbir kirintisi kalmamalidir.
+        await client.post(
+            f"/projects/{project.id}/units/bulk/preview",
+            json={
+                "block_id": str(block.id),
+                "unit_kind": "apartment",
+                "start_floor": 1,
+                "end_floor": 1,
+                "units_per_floor": 2,
+            },
+            headers=_auth(token),
+        ),
+        await client.post(
+            f"/projects/{project.id}/units/import/validate",
+            files=_file(_xlsx([["A Blok", "9", "Daire", "3+1", 120]])),
             headers=_auth(token),
         ),
     ]
