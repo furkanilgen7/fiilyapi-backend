@@ -19,6 +19,7 @@ from decimal import Decimal
 from openpyxl import Workbook
 from sqlalchemy import delete, select
 
+from app.modules.audit import messages
 from app.modules.audit.models import AuditAction, AuditLog
 from app.modules.units.models import Unit, UnitKind, UnitOwnerSide
 from app.modules.units.schemas import UnitNumberingPattern
@@ -304,6 +305,124 @@ async def test_audit_rows_carry_actor_and_ip(client, db_session, user_factory, p
     assert rows[0].actor_user_id is not None
     # INET sutunu `ipaddress` nesnesi dondurur; karsilastirma metne cevrilerek yapilir.
     assert str(rows[0].ip_address) == _IP
+
+
+async def test_import_partial_writes_one_row_carrying_skipped_count(
+    client, db_session, user_factory, project_factory
+):
+    """P3.1 T14 (#55, spec §9): KISMI aktarimda da ISTEK BASINA TEK satir.
+
+    Ve o tek satir `skipped` sayisini TASIR: 4 satirlik dosyadan 3 unite gelmesi
+    ile 3 satirlik dosyadan 3 unite gelmesi gunlukte AYNI gorunemez (§6.1).
+    """
+    project = await project_factory("B11-13", name="Yeşil Vadi")
+    site = await _site(db_session, project)
+    await _block(db_session, project, site, name="A Blok")
+    headers = await _admin(client, db_session, user_factory)
+    rows = [
+        ["A Blok", None, str(no), "Daire", "3+1", 120, None, None, None, None, None, None]
+        for no in range(1, 4)
+    ]
+    # `Oda Tipi` bos → HATA (spec §6.5, EI 161): satir atlanir, dosya reddedilmez.
+    rows.append(["A Blok", None, "4", "Daire", None, 120, None, None, None, None, None, None])
+
+    resp = await client.post(
+        f"/projects/{project.id}/units/import",
+        files={"file": ("uniteler.xlsx", _xlsx(rows), _XLSX_MIME)},
+        headers=headers,
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert (body["created"], body["skipped"]) == (3, 1)
+    audit_rows = await _rows(db_session, AuditAction.create)
+    assert len(audit_rows) == 1
+    assert (
+        audit_rows[0].detail
+        == "Üniteler Excel'den içe aktarıldı: Yeşil Vadi · 3 ünite (1 satır atlandı)"
+    )
+
+
+async def test_preview_and_validate_write_no_audit(
+    client, db_session, user_factory, project_factory
+):
+    """P3.1 T14 (spec §9): P3.1'in IKI yeni ucu da denetim YAZMAZ.
+
+    Ikisi de yazma akisinin ONIZLEMESIDIR (`bulk/preview`, `import/validate`) ve
+    hicbir satir uretmez; denetim yazsalardi "Onizlemeyi Yenile"ye her basista
+    gunluge satir dusen bir ekran ortaya cikardi (P4 T7 kurali).
+    """
+    project = await project_factory("B11-14", name="Yeşil Vadi")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site, name="A Blok")
+    headers = await _admin(client, db_session, user_factory)
+    row = ["A Blok", None, "1", "Daire", "3+1", 120, None, None, None, None, None, None]
+    content = _xlsx([row])
+
+    preview = await client.post(
+        f"/projects/{project.id}/units/bulk/preview",
+        json={
+            "block_id": str(block.id),
+            "unit_kind": UnitKind.apartment.value,
+            "numbering": UnitNumberingPattern.floor_sequence.value,
+            "start_floor": 1,
+            "end_floor": 2,
+            "units_per_floor": 2,
+        },
+        headers=headers,
+    )
+    validate = await client.post(
+        f"/projects/{project.id}/units/import/validate",
+        files={"file": ("uniteler.xlsx", content, _XLSX_MIME)},
+        headers=headers,
+    )
+
+    assert (preview.status_code, validate.status_code) == (200, 200)
+    assert await _count(db_session) == 0
+
+
+def test_unit_audit_message_texts_are_frozen():
+    """P3.1 T14 (spec §9): P3.1'de DEGISMEYEN yedi metin, birebir.
+
+    §9 tablosunun "(değişmedi)" satirlari bir iddiadir; bu test onu kilitler.
+    Bir metnin sessizce degismesi eski denetim satirlariyla yenilerinin ayni
+    ekranda FARKLI dilde gorunmesine yol acar.
+    """
+    assert messages.block_created("Yeşil Vadi", "A Blok") == (
+        "Yeni blok oluşturuldu: Yeşil Vadi · A Blok"
+    )
+    assert messages.block_updated("Yeşil Vadi", "A Blok") == "Blok güncellendi: Yeşil Vadi · A Blok"
+    assert messages.block_deleted("Yeşil Vadi", "A Blok") == "Blok silindi: Yeşil Vadi · A Blok"
+    assert messages.unit_created("Yeşil Vadi", "A Blok", "1") == (
+        "Yeni ünite oluşturuldu: Yeşil Vadi · A Blok · 1"
+    )
+    assert messages.unit_updated("Yeşil Vadi", "A Blok", "1") == (
+        "Ünite güncellendi: Yeşil Vadi · A Blok · 1"
+    )
+    assert messages.unit_deleted("Yeşil Vadi", "A Blok", "1") == (
+        "Ünite silindi: Yeşil Vadi · A Blok · 1"
+    )
+    assert messages.units_bulk_created("Yeşil Vadi", "A Blok", 24) == (
+        "Toplu ünite üretildi: Yeşil Vadi · A Blok · 24 ünite"
+    )
+    assert messages.unit_allocation_updated("Yeşil Vadi", 42) == (
+        "Ünite paylaşımı güncellendi: Yeşil Vadi · 42 ünite"
+    )
+
+
+def test_units_imported_message_reports_skipped_rows():
+    """P3.1 T14 (spec §9, §6.1): `skipped` VARSA metne girer."""
+    assert messages.units_imported("Yeşil Vadi", 22, 2) == (
+        "Üniteler Excel'den içe aktarıldı: Yeşil Vadi · 22 ünite (2 satır atlandı)"
+    )
+
+
+def test_units_imported_message_stays_short_without_skipped_rows():
+    """P3.1 T14: `skipped=0` iken parantezli ek YAZILMAZ — "(0 satır atlandı)"
+    her tam aktarmaya gurultu eklerdi."""
+    assert messages.units_imported("Yeşil Vadi", 22, 0) == (
+        "Üniteler Excel'den içe aktarıldı: Yeşil Vadi · 22 ünite"
+    )
 
 
 async def test_failed_write_writes_no_audit(client, db_session, user_factory, project_factory):
