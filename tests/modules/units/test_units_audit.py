@@ -343,14 +343,15 @@ async def test_import_partial_writes_one_row_carrying_skipped_count(
     )
 
 
-async def test_preview_and_validate_write_no_audit(
+async def test_preview_validate_and_template_write_no_audit(
     client, db_session, user_factory, project_factory
 ):
-    """P3.1 T14 (spec §9): P3.1'in IKI yeni ucu da denetim YAZMAZ.
+    """P3.1 T15 (spec §9, §12.5/54): P3.1'in UC yeni ucu da denetim YAZMAZ.
 
-    Ikisi de yazma akisinin ONIZLEMESIDIR (`bulk/preview`, `import/validate`) ve
-    hicbir satir uretmez; denetim yazsalardi "Onizlemeyi Yenile"ye her basista
-    gunluge satir dusen bir ekran ortaya cikardi (P4 T7 kurali).
+    Ucu de yazma akisinin ONIZLEMESIDIR (`bulk/preview`, `import/validate`,
+    `import/template`) ve hicbir satir uretmez; denetim yazsalardi "Onizlemeyi
+    Yenile" / "Şablon İndir"e her basista gunluge satir dusen bir ekran ortaya
+    cikardi (P4 T7 kurali).
     """
     project = await project_factory("B11-14", name="Yeşil Vadi")
     site = await _site(db_session, project)
@@ -377,7 +378,9 @@ async def test_preview_and_validate_write_no_audit(
         headers=headers,
     )
 
-    assert (preview.status_code, validate.status_code) == (200, 200)
+    template = await client.get(f"/projects/{project.id}/units/import/template", headers=headers)
+
+    assert (preview.status_code, validate.status_code, template.status_code) == (200, 200, 200)
     assert await _count(db_session) == 0
 
 

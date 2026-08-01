@@ -391,10 +391,9 @@ async def test_idor_import_block_name_collision_creates_in_own_project(
 #      yol disindan gelen IKINCI bir kimlik. Yol proje A'yi gosterirken
 #      `site_id` B'nin santiyesini gosterebilir (`block_id` tuzaginin ikizi).
 #
-# Spec §12.6'nin I3 ve I6 satirlari `GET .../units/import/template` icindir;
-# O UC HENUZ ACILMADI (plan T14, bu dilimin disinda birakildi) ve bu yuzden
-# burada karsiligi YOKTUR. Uc acildiginda bu dosyaya I3 (gorunmeyen proje →
-# 404) ve I6 (`view` izniyle → 200) eklenmelidir.
+#   4. `GET .../units/import/template` — P3.1 T14'te acilan sablon ucu. Izni
+#      `view`'dir (spec §6.2 karari), yani BU DILIMDEKI TEK "view yeter" yeni
+#      uctur; gorunurluk kapisi ise diger uclarla AYNIDIR (I3 vs I6).
 
 
 async def test_idor_preview_invisible_project_404(
@@ -474,6 +473,43 @@ async def test_idor_preview_with_foreign_block_404(
     _assert_no_leak(resp, str(block_b.id), block_b.name, str(project_b.id))
 
 
+async def test_idor_template_invisible_project_404(client, user_factory, project_factory):
+    """Spec §12.6/I3. Sablon ucu `view` izniyle acilir (I6) ama GORUNURLUK
+    muafiyeti YOKTUR: gorunmeyen bir projenin sablonu 404 doner.
+
+    Ayrimi kacirmak kolaydir — "sablonda proje verisi yok, kapiya ne gerek var"
+    denirse yol bir PROJE VARLIK ORAKULUNE doner: elinde UUID olan kullanici
+    200/404 farkindan projenin var oldugunu okur.
+    """
+    project = await project_factory("IDOR-I3")
+    token = await _login(client, user_factory, "patron")
+
+    resp = await client.get(f"/projects/{project.id}/units/import/template", headers=_auth(token))
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == _PROJECT_MISSING
+    _assert_no_leak(resp, str(project.id), project.code, project.name)
+
+
+async def test_idor_template_with_view_permission_200(
+    client, db_session, user_factory, project_factory
+):
+    """Spec §12.6/I6 + §6.2 karari. `site_chief` (`projects`=view) sablonu
+    INDIREBILIR.
+
+    Bu, dosyadaki TEK "view yeter" yeni uctur ve bilinclidir: sablon bos bir
+    baslik satiridir, proje verisi tasimaz; `full`'a kapatmak veri GIRECEK
+    kullaniciyi akisin ilk adimindan mahrum birakirdi. Ayni rol `preview` ve
+    `validate`'te 403 alir (I5) — fark ASAGIDAKI `view` tablosunda kilitli.
+    """
+    project, _, _ = await _fixture_project_with_unit(db_session, project_factory, "IDOR-I6")
+    token = await _login_with_access(client, db_session, user_factory, "site_chief")
+
+    resp = await client.get(f"/projects/{project.id}/units/import/template", headers=_auth(token))
+
+    assert resp.status_code == 200
+
+
 @pytest.mark.parametrize("endpoint", ["units/import", "units/import/validate"])
 async def test_idor_site_id_from_other_project_404(
     client, db_session, user_factory, project_factory, endpoint
@@ -524,10 +560,13 @@ async def test_idor_site_id_from_other_project_404(
         # "yazip yazmadigina" BAKMAZ — onizleme de token ister.
         ("post", "/projects/{project}/units/bulk/preview"),
         ("post", "/projects/{project}/units/import/validate"),
+        # P3.1 T14: sablon ucu. Izni `view`'dir (I6) ama KIMLIK yine sarttir —
+        # "herkese acik sablon" diye bir kapi acilmaz.
+        ("get", "/projects/{project}/units/import/template"),
     ],
 )
 async def test_idor_no_token_401(client, db_session, user_factory, project_factory, method, path):
-    """§11.4-11 + spec §12.6/I8. P3.1 sonrasi ON UC ucun HEPSI. Yeni bir uc
+    """§11.4-11 + spec §12.6/I8. P3.1 sonrasi ON DORT ucun HEPSI. Yeni bir uc
     eklenip bu listeye yazilmazsa eksik oldugu B12 openapi karsilastirmasinda
     gorulur."""
     project, block, unit = await _fixture_project_with_unit(db_session, project_factory, "IDOR-11")
@@ -552,6 +591,8 @@ async def test_idor_no_token_401(client, db_session, user_factory, project_facto
         # P3.1 T15 (spec §12.6/I7): iki yeni uc de `none` izniyle 403.
         ("post", "/projects/{project}/units/bulk/preview"),
         ("post", "/projects/{project}/units/import/validate"),
+        # P3.1 T14: sablon `view` ISTER — `none` yetmez (spec §12.6/I7 "ucu de").
+        ("get", "/projects/{project}/units/import/template"),
     ],
 )
 async def test_idor_projects_permission_none_403(

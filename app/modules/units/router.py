@@ -1,7 +1,8 @@
 import uuid
 from typing import Annotated
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel
@@ -13,7 +14,7 @@ from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
-from app.modules.units import batch, importer, service
+from app.modules.units import batch, guards, importer, service
 from app.modules.units.models import UnitKind, UnitSalesStatus
 from app.modules.units.schemas import (
     BlockCreate,
@@ -31,7 +32,12 @@ from app.modules.units.schemas import (
     UnitResponse,
     UnitUpdate,
 )
+from app.modules.units.template import build_template_workbook
 from app.modules.users.models import User
+
+# `boq/router.py` ve `audit/router.py` ile AYNI sabit: uc modul de kendi
+# kopyasini tutar (mevcut desen), ortak bir `core` sabiti ACILMAZ.
+XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 # Uclar iki ayri kok altina dagilir (P4 deseni): proje baglamli uclar
 # `/projects/...`, kimligi yukari cozumleyen tekil uclar `/blocks/...` ve
@@ -392,3 +398,44 @@ async def import_units_endpoint(
     )
     await _audit(request, session, user, AuditAction.create, detail)
     return result
+
+
+def _content_disposition(filename: str) -> str:
+    """`boq/router.py` ile ayni kural: RFC 5987 `filename*` (UTF-8) yaninda
+    ASCII-guvenli bir `filename` de yollanir — proje kodu Turkce karakter
+    icerebilir ve eski istemciler `filename*` okumaz."""
+    ascii_fallback = filename.encode("ascii", errors="ignore").decode("ascii").replace('"', "")
+    if not ascii_fallback:
+        ascii_fallback = "unite-sablonu.xlsx"
+    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(filename)}"
+
+
+@router.get(
+    "/projects/{project_id}/units/import/template",
+    dependencies=[_VIEW],
+    response_class=Response,
+    responses={200: {"content": {XLSX_MEDIA_TYPE: {}}, "description": "Excel sablonu"}},
+)
+async def units_import_template_endpoint(
+    project_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> Response:
+    """Spec §6.7 (EI 37, 87 "Şablon İndir"). 12 baslikli BOS `.xlsx`.
+
+    IZIN `view`'DIR ve bu, modulun tek "view yeter" yazma-akisi ucudur (spec
+    §6.2 karari): sablon hicbir proje verisi tasimaz, `full`'a kapatmak veri
+    GIRECEK kullaniciyi akisin ilk adimindan mahrum birakirdi.
+
+    GORUNURLUK KAPISI YINE DE VARDIR (spec §12.6/I3): govde proje verisi
+    tasimasa da 200/404 farki tek basina bir PROJE VARLIK ORAKULUDUR.
+
+    Okuma ucudur — `_audit` CAGIRMAZ ve `Request` parametresi bile ALMAZ
+    (P4 T7 kurali; `validate` ucuyle ayni gerekce).
+    """
+    project = await guards.visible_project(session, user, project_id)
+    return Response(
+        content=build_template_workbook().getvalue(),
+        media_type=XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": _content_disposition(f"unite-sablonu-{project.code}.xlsx")},
+    )
