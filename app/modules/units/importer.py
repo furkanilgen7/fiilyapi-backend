@@ -13,7 +13,7 @@ Bir dosya yolu ya da gecici dosya bu modulde YOKTUR ve eklenmemelidir (spec §7.
 
 import io
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import ROUND_HALF_UP, Decimal, DecimalException
 
 from openpyxl import load_workbook
@@ -164,7 +164,8 @@ class ImportRow:
 
 @dataclass(frozen=True)
 class RowError:
-    """`UnitImportRowError` semasinin saf karsiligi — importer Pydantic'e bagimli degildir."""
+    """SATIR HATASI — satir YAZILMAZ (spec §6.5). Importer Pydantic'e bagimli
+    degildir: bu tip `UnitImportRowReport.messages`'a servis katmaninda cevrilir."""
 
     row: int
     column: str | None
@@ -184,6 +185,41 @@ class RowWarning:
     row: int
     column: str | None
     message: str
+
+
+@dataclass(frozen=True)
+class RowEcho:
+    """EI 118-125 sutunlarinin HAM yankisi — HATALI satirda da doludur.
+
+    Rapor satiri kullanicinin dosyadaki satiri bulmasinin tek yoludur (EI 154
+    hata satirini `C-6 · C · 2 · — · 0 · 1.258.600` diye basiyor); yalniz satir
+    numarasi verilseydi 1000 satirlik bir dosyada arama yeniden kullanicinin
+    isi olurdu.
+    """
+
+    row: int
+    unit_no: str | None
+    block_name: str | None
+    floor: str | None
+    layout: str | None
+    gross_area_m2: Decimal | None
+    list_price: Decimal | None
+
+
+@dataclass(frozen=True)
+class ParsedRow:
+    """Cozumlenmis TEK satirin TAM sonucu: yanki + veri + hatalar + uyarilar.
+
+    `data is None` ⇔ satir HATALIDIR. Bu esdegerlik kismi aktarimin cekirdegidir
+    (spec §6.1): yalniz `data`'si dolu satirlar yazilabilir, dolayisiyla "hatali
+    satir yazildi" hatasi TIP duzeyinde imkânsizlasir.
+    """
+
+    row: int
+    echo: RowEcho
+    data: ImportRow | None
+    errors: list[RowError]
+    warnings: list[RowWarning]
 
 
 class ImportFileError(Exception):
@@ -302,9 +338,15 @@ def _label(field: str) -> str:
     return next(column.label for column in COLUMNS if column.field == field)
 
 
-def _parse_row(
-    number: int, row: tuple, index: dict[str, int]
-) -> tuple[ImportRow | None, list[RowError], list[RowWarning]]:
+def _optional_text(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _optional_decimal(value: object) -> Decimal | None:
+    return value if isinstance(value, Decimal) else None
+
+
+def _parse_row(number: int, row: tuple, index: dict[str, int]) -> ParsedRow:
     """Bir satirin TUM hatalari toplanir — ilk hatada durulmaz.
 
     Kullanici 48 satirlik bir dosyayi hata basina bir kez yuklemek zorunda
@@ -360,11 +402,25 @@ def _parse_row(
             RowWarning(number, _label("list_price"), IMPORT_ROW_PRICE_BELOW_COST.format(cost=cost))
         )
 
+    # EI 118-125: rapor satiri dosyadaki degerleri HATALI satirda da tasir —
+    # kullanici satiri ancak boyle bulur. Bu yuzden yanki `errors`'tan BAGIMSIZ
+    # kurulur ve `ImportRow`'un varligina bagli degildir.
+    echo = RowEcho(
+        row=number,
+        unit_no=_optional_text(values.get("unit_no")),
+        block_name=_optional_text(values.get("block_name")),
+        floor=_optional_text(values.get("floor")),
+        layout=_optional_text(values.get("layout")),
+        gross_area_m2=_optional_decimal(values.get("gross_area_m2")),
+        list_price=_optional_decimal(values.get("list_price")),
+    )
     if errors:
         # Satirin durumu TEKTIR (EI 119): hatali satir ayrica "uyarili" olmaz.
-        return None, errors, []
-    return (
-        ImportRow(
+        return ParsedRow(row=number, echo=echo, data=None, errors=errors, warnings=[])
+    return ParsedRow(
+        row=number,
+        echo=echo,
+        data=ImportRow(
             row=number,
             block_name=str(values["block_name"]),
             unit_no=str(values["unit_no"]),
@@ -378,35 +434,49 @@ def _parse_row(
             floor=values["floor"],  # type: ignore[arg-type]
             facing=values["facing"],  # type: ignore[arg-type]
         ),
-        [],
-        warnings,
+        errors=[],
+        warnings=warnings,
     )
 
 
-def _duplicate_errors(rows: list[ImportRow]) -> list[RowError]:
+def _mark_duplicates(parsed_rows: list[ParsedRow]) -> list[ParsedRow]:
     """Dosya ICINDE ayni `(Blok, Ünite No)` ikilisi — DB'ye hic gitmeden yakalanir.
 
-    Hata IKINCI satira yazilir: kullanicinin silmesi gereken satir odur.
+    Hata IKINCI satira yazilir ve o satirin `data`'si DUSURULUR: kismi aktarimda
+    "hatali satir yazilmaz" garantisi `data is None` esdegerligiyle taşınır, ayri
+    bir hata listesiyle degil — iki kaynak olsaydi biri sessizce atlanabilirdi.
     """
     seen: set[tuple[str, str]] = set()
-    errors: list[RowError] = []
-    for parsed in rows:
+    marked: list[ParsedRow] = []
+    for parsed in parsed_rows:
+        if parsed.data is None:
+            marked.append(parsed)
+            continue
         # Blok adi NORMALLESTIRILEREK eslesir (servis de blogu boyle bulur), ama
         # `unit_no` HARFI HARFINE karsilastirilir: `uq_units_block_no` tam
         # esitliktir, "A1" ile "a1" DB'de iki ayri unitedir.
-        key = (normalize_header(parsed.block_name), parsed.unit_no)
+        key = (normalize_header(parsed.data.block_name), parsed.data.unit_no)
         if key in seen:
-            errors.append(
-                RowError(parsed.row, "Ünite No", "Bu ünite numarası dosyada birden çok kez var")
+            marked.append(
+                replace(
+                    parsed,
+                    data=None,
+                    errors=[
+                        RowError(
+                            parsed.row, "Ünite No", "Bu ünite numarası dosyada birden çok kez var"
+                        )
+                    ],
+                    warnings=[],
+                )
             )
+            continue
         seen.add(key)
-    return errors
+        marked.append(parsed)
+    return marked
 
 
-def parse_units_file(
-    content: bytes,
-) -> tuple[list[ImportRow], list[RowError], list[RowWarning]]:
-    """`bytes` → cozumlenmis satirlar + satir hatalari + satir UYARILARI.
+def parse_units_file(content: bytes) -> list[ParsedRow]:
+    """`bytes` → SATIR SATIR cozumleme sonucu (`ParsedRow` listesi).
 
     Dosyanin tamamini reddeden durumlar `ImportFileError` firlatir; satir bazli
     hatalar DONDURULUR, cunku cagiran onlari DB kaynakli hatalarla BIRLESTIRIP
@@ -426,9 +496,7 @@ def parse_units_file(
     try:
         sheet = workbook.active
         index = _header_index(sheet)
-        rows: list[ImportRow] = []
-        errors: list[RowError] = []
-        warnings: list[RowWarning] = []
+        parsed_rows: list[ParsedRow] = []
         processed = 0
         # Satir numarasi Excel'in kendi numarasidir: baslik 1, veri 2'den baslar.
         for number, raw in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
@@ -439,12 +507,8 @@ def parse_units_file(
             # dosyayi bellege alip sonra saymak sinirin amacini bozardi.
             if processed > MAX_IMPORT_ROWS:
                 raise ImportFileError(IMPORT_TOO_MANY_ROWS)
-            parsed, row_errors, row_warnings = _parse_row(number, raw, index)
-            if parsed is not None:
-                rows.append(parsed)
-            errors.extend(row_errors)
-            warnings.extend(row_warnings)
+            parsed_rows.append(_parse_row(number, raw, index))
     finally:
         # `read_only` modunda acik kalan dosya tanitici birakilmaz.
         workbook.close()
-    return rows, [*errors, *_duplicate_errors(rows)], warnings
+    return _mark_duplicates(parsed_rows)

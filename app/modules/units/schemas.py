@@ -48,7 +48,10 @@ __all__ = [
     "UnitCreate",
     "UnitFacing",
     "UnitImportResult",
-    "UnitImportRowError",
+    "UnitImportRowReport",
+    "UnitImportRowStatus",
+    "UnitImportSummary",
+    "UnitImportValidation",
     "UnitKind",
     "UnitKindBreakdown",
     "UnitListResponse",
@@ -553,13 +556,70 @@ class UnitBulkPreview(BaseModel):
 # --- Excel ice aktarma (kullanici karari, mockup yok — spec §6.4) ---
 
 
-class UnitImportRowError(BaseModel):
-    row: int  # Excel satir numarasi (baslik = 1, veri 2'den baslar)
-    column: str | None
-    message: str
+class UnitImportRowStatus(str, enum.Enum):
+    """EI 119 "Durum" sutunu — satir basina TEK durum.
+
+    Hatali satir ayrica "uyarili" OLMAZ: EI tablosu her satira tek bir simge
+    basiyor (✓ / ⚠ / ✗) ve iki durumu ayni anda tasiyan satir "yazildi mi"
+    sorusunu belirsiz birakirdi.
+    """
+
+    ok = "ok"  # EI 131/142/177 ✓, mesaj "Hazir"
+    warning = "warning"  # EI 166 ⚠ — kullanici isterse YAZILIR (EI 192)
+    error = "error"  # EI 154 ✗ — ASLA yazilmaz
+
+
+class UnitImportRowReport(BaseModel):
+    """EI 118-126 sutunlari BIREBIR.
+
+    `messages` LISTEDIR, tek metin degil: EI 161 bir satirda IKI mesaj
+    gosteriyor ("Oda Tipi boş · Brüt m² sıfır olamaz") ve birlestirilmis tek
+    metin istemcinin mesajlari ayri gostermesini imkânsiz kilardi.
+    """
+
+    row: int  # EI 118 — Excel satir numarasi (baslik = 1, veri 2'den baslar)
+    status: UnitImportRowStatus  # EI 119
+    unit_no: str | None  # EI 120
+    block_name: str | None  # EI 121
+    floor: str | None  # EI 122 — METIN (karar 4)
+    layout: str | None  # EI 123
+    gross_area_m2: Decimal | None  # EI 124
+    list_price: Decimal | None  # EI 125
+    messages: list[str]  # EI 126
+    # Satirin GERCEKTEN yazilip yazilmadigi. Dogrulama ucunda DAIMA `False`:
+    # "gecerli" ile "yazildi" ayri sorulardir ve tek alana indirilseydi
+    # dogrulama sonucu aktarim sonucu gibi okunabilirdi.
+    imported: bool
+
+
+class UnitImportSummary(BaseModel):
+    """EI 94-99 dort sayac kutusu. `valid + warning + error == total_rows`."""
+
+    total_rows: int  # EI 95 "Toplam Satır 24"
+    valid: int  # EI 96 "Geçerli 22"
+    warning: int  # EI 97 "Uyarı 1"
+    error: int  # EI 98 "Hata 1"
+
+
+class UnitImportValidation(BaseModel):
+    """`POST …/units/import/validate` yaniti (spec §6.2) — HICBIR SEY YAZILMAZ."""
+
+    summary: UnitImportSummary
+    rows: list[UnitImportRowReport]
+    blocks_to_create: list[str]  # dosyada gecen, projede olmayan blok adlari
 
 
 class UnitImportResult(BaseModel):
-    created: int
+    """P3'teki sema GENISLEDI (spec §6.3).
+
+    `errors: list[UnitImportRowError]` alani KALDIRILDI; yerini `rows` aldi —
+    uyari ve basari satirlarini da tasiyabilen TEK liste. Iki liste olsaydi
+    (hatalar ayri, satirlar ayri) EI 118-126 tablosu iki kaynaktan birlestirilir
+    ve biri bayatladiginda ekran sessizce yanlis satiri gosterirdi.
+    """
+
+    summary: UnitImportSummary
+    created: int  # GERCEKTEN yazilan unite adedi (EI 202 "22")
+    skipped: int  # atlanan satir adedi — `created + skipped == total_rows`
     blocks_created: int
-    errors: list[UnitImportRowError]  # basarili sonucta bos
+    rows: list[UnitImportRowReport]

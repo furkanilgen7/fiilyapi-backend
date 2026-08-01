@@ -116,10 +116,25 @@ def _legacy_row(unit_no: str = "1", **cells) -> list:
     return [values[label] for label in _LEGACY_HEADERS]
 
 
-async def _post_import(client, project, content: bytes, token: str, filename="uniteler.xlsx"):
+def _parse(content: bytes):
+    """`parse_units_file` ciktisini eski (satirlar, hatalar, uyarilar) uclusune
+    indirger — cozumleme testlerinin ilgilenmedigi `ParsedRow` sarmalayicisini
+    her testte acmamak icin."""
+    parsed = parse_units_file(content)
+    return (
+        [row.data for row in parsed if row.data is not None],
+        [error for row in parsed for error in row.errors],
+        [warning for row in parsed for warning in row.warnings],
+    )
+
+
+async def _post_import(
+    client, project, content: bytes, token: str, filename="uniteler.xlsx", **form
+):
     return await client.post(
         f"/projects/{project.id}/units/import",
         files={"file": (filename, content, _XLSX_MIME)},
+        data={key: str(value) for key, value in form.items()},
         headers=_auth(token),
     )
 
@@ -165,7 +180,7 @@ def test_unknown_extra_columns_ignored():
         headers=[*_HEADERS, "Notlar"],
     )
 
-    rows, errors, _ = parse_units_file(content)
+    rows, errors, _ = _parse(content)
 
     assert errors == []
     assert len(rows) == 1
@@ -203,8 +218,13 @@ async def test_import_valid_10_rows_returns_200(client, db_session, user_factory
     assert resp.status_code == 200
     body = resp.json()
     assert body["created"] == 10
+    assert body["skipped"] == 0
     assert body["blocks_created"] == 0
-    assert body["errors"] == []
+    # BILEREK DEGISTI (T12, spec §6.3): `errors` alani KALDIRILDI, yerini
+    # uyari/basari satirlarini da tasiyabilen `rows` aldi.
+    assert body["summary"] == {"total_rows": 10, "valid": 10, "warning": 0, "error": 0}
+    assert [r["status"] for r in body["rows"]] == ["ok"] * 10
+    assert all(r["imported"] is True for r in body["rows"])
     assert await _count_units(db_session, project.id) == 10
 
 
@@ -272,10 +292,18 @@ async def test_import_creates_missing_block(client, db_session, user_factory, pr
     assert block.site_id == site.id
 
 
-async def test_import_row_error_returns_422_and_writes_nothing(
+async def test_import_kismi_gecerliler_yazilir_hatali_yazilmaz(
     client, db_session, user_factory, project_factory
 ):
-    """HEP-YA-HIC KANITI: tek satir hataliysa unite sayisi 0 kalir."""
+    """P3 §11.3 test 28 BILEREK TERSINE DONDU (spec §6.1, kullanici karari).
+
+    P3'te bu test "tek satir hataliysa unite sayisi 0 kalir" diyordu. EI 38/202
+    "22 Gecerli Satiri Aktar" ve EI 101 "veya sadece gecerli satirlari aktarin"
+    ile uzlasmadigi icin karar KISMI AKTARIM lehine degisti.
+
+    KISMI YAZIMIN ASIL KANITI (spec §12.5/44): hatali satirin unitesi DB'de
+    YOK, gecerlininki VAR. Durum kodu bunu ISPATLAMAZ.
+    """
     project = await project_factory("B9-4", project_type="kendi_yatirim")
     site = await _site(db_session, project)
     await _block(db_session, project, site, name="A Blok")
@@ -289,17 +317,32 @@ async def test_import_row_error_returns_422_and_writes_nothing(
 
     resp = await _post_import(client, project, content, token)
 
-    assert resp.status_code == 422
-    errors = resp.json()["errors"]
-    assert errors[0]["row"] == 3
-    assert errors[0]["message"] == "Net alan brüt alandan büyük olamaz"
-    assert await _count_units(db_session, project.id) == 0
+    assert resp.status_code == 200
+    body = resp.json()
+    assert (body["created"], body["skipped"]) == (1, 1)
+    assert body["summary"] == {"total_rows": 2, "valid": 1, "warning": 0, "error": 1}
+    assert [(r["row"], r["status"], r["imported"]) for r in body["rows"]] == [
+        (2, "ok", True),
+        (3, "error", False),
+    ]
+    assert body["rows"][1]["messages"] == ["Net alan brüt alandan büyük olamaz"]
+    written = (
+        (await db_session.execute(select(Unit).where(Unit.project_id == project.id)))
+        .scalars()
+        .all()
+    )
+    assert [unit.unit_no for unit in written] == ["1"]
 
 
-async def test_import_error_does_not_create_blocks(
+async def test_import_hic_gecerli_satir_yoksa_blok_da_olusmaz(
     client, db_session, user_factory, project_factory
 ):
-    """Hep-ya-hic BLOKLARI da kapsar: hatali dosya yarim blok BIRAKMAZ."""
+    """BILEREK DEGISTI (T12): 422'nin gerekcesi artik "dosyada hata var" DEGIL,
+    "aktarilabilecek gecerli satir yok"tur (spec §8.3, EI mantigi).
+
+    Garanti ayni kaldi: hicbir sey yazilmaz — blok da acilmaz. `created=0` ile
+    200 donmek kullanicinin "aktarildi" sanmasina yol acardi.
+    """
     project = await project_factory("B9-5", project_type="kendi_yatirim")
     await _site(db_session, project)
     token = await _login(client, user_factory, "system_admin")
@@ -308,6 +351,7 @@ async def test_import_error_does_not_create_blocks(
     resp = await _post_import(client, project, content, token)
 
     assert resp.status_code == 422
+    assert resp.json()["detail"] == "Aktarılabilecek geçerli satır yok"
     assert await _count_blocks(db_session, project.id) == 0
 
 
@@ -322,9 +366,12 @@ async def test_import_duplicate_pair_within_file_returns_422(
 
     resp = await _post_import(client, project, content, token)
 
-    assert resp.status_code == 422
-    assert resp.json()["errors"][0]["row"] == 3
-    assert await _count_units(db_session, project.id) == 0
+    # BILEREK DEGISTI (T12): tekrar eden IKINCI satir atlanir, birincisi yazilir.
+    assert resp.status_code == 200
+    body = resp.json()
+    assert (body["created"], body["skipped"]) == (1, 1)
+    assert body["rows"][1]["messages"] == ["Bu ünite numarası dosyada birden çok kez var"]
+    assert await _count_units(db_session, project.id) == 1
 
 
 async def test_import_existing_unit_no_returns_422(
@@ -339,8 +386,10 @@ async def test_import_existing_unit_no_returns_422(
 
     resp = await _post_import(client, project, content, token)
 
+    # Tek satirin tamami hatali → yazilacak satir kalmadi (BILEREK DEGISTI: eski
+    # gerekce "dosyada hata var"di).
     assert resp.status_code == 422
-    assert resp.json()["errors"][0]["message"] == "Bu ünite numarası bu blokta zaten kullanılıyor"
+    assert resp.json()["detail"] == "Aktarılabilecek geçerli satır yok"
     assert await _count_units(db_session, project.id) == 1
 
 
@@ -410,8 +459,14 @@ async def test_import_too_many_rows_returns_422(client, db_session, user_factory
     assert await _count_units(db_session, project.id) == 0
 
 
-async def test_import_error_list_capped_at_50(client, db_session, user_factory, project_factory):
-    """60 hatali satir → 50 hata listelenir, kalani ozetlenir (spec §7.8)."""
+async def test_import_hepsi_hatali_dosya_422(client, db_session, user_factory, project_factory):
+    """BILEREK DEGISTI (T12): `errors` alani ve 50'lik kirpma KALKTI.
+
+    Kirpma `UnitImportError` govdesine aitti; kismi aktarimda satir raporu
+    `rows` icinde ve kirpilmiyor (spec §6.3). Hicbir satir gecerli degilse
+    yanit tek Turkce mesajli 422'dir; satir raporunu gormek isteyen kullanici
+    `import/validate` ucunu kullanir.
+    """
     project = await project_factory("B9-13", project_type="kendi_yatirim")
     site = await _site(db_session, project)
     await _block(db_session, project, site, name="A Blok")
@@ -421,10 +476,8 @@ async def test_import_error_list_capped_at_50(client, db_session, user_factory, 
     resp = await _post_import(client, project, content, token)
 
     assert resp.status_code == 422
-    body = resp.json()
-    assert len(body["errors"]) == 50
-    assert body["truncated"] == "Ve 10 hata daha"
-    assert body["detail"] == "Dosya işlenemedi, 60 satırda hata var"
+    assert resp.json() == {"detail": "Aktarılabilecek geçerli satır yok"}
+    assert await _count_units(db_session, project.id) == 0
 
 
 async def test_import_owner_side_in_non_land_share_project_returns_422(
@@ -439,11 +492,10 @@ async def test_import_owner_side_in_non_land_share_project_returns_422(
 
     resp = await _post_import(client, project, content, token)
 
+    # Tek satir hatali → gecerli satir kalmadi. Satir mesaji `validate` ucunda
+    # gorunur; burada yalniz "hicbiri yazilmadi" kilitlenir.
     assert resp.status_code == 422
-    assert (
-        resp.json()["errors"][0]["message"]
-        == "Ünite payı yalnızca kat karşılığı projelerde belirlenebilir"
-    )
+    assert resp.json()["detail"] == "Aktarılabilecek geçerli satır yok"
     assert await _count_units(db_session, project.id) == 0
 
 
@@ -535,7 +587,7 @@ def test_eski_basliklar_esanlamli_tip_pay():
         headers=_LEGACY_HEADERS,
     )
 
-    rows, errors, _ = parse_units_file(content)
+    rows, errors, _ = _parse(content)
 
     assert errors == []
     assert rows[0].layout == "3+1"
@@ -555,7 +607,7 @@ def test_baslik_normalizasyonu_I_tuzagi():
         [_row(unit_no="9")],
         headers=["Blok", "Kat", "ÜNİTE NO", "TÜR", "  ODA TİPİ ", *_HEADERS[5:]],
     )
-    rows, errors, _ = parse_units_file(content)
+    rows, errors, _ = _parse(content)
 
     assert errors == []
     assert rows[0].layout == "3+1"
@@ -577,7 +629,7 @@ def test_kat_metin_donusturme_yok():
         ]
     )
 
-    rows, errors, _ = parse_units_file(content)
+    rows, errors, _ = _parse(content)
 
     assert [row.floor for row in rows] == ["Zemin", "3. Kat", "3"]
     assert [(e.row, e.column) for e in errors] == [(5, "Kat")]
@@ -618,7 +670,7 @@ def test_oda_tipi_bos_hata():
     """EI 161: `Oda Tipi` P3.1'de ZORUNLU oldu (P3'te opsiyoneldi)."""
     content = _xlsx([_row(unit_no="1", **{"Oda Tipi": None})])
 
-    rows, errors, _ = parse_units_file(content)
+    rows, errors, _ = _parse(content)
 
     assert rows == []
     assert [(e.row, e.column, e.message) for e in errors] == [
@@ -635,7 +687,7 @@ def test_brut_m2_sifir_hata():
         ]
     )
 
-    rows, errors, _ = parse_units_file(content)
+    rows, errors, _ = _parse(content)
 
     assert rows == []
     assert [(e.row, e.message) for e in errors] == [
@@ -651,7 +703,7 @@ def test_hatali_satir_iki_mesaj_tasir():
     """
     content = _xlsx([_row(unit_no="1", **{"Oda Tipi": None, "Brüt m²": 0})])
 
-    rows, errors, _ = parse_units_file(content)
+    rows, errors, _ = _parse(content)
 
     assert rows == []
     assert [e.message for e in errors] == ["Oda Tipi boş olamaz", "Brüt m² sıfır olamaz"]
@@ -670,7 +722,7 @@ def test_maliyet_okunur_ama_dondurulen_satirda_kolon_yok():
         ]
     )
 
-    rows, errors, warnings = parse_units_file(content)
+    rows, errors, warnings = _parse(content)
 
     assert errors == []
     assert not hasattr(rows[0], "cost")
@@ -679,3 +731,283 @@ def test_maliyet_okunur_ama_dondurulen_satirda_kolon_yok():
     assert [(w.row, w.message) for w in warnings] == [
         (3, "Fiyat maliyetin altında (₺860000.00) — kontrol edin")
     ]
+
+
+# --- P3.1 T12: KISMI AKTARIM (spec §6.1, §6.2, §6.3, §12.5) ---
+#
+# Bu bolumun tasidigi tek buyuk risk: "gecerli satir yazilmadi" ya da "hatali
+# satir yazildi" SESSIZ veri hatasidir. Bu yuzden testler durum koduyla
+# YETINMEZ, hangi unitenin DB'de oldugunu tek tek olcerler.
+
+
+def _ei_rows() -> list[list]:
+    """EI 94-99 senaryosu: 24 satir · 22 gecerli · 1 uyari · 1 hata.
+
+    Uyari satiri EI 173 kuralindan dogar (fiyat maliyetin altinda), hata satiri
+    EI 161'den (Oda Tipi bos + Brut m² sifir) ve BIR satirda IKI mesaj tasir.
+    """
+    rows = [_row(unit_no=str(n)) for n in range(1, 23)]
+    rows.append(_row(unit_no="23", **{"Maliyet": 860000, "Liste Fiyatı": 800000}))
+    rows.append(_row(unit_no="24", **{"Oda Tipi": None, "Brüt m²": 0}))
+    return rows
+
+
+async def test_summary_EI_sayaclari_birebir(client, db_session, user_factory, project_factory):
+    """Spec §12.5: EI 95-98 kutulari — 24 / 22 / 1 / 1."""
+    project = await project_factory("T12-1", project_type="kendi_yatirim")
+    site = await _site(db_session, project)
+    await _block(db_session, project, site, name="A Blok")
+    token = await _login(client, user_factory, "system_admin")
+
+    body = (await _post_import(client, project, _xlsx(_ei_rows()), token)).json()
+
+    assert body["summary"] == {"total_rows": 24, "valid": 22, "warning": 1, "error": 1}
+
+
+async def test_hatali_satir_iki_mesaj_tasir_raporda(
+    client, db_session, user_factory, project_factory
+):
+    """EI 161: BIR satirda IKI mesaj → `messages` LISTEDIR, tek metin degil."""
+    project = await project_factory("T12-2", project_type="kendi_yatirim")
+    site = await _site(db_session, project)
+    await _block(db_session, project, site, name="A Blok")
+    token = await _login(client, user_factory, "system_admin")
+
+    body = (await _post_import(client, project, _xlsx(_ei_rows()), token)).json()
+
+    error_row = next(r for r in body["rows"] if r["status"] == "error")
+    assert error_row["messages"] == ["Oda Tipi boş olamaz", "Brüt m² sıfır olamaz"]
+    # EI 118-125: rapor satiri dosyadaki degerleri de tasir (kullanici satiri
+    # ancak boyle bulur) — hatali satirda da.
+    assert error_row["unit_no"] == "24"
+    assert error_row["block_name"] == "A Blok"
+
+
+async def test_import_include_warnings_true_created_23_skipped_1(
+    client, db_session, user_factory, project_factory
+):
+    """Spec §12.5/42: varsayilan `include_warnings=True` → 22 gecerli + 1 uyarili."""
+    project = await project_factory("T12-3", project_type="kendi_yatirim")
+    site = await _site(db_session, project)
+    await _block(db_session, project, site, name="A Blok")
+    token = await _login(client, user_factory, "system_admin")
+
+    body = (await _post_import(client, project, _xlsx(_ei_rows()), token)).json()
+
+    assert (body["created"], body["skipped"]) == (23, 1)
+    assert body["created"] + body["skipped"] == body["summary"]["total_rows"]
+    assert await _count_units(db_session, project.id) == 23
+
+
+async def test_import_include_warnings_false_created_22_skipped_2(
+    client, db_session, user_factory, project_factory
+):
+    """Spec §12.5/43 (EI 192 kutucugu isaretsiz): uyarili satir da ATLANIR."""
+    project = await project_factory("T12-4", project_type="kendi_yatirim")
+    site = await _site(db_session, project)
+    await _block(db_session, project, site, name="A Blok")
+    token = await _login(client, user_factory, "system_admin")
+
+    body = (
+        await _post_import(client, project, _xlsx(_ei_rows()), token, include_warnings=False)
+    ).json()
+
+    assert (body["created"], body["skipped"]) == (22, 2)
+    warning_row = next(r for r in body["rows"] if r["status"] == "warning")
+    assert warning_row["imported"] is False
+    assert await _count_units(db_session, project.id) == 22
+
+
+async def test_import_hic_gecerli_satir_yoksa_422_nothing_to_write(
+    client, db_session, user_factory, project_factory
+):
+    """Spec §12.5/45: `created=0` ile 200 DONMEZ — kullanici "aktarildi" sanardi.
+
+    ISLEM SINIRI: 422 ilk `session.add`'DEN ONCE atilir; ustelik istisna tum
+    istek transaction'ini geri alir. Iki kat guvence de olculur (unite VE blok).
+    """
+    project = await project_factory("T12-5", project_type="kendi_yatirim")
+    site = await _site(db_session, project)
+    await _block(db_session, project, site, name="A Blok")
+    token = await _login(client, user_factory, "system_admin")
+    content = _xlsx(
+        [_row(unit_no="1", **{"Oda Tipi": None}), _row(block="Yeni Blok", kind="Villa")]
+    )
+
+    resp = await _post_import(client, project, content, token)
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "Aktarılabilecek geçerli satır yok"
+    assert await _count_units(db_session, project.id) == 0
+    assert await _count_blocks(db_session, project.id) == 1  # yalniz onceden var olan
+
+
+async def test_import_ayni_dosya_ikinci_kez_hepsi_atlanir_422(
+    client, db_session, user_factory, project_factory
+):
+    """Spec §6.1'in 2. gerekcesinin TESTI (§12.5/46).
+
+    P3 hep-ya-hici "duzelt ve yeniden yukle imkânsizlasir" diye savunmustu.
+    Kismi aktarimda bu itiraz ZARARSIZDIR: ikinci yuklemede zaten yazilmis
+    satirlar "zaten kullaniliyor" hatasiyla RAPORLANIR ve atlanir.
+    """
+    project = await project_factory("T12-6", project_type="kendi_yatirim")
+    site = await _site(db_session, project)
+    await _block(db_session, project, site, name="A Blok")
+    token = await _login(client, user_factory, "system_admin")
+    content = _xlsx([_row(unit_no=str(n)) for n in range(1, 4)])
+
+    first = await _post_import(client, project, content, token)
+    second = await _post_import(client, project, content, token)
+
+    assert first.json()["created"] == 3
+    assert second.status_code == 422
+    assert second.json()["detail"] == "Aktarılabilecek geçerli satır yok"
+    assert await _count_units(db_session, project.id) == 3
+
+
+async def test_import_yeni_blok_olusur_hatali_satirin_blogu_olusmaz(
+    client, db_session, user_factory, project_factory
+):
+    """Spec §12.5/47: blok olusturma GECERLI satirlara baglidir.
+
+    Hatali satirin blogu acilsaydi kullanici hicbir unitesi olmayan hayalet bir
+    blokla kalirdi ve bunu ancak blok listesinde fark ederdi.
+    """
+    project = await project_factory("T12-7", project_type="kendi_yatirim")
+    await _site(db_session, project)
+    token = await _login(client, user_factory, "system_admin")
+    content = _xlsx(
+        [
+            _row(block="İyi Blok", unit_no="1"),
+            _row(block="Kötü Blok", unit_no="2", kind="Villa"),
+        ]
+    )
+
+    body = (await _post_import(client, project, content, token)).json()
+
+    assert (body["created"], body["skipped"], body["blocks_created"]) == (1, 1, 1)
+    names = (
+        (await db_session.execute(select(Block.name).where(Block.project_id == project.id)))
+        .scalars()
+        .all()
+    )
+    assert list(names) == ["İyi Blok"]
+
+
+async def test_import_cok_santiyeli_site_id_yok_422_site_required(
+    client, db_session, user_factory, project_factory
+):
+    """Spec §12.5/47b: cok santiyeli projede otomatik atama YANLIS veri uretirdi."""
+    project = await project_factory("T12-8", project_type="kendi_yatirim")
+    await _site(db_session, project, code="S1")
+    await _site(db_session, project, code="S2")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await _post_import(client, project, _xlsx([_row(block="Yeni Blok")]), token)
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "Birden fazla şantiye var, blok için şantiye seçilmelidir"
+    assert await _count_blocks(db_session, project.id) == 0
+
+
+async def test_import_site_id_ile_yeni_bloklar_o_santiyede(
+    client, db_session, user_factory, project_factory
+):
+    """Spec §12.5/47b (EI 61 "Hedef Şantiye", karar 3): bugun 422 veren yol boyle acilir."""
+    project = await project_factory("T12-9", project_type="kendi_yatirim")
+    await _site(db_session, project, code="S1")
+    second = await _site(db_session, project, code="S2")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await _post_import(
+        client, project, _xlsx([_row(block="Yeni Blok")]), token, site_id=second.id
+    )
+
+    assert resp.status_code == 200
+    block = (
+        await db_session.execute(select(Block).where(Block.project_id == project.id))
+    ).scalar_one()
+    assert block.site_id == second.id
+
+
+async def test_import_mevcut_blogun_site_id_si_degismez(
+    client, db_session, user_factory, project_factory
+):
+    """Spec §6.2: `site_id` YALNIZ yeni blok acarken kullanilir.
+
+    SESSIZ VERI TASIMA RISKI: dosyadaki blok zaten varsa bloğun santiyesi
+    DEGISTIRILMEZ — blok tasimak bu ucun isi degildir ve kullanici uniteye
+    ekleme yaparken bloğunu tasidigini fark edemezdi.
+    """
+    project = await project_factory("T12-10", project_type="kendi_yatirim")
+    first = await _site(db_session, project, code="S1")
+    second = await _site(db_session, project, code="S2")
+    block = await _block(db_session, project, first, name="A Blok")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await _post_import(client, project, _xlsx([_row(unit_no="9")]), token, site_id=second.id)
+
+    assert resp.status_code == 200
+    await db_session.refresh(block)
+    assert block.site_id == first.id
+
+
+async def test_import_baska_projenin_site_id_404(client, db_session, user_factory, project_factory):
+    """Spec §12.5/47c — YENI IDOR YUZEYI (karar 3 ile acildi).
+
+    Baska projenin santiyesi VAR OLMAYAN kimlikle AYNI 404'u alir: aksi hâlde
+    elinde UUID olan kullanici kaydin var oldugunu ve baskasina ait oldugunu
+    ayirt edebilirdi.
+    """
+    project = await project_factory("T12-11A", project_type="kendi_yatirim")
+    await _site(db_session, project, code="S-OWN")
+    other = await project_factory("T12-11B", project_type="kendi_yatirim")
+    foreign = await _site(db_session, other, code="S-FOREIGN")
+    token = await _login(client, user_factory, "system_admin")
+    content = _xlsx([_row(block="Yeni Blok")])
+
+    foreign_resp = await _post_import(client, project, content, token, site_id=foreign.id)
+    unknown_resp = await _post_import(client, project, content, token, site_id=uuid.uuid4())
+
+    assert foreign_resp.status_code == 404
+    assert foreign_resp.json() == {"detail": "Şantiye bulunamadı"}
+    assert unknown_resp.json() == foreign_resp.json()
+    assert await _count_blocks(db_session, project.id) == 0
+
+
+async def test_import_maliyet_hicbir_kolona_yazilmaz(
+    client, db_session, user_factory, project_factory
+):
+    """Spec §12.5/48 (karar 10): `Maliyet` DB'de karsiligi olmayan bir sutundur."""
+    project = await project_factory("T12-12", project_type="kendi_yatirim")
+    site = await _site(db_session, project)
+    await _block(db_session, project, site, name="A Blok")
+    token = await _login(client, user_factory, "system_admin")
+    content = _xlsx([_row(unit_no="1", **{"Maliyet": 860000, "Liste Fiyatı": 890000})])
+
+    resp = await _post_import(client, project, content, token)
+
+    assert resp.status_code == 200
+    unit = (
+        await db_session.execute(select(Unit).where(Unit.project_id == project.id))
+    ).scalar_one()
+    values = {str(getattr(unit, column.name)) for column in Unit.__table__.columns}
+    assert not any("860000" in value for value in values)
+
+
+async def test_import_fiyat_maliyetin_altinda_warning(
+    client, db_session, user_factory, project_factory
+):
+    """Spec §12.5/49 (EI 173) — mockup'taki TEK uyari kurali."""
+    project = await project_factory("T12-13", project_type="kendi_yatirim")
+    site = await _site(db_session, project)
+    await _block(db_session, project, site, name="A Blok")
+    token = await _login(client, user_factory, "system_admin")
+    content = _xlsx([_row(unit_no="1", **{"Maliyet": 860000, "Liste Fiyatı": 800000})])
+
+    body = (await _post_import(client, project, content, token)).json()
+
+    assert body["rows"][0]["status"] == "warning"
+    assert body["rows"][0]["messages"] == ["Fiyat maliyetin altında (₺860000.00) — kontrol edin"]
+    assert body["rows"][0]["imported"] is True

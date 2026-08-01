@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel
@@ -316,10 +316,19 @@ async def import_units_endpoint(
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
     file: Annotated[UploadFile, File()],
+    site_id: Annotated[uuid.UUID | None, Form()] = None,
+    include_warnings: Annotated[bool, Form()] = True,
 ) -> UnitImportResult:
-    """Spec §7.8. BELGE SAKLAMA ALTYAPISI GEREKMEZ ve kurulmayacaktir: dosya
+    """Spec §6.1-§6.5. BELGE SAKLAMA ALTYAPISI GEREKMEZ ve kurulmayacaktir: dosya
     bellekte okunur, uniteler yaratilir, dosya ATILIR. Diske, S3'e, veritabanina
     hicbir sey yazilmaz — P3'e sigmasinin tek sebebi budur.
+
+    KISMI AKTARIM (P3'un hep-ya-hic karari BILEREK tersine cevrildi, spec §6.1):
+    gecerli satirlar yazilir, hatalilar raporlanir. Hic gecerli satir yoksa 422 —
+    `created=0` ile 200 donmek kullanicinin "aktarildi" sanmasina yol acardi.
+
+    `site_id` (EI 61 "Hedef Şantiye", karar 3) YALNIZ yeni blok acarken kullanilir.
+    `include_warnings` EI 192 kutucugudur; varsayilani mockup'taki gibi ISARETLIDIR.
 
     Boyut IKI KEZ olculur: once istemcinin bildirdigi `size` ile (henuz govde
     bellege alinmadan), sonra GERCEKTEN okunan `bytes` uzunluguyla
@@ -330,6 +339,13 @@ async def import_units_endpoint(
         importer.ensure_size(file.size)
     except importer.ImportFileError as exc:
         raise UnitValidationError(str(exc)) from exc
-    result, detail = await batch.import_units(session, user, project_id, await file.read())
+    result, detail = await batch.import_units(
+        session,
+        user,
+        project_id,
+        await file.read(),
+        site_id=site_id,
+        include_warnings=include_warnings,
+    )
     await _audit(request, session, user, AuditAction.create, detail)
     return result

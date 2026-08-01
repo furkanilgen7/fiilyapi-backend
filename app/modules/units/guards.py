@@ -54,6 +54,10 @@ NET_GT_GROSS = "Net alan brüt alandan büyük olamaz"
 # metin diger tum alan mesajlariyla birlikte BURADA durur.
 INVALID_VAT_RATE = "KDV oranı yalnızca %1, %10 veya %20 olabilir"
 DUPLICATE_IN_PAYLOAD = "Aynı ünite listede birden çok kez var"
+# Spec §8.3 / §6.1: kismi aktarimda dosya artik "islenemedi" durumuna DUSMEZ;
+# yalniz HIC gecerli satir yoksa 422 doner. `created=0` ile 200 donmek
+# kullanicinin "aktarildi" sanmasina yol acardi.
+IMPORT_NOTHING_TO_WRITE = "Aktarılabilecek geçerli satır yok"
 # Spec §8.3 — kat sablonu (TU 96-133). Kural `UnitBulkCreate.model_validator`'da
 # zorlanir; METIN diger tum alan mesajlariyla birlikte BURADA durur.
 SLOT_COUNT_MISMATCH = "Kat şablonu satır sayısı kat başına daire sayısıyla eşleşmiyor"

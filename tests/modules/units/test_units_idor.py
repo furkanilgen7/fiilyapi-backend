@@ -365,7 +365,10 @@ async def test_idor_import_block_name_collision_creates_in_own_project(
     )
 
     assert resp.status_code == 200
-    assert resp.json() == {"created": 1, "blocks_created": 1, "errors": []}
+    # BILEREK DEGISTI (P3.1 T12, spec §6.3): `errors` alani kaldirildi, yerini
+    # `summary`/`rows`/`skipped` aldi. IDDIA degismedi: bir unite ve bir blok.
+    assert (resp.json()["created"], resp.json()["blocks_created"]) == (1, 1)
+    assert resp.json()["skipped"] == 0
     result = await db_session.execute(
         select(Block).where(Block.project_id == project_a.id, Block.name == block_b.name)
     )
