@@ -19,7 +19,6 @@ from app.modules.sites.schemas import (
     SectionCreate,
     SectionDetailResponse,
     SectionListResponse,
-    SectionResponse,
     SectionUpdate,
     SiteCreate,
     SiteDetailResponse,
@@ -180,7 +179,7 @@ async def _owning_site_name(session: AsyncSession, section: Section) -> str:
 
 @router.post(
     "/sites/{site_id}/sections",
-    response_model=SectionResponse,
+    response_model=SectionDetailResponse,
     status_code=status.HTTP_201_CREATED,
     dependencies=[_FULL],
 )
@@ -190,7 +189,7 @@ async def create_section_endpoint(
     data: SectionCreate,
     current_user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
-) -> SectionResponse:
+) -> SectionDetailResponse:
     section = await service.create_section(session, current_user, site_id, data)
     await _audit(
         request,
@@ -199,7 +198,7 @@ async def create_section_endpoint(
         AuditAction.create,
         messages.section_created(await _owning_site_name(session, section), section.name),
     )
-    return service.to_section(section)
+    return service.to_section_detail(section)
 
 
 @router.get("/sections/{section_id}", response_model=SectionDetailResponse, dependencies=[_VIEW])
@@ -239,17 +238,17 @@ async def delete_section_endpoint(
     await _audit(request, session, current_user, AuditAction.delete, detail)
 
 
-@router.patch("/sections/{section_id}", response_model=SectionResponse, dependencies=[_FULL])
+@router.patch("/sections/{section_id}", response_model=SectionDetailResponse, dependencies=[_FULL])
 async def update_section_endpoint(
     request: Request,
     section_id: uuid.UUID,
     data: SectionUpdate,
     current_user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
-) -> SectionResponse:
+) -> SectionDetailResponse:
     # Metin SERVISTEN gelir (`update_site` deseni): `is_draft: true -> false`
     # gecisi ("yayına alındı") duz guncellemeden ayirt edilebilsin diye — onceki
     # `is_draft` degeri yalniz orada gorunur.
     section, detail = await service.update_section(session, current_user, section_id, data)
     await _audit(request, session, current_user, AuditAction.update, detail)
-    return service.to_section(section)
+    return service.to_section_detail(section)
