@@ -28,6 +28,7 @@ from app.modules.sites.schemas import (
     CountPlaceholder,
     MetricPlaceholder,
     SectionCreate,
+    SectionDetailResponse,
     SectionListResponse,
     SectionResponse,
     SectionStatusCounts,
@@ -164,6 +165,28 @@ def to_section(section: Section) -> SectionResponse:
         boq_item_count=_count(_BOQ),
         budget=_metric(_BOQ),
         worker_count=_count(_TIMESHEET),
+    )
+
+
+def to_section_detail(section: Section) -> SectionDetailResponse:
+    """P6 §5 — bolum detay govdesi: `to_section`in TUM alanlari + T1 kolonlari.
+
+    Yer tutucular `to_section`ten AYNEN devralinir (yeniden kurulmaz): dort
+    `pending_module` degeri tek yerde tanimli kalir, aksi hâlde liste ve detay
+    ekranlari zamanla farkli modul anahtarlari gosterirdi.
+    """
+    return SectionDetailResponse(
+        **to_section(section).model_dump(),
+        site_id=section.site_id,
+        section_type=section.section_type,
+        description=section.description,
+        deputy_manager_user_id=section.deputy_manager_user_id,
+        deputy_manager_name=section.deputy_manager_name,
+        planned_worker_count=section.planned_worker_count,
+        budget_amount=section.budget_amount,
+        is_draft=section.is_draft,
+        created_at=section.created_at,
+        updated_at=section.updated_at,
     )
 
 
@@ -323,6 +346,23 @@ async def list_sections_for_site(
     return SectionListResponse(
         counts=_section_counts(sections), items=[to_section(s) for s in sections]
     )
+
+
+async def get_section_detail(
+    session: AsyncSession, actor: User, section_id: uuid.UUID
+) -> SectionDetailResponse:
+    """P6 §5 — `GET /sections/{section_id}`.
+
+    Gorunurluk suzgeci `_visible_section`tir (bolum -> santiye -> proje):
+    OKUMA ucu de YENI BIR IDOR YUZEYIDIR. Kendi erisim mantigini yazmaz,
+    silme/guncelleme uclariyla AYNI fonksiyonu cagirir — iki ayri suzgec zamanla
+    ayrisir ve ayrisan taraf sessiz bir yetki sizintisi olur.
+
+    Gorunmeyen bolum 404 `Bölüm bulunamadı` doner ve govdesi var olmayan bir
+    UUID'ninkiyle BIREBIR AYNIDIR.
+    """
+    section, _ = await _visible_section(session, actor, section_id)
+    return to_section_detail(section)
 
 
 # --- Yazma uclari ---
@@ -613,8 +653,18 @@ async def update_section(
 ) -> Section:
     section, _ = await _visible_section(session, actor, section_id)
     changes = data.model_dump(exclude_unset=True)
-    if changes.get("manager_user_id") is not None:
-        changes["manager_name"] = await _resolve_user_name(session, changes["manager_user_id"])
+    # Kullanici cozumu YAZMADAN ONCE (update_site ile ayni sira): gecersiz
+    # kullanici govdedeki HICBIR alani degistirmez. `deputy_manager_user_id`
+    # `manager_user_id` deseninin birebiridir — ayni `_resolve_user_name`,
+    # dolayisiyla IZINLI (`on_leave`) personel de atanabilir, pasif olan 422.
+    # Kosul `is not None`dir: FK'yi acikca NULL'lamak ad anlik goruntusunu
+    # SILMEZ (kullanici silinse bile evrakta kalmasiyla ayni gerekce).
+    for fk_field, name_field in (
+        ("manager_user_id", "manager_name"),
+        ("deputy_manager_user_id", "deputy_manager_name"),
+    ):
+        if changes.get(fk_field) is not None:
+            changes[name_field] = await _resolve_user_name(session, changes[fk_field])
     for field, value in changes.items():
         setattr(section, field, value)
     await session.flush()

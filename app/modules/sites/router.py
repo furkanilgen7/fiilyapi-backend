@@ -17,6 +17,7 @@ from app.modules.sites import repository, service
 from app.modules.sites.models import Section, Site
 from app.modules.sites.schemas import (
     SectionCreate,
+    SectionDetailResponse,
     SectionListResponse,
     SectionResponse,
     SectionUpdate,
@@ -199,6 +200,22 @@ async def create_section_endpoint(
         messages.section_created(await _owning_site_name(session, section), section.name),
     )
     return service.to_section(section)
+
+
+@router.get("/sections/{section_id}", response_model=SectionDetailResponse, dependencies=[_VIEW])
+async def get_section_endpoint(
+    section_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> SectionDetailResponse:
+    """P6 §5 — Bolum Detay ekraninin veri ucu.
+
+    Izin modulu `sites`tir, AYRI bir modul acilmaz: bolum santiyenin ic
+    kirilimidir (bkz. router docstring'i). Gorunurluk servistedir
+    (`_visible_section`) — gorunmeyen bolum 404 doner ve govdesi var olmayan bir
+    UUID'ninkiyle BIREBIR AYNIDIR.
+    """
+    return await service.get_section_detail(session, user, section_id)
 
 
 @router.delete(

@@ -1,5 +1,5 @@
 import uuid
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -7,12 +7,13 @@ from pydantic import BaseModel, ConfigDict, Field
 # B6/P1 yer tutucu sozlesmesi TEK yerde tanimlidir (spec §3): kopyalanmaz,
 # projects modulunden import edilir.
 from app.modules.projects.schemas import CountPlaceholder, MetricPlaceholder
-from app.modules.sites.models import SectionStatus, SiteStatus
+from app.modules.sites.models import SectionStatus, SectionType, SiteStatus
 
 __all__ = [
     "CountPlaceholder",
     "MetricPlaceholder",
     "SectionCreate",
+    "SectionDetailResponse",
     "SectionListResponse",
     "SectionResponse",
     "SectionStatusCounts",
@@ -81,6 +82,38 @@ class SectionResponse(BaseModel):
     boq_item_count: CountPlaceholder
     budget: MetricPlaceholder
     worker_count: CountPlaceholder
+
+
+class SectionDetailResponse(SectionResponse):
+    """P6 §5 — `GET /sections/{section_id}` govdesi: `sections`in TUM kolonlari.
+
+    `SectionResponse`ten TUREYIR, YERINE GECMEZ: liste ucu (`SectionListResponse`)
+    dar govdeyi tasimaya devam eder. Miras alinan DORT YER TUTUCU
+    (`progress_pct`/`boq_item_count`/`budget`/`worker_count`) BILINCLI OLARAK
+    KALIR (spec §6): hero KPI'lari bu dilimde placeholder desenindedir.
+
+    `budget` (BOQ turevi yer tutucu) ile `budget_amount` (elle girilen gercek
+    kolon) AYNI SEY DEGILDIR ve biri digerinin yerine gecmez — bkz. `Section`
+    docstring'i (P6 §7 S2a). BOQ-bolum bagi acildiginda yer tutucu gercege
+    donusecek, `budget_amount` ise turev degere cevrilecektir.
+
+    Mockup'ta gorunup burada OLMAYAN her sey `Section` modelinde de yoktur
+    (BOQ atamalari, taseron/makine, bagimlilik/milestone, belgeler): spec §6
+    listesi — bu dilimde ARA COZUM yazilmaz.
+    """
+
+    site_id: uuid.UUID
+    section_type: SectionType | None
+    description: str | None
+    # `manager_user_id`/`manager_name` ikilisinin birebiri: ad FK'nin ANLIK
+    # GORUNTUSUDUR, kullanici silinse (FK `SET NULL`) bile evrakta KALIR.
+    deputy_manager_user_id: uuid.UUID | None
+    deputy_manager_name: str | None
+    planned_worker_count: int | None
+    budget_amount: Decimal | None
+    is_draft: bool
+    created_at: datetime
+    updated_at: datetime
 
 
 class SectionStatusCounts(BaseModel):
@@ -313,3 +346,19 @@ class SectionUpdate(BaseModel):
     start_date: date | None = None
     end_date: date | None = None
     sort_order: int | None = Field(default=None, ge=0)
+
+    # --- P6 · T2 genislemesi (spec §3/§5). HEPSI OPSIYONEL: "gonderilmedi" ile
+    # "null yapildi" ayrimi `exclude_unset` ile korunur.
+    #
+    # `budget_amount`/`planned_worker_count` icin `ge=0` BURADA durur: kural
+    # Pydantic'te alan bazli 422 uretir; DB'deki `ck_sections_*` CHECK'leri
+    # emniyet agi olarak KALIR ama kullaniciya anlasilir mesaj vermez.
+    section_type: SectionType | None = None
+    description: str | None = None
+    # `manager_user_id` (yukarida) ile AYNI kural: FK verilirse servis
+    # `deputy_manager_name`i `users.full_name` ile EZER; ad FK'nin turevidir.
+    deputy_manager_user_id: uuid.UUID | None = None
+    deputy_manager_name: str | None = Field(default=None, max_length=200)
+    planned_worker_count: int | None = Field(default=None, ge=0)
+    budget_amount: Decimal | None = Field(default=None, ge=0)
+    is_draft: bool | None = None
