@@ -413,3 +413,27 @@ def sale_updated(project_name: str, unit_label: str, customer_name: str) -> str:
 
 def sale_deleted(project_name: str, unit_label: str, customer_name: str) -> str:
     return f"Ünite satışı silindi: {project_name} · {unit_label} · {customer_name}"
+
+
+# --- Odeme plani (P8 T4) ---
+#
+# Yeni `AuditAction` GEREKMEDI: plan uretimi satir ACAR (`create`), plan
+# duzenlemesi ve tahsilat mevcut satiri DEGISTIRIR (`update`). Tahsilat icin
+# ayri bir aksiyon acilmadi cunku denetim ekrani aksiyona degil METNE gore
+# okunur ve "Taksit tahsilati" ifadesi olayi tam olarak adlandirir.
+
+
+def sale_plan_generated(project_name: str, unit_label: str, row_count: int) -> str:
+    return f"Ödeme planı oluşturuldu: {project_name} · {unit_label} · {row_count} satır"
+
+
+def sale_plan_saved(project_name: str, unit_label: str, row_count: int) -> str:
+    return f"Ödeme planı güncellendi: {project_name} · {unit_label} · {row_count} satır"
+
+
+def sale_installment_paid(
+    project_name: str, unit_label: str, installment_label: str, amount: Decimal
+) -> str:
+    return (
+        f"Taksit tahsilatı işlendi: {project_name} · {unit_label} · {installment_label} · {amount}"
+    )

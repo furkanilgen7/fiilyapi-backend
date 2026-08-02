@@ -8,8 +8,10 @@ uçlar `/sales/{sale_id}` altındadır; bu yüzden router prefix TAŞIMAZ.
 BİRLİKTE `src/app/api/backend/[...path]/route.ts` `ALLOWED_ROOTS` listesine
 eklenmelidir — eklenmezse modül YALNIZ CANLIDA 404 verir, jsdom testleri görmez.
 
-BU DİLİMDE OLMAYAN uçlar: `generate-plan` / `PUT installments` / `pay` (T4) ·
-`activate` / `transfer-deed` / `cancel` / `summary` (T5).
+BU DİLİMDE OLMAYAN uçlar: `activate` / `transfer-deed` / `cancel` / `summary` (T5).
+
+Ödeme planı uçları (T4) `installments.py` servisini çağırır; üçü de `sales:full`
+ister (aşağıdaki `pay` gerekçesine bakınız).
 """
 
 import uuid
@@ -26,8 +28,12 @@ from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
-from app.modules.sales import service
+from app.modules.sales import installments, service
 from app.modules.sales.schemas import (
+    InstallmentPayInput,
+    SaleInstallmentResponse,
+    SaleInstallmentsSave,
+    SalePlanResponse,
     UnitSaleCreate,
     UnitSaleListResponse,
     UnitSaleResponse,
@@ -141,3 +147,80 @@ async def delete_sale_endpoint(
     """
     detail = await service.delete_sale(session, user, sale_id)
     await _audit(request, session, user, AuditAction.delete, detail)
+
+
+# --- Ödeme planı (T4; spec §4, mockup F99-F147) ---
+
+
+@router.post(
+    "/sales/{sale_id}/generate-plan", response_model=SalePlanResponse, dependencies=[_FULL]
+)
+async def generate_sale_plan_endpoint(
+    request: Request,
+    sale_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> SalePlanResponse:
+    """F100 "Plan Oluştur" — SUNUCU OTORİTESİ: satırlar satış kaydının plan
+    sütunlarından (F103-106) üretilir, gövde ALINMAZ.
+
+    Mevcut plan üzerine yazılır; tahsilatı olan plan 409 ile korunur.
+    """
+    plan, detail = await installments.generate_plan(session, user, sale_id)
+    await _audit(request, session, user, AuditAction.create, detail)
+    return plan
+
+
+@router.put("/sales/{sale_id}/installments", response_model=SalePlanResponse, dependencies=[_FULL])
+async def save_sale_installments_endpoint(
+    request: Request,
+    sale_id: uuid.UUID,
+    data: SaleInstallmentsSave,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> SalePlanResponse:
+    """⚠️ **DEĞİŞTİRME** semantiği (`PUT /progress-payments/{id}/lines` ikizi):
+
+    gövde planın TAMAMIDIR, gövdede geçmeyen satır SİLİNİR. `contracts`
+    dağıtımının BİRLEŞTİRME ucuyla karıştırılmamalıdır.
+
+    Σ `amount` = `sale_price` sunucuda doğrulanır (422); tahsilatı olan satır
+    plandan çıkarılamaz (409).
+    """
+    plan, detail = await installments.save_installments(session, user, sale_id, data)
+    await _audit(request, session, user, AuditAction.update, detail)
+    return plan
+
+
+@router.post(
+    "/sales/installments/{installment_id}/pay",
+    response_model=SaleInstallmentResponse,
+    dependencies=[_FULL],
+)
+async def pay_sale_installment_endpoint(
+    request: Request,
+    installment_id: uuid.UUID,
+    data: InstallmentPayInput,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> SaleInstallmentResponse:
+    """§8 S2 tahsilatı — kısmi ödeme destekli; aşırı ödeme 422.
+
+    ## Kapı neden `sales:full` (karar + gerekçe)
+
+    Tahsilat bir YAZMA işlemidir ve `AccessLevel` merdiveninde yazmanın karşılığı
+    `full`tür; `draft`/`request`/`approve` ara seviyeleri BELGE İŞ AKIŞLARI
+    içindir (hakediş taslak→onay zinciri) ve tahsilatın böyle bir akışı YOKTUR.
+    Ayrı bir "tahsilat" seviyesi AÇILMADI: `sales` izin modülü T1'de matrise
+    (19.) tek satır olarak girdi, ikinci bir satır matrisin seed'i + migration'ı
+    + testini birlikte değiştirmeyi gerektirirdi ve spec §4 böyle bir ayrım
+    tarif etmiyor. `accounting` rolü bugün `sales=(view, finance)` olduğundan
+    tahsilat İŞLEYEMEZ — bu bilinçli sonuçtur; değişmesi gerekiyorsa doğru yer
+    izin matrisi seed'idir, uç kapısı değil.
+
+    Kimlik YUKARI çözümlenir (taksit → satış → proje): görünmeyen taksit 404
+    döner ve var olmayanla AYNI gövdeyi verir.
+    """
+    installment, detail = await installments.pay_installment(session, user, installment_id, data)
+    await _audit(request, session, user, AuditAction.update, detail)
+    return installment

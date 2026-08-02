@@ -116,3 +116,56 @@ async def installment_stats(
         )
         for sale_id, paid, total, paid_count, overdue in (await session.execute(stmt)).all()
     }
+
+
+# --- Ödeme planı (T4) ---
+
+
+async def get_installment_locked(
+    session: AsyncSession, installment_id: uuid.UUID
+) -> SaleInstallment | None:
+    """TEK taksit satırını `SELECT … FOR UPDATE` ile okur (tahsilat serileştirme).
+
+    Kilit, doğrulamayı besleyen okumanın KENDİSİDİR: ayrı bir kilitsiz `SELECT`
+    ile okunup sonra kilitlenseydi TOCTOU penceresi açık kalırdı
+    (`contracts/repository.lock_employer_items` dersi).
+
+    `ORDER BY` YOK çünkü kilit kümesi TEK satırdır (birincil anahtar eşitliği);
+    deadlock riski yalnız çok satırlı kilit kümelerinde doğar — orada
+    (`lock_installments`) sıra ZORUNLUDUR.
+    """
+    stmt = select(SaleInstallment).where(SaleInstallment.id == installment_id).with_for_update()
+    return (await session.execute(stmt)).scalars().first()
+
+
+async def lock_installments(session: AsyncSession, sale_id: uuid.UUID) -> None:
+    """Bir satışın TÜM plan satırlarını `SELECT … FOR UPDATE` ile kilitler.
+
+    `PUT installments` yazmadan ÖNCE, doğrulamayı besleyen okumalardan da ÖNCE
+    çağrılmak ZORUNDA: aksi hâlde eşzamanlı bir `pay` isteği, plan düzenlemesi
+    tahsilat kontrolünü yaptıktan sonra araya girer ve tutarı düşürülen satır
+    aşırı ödenmiş hâlde kalırdı.
+
+    `ORDER BY sequence_no` OPSİYONEL DEĞİLDİR (TB1 dersi): kilit kümesi çok
+    satırlı olduğu için sıra tutarsız olursa iki eşzamanlı istek karşılıklı
+    kilitlenir (A satır-1'i, B satır-2'yi tutarken ikisi de diğerini bekler).
+    `sequence_no` bu tablo için (sale_id ile birlikte) BENZERSİZDİR, dolayısıyla
+    küresel ve deterministik bir sıra verir.
+    """
+    stmt = (
+        select(SaleInstallment.id)
+        .where(SaleInstallment.sale_id == sale_id)
+        .order_by(SaleInstallment.sequence_no)
+        .with_for_update()
+    )
+    await session.execute(stmt)
+
+
+async def list_installments(session: AsyncSession, sale_id: uuid.UUID) -> list[SaleInstallment]:
+    """Plan satırları, ekrandaki sırayla (peşinat önce — `sequence_no=0`)."""
+    stmt = (
+        select(SaleInstallment)
+        .where(SaleInstallment.sale_id == sale_id)
+        .order_by(SaleInstallment.sequence_no)
+    )
+    return list((await session.execute(stmt)).scalars().all())

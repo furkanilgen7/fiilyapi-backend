@@ -30,7 +30,7 @@ from app.modules.customers.repository import get_customer
 from app.modules.projects.models import Project
 from app.modules.projects.service import visible_projects
 from app.modules.sales import repository
-from app.modules.sales.models import UnitSale
+from app.modules.sales.models import SaleInstallment, UnitSale
 from app.modules.units.models import Unit, UnitOwnerSide
 from app.modules.units.repository import get_unit
 from app.modules.users.models import User
@@ -38,7 +38,16 @@ from app.modules.users.models import User
 __all__ = [
     "CUSTOMER_MISSING",
     "DELETE_NOT_ALLOWED",
+    "DUPLICATE_SEQUENCE_NO",
+    "INSTALLMENT_MISSING",
+    "INSTALLMENT_TOTAL_MISMATCH",
     "LANDOWNER_UNIT_NOT_SELLABLE",
+    "PAID_INSTALLMENT_BELOW_PAID",
+    "PAID_INSTALLMENT_REMOVED",
+    "PAYMENT_EXCEEDS_INSTALLMENT",
+    "PLAN_DOWN_PAYMENT_EXCEEDS",
+    "PLAN_HAS_PAYMENTS",
+    "PLAN_INPUT_MISSING",
     "PROJECT_MISSING",
     "SALE_MISSING",
     "SALE_NOT_DELETABLE",
@@ -46,8 +55,10 @@ __all__ = [
     "UNIT_MISSING",
     "USER_NOT_FOUND",
     "ensure_no_open_sale",
+    "ensure_plan_replaceable",
     "ensure_unit_sellable",
     "existing_customer",
+    "visible_installment",
     "unit_in_project",
     "visible_project",
     "visible_sale",
@@ -57,6 +68,9 @@ __all__ = [
 PROJECT_MISSING = "Proje bulunamadı"
 SALE_MISSING = "Satış kaydı bulunamadı"
 UNIT_MISSING = "Ünite bulunamadı"
+# T4: taksit → satış → proje zinciriyle süzülür; görünmeyen taksit VAR OLMAYANLA
+# aynı gövdeyi döner (spec §6).
+INSTALLMENT_MISSING = "Taksit bulunamadı"
 
 # 422 — spec §8 S3 (kullanıcı kararı): arsa sahibinin payına düşen üniteler
 # satışa KAPALIDIR. Hissedar-ünite dağıtımı P9'un işidir; orada yeniden
@@ -78,6 +92,37 @@ SALE_NOT_DELETABLE = "Yalnızca rezervasyon kaydı silinebilir; satış iptal ed
 
 # 403 — `can_delete` (`app/core/access.py`) reddi.
 DELETE_NOT_ALLOWED = "Bu satış kaydını silme yetkiniz yok"
+
+# --- Ödeme planı (T4; spec §2/§4, mockup F110-147) ---
+
+# 422 — plan üretilecek girdi yok (ne peşinat ne taksit). Boş plan SESSİZCE
+# üretilmez: kullanıcı "Plan Oluştur"a (F100) bastığında hiçbir şey olmaması
+# formu doldurduğunu sanmasına yol açardı.
+PLAN_INPUT_MISSING = "Ödeme planı için peşinat veya taksit sayısı girilmelidir"
+
+# 422 — F103 peşinat F86 satış bedelini aşamaz (negatif taksit doğardı).
+PLAN_DOWN_PAYMENT_EXCEEDS = "Peşinat satış bedelinden büyük olamaz"
+
+# 409 — tahsilatı olan plan YENİDEN ÜRETİLMEZ: satırların silinmesi işlenmiş
+# tahsilatı da yok ederdi (geri alınamaz veri kaybı). Kullanıcı önce planı
+# `PUT installments` ile düzenler ya da tahsilatı düzeltir.
+PLAN_HAS_PAYMENTS = "Tahsilatı yapılmış ödeme planı yeniden üretilemez"
+
+# 422 — spec §2: plan toplamı = `sale_price` (mockup satır 143 TOPLAM = F86).
+INSTALLMENT_TOTAL_MISMATCH = "Ödeme planı toplamı satış bedeline eşit olmalıdır"
+
+# 409 — gövdede aynı `sequence_no` iki kez (UQ `uq_sale_installments_sale_sequence`
+# ikizi; `lines.DUPLICATE_CELL` deseni).
+DUPLICATE_SEQUENCE_NO = "Aynı taksit sırası birden çok kez gönderildi"
+
+# 409 — DEĞİŞTİRME semantiği tahsilatı SESSİZCE YUTAMAZ (aşağıdaki gerekçe).
+PAID_INSTALLMENT_REMOVED = "Tahsilatı olan taksit plandan çıkarılamaz"
+
+# 422 — tahsilatın altına inen tutar, satırı "aşırı ödenmiş" hâlde bırakırdı.
+PAID_INSTALLMENT_BELOW_PAID = "Taksit tutarı tahsil edilen tutardan küçük olamaz"
+
+# 422 — §8 S2: kısmi ödeme serbesttir, AŞIRI ödeme değil.
+PAYMENT_EXCEEDS_INSTALLMENT = "Tahsilat tutarı taksit bakiyesini aşamaz"
 
 
 # --- Görünürlük (spec §6) ---
@@ -162,3 +207,36 @@ def ensure_deletable_status(is_reservation: bool) -> None:
     """Spec §4: yalnız `reservation` silinir; gerisi iptal edilir (T5)."""
     if not is_reservation:
         raise ConflictError(SALE_NOT_DELETABLE)
+
+
+# --- Ödeme planı korkulukları (T4) ---
+
+
+async def visible_installment(
+    session: AsyncSession, actor: User, installment_id: uuid.UUID
+) -> tuple[SaleInstallment, UnitSale, Project]:
+    """Taksit → satış → proje zinciri (`visible_sale`in bir halka uzunu).
+
+    Görünmeyen taksit **404** döner ve VAR OLMAYANLA aynı gövdeyi verir: aksi
+    hâlde elinde taksit UUID'si olan kullanıcı, kaydın var olduğunu ve başka bir
+    projeye ait olduğunu ayırt edebilirdi (spec §6).
+
+    Satır burada `SELECT … FOR UPDATE` ile KİLİTLENEREK okunur: `pay` ucunun
+    doğrulaması (`paid_amount + tutar ≤ amount`) bu okumadan beslenir ve kilit
+    okumadan SONRA alınsaydı iki eşzamanlı tahsilat aynı "tahsil edilen"i görür,
+    ikisi de geçerli sanılır ve taksit AŞIRI ödenirdi (TOCTOU).
+    """
+    installment = await repository.get_installment_locked(session, installment_id)
+    if installment is None:
+        raise NotFoundError(INSTALLMENT_MISSING)
+    sale = await repository.get_sale(session, installment.sale_id)
+    if sale is None:  # pragma: no cover - FK CASCADE garantisi
+        raise NotFoundError(INSTALLMENT_MISSING)
+    project = await visible_project(session, actor, sale.project_id, INSTALLMENT_MISSING)
+    return installment, sale, project
+
+
+def ensure_plan_replaceable(installments: list[SaleInstallment]) -> None:
+    """Yeniden üretim tahsilatı YOK EDEMEZ (409) — `PLAN_HAS_PAYMENTS` gerekçesi."""
+    if any(row.paid_amount > 0 for row in installments):
+        raise ConflictError(PLAN_HAS_PAYMENTS)

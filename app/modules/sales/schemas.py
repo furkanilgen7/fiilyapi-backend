@@ -17,7 +17,7 @@ ne serviste, ne DB'de — uyarı bile üretilmez.
 """
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -26,6 +26,7 @@ from app.modules.customers.models import CustomerType
 from app.modules.projects.schemas import MetricPlaceholder
 from app.modules.sales.models import (
     DeedCondition,
+    InstallmentPaymentMethod,
     PaymentPlanType,
     SaleType,
     UnitSaleStatus,
@@ -159,6 +160,73 @@ class UnitSaleResponse(BaseModel):
     # faturası (`invoicing` modülünün kodu henüz yazılmadı) — `contracts`
     # şemalarındaki `pending_modules` deseninin aynısı.
     pending_modules: list[str] = Field(default_factory=lambda: list(PENDING_MODULES))
+
+
+# --- Ödeme planı (T4; F110-147) ---
+
+
+class SaleInstallmentInput(BaseModel):
+    """`PUT /sales/{id}/installments` gövdesinin TEK satırı.
+
+    `paid_amount`/`paid_at` gövdede YOKTUR: tahsilat yalnız `pay` ucundan işlenir
+    (§8 S2). Plan düzenlemesiyle tahsilat aynı gövdeden gelseydi, kullanıcı bir
+    satırın tutarını değiştirirken tahsilatını da sessizce sıfırlayabilirdi.
+    """
+
+    sequence_no: int = Field(ge=0)  # 0 = peşinat (T1 model notu)
+    label: str = Field(min_length=1, max_length=50)  # F118
+    due_date: date  # F120
+    amount: Decimal = Field(ge=0, max_digits=18, decimal_places=2)  # F121
+    payment_method: InstallmentPaymentMethod | None = None  # F122/129
+
+
+class SaleInstallmentsSave(BaseModel):
+    """DEĞİŞTİRME semantiği: `items` planın YENİ HÂLİDİR, gövdede geçmeyen satır SİLİNİR."""
+
+    items: list[SaleInstallmentInput]
+
+
+class InstallmentPayInput(BaseModel):
+    """Tahsilat (§8 S2) — kısmi ödeme desteklenir, bu yüzden bayrak değil TUTAR.
+
+    `paid_at` istemciden ALINMAZ: satır TAM ödendiğinde sunucu saati yazılır
+    (geriye dönük tarih girişi bir muhasebe kaydıdır ve hazine dilimine aittir).
+    """
+
+    amount: Decimal = Field(gt=0, max_digits=18, decimal_places=2)
+
+
+class SaleInstallmentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    sale_id: uuid.UUID
+    sequence_no: int
+    label: str
+    due_date: date
+    amount: Decimal
+    payment_method: InstallmentPaymentMethod | None
+    paid_amount: Decimal
+    paid_at: datetime | None
+    # TÜREV (kolon DEĞİL): satırın kalanı. `is_overdue` burada ÜRETİLMEZ —
+    # "gecikmiş" sayacı satış düzeyinde zaten `installment_stats`ten gelir.
+    remaining_amount: Decimal
+
+
+class SalePlanResponse(BaseModel):
+    """F110-147 tablosu + F143 TOPLAM satırı.
+
+    `total_amount` HER ZAMAN `sale_price`a eşittir (sunucu doğrular, spec §2);
+    yine de yanıtta durur ki ekran toplamı kendisi toplamak zorunda kalmasın.
+    """
+
+    sale_id: uuid.UUID
+    sale_price: Decimal
+    total_amount: Decimal
+    paid_amount: Decimal
+    # F106 vade farkının GÖSTERİM tutarı — plana YAZILMAZ (bkz. `plan.py` kararı).
+    term_interest_amount: Decimal
+    items: list[SaleInstallmentResponse]
 
 
 class UnitSaleTotals(BaseModel):
