@@ -16,7 +16,7 @@ import pytest
 
 from app.modules.boq.models import BoqGroup, BoqItem
 from app.modules.contracts.models import EmployerContractGroup, EmployerContractItem
-from app.modules.projects.models import ProjectContract
+from app.modules.projects.models import PriceIndexType, ProjectContract
 from app.modules.sites.models import Site
 
 
@@ -132,6 +132,46 @@ async def test_avans_tutari_ve_kalem_toplami(client, admin_headers, sozlesmeli_p
     assert "items_total" in govde and "items_total_diff" in govde
     assert Decimal(govde["items_total"]) == Decimal("185000.00")
     assert Decimal(govde["items_total_diff"]) == Decimal("11200000") - Decimal("185000.00")
+
+
+@pytest.mark.asyncio
+async def test_endeks_alanlari_yanitta_doner(client, admin_headers, project_factory, seeded_db):
+    """T5 (spec §6 ek task): okuma ucu `index_type` + `has_price_escalation` döner.
+
+    Taşeron hakedişi ekranı fiyat farkı katsayısını gösterirken sözleşmenin
+    endeks tipini ister; alan additive eklendi, yazma yolu değişmedi.
+    """
+    project = await project_factory(code="CL-EMP-IDX", name="Endeksli Proje")
+    await _contract(
+        seeded_db,
+        project.id,
+        has_price_escalation=True,
+        index_type=PriceIndexType.tufe,
+        base_index_value=Decimal("2450.123"),
+    )
+
+    yanit = await client.get(f"/projects/{project.id}/contract", headers=admin_headers)
+
+    assert yanit.status_code == 200, yanit.text
+    govde = yanit.json()
+    assert govde["has_price_escalation"] is True
+    assert govde["index_type"] == "tufe"
+
+
+@pytest.mark.asyncio
+async def test_fiyat_farksiz_sozlesmede_endeks_null(
+    client, admin_headers, project_factory, seeded_db
+):
+    """`has_price_escalation=false` sözleşmede `index_type` NULL döner."""
+    project = await project_factory(code="CL-EMP-IDX0", name="Endekssiz Proje")
+    await _contract(seeded_db, project.id, has_price_escalation=False)
+
+    yanit = await client.get(f"/projects/{project.id}/contract", headers=admin_headers)
+
+    assert yanit.status_code == 200, yanit.text
+    govde = yanit.json()
+    assert govde["has_price_escalation"] is False
+    assert govde["index_type"] is None
 
 
 @pytest.mark.asyncio

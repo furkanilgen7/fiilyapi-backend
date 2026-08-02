@@ -102,6 +102,15 @@ VatRate = Annotated[
     AfterValidator(_check_vat_rate),
 ]
 
+# ZORUNLU alanlar icin ayni kume (`sales.schemas` NULL'i mesru sayar, taseron
+# sozlesmesinin `vat_pct` kolonu ise NOT NULL.dur — taseron hakedisi spec §8 S1).
+# Ikinci bir validator ACILMAZ: kume tek kaynaktan (`_ALLOWED_VAT_RATES`) okunur.
+RequiredVatRate = Annotated[
+    Decimal,
+    Field(ge=0, max_digits=5, decimal_places=2),
+    AfterValidator(_check_vat_rate),
+]
+
 
 class UnitValueBasis(str, enum.Enum):
     """Toplamlarin hangi sutundan hesaplandigi (spec §4.4).

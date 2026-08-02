@@ -26,6 +26,14 @@ from app.modules.contracts.models import ContractStatus, PaymentPeriod
 # `progress_payments.schemas` yalnız kendi modellerini okur.
 from app.modules.progress_payments.schemas import ProgressPaymentSummary
 
+# `PriceIndexType` sözleşme kolonunun kendi enum'udur (`projects.models`) —
+# okuma şemasında yeniden tanımlanmaz (T5).
+from app.modules.projects.models import PriceIndexType
+
+# KDV kümesi ({1, 10, 20}) `units.schemas`ten GELİR (`sales.schemas` ile aynı
+# gerekçe): oran yasayla değişen TEK bir listedir, üç modülde üç kopya olamaz.
+from app.modules.units.schemas import RequiredVatRate, VatRate
+
 __all__ = [
     "ContractAllocationInput",
     "ContractDistributionAllocation",
@@ -216,6 +224,11 @@ class EmployerContractDetail(BaseModel):
     vat_pct: Decimal
     late_penalty_daily: Decimal | None
     has_price_escalation: bool
+    index_type: PriceIndexType | None
+    """T5 (spec §6 ek task, P7 bulgusu): fiyat farkı endeks tipi additive olarak
+    okuma ucuna eklendi — sözleşmenin yazma yolu bu dilimde DEĞİŞMEZ
+    (`PATCH /projects/{id}` nested `contract`'ında kalır). Fiyat farkı kapalıyken
+    (`has_price_escalation=false`) model kısıtı gereği daima `None`."""
     status: ContractStatus
     # Tarihler `projects.start_date`/`end_date`'ten okunur (spec §3.1 — ikinci
     # bir tarih kaynağı açılmaz).
@@ -445,6 +458,8 @@ class SubcontractorContractCreate(BaseModel):
     late_penalty_daily: Decimal | None = Field(default=None, ge=0)
     advance_pct: Decimal = Field(default=Decimal("10"), ge=0, le=100)
     retainage_pct: Decimal = Field(default=Decimal("5"), ge=0, le=100)
+    # Taşeron hakedişi spec §8 S1: hakediş oluşturmada snapshot'lanır.
+    vat_pct: RequiredVatRate = Decimal("20")
     payment_period: PaymentPeriod = PaymentPeriod.monthly
     payment_term_days: int = Field(default=30, ge=0)
     materials_by_contractor: bool = False
@@ -470,6 +485,7 @@ class SubcontractorContractUpdate(BaseModel):
     late_penalty_daily: Decimal | None = Field(default=None, ge=0)
     advance_pct: Decimal | None = Field(default=None, ge=0, le=100)
     retainage_pct: Decimal | None = Field(default=None, ge=0, le=100)
+    vat_pct: VatRate = None
     payment_period: PaymentPeriod | None = None
     payment_term_days: int | None = Field(default=None, ge=0)
     materials_by_contractor: bool | None = None
@@ -500,6 +516,7 @@ class SubcontractorContractDetail(BaseModel):
     late_penalty_daily: Decimal | None
     advance_pct: Decimal
     retainage_pct: Decimal
+    vat_pct: Decimal
     payment_period: PaymentPeriod
     payment_term_days: int
     materials_by_contractor: bool

@@ -345,6 +345,7 @@ async def get_employer_contract_detail(
         vat_pct=contract.vat_pct,
         late_penalty_daily=contract.late_penalty_daily,
         has_price_escalation=contract.has_price_escalation,
+        index_type=contract.index_type,
         status=contract.status,
         start_date=project.start_date,
         end_date=project.end_date,

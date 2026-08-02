@@ -16,12 +16,44 @@ quantize2 edilir (§6.1 formül sırası — sıra bozulursa OLU 122/126 altın
 sayıları tutmaz).
 """
 
+from collections.abc import Iterable
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
+from typing import NamedTuple, Protocol
 
 _MONEY = Decimal("0.01")
 _ZERO = Decimal("0")
 _HUNDRED = Decimal("100")
+
+
+class LineLike(Protocol):
+    """Bir hakediş satırının hesaba giren ÜÇ alanı.
+
+    Somut modele BAĞLANMAZ (`guards._PaymentLike` deseninin aynısı): işveren
+    `ProgressPaymentLine` ile taşeron `SubcontractorProgressPaymentLine` aynı
+    üçlüyü taşır, hesap zinciri ikisi için de TEK kopyadır (taşeron modülü bu
+    dosyayı KOPYALAMAZ, ÇAĞIRIR — plan T3 "kopya kod T7 bulgusudur").
+    """
+
+    contract_unit_price: Decimal
+    coefficient: Decimal
+    quantity: Decimal
+
+
+class PaymentLike(Protocol):
+    """`cumulative_state`in okuduğu hakediş alanları (§6.3 zinciri)."""
+
+    advance_pct: Decimal
+    retainage_pct: Decimal
+    lines: list  # list[LineLike] — invariant `list` ile somut modeller kabul edilsin
+
+
+class CumulativeState(NamedTuple):
+    """Tamamlanmış hakediş zincirinin biriktirdiği durum (spec §6.3, §8, §9.6)."""
+
+    gross: Decimal
+    advance_recovered: Decimal
+    retention: Decimal
 
 
 def quantize2(value: Decimal) -> Decimal:
@@ -79,6 +111,61 @@ def retention_amount(gross: Decimal, retainage_pct: Decimal) -> Decimal:
 def net_amount(gross: Decimal, vat: Decimal, advance: Decimal, retention: Decimal) -> Decimal:
     """Net ödeme (E15 170-171, OLU 195-196) — spec §6.4."""
     return quantize2(gross + vat - advance - retention)
+
+
+def gross_total(payment_lines: Iterable[LineLike]) -> Decimal:
+    """Satır tutarlarının brüt toplamı — `line_total`'ın TEK toplama kopyası.
+
+    İki hakediş ailesi de buradan okur (T3, plan "paylaş, kopyalama").
+    """
+    return sum(
+        (
+            line_total(line.contract_unit_price, line.coefficient, line.quantity)
+            for line in payment_lines
+        ),
+        Decimal("0.00"),
+    )
+
+
+def advance_or_uncapped(
+    gross: Decimal,
+    advance_pct: Decimal,
+    contract_amount: Decimal | None,
+    advance_recovered: Decimal,
+) -> Decimal:
+    """`contract_amount` NULL iken (taslak sözleşme) tavan uygulanamaz — görüntüleme
+    amaçlı TAVANSIZ kesinti döner (spec §6.3: bu durumda hakediş zaten onaya
+    GÖNDERİLEMEZ, `CONTRACT_AMOUNT_REQUIRED`; burada yalnız taslak görüntülemesi
+    için zarif düşüş).
+
+    Taşeron ucunda sözleşme bedeli kalemlerden TÜREDİĞİ için pratikte hiç `None`
+    olmaz; ortak zincirin tek gövdesi olsun diye imza korunur.
+    """
+    if contract_amount is None:
+        return quantize2(gross * advance_pct / _HUNDRED)
+    return advance_deduction(gross, advance_pct, contract_amount, advance_recovered)
+
+
+def cumulative_state(
+    payments: Iterable[PaymentLike], contract_amount: Decimal | None
+) -> CumulativeState:
+    """Avans mahsubu zincirinin TEK kopyası — SORGUSUZ, saf.
+
+    `payments` **`sequence_no`'ya göre ARTAN sırada** verilmelidir: her adımın
+    tavanı bir öncekinin kurtardığı avansa bağlıdır (§6.3), basit toplam
+    DEĞİLDİR. Zincir ikinci bir yerde kopyalansaydı tavan matematiği zamanla iki
+    farklı sonuç üretirdi — bu yüzden işveren `service.py`, işveren `summary.py`
+    ve taşeron `amounts.py` üçü de BURAYA gelir.
+    """
+    gross_sum = _ZERO
+    recovered = _ZERO
+    retention_total = _ZERO
+    for prior in payments:
+        gross_i = gross_total(prior.lines)
+        gross_sum += gross_i
+        recovered += advance_or_uncapped(gross_i, prior.advance_pct, contract_amount, recovered)
+        retention_total += retention_amount(gross_i, prior.retainage_pct)
+    return CumulativeState(gross=gross_sum, advance_recovered=recovered, retention=retention_total)
 
 
 def duration_pct(start: date | None, end: date | None, today: date | None) -> Decimal | None:

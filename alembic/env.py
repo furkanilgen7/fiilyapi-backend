@@ -27,6 +27,9 @@ from app.modules.roles import models as roles_models  # noqa: F401
 from app.modules.sales import models as sales_models  # noqa: F401
 from app.modules.settings import models as settings_models  # noqa: F401
 from app.modules.sites import models as sites_models  # noqa: F401
+from app.modules.subcontractor_progress_payments import (  # noqa: F401
+    models as subcontractor_progress_payments_models,
+)
 from app.modules.units import models as units_models  # noqa: F401
 from app.modules.users import models as users_models  # noqa: F401
 
