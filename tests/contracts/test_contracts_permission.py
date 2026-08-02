@@ -7,7 +7,7 @@ from app.modules.roles.seed_data import MATRIX, MODULES, ROLE_ORDER, seed_refere
 def test_contracts_modulu_matriste_var():
     anahtarlar = [m["key"] for m in MODULES]
     assert "contracts" in anahtarlar
-    assert len(MODULES) == 18
+    assert len(MODULES) == 19
 
 
 def test_contracts_satiri_dogru_rollere_kapali():
@@ -23,15 +23,15 @@ def test_contracts_satiri_dogru_rollere_kapali():
 
 
 @pytest.mark.asyncio
-async def test_seed_144_izin_satiri_uretir(db_session):
+async def test_seed_152_izin_satiri_uretir(db_session):
     from sqlalchemy import func, select
 
     from app.modules.roles.models import RolePermission
 
     # NOT: brief taslağı bu satırı içermiyordu; db_session (seeded_db değil)
-    # kendiliğinden seed edilmediği için testin amacına (144 satır üretimini
+    # kendiliğinden seed edilmediği için testin amacına (152 satır üretimini
     # doğrulamak) ulaşması için seed_reference_data burada açıkça çağrılır.
     await seed_reference_data(db_session)
 
     toplam = await db_session.scalar(select(func.count()).select_from(RolePermission))
-    assert toplam == 8 * 18
+    assert toplam == 8 * 19

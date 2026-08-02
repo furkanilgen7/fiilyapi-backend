@@ -8,10 +8,23 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 from app.core.config import settings
 from app.core.db import Base
+
+# TUM modullerin `models` modulu BURADA import edilir (TB1). Import bir YAN ETKI
+# icindir: model modulu yuklenmeden tablolari `Base.metadata`ya kaydolmaz ve
+# autogenerate / `alembic check` o tablolari "silinecek" diye raporlar (sahte diff).
+#
+# Bu liste `app/modules/*/models.py` ile BIREBIR ayni olmak zorundadir.
+#
+# >>> YENI BIR MODUL ACARSAN models.py'sini BURAYA DA EKLE. <<<
 from app.modules.audit import models as audit_models  # noqa: F401
+from app.modules.boq import models as boq_models  # noqa: F401
 from app.modules.company import models as company_models  # noqa: F401
+from app.modules.contracts import models as contracts_models  # noqa: F401
+from app.modules.customers import models as customers_models  # noqa: F401
+from app.modules.progress_payments import models as progress_payments_models  # noqa: F401
 from app.modules.projects import models as projects_models  # noqa: F401
 from app.modules.roles import models as roles_models  # noqa: F401
+from app.modules.sales import models as sales_models  # noqa: F401
 from app.modules.settings import models as settings_models  # noqa: F401
 from app.modules.sites import models as sites_models  # noqa: F401
 from app.modules.units import models as units_models  # noqa: F401

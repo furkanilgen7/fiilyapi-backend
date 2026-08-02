@@ -3,6 +3,12 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.customers.models import Customer
+
+# YAPRAK modüller: `sales.models` yalnız `core.db`ye bağlıdır, `customers.models`
+# de öyle. Servis/guard katmanına bağlanılsaydı `sales.guards → units.repository`
+# ile döngü doğardı.
+from app.modules.sales.models import UnitSale, UnitSaleStatus
 from app.modules.sites.models import Site
 from app.modules.units.models import Block, Unit
 
@@ -121,6 +127,46 @@ async def list_units_for_project(session: AsyncSession, project_id: uuid.UUID) -
         select(Unit).where(Unit.project_id == project_id).order_by(Unit.sort_order, Unit.unit_no)
     )
     return list(result.scalars().all())
+
+
+def _open_sales_stmt():
+    """AÇIK satış kayıtları (`cancelled` HARİÇ) + alıcı adı.
+
+    `sales.repository.get_open_sale_for_unit`in çoğul ikizi ve AYNI süzgeci
+    kullanır (`status != cancelled`); iki koşul BİRLİKTE değişmelidir. Buradan
+    `sales/service.py`ye değil `sales/models.py`ye (yaprak modül) bağlanılır:
+    ters yönde bir bağ (`sales` → `units`) zaten vardır ve servis katmanına
+    bağlanmak döngü doğururdu.
+    """
+    return (
+        select(UnitSale, Customer)
+        .join(Customer, UnitSale.customer_id == Customer.id)
+        .where(UnitSale.status != UnitSaleStatus.cancelled)
+    )
+
+
+async def list_open_sales_for_project(
+    session: AsyncSession, project_id: uuid.UUID
+) -> list[tuple[UnitSale, Customer]]:
+    """P8 T5: ünite listesinin satış fiyatı/alıcısı (KY 275/277) TEK sorgudan.
+
+    Ünite başına ayrı SELECT atmak 24 daireli bir blokta 24 gidiş-dönüş demekti;
+    `list_units_for_project` ile aynı gerekçe.
+    """
+    result = await session.execute(_open_sales_stmt().where(UnitSale.project_id == project_id))
+    return [(sale, customer) for sale, customer in result.all()]
+
+
+async def get_open_sale_for_unit(
+    session: AsyncSession, unit_id: uuid.UUID
+) -> tuple[UnitSale, Customer] | None:
+    """Tekil ünite yanıtı (POST/PATCH/GET) için AYNI kaynaktan tek satır.
+
+    Liste ile tekil yanıt aynı sorgu gövdesini paylaşır ki "bu daire kime
+    satıldı" sorusunun iki farklı doğruluk tanımı olmasın.
+    """
+    row = (await session.execute(_open_sales_stmt().where(UnitSale.unit_id == unit_id))).first()
+    return (row[0], row[1]) if row is not None else None
 
 
 async def block_has_units(session: AsyncSession, block_id: uuid.UUID) -> bool:

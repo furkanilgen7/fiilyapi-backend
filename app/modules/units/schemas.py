@@ -212,9 +212,11 @@ class UnitResponse(BaseModel):
     # UE 94 — ARTIK YER TUTUCU DEGIL (kullanici karari 2, spec §4.4). P8
     # geldiginde OTOMATIKLESECEK ve elle giris kilitlenecektir.
     sales_status: UnitSalesStatus | None
+    # KY 275/277 — P8 T5'te YER TUTUCU DEGIL: acik satis kaydindan gelir
+    # (`unit_sales`). Satisi olmayan unitede `None`dir; uydurma deger uretilmez.
+    sale_price: Decimal | None  # P8 (KY 275)
+    buyer_name: str | None  # P8 (KY 277)
     # --- ileri dilim yer tutuculari ---
-    sale_price: MetricPlaceholder  # P8 (KY 275)
-    buyer_name: MetricPlaceholder  # P8 (KY 277)
     shareholder: MetricPlaceholder  # P9 (KKP 91)
     # KARAR 3: maliyet ELLE GIRILMEZ, kolon ACILMAZ (spec §4.5) — ileride Is
     # Kalemleri/satinalmadan hesaplanacak. Maliyet yoksa kâr da yoktur.
@@ -253,8 +255,7 @@ class UnitSideSummary(BaseModel):
     # sutunu) beslendikleri icin onlarla birlikte GERCEK sayaca dondular (spec
     # §8.2). Ayri kalsalardi ekran proje toplaminda "34 satildi" gorup taraf
     # tablosunda "veri yok" basardi. GERCEKLESEN satis TUTARI hâlâ P8'indir ve
-    # `UnitTotals.sales_revenue` yer tutucu KALIR — durum sutunu acildi diye
-    # ciro uydurulmaz.
+    # `UnitTotals.sales_revenue` de P8 T5'te gercek degere dondu.
     sold: int  # KKP 163
     reserved: int
     listed: int  # `closed` (Satisa Kapali) SAYILMAZ: bos olsa bile satista degil
@@ -280,10 +281,11 @@ class UnitTotals(BaseModel):
     sold_units: int  # KY 88, 264
     reserved_units: int  # KY 265
     available_units: int  # KY 266
-    # YER TUTUCU KALIR: GERCEKLESEN satis tutari hâlâ P8'in verisidir — durum
-    # sutunu acildi diye ciro uydurulmaz.
-    sales_revenue: MetricPlaceholder  # P8 (KY 93)
-    average_sale_price: MetricPlaceholder  # P8 (KY 267)
+    # P8 T5'te GERCEK degere dondu: ciro artik `unit_sales`ten toplanir ve
+    # yalniz GERCEKLESEN satislari (`active`/`deed_transferred`) sayar —
+    # rezervasyon ciro DEGILDIR. Satis yoksa ortalama `None`dir, 0 degil.
+    sales_revenue: Decimal  # P8 (KY 93)
+    average_sale_price: Decimal | None  # P8 (KY 267)
 
 
 class UnitBlockGroup(BaseModel):
@@ -397,7 +399,15 @@ class UnitCreate(_UnitFormFields):
 
 class UnitUpdate(_UnitFormFields):
     """TUM alanlar opsiyoneldir; "gonderilmedi" ile "null yapildi" ayrimi servis
-    katmaninda `model_fields_set` ile cozulur (P1/P2/P4 deseni)."""
+    katmaninda `model_fields_set` ile cozulur (P1/P2/P4 deseni).
+
+    **`sales_status` BU SEMADAN CIKARILDI (P8 T3, satis spec §3).** Sinif
+    docstring'indeki (`models.py:232-240`) "GELECEK IS — P8" notunun kapanisidir:
+    unitenin vitrin durumu artik SATIS KAYDINDAN turetilir
+    (`sales/service.sync_unit_sales_status`) ve elle giris kilitlenir. Iki yazma
+    yolu birakmak, satis kaydiyla vitrin durumunun sessizce ayrismasi demekti.
+    Kirici DEGILDIR: alani kullanan bir UI henuz yoktur (spec §3). `UnitCreate`te
+    KALIR — orada henuz satis kaydi yoktur, deger yalnizca acilis vitrinidir."""
 
     block_id: uuid.UUID | None = None
     unit_no: str | None = Field(default=None, min_length=1, max_length=30)
@@ -409,8 +419,6 @@ class UnitUpdate(_UnitFormFields):
     appraisal_value: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=2)
     owner_side: UnitOwnerSide | None = None
     sort_order: int | None = Field(default=None, ge=0)
-    # Kullanici karari 2: satis durumu BUGUN elle degistirilebilir (spec §4.4).
-    sales_status: UnitSalesStatus | None = None
 
 
 class UnitAllocationItem(BaseModel):

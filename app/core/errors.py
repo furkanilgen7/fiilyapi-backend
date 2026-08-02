@@ -55,6 +55,17 @@ class UnitValidationError(DomainError):
     """
 
 
+class CustomerValidationError(DomainError):
+    """Alıcı (müşteri) tip/kimlik kuralı ihlali (P8 spec §2) — 422.
+
+    `UnitValidationError` deseninin aynısı: DB `CHECK` ile zorlanamayan
+    (`person` -> TCKN, `company` -> VKN) ve zorlansa bile kullanıcıya Türkçe
+    mesaj veremeyecek kural, tek yazma yolunda servis korkuluğuyla tutulur.
+    Pydantic'te DEĞİL: PATCH kısmi gövde gönderir, kural ancak DB'deki kayıtla
+    birleştirilmiş değerler üzerinde anlamlıdır.
+    """
+
+
 class RelatedRecordsExistError(DomainError):
     """Silinmek istenen kayda bağlı alt kayıtlar var (Alt-Proje 2 P3 spec §7.9) — 409.
 

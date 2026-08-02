@@ -111,6 +111,32 @@ async def list_employer_groups(
     return list(result.scalars().all())
 
 
+async def lock_employer_items(session: AsyncSession, project_id: uuid.UUID) -> None:
+    """Bir sözleşmenin TÜM poz kalemlerini `SELECT … FOR UPDATE` ile kilitler.
+
+    `progress_payments/repository.py::get_contract_locked` deseninin aynısı,
+    yalnız kilit kümesi çok satırlı: dağıtımın doğruladığı kota (`Σ şantiye
+    kotası ≤ contract_item.quantity`) kalem satırının kendisine yazılıdır, bu
+    yüzden kilitlenmesi gereken şey o kalemlerdir. Dağıtım yazımından ÖNCE,
+    doğrulamayı besleyen okumalardan da ÖNCE çağrılmak ZORUNDA — aksi hâlde iki
+    eşzamanlı istek aynı "kalan"ı okur, ikisi de geçerli sanılır, ikisi de yazar
+    ve toplam sözleşme miktarını aşar (TOCTOU, spec §2).
+
+    `ORDER BY id` OPSİYONEL DEĞİLDİR: kilit kümesi çok satırlı olduğu için sıra
+    tutarsız olursa iki eşzamanlı istek karşılıklı kilitlenir (A kalem-1'i,
+    B kalem-2'yi tutarken ikisi de diğerini bekler → deadlock). Küresel ve
+    deterministik bir sıra (birincil anahtar) her iki isteğin de AYNI satırda
+    buluşmasını, dolayısıyla birinin BEKLEMESİNİ garanti eder.
+    """
+    stmt = (
+        select(EmployerContractItem.id)
+        .where(EmployerContractItem.project_id == project_id)
+        .order_by(EmployerContractItem.id)
+        .with_for_update()
+    )
+    await session.execute(stmt)
+
+
 async def get_employer_group(
     session: AsyncSession, group_id: uuid.UUID
 ) -> EmployerContractGroup | None:
