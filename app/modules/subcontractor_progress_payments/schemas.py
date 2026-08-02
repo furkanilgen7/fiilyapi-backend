@@ -4,8 +4,9 @@ Alan sınırları modeldeki kolon tipleriyle BİREBİR (spec §2): snapshot alan
 `code`/`unit`/`group_name` modeldeki `String(N)` uzunluklarını taşır, `description`
 sınırsız `Text`tir.
 
-Hesap blokları (brüt/KDV/avans/teminat/net) BU DİLİMDE YOKTUR — T3'te
-`progress_payments.calculations` yeniden kullanılarak eklenecektir.
+Hesap blokları (brüt/KDV/avans/teminat/net) T3'te eklendi ve gövdeleri
+`progress_payments.calculations`ten okunur — bu modül yalnız ŞEKLİ tanımlar,
+formülün ikinci bir kopyasını TAŞIMAZ.
 """
 
 import uuid
@@ -20,12 +21,16 @@ from app.modules.subcontractor_progress_payments.models import (
 )
 
 __all__ = [
+    "SubcontractorPaymentCalculation",
     "SubcontractorProgressPaymentCreate",
     "SubcontractorProgressPaymentDetail",
+    "SubcontractorProgressPaymentLineInput",
     "SubcontractorProgressPaymentLineRead",
+    "SubcontractorProgressPaymentLinesSave",
     "SubcontractorProgressPaymentListItem",
     "SubcontractorProgressPaymentListResponse",
     "SubcontractorProgressPaymentUpdate",
+    "SubcontractorRefreshPricesResponse",
 ]
 
 
@@ -47,6 +52,36 @@ class SubcontractorProgressPaymentCreate(BaseModel):
     section_id: uuid.UUID | None = None
     """O58 "Bölüm" seçici — bilgi alanı (spec §8 S2). NULL = "Tüm Bölümler";
     kota/hesaba GİRMEZ, salt etiket/filtredir."""
+
+
+class SubcontractorProgressPaymentLineInput(BaseModel):
+    """`PUT …/lines` gövdesindeki tek satır (T3).
+
+    İşveren `ProgressPaymentLineInput`tan İKİ FARK:
+    * `site_id` YOK — taşeron satırında şantiye kırılımı yoktur (spec §2);
+    * `coefficient` KİLİTSİZ (yalnız `> 0`): taşeron sözleşmesinde
+      `has_price_escalation` kolonu yoktur, işverendeki FF kilidi uygulanmaz
+      (şef kararı 2026-08-02).
+
+    `quantity_source` BİLEREK YOKTUR: bu dilimde her satır `manual`dır (spec §2),
+    istekten alınması `diary` rozetini sahte doldurmanın yolu olurdu.
+    `coefficient` gönderilmezse yeni satır hakedişin `default_coefficient`'ını
+    alır, MEVCUT satırın katsayısı KORUNUR.
+    """
+
+    contract_item_id: uuid.UUID
+    quantity: Decimal = Field(ge=0)
+    """0 meşrudur (satır "girilmedi" değil "bu dönem sıfır" demektir)."""
+    coefficient: Decimal | None = Field(default=None, gt=0)
+    sort_order: int | None = Field(default=None, ge=0)
+    """Gönderilmezse GÖVDE SIRASI otoritedir."""
+
+
+class SubcontractorProgressPaymentLinesSave(BaseModel):
+    """`PUT …/lines` gövdesi — DEĞİŞTİRME semantiği: gövdede olmayan satır
+    SİLİNİR. Boş liste = tüm satırları temizle."""
+
+    lines: list[SubcontractorProgressPaymentLineInput] = Field(default_factory=list)
 
 
 class SubcontractorProgressPaymentUpdate(BaseModel):
@@ -84,10 +119,35 @@ class SubcontractorProgressPaymentLineRead(BaseModel):
     quantity_source: QuantitySource
     """O87 "Günlük kayıttan" rozetinin kaynağı; `site_diary` dilimi gelene kadar
     HER satır `manual`dır (spec §2)."""
+    adjusted_unit_price: Decimal
+    """O102 "Düz. B.F." = `contract_unit_price × coefficient` (kuruşa yuvarlı, K5)."""
+    line_total: Decimal
+    """O106 satır hakediş tutarı = `adjusted_unit_price × quantity` (K5 formül sırası)."""
+
+
+class SubcontractorPaymentCalculation(BaseModel):
+    """O147-163 tfoot'u (spec §3) — `calculations.py` çıktısı, SAKLANMAZ (türev).
+
+    Teminat kesintisi ve fiyat farkı katsayısı ONAYLI SAPMA olarak dahildir;
+    KDV tevkifatı bu dilimde hesaba GİRMEZ (spec §8 S4).
+    """
+
+    gross: Decimal
+    vat: Decimal
+    advance_deduction: Decimal
+    retention: Decimal
+    net: Decimal
+
+
+class SubcontractorRefreshPricesResponse(BaseModel):
+    """`POST …/refresh-prices` yanıtı — güncel ekran ayrı bir `GET` ile okunur
+    (işveren `RefreshPricesResponse` deseni)."""
+
+    refreshed_count: int
 
 
 class SubcontractorProgressPaymentListItem(BaseModel):
-    """L112-180 liste satırı. Tutar kolonları T3'te (hesap dilimi) eklenecek."""
+    """L112-180 liste satırı."""
 
     id: uuid.UUID
     contract_id: uuid.UUID
@@ -102,6 +162,10 @@ class SubcontractorProgressPaymentListItem(BaseModel):
     status: SubcontractorPaymentStatus
     section_id: uuid.UUID | None
     created_at: datetime
+    gross_total: Decimal
+    net_total: Decimal
+    """L143-146: liste ekranı brüt ve NET taşır. Mockup'ın "Net = Brüt − KDV"
+    görünümü hesap hatasıdır — doğru formül (`calculations.net_amount`) uygulanır."""
 
 
 class SubcontractorProgressPaymentListResponse(BaseModel):
@@ -142,3 +206,8 @@ class SubcontractorProgressPaymentDetail(BaseModel):
     created_at: datetime
     updated_at: datetime
     lines: list[SubcontractorProgressPaymentLineRead]
+    calculation: SubcontractorPaymentCalculation
+    dropped_orphan_count: int = 0
+    """`PUT …/lines` yanıtında: kalemi silindiği için (`contract_item_id IS NULL`)
+    gövdeden adreslenemeyen ve bu kaydetmede DÜŞEN satır sayısı — zarif düşüş +
+    bildirim, sessiz atlama YOK. Okuma uçlarında her zaman `0`'dır."""

@@ -316,63 +316,15 @@ async def save_lines(
 # zincirleme çağrısı (her adım bir öncekinin sonucunu besler).
 
 
-def _gross_total(payment_lines: list[ProgressPaymentLine]) -> Decimal:
-    # Parametre adı `lines` DEĞİL: modül düzeyindeki `lines` importunu gölgeler.
-    return sum(
-        (
-            calculations.line_total(line.contract_unit_price, line.coefficient, line.quantity)
-            for line in payment_lines
-        ),
-        Decimal("0.00"),
-    )
-
-
-def _advance_or_uncapped(
-    gross: Decimal,
-    advance_pct: Decimal,
-    contract_amount: Decimal | None,
-    advance_recovered: Decimal,
-) -> Decimal:
-    """`contract.amount` NULL iken (taslak sözleşme) tavan uygulanamaz — görüntüleme
-    amaçlı tavansız kesinti döner (spec §6.3: bu durumda hakediş zaten ONAYA
-    GÖNDERİLEMEZ, `CONTRACT_AMOUNT_REQUIRED`; burada yalnız taslak GÖRÜNTÜLEMESİ
-    için zarif düşüş)."""
-    if contract_amount is None:
-        return calculations.quantize2(gross * advance_pct / _HUNDRED)
-    return calculations.advance_deduction(gross, advance_pct, contract_amount, advance_recovered)
-
-
-class CumulativeState(NamedTuple):
-    """Tamamlanmış hakediş zincirinin biriktirdiği durum (spec §6.3, §8, §9.6)."""
-
-    gross: Decimal
-    advance_recovered: Decimal
-    retention: Decimal
-
-
-def cumulative_state(
-    payments: list[ProgressPayment], contract_amount: Decimal | None
-) -> CumulativeState:
-    """Avans mahsubu zincirinin TEK kopyası — SORGUSUZ, saf.
-
-    `payments` **`sequence_no`'ya göre ARTAN sırada** verilmelidir: her adımın
-    tavanı bir öncekinin kurtardığı avansa bağlıdır (§6.3), basit toplam
-    DEĞİLDİR. Üç çağıran vardır ve üçü de buradan okur — `_history_state`
-    (detay/liste "önceki" durumu), `list_payments` (toplu geçmiş) ve
-    `summary.build_summary` (§9.6 kümülatifleri). Zincir ikinci bir yerde
-    kopyalansaydı, tavan matematiği zamanla iki farklı sonuç üretirdi.
-    """
-    gross_total = _ZERO
-    recovered = _ZERO
-    retention_total = _ZERO
-    for prior in payments:
-        gross_i = _gross_total(prior.lines)
-        gross_total += gross_i
-        recovered += _advance_or_uncapped(gross_i, prior.advance_pct, contract_amount, recovered)
-        retention_total += calculations.retention_amount(gross_i, prior.retainage_pct)
-    return CumulativeState(
-        gross=gross_total, advance_recovered=recovered, retention=retention_total
-    )
+# Zincirin gövdesi T3'te `calculations.py`ye TAŞINDI (plan T3: "kopya kod
+# değil paylaşım"): taşeron hakedişi de aynı `gross_total`/`advance_or_uncapped`/
+# `cumulative_state` üçlüsünü çağırır. Aşağıdaki isimler bu modülün
+# çağıranlarını (özellikle `summary.service.cumulative_state`) KIRMAMAK için
+# duran ince kabuklardır — ikinci bir hesap kopyası DEĞİLDİR.
+CumulativeState = calculations.CumulativeState
+cumulative_state = calculations.cumulative_state
+_gross_total = calculations.gross_total
+_advance_or_uncapped = calculations.advance_or_uncapped
 
 
 def _history_state(

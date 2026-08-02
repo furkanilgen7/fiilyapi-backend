@@ -9,11 +9,12 @@ kapsamlıdır (spec §2, mockup #47/#48).
 """
 
 import uuid
+from decimal import Decimal
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.contracts.models import SubcontractorContract
+from app.modules.contracts.models import SubcontractorContract, SubcontractorContractItem
 from app.modules.projects.models import Project
 from app.modules.sites.models import Section, Site
 from app.modules.subcontractor_progress_payments.models import (
@@ -24,6 +25,9 @@ from app.modules.subcontractor_progress_payments.models import (
 # "Açık" hakediş: henüz sonuçlanmamış taslak veya onay bekleyen (spec §5) —
 # aynı sözleşmede ikincisi açılamaz.
 OPEN_STATUSES = (SubcontractorPaymentStatus.draft, SubcontractorPaymentStatus.pending_approval)
+
+# Kümülatif muhasebeye giren durumlar (kota tavanı §4, avans zinciri §3).
+COMPLETED_STATUSES = (SubcontractorPaymentStatus.approved, SubcontractorPaymentStatus.paid)
 
 PaymentRow = tuple[SubcontractorProgressPayment, SubcontractorContract, Project]
 
@@ -94,6 +98,107 @@ async def get_section_with_site(
     )
     row = (await session.execute(stmt)).first()
     return (row[0], row[1]) if row is not None else None
+
+
+async def get_contract_items_by_ids(
+    session: AsyncSession, item_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, SubcontractorContractItem]:
+    """Satır yazma/tazeleme yolunun TOPLU kalem çekimi — satır başına sorgu YOK."""
+    if not item_ids:
+        return {}
+    stmt = select(SubcontractorContractItem).where(SubcontractorContractItem.id.in_(item_ids))
+    return {item.id: item for item in (await session.execute(stmt)).scalars().all()}
+
+
+async def get_contract_amount(session: AsyncSession, contract_id: uuid.UUID) -> Decimal:
+    """Sözleşme bedeli = `Σ quantity × unit_price` (spec §3 avans tavanı).
+
+    Taşeron sözleşmesinde `amount` KOLONU YOKTUR (K3 türev ilkesi, `contracts`
+    modülünün kararı) — bedel her okuyuşta kalemlerden türer.
+
+    Fiyatsız kalem (`unit_price IS NULL`) toplama GİRMEZ: "girilmedi ≠ 0 TL"
+    kuralı burada da geçerlidir; NULL'u 0 saymak tavanı SESSİZCE düşürürdü.
+    """
+    return (await get_contract_amounts(session, [contract_id])).get(contract_id, Decimal("0.00"))
+
+
+async def get_contract_amounts(
+    session: AsyncSession, contract_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, Decimal]:
+    """`get_contract_amount`ın TOPLU hâli — liste ucu sözleşme başına sorgu KOŞMAZ."""
+    if not contract_ids:
+        return {}
+    stmt = (
+        select(
+            SubcontractorContractItem.contract_id,
+            func.sum(SubcontractorContractItem.quantity * SubcontractorContractItem.unit_price),
+        )
+        .where(
+            SubcontractorContractItem.contract_id.in_(contract_ids),
+            SubcontractorContractItem.unit_price.is_not(None),
+        )
+        .group_by(SubcontractorContractItem.contract_id)
+    )
+    rows = (await session.execute(stmt)).all()
+    return {row[0]: Decimal(row[1] or 0) for row in rows}
+
+
+async def list_completed_payments(
+    session: AsyncSession,
+    contract_id: uuid.UUID,
+    *,
+    before_sequence_no: int | None = None,
+    exclude_payment_id: uuid.UUID | None = None,
+) -> list[SubcontractorProgressPayment]:
+    """Tamamlanmış (`approved|paid`) hakedişler, sıra ARTAN. **İKİ MODLU TEK sorgu**
+    (işveren `list_completed_payments` deseninin birebiri, kapsamı SÖZLEŞME):
+
+    * `before_sequence_no=N` → **sıra tabanlı**: avans mahsubu zinciri (spec §3)
+      buradan okur — N'inci hakedişin kalan tavanı kendinden ÖNCEKİLERİN
+      kurtardığına bağlıdır.
+    * `exclude_payment_id=X` → **sırasız TAM küme** (kendisi hariç): kota tavanı
+      (spec §4) buradan okur. Kota bir TOPLAM kısıtıdır, kronolojik değildir —
+      sıraya bağlansaydı onay sırasını değiştirmek tavanı aşmanın meşru bir yolu
+      olurdu (işveren H6 denetimi K1).
+    """
+    stmt = select(SubcontractorProgressPayment).where(
+        SubcontractorProgressPayment.contract_id == contract_id,
+        SubcontractorProgressPayment.status.in_(COMPLETED_STATUSES),
+    )
+    if before_sequence_no is not None:
+        stmt = stmt.where(SubcontractorProgressPayment.sequence_no < before_sequence_no)
+    if exclude_payment_id is not None:
+        stmt = stmt.where(SubcontractorProgressPayment.id != exclude_payment_id)
+    result = await session.execute(stmt.order_by(SubcontractorProgressPayment.sequence_no))
+    return list(result.scalars().all())
+
+
+async def list_completed_payments_by_contracts(
+    session: AsyncSession, contract_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[SubcontractorProgressPayment]]:
+    """Liste ucunun N+1 çözümü (işveren `…_by_projects` deseni): birden çok
+    sözleşmenin tamamlanmış hakedişleri TEK sorguda, `sequence_no` ARTAN sırada.
+
+    Kapsam süzgeci ÇAĞIRANDAN gelen kimlik listesindedir — görünmeyen sözleşmenin
+    satırı hiç ÇEKİLMEZ (spec §9.0).
+    """
+    if not contract_ids:
+        return {}
+    stmt = (
+        select(SubcontractorProgressPayment)
+        .where(
+            SubcontractorProgressPayment.contract_id.in_(contract_ids),
+            SubcontractorProgressPayment.status.in_(COMPLETED_STATUSES),
+        )
+        .order_by(
+            SubcontractorProgressPayment.contract_id,
+            SubcontractorProgressPayment.sequence_no,
+        )
+    )
+    grouped: dict[uuid.UUID, list[SubcontractorProgressPayment]] = {}
+    for payment in (await session.execute(stmt)).scalars().all():
+        grouped.setdefault(payment.contract_id, []).append(payment)
+    return grouped
 
 
 def _list_stmt(

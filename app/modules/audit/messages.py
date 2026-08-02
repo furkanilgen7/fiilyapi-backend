@@ -402,6 +402,20 @@ def subcontractor_progress_payment_updated(
     return f"Taşeron hakedişi güncellendi: {label}"
 
 
+def subcontractor_progress_payment_lines_saved(
+    project_name: str, subcontractor_name: str | None, sequence_no: int, count: int
+) -> str:
+    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    return f"Taşeron hakediş satırları kaydedildi: {label} · {count} satır"
+
+
+def subcontractor_progress_payment_prices_refreshed(
+    project_name: str, subcontractor_name: str | None, sequence_no: int, count: int
+) -> str:
+    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    return f"Taşeron hakediş fiyatları tazelendi: {label} · {count} kalem"
+
+
 def subcontractor_progress_payment_deleted(
     project_name: str,
     subcontractor_name: str | None,

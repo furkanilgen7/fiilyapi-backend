@@ -12,8 +12,9 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.progress_payments import calculations
 from app.modules.projects.service import visible_projects
-from app.modules.subcontractor_progress_payments import repository
+from app.modules.subcontractor_progress_payments import amounts, repository
 from app.modules.subcontractor_progress_payments.models import (
     SubcontractorPaymentStatus,
     SubcontractorProgressPaymentLine,
@@ -29,8 +30,16 @@ from app.modules.users.models import User
 
 
 def _line_read(line: SubcontractorProgressPaymentLine) -> SubcontractorProgressPaymentLineRead:
+    """Satır türevleri (`adjusted_unit_price`/`line_total`) `calculations.py`nin
+    saf fonksiyonlarından okunur — formül BURADA TEKRARLANMAZ (T3)."""
     return SubcontractorProgressPaymentLineRead(
         id=line.id,
+        adjusted_unit_price=calculations.adjusted_unit_price(
+            line.contract_unit_price, line.coefficient
+        ),
+        line_total=calculations.line_total(
+            line.contract_unit_price, line.coefficient, line.quantity
+        ),
         contract_item_id=line.contract_item_id,
         code=line.code,
         description=line.description,
@@ -44,11 +53,18 @@ def _line_read(line: SubcontractorProgressPaymentLine) -> SubcontractorProgressP
     )
 
 
-def build_detail(context: PaymentContext) -> SubcontractorProgressPaymentDetail:
+async def build_detail(
+    session: AsyncSession, context: PaymentContext
+) -> SubcontractorProgressPaymentDetail:
     """GÖRÜNÜRLÜK KONTROLÜ YAPMAZ — çağıranın kapsam kararını çoktan vermiş
     olması ŞARTTIR (işveren `build_detail` ayrımının aynı gerekçesi: `POST`/
-    `PATCH` uçları `visible_projects` sorgusunu ikinci kez koşturmasın)."""
+    `PATCH` uçları `visible_projects` sorgusunu ikinci kez koşturmasın).
+
+    T3'te `async` oldu: hesap bloğunun avans tavanı sözleşme bedeline ve ÖNCEKİ
+    tamamlanmış hakedişlere bağlıdır (spec §3), ikisi de DB'den okunur.
+    """
     payment, contract, project = context
+    calculation = await amounts.calculation_for(session, payment)
     return SubcontractorProgressPaymentDetail(
         id=payment.id,
         contract_id=payment.contract_id,
@@ -76,13 +92,14 @@ def build_detail(context: PaymentContext) -> SubcontractorProgressPaymentDetail:
         created_at=payment.created_at,
         updated_at=payment.updated_at,
         lines=[_line_read(line) for line in payment.lines],
+        calculation=calculation,
     )
 
 
 async def get_detail(
     session: AsyncSession, actor: User, payment_id: uuid.UUID
 ) -> SubcontractorProgressPaymentDetail:
-    return build_detail(await visible_payment(session, actor, payment_id))
+    return await build_detail(session, await visible_payment(session, actor, payment_id))
 
 
 async def list_payments(
@@ -111,6 +128,9 @@ async def list_payments(
         session, visible_ids, limit=limit, offset=offset, **filters
     )
     total = await repository.count_payments(session, visible_ids, **filters)
+    # Hesap TOPLU çekilir (işveren liste ucunun N+1 dersi): hakediş başına
+    # sözleşme bedeli + geçmiş sorgusu koşulsaydı 50 satırlık sayfa 100 sorgu ederdi.
+    blocks = await amounts.bulk_calculations(session, [payment for payment, _, _ in rows])
     return SubcontractorProgressPaymentListResponse(
         items=[
             SubcontractorProgressPaymentListItem(
@@ -127,6 +147,8 @@ async def list_payments(
                 status=payment.status,
                 section_id=payment.section_id,
                 created_at=payment.created_at,
+                gross_total=blocks[payment.id].gross,
+                net_total=blocks[payment.id].net,
             )
             for payment, contract, project in rows
         ],

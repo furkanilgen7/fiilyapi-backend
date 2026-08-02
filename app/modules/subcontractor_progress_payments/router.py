@@ -4,8 +4,8 @@ Kapılar `progress_payments` iznidir: iki hakediş ailesi AYNI ekran ailesidir,
 **yeni izin modülü AÇILMAZ** (spec §1). Denetim günlüğü (`record_audit`) TÜM
 yazma uçlarına bağlıdır; mesajlar `app/modules/audit/messages.py`de merkezîdir.
 
-Kapsam DIŞI (T3/T4/T5): `PUT …/lines`, `refresh-prices`, durum aksiyonları,
-`summary`.
+T3'te eklendi: `PUT …/lines` (değiştirme semantiği + kota) ve `refresh-prices`.
+Kapsam DIŞI (T4/T5): durum aksiyonları, `summary`.
 """
 
 import uuid
@@ -28,8 +28,10 @@ from app.modules.subcontractor_progress_payments.models import SubcontractorPaym
 from app.modules.subcontractor_progress_payments.schemas import (
     SubcontractorProgressPaymentCreate,
     SubcontractorProgressPaymentDetail,
+    SubcontractorProgressPaymentLinesSave,
     SubcontractorProgressPaymentListResponse,
     SubcontractorProgressPaymentUpdate,
+    SubcontractorRefreshPricesResponse,
 )
 from app.modules.users.models import User
 
@@ -111,7 +113,7 @@ async def create_subcontractor_progress_payment_endpoint(
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
-    return read.build_detail(context)
+    return await read.build_detail(session, context)
 
 
 @router.patch(
@@ -137,7 +139,78 @@ async def update_subcontractor_progress_payment_endpoint(
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
-    return read.build_detail(context)
+    return await read.build_detail(session, context)
+
+
+@router.put(
+    "/subcontractor-progress-payments/{payment_id}/lines",
+    response_model=SubcontractorProgressPaymentDetail,
+    dependencies=[_DRAFT],
+)
+async def save_subcontractor_progress_payment_lines_endpoint(
+    request: Request,
+    payment_id: uuid.UUID,
+    data: SubcontractorProgressPaymentLinesSave,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> SubcontractorProgressPaymentDetail:
+    """O formunun tek "Taslak Kaydet" gövdesi — **DEĞİŞTİRME** semantiği.
+
+    ⚠️ Gövdede geçmeyen satır SİLİNİR (`PUT …/contract/distribution`
+    BİRLEŞTİRMESİNİN tersi). Yalnız `status=draft` (409); kalem sahipliği, fiyat
+    guard'ı ve kota tavanı (spec §4) her yazımda koşar.
+
+    Kalemi silinmiş satırlar gövdeden adreslenemediği için düşer; sayıları
+    yanıtın `dropped_orphan_count` alanında BİLDİRİLİR (sessiz atlama yok).
+    Detay `build_detail`den KAPSAM SORGUSU TEKRARLANMADAN kurulur.
+    """
+    context, dropped_orphan_count = await service.save_lines(session, user, payment_id, data)
+    await record_audit(
+        session,
+        action=AuditAction.update,
+        detail=messages.subcontractor_progress_payment_lines_saved(
+            context.project.name,
+            context.contract.subcontractor_name,
+            context.payment.sequence_no,
+            len(context.payment.lines),
+        ),
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    detail = await read.build_detail(session, context)
+    return detail.model_copy(update={"dropped_orphan_count": dropped_orphan_count})
+
+
+@router.post(
+    "/subcontractor-progress-payments/{payment_id}/refresh-prices",
+    response_model=SubcontractorRefreshPricesResponse,
+    dependencies=[_DRAFT],
+)
+async def refresh_subcontractor_progress_payment_prices_endpoint(
+    request: Request,
+    payment_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> SubcontractorRefreshPricesResponse:
+    """Yalnız `draft`ta snapshot beşlisini + yüzde üçlüsünü bilinçli tazeler.
+
+    Yanıt YALNIZ `{refreshed_count}`tur (işveren deseni): güncel ekran ayrı bir
+    `GET` ile okunur, tek gövdede sayaç + tam detay BİRLEŞTİRİLMEZ.
+    """
+    context, refreshed_count = await service.refresh_prices(session, user, payment_id)
+    await record_audit(
+        session,
+        action=AuditAction.update,
+        detail=messages.subcontractor_progress_payment_prices_refreshed(
+            context.project.name,
+            context.contract.subcontractor_name,
+            context.payment.sequence_no,
+            refreshed_count,
+        ),
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return SubcontractorRefreshPricesResponse(refreshed_count=refreshed_count)
 
 
 @router.delete(

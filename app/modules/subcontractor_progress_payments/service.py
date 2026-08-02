@@ -27,7 +27,7 @@ from app.modules.progress_payments import calculations
 from app.modules.projects.models import Project
 from app.modules.projects.service import visible_projects
 from app.modules.roles.repository import get_permission
-from app.modules.subcontractor_progress_payments import guards, repository
+from app.modules.subcontractor_progress_payments import guards, lines, repository
 from app.modules.subcontractor_progress_payments.models import (
     SubcontractorPaymentStatus,
     SubcontractorProgressPayment,
@@ -35,6 +35,7 @@ from app.modules.subcontractor_progress_payments.models import (
 )
 from app.modules.subcontractor_progress_payments.schemas import (
     SubcontractorProgressPaymentCreate,
+    SubcontractorProgressPaymentLinesSave,
     SubcontractorProgressPaymentUpdate,
 )
 from app.modules.users.models import User
@@ -175,13 +176,9 @@ async def _build_lines(
     if any(item.unit_price is None for item in ordered):
         raise SiteValidationError(guards.ITEM_PRICE_REQUIRED)
 
-    source_ids = [item.source_contract_item_id for item in ordered if item.source_contract_item_id]
-    group_names = {
-        item_id: group_name
-        for item_id, _, group_name in await contracts_repository.get_employer_item_groups(
-            session, source_ids
-        )
-    }
+    # Grup adı zinciri T3'te `lines.group_names`e taşındı: satır yazma yolu da
+    # aynı snapshot'ı kurar, iki çözüm kopyası zamanla ayrışırdı.
+    item_groups = await lines.group_names(session, ordered)
     return [
         SubcontractorProgressPaymentLine(
             contract_item_id=item.id,
@@ -191,7 +188,7 @@ async def _build_lines(
             contract_unit_price=item.unit_price,
             coefficient=default_coefficient,
             quantity=_ZERO_QUANTITY,
-            group_name=group_names.get(item.source_contract_item_id),
+            group_name=item_groups.get(item.source_contract_item_id),
             sort_order=index,
         )
         for index, item in enumerate(ordered)
@@ -273,6 +270,74 @@ async def update(
     await session.flush()
     await session.refresh(context.payment)
     return context
+
+
+# --- Satır kaydetme (T3, spec §2/§4) ---
+
+
+async def save_lines(
+    session: AsyncSession,
+    actor: User,
+    payment_id: uuid.UUID,
+    data: SubcontractorProgressPaymentLinesSave,
+) -> tuple[PaymentContext, int]:
+    """`PUT …/lines` — DEĞİŞTİRME semantiği (gövde ekranın TAMAMIDIR).
+
+    Bu katman YALNIZ kapsam (§9.0), KİLİT ve durum kapısını kurar; gövdenin
+    doğrulaması ve uygulanması `lines.apply_lines`tadır (ayrım bilinçlidir:
+    `lines.py` görünürlük katmanını çağırsaydı `service → lines → service`
+    döngüsel importu doğardı).
+
+    Satır yazma KİLİTLİ satır üzerinden yapılır (`_visible_payment_locked`,
+    kilit sırası `create`/`delete` ile AYNI: önce sözleşme, sonra hakediş).
+    Kilitsiz okunsaydı iki eşzamanlı `PUT` kota tavanını TOCTOU ile aşabilirdi:
+    ikisi de kümülatifi aynı anda okur, ikisi de "tavana sığıyor" der.
+
+    İkinci öğe: gövdeden adreslenemediği için düşen bağı-kopmuş satır sayısı.
+    """
+    context = await _visible_payment_locked(session, actor, payment_id)
+    if context.payment.status != SubcontractorPaymentStatus.draft:
+        raise ConflictError(guards.INVALID_STATUS_TRANSITION)
+
+    dropped = await lines.apply_lines(session, context.contract, context.payment, data.lines)
+    await session.refresh(context.payment)
+    return context, dropped
+
+
+# --- Fiyat tazeleme (T3; işveren `refresh_prices` deseninin taşeron karşılığı) ---
+
+
+async def refresh_prices(
+    session: AsyncSession, actor: User, payment_id: uuid.UUID
+) -> tuple[PaymentContext, int]:
+    """`POST …/refresh-prices` — yalnız `draft`ta bağı kopmamış satırların
+    snapshot BEŞLİSİNİ (`code/description/unit/contract_unit_price/group_name`)
+    sözleşme KALEMİNDEN, hakedişin YÜZDE ÜÇLÜSÜNÜ SÖZLEŞMEDEN yeniden kopyalar.
+    `coefficient`/`quantity` KULLANICI VERİSİDİR, DOKUNULMAZ.
+
+    Bağı kopmuş satır (`contract_item_id IS NULL`) tazelenemez — kıyaslanacak
+    canlı fiyat yoktur. SESSİZCE atlanmaz anlamında satır SİLİNMEZ, yalnız
+    `refreshed_count`a girmez: hiçbir veri kaybolmadığı için ayrı bir "düşen
+    satır" alanı icat EDİLMEZ.
+
+    Değişmemiş satır/yüzde YAZILMAZ (no-op tazeleme `refreshed_count=0` döner).
+    """
+    context = await _visible_payment_locked(session, actor, payment_id)
+    payment, contract, _ = context
+    if payment.status != SubcontractorPaymentStatus.draft:
+        raise ConflictError(guards.INVALID_STATUS_TRANSITION)
+
+    payment.vat_pct = contract.vat_pct
+    payment.advance_pct = contract.advance_pct
+    payment.retainage_pct = contract.retainage_pct
+
+    # Satır snapshot'ının tazelenmesi `lines.py`dedir: snapshot kuralının (hangi
+    # beşli, hangi kaynaktan) TEK evi orasıdır — bu katman kapsam/kilit/durum
+    # kapısı ve YÜZDE üçlüsüyle sınırlıdır.
+    refreshed_count = await lines.refresh_snapshots(session, payment)
+    await session.flush()
+    await session.refresh(payment)
+    return context, refreshed_count
 
 
 # --- Silme (işveren K8'in İKİ KATMANLI kuralı birebir) ---
