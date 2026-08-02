@@ -6,9 +6,12 @@ edilebilsin (`bulk.py` ile ayni gerekce). Burada `AsyncSession` YOKTUR ve
 olmamalidir: bu modul yalnizca ORM nesnelerini semalara cevirir.
 """
 
+import uuid
+from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 
 from app.modules.projects.models import ProjectType
+from app.modules.sales.models import UnitSaleStatus
 from app.modules.units.models import Block, Unit, UnitKind, UnitOwnerSide, UnitSalesStatus
 from app.modules.units.schemas import (
     BlockResponse,
@@ -22,9 +25,40 @@ from app.modules.units.schemas import (
 
 # Spec §6.1: bu dilimde YAZILMAYAN turev alanlarin bagli oldugu modul anahtarlari.
 # Kullaniciya gosterilecek metin degil, B6 yer tutucu sozlesmesindeki anahtardir.
-_UNIT_SALES = "unit_sales"
+#
+# `_UNIT_SALES` KALDIRILDI (P8 T5): dort yer tutucusunun (KY 275 `sale_price`,
+# KY 277 `buyer_name`, KY 93 `sales_revenue`, KY 267 `average_sale_price`) veri
+# kaynagi artik VAR — `unit_sales` tablosu P8'de acildi. `sales_status`un
+# P3.1'de yer tutucudan gercek sutuna donusunun aynisi. Geriye kalan iki anahtar
+# hâlâ verisi YAZILMAMIS modulleri gosterir.
 _SHAREHOLDER_UNITS = "shareholder_units"
 _PROJECT_COSTS = "project_costs"
+
+
+@dataclass(frozen=True)
+class UnitSaleInfo:
+    """Bir unitenin ACIK satis kaydindan (P8) okunan sunum verisi.
+
+    ORM nesnesi DEGIL sade bir demet tasinir: bu modulun sozlesmesi "yalniz
+    Decimal/str alir, sema dondurur"dur ve `sales` ORM'unu buraya sizdirmak
+    saf toplama cekirdegini veritabani nesnelerine baglardi.
+    """
+
+    sale_price: Decimal
+    customer_name: str
+    status: UnitSaleStatus
+
+    @property
+    def is_realized(self) -> bool:
+        """KY 93 "Satis Geliri" GERCEKLESEN satistir; rezervasyon ciro DEGILDIR.
+
+        Unite SATIRI yine de rezervasyonun bedelini gosterir (o daireye kimin
+        kapora verdigi ekranda gorunmelidir); TOPLAM ciroya ise yalniz
+        `active`/`deed_transferred` girer. Ayni ayrim satis ozetinin S55/S56
+        kartlarinda da vardir (`sales/summary._SOLD_STATUSES`).
+        """
+        return self.status in (UnitSaleStatus.active, UnitSaleStatus.deed_transferred)
+
 
 _MONEY = Decimal("0.01")
 _HUNDRED = Decimal("100")
@@ -117,10 +151,11 @@ def to_block(block: Block, site_name: str, units: list[Unit]) -> BlockResponse:
     )
 
 
-def to_unit(unit: Unit, block_name: str) -> UnitResponse:
-    """Satis FIYATI/ALICISI (KY 275/277, KKP 91) hâlâ P8/P9'un isidir ve yer
-    tutucu doner. Satis DURUMU (UE 94) P3.1'de gercek sutuna dondu — kullanici
-    karari 2, P3 §4.6'dan bilincli donus (spec §4.4)."""
+def to_unit(unit: Unit, block_name: str, sale: UnitSaleInfo | None = None) -> UnitResponse:
+    """Satis FIYATI/ALICISI (KY 275/277) P8 T5'te GERCEK degere baglandi; satis
+    yoksa `None` doner — uydurma deger uretilmez. Satis DURUMU (UE 94) P3.1'de
+    gercek sutuna donmustu (kullanici karari 2, spec §4.4). HISSEDAR (KKP 91)
+    hâlâ P9'un isidir ve yer tutucu KALIR."""
     return UnitResponse(
         id=unit.id,
         block_id=unit.block_id,
@@ -143,8 +178,9 @@ def to_unit(unit: Unit, block_name: str) -> UnitResponse:
         vat_rate=unit.vat_rate,
         # UE 94 artik GERCEK degerdir (kullanici karari 2, spec §4.4).
         sales_status=unit.sales_status,
-        sale_price=_metric(_UNIT_SALES),
-        buyer_name=_metric(_UNIT_SALES),
+        # KY 275/277 — P8 T5'te ACIK satis kaydina baglandi (yer tutucu bitti).
+        sale_price=sale.sale_price if sale is not None else None,
+        buyer_name=sale.customer_name if sale is not None else None,
         shareholder=_metric(_SHAREHOLDER_UNITS),
         # Maliyet kolonu ACILMAZ (karar 3): maliyet yoksa kâr da yoktur.
         unit_cost=_metric(_PROJECT_COSTS),
@@ -191,11 +227,25 @@ def _side_summary(
     )
 
 
-def totals(units: list[Unit], basis: UnitValueBasis) -> UnitTotals:
+def totals(
+    units: list[Unit],
+    basis: UnitValueBasis,
+    sales_by_unit: dict[uuid.UUID, UnitSaleInfo] | None = None,
+) -> UnitTotals:
     """Spec §7.4: toplamlar SUZGECTEN ETKILENMEZ — cagiran daima projenin TUM
-    unitelerini verir (P1 `list_projects_overview` kuralinin birebir tekrari)."""
+    unitelerini verir (P1 `list_projects_overview` kuralinin birebir tekrari).
+
+    `sales_by_unit` verilen UNITELERE gore suzulur: sozluk projenin tamamini
+    tasiyabilir, ciro yalnizca elde tutulan unitelerden toplanir."""
     total_value = _sum([_basis_value(u, basis) for u in units])
     by_status = _by_sales_status(units)
+    satislar = sales_by_unit or {}
+    gerceklesen = [
+        info
+        for info in (satislar.get(unit.id) for unit in units)
+        if info is not None and info.is_realized
+    ]
+    sales_revenue = _sum([info.sale_price for info in gerceklesen])
     return UnitTotals(
         counts=_counts(units),
         value_basis=basis,
@@ -209,6 +259,8 @@ def totals(units: list[Unit], basis: UnitValueBasis) -> UnitTotals:
         sold_units=by_status[UnitSalesStatus.sold],
         reserved_units=by_status[UnitSalesStatus.reserved],
         available_units=by_status[UnitSalesStatus.listed],
-        sales_revenue=_metric(_UNIT_SALES),
-        average_sale_price=_metric(_UNIT_SALES),
+        # KY 93 / KY 267 — P8 T5'te GERCEK degere baglandi. Ortalama SIFIRA
+        # BOLUNMEZ: satis yoksa `None`dir, 0 degil (`_average` ile ayni kural).
+        sales_revenue=sales_revenue,
+        average_sale_price=_average(sales_revenue, len(gerceklesen)),
     )

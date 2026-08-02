@@ -32,7 +32,13 @@ from app.modules.units.schemas import (
     UnitResponse,
     UnitUpdate,
 )
-from app.modules.units.summary import VALUE_BASIS_BY_TYPE, to_block, to_unit, totals
+from app.modules.units.summary import (
+    VALUE_BASIS_BY_TYPE,
+    UnitSaleInfo,
+    to_block,
+    to_unit,
+    totals,
+)
 from app.modules.users.models import User
 
 # `Block`'un NOT NULL sutunlari: PATCH'te `null` ile bosaltilamazlar.
@@ -135,6 +141,9 @@ async def list_units(
     project = await guards.visible_project(session, actor, project_id)
     blocks, by_block, units = await _blocks_with_units(session, project_id)
     basis = VALUE_BASIS_BY_TYPE[project.project_type]
+    # P8 T5: satis fiyati/alicisi (KY 275/277) ve ciro (KY 93/267) TEK sorgudan
+    # gelir — unite basina SELECT atmak 24 daireli blokta N+1 demekti.
+    sales_by_unit = await _open_sales_by_unit(session, project_id)
 
     selected = [
         (block, site_name)
@@ -146,14 +155,14 @@ async def list_units(
         UnitBlockGroup(
             block=to_block(block, site_name, by_block[block.id]),
             units=[
-                to_unit(unit, block.name)
+                to_unit(unit, block.name, sales_by_unit.get(unit.id))
                 for unit in by_block[block.id]
                 if _matches(unit, kind, owner_side, floor, sales_status)
             ],
         )
         for block, site_name in selected
     ]
-    return UnitListResponse(totals=totals(units, basis), blocks=groups)
+    return UnitListResponse(totals=totals(units, basis, sales_by_unit), blocks=groups)
 
 
 # --- Yanit zarflari ---
@@ -178,8 +187,32 @@ async def _block_name(session: AsyncSession, block_id: uuid.UUID) -> str:
     return block.name if block is not None else ""
 
 
+async def _open_sales_by_unit(
+    session: AsyncSession, project_id: uuid.UUID
+) -> dict[uuid.UUID, UnitSaleInfo]:
+    """P8 T5: `unit_id` → acik satis kaydinin sunum verisi.
+
+    Sozluk ORM nesnesi DEGIL `UnitSaleInfo` tasir (bkz. `summary.py`): saf
+    toplama cekirdegi `sales` ORM'una baglanmaz.
+    """
+    return {
+        sale.unit_id: UnitSaleInfo(
+            sale_price=sale.sale_price, customer_name=customer.name, status=sale.status
+        )
+        for sale, customer in await repository.list_open_sales_for_project(session, project_id)
+    }
+
+
 async def unit_response(session: AsyncSession, unit: Unit) -> UnitResponse:
-    return to_unit(unit, await _block_name(session, unit.block_id))
+    """Tekil yanit da satis bilgisini LISTEYLE AYNI kaynaktan alir — POST/PATCH
+    sonrasi ekranin gordugu satir listedekiyle ayrisamaz."""
+    row = await repository.get_open_sale_for_unit(session, unit.id)
+    sale = (
+        UnitSaleInfo(sale_price=row[0].sale_price, customer_name=row[1].name, status=row[0].status)
+        if row is not None
+        else None
+    )
+    return to_unit(unit, await _block_name(session, unit.block_id), sale)
 
 
 # --- Blok yazma uclari (spec §7.2, §7.3) ---

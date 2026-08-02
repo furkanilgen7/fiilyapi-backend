@@ -373,3 +373,101 @@ def progress_payment_lines_saved(project_name: str, sequence_no: int, count: int
 
 def progress_payment_prices_refreshed(project_name: str, sequence_no: int, count: int) -> str:
     return f"Hakediş fiyatları tazelendi: {project_name} · #{sequence_no} · {count} kalem"
+
+
+# --- Alici (musteri) kartoteksi (P8 T2) ---
+#
+# Yeni `AuditAction` GEREKMEDI: kayit acma/duzenleme mevcut `create`/`update`
+# aksiyonlarina birebir oturuyor (`subcontractor_created` deseni). Silme metni
+# YOK cunku DELETE ucu da yok (spec §4).
+
+
+def customer_created(name: str) -> str:
+    return f"Müşteri oluşturuldu: {name}"
+
+
+def customer_updated(name: str) -> str:
+    return f"Müşteri güncellendi: {name}"
+
+
+# --- Unite satisi (P8 T3) ---
+#
+# Yeni `AuditAction` GEREKMEDI: satis kaydi acma/duzenleme/silme mevcut
+# `create`/`update`/`delete` aksiyonlarina birebir oturuyor (`unit_created`
+# ailesinin deseni). Durum GECISLERININ metinleri (`activate`/`transfer-deed`/
+# `cancel`) T5'in isidir ve `approve` aksiyonu orada degerlendirilecektir.
+#
+# Ucunun de imzasi AYNIDIR — silme metni ek parametre ALMAZ cunku etiket
+# (`A Blok · 12`) ve alici adi zaten kaydin kim oldugunu tam olarak soyler.
+# Cagiran (`sales/service.delete_sale`) bu ikisini `session.delete` ONCESINDE
+# okur; sonrasinda hicbir sorguyla geri getirilemezler.
+
+
+def sale_created(project_name: str, unit_label: str, customer_name: str) -> str:
+    return f"Ünite satışı oluşturuldu: {project_name} · {unit_label} · {customer_name}"
+
+
+def sale_updated(project_name: str, unit_label: str, customer_name: str) -> str:
+    return f"Ünite satışı güncellendi: {project_name} · {unit_label} · {customer_name}"
+
+
+def sale_deleted(project_name: str, unit_label: str, customer_name: str) -> str:
+    return f"Ünite satışı silindi: {project_name} · {unit_label} · {customer_name}"
+
+
+# --- Odeme plani (P8 T4) ---
+#
+# Yeni `AuditAction` GEREKMEDI: plan uretimi satir ACAR (`create`), plan
+# duzenlemesi ve tahsilat mevcut satiri DEGISTIRIR (`update`). Tahsilat icin
+# ayri bir aksiyon acilmadi cunku denetim ekrani aksiyona degil METNE gore
+# okunur ve "Taksit tahsilati" ifadesi olayi tam olarak adlandirir.
+
+
+def sale_plan_generated(project_name: str, unit_label: str, row_count: int) -> str:
+    return f"Ödeme planı oluşturuldu: {project_name} · {unit_label} · {row_count} satır"
+
+
+def sale_plan_saved(project_name: str, unit_label: str, row_count: int) -> str:
+    return f"Ödeme planı güncellendi: {project_name} · {unit_label} · {row_count} satır"
+
+
+def sale_installment_paid(
+    project_name: str, unit_label: str, installment_label: str, amount: Decimal
+) -> str:
+    return (
+        f"Taksit tahsilatı işlendi: {project_name} · {unit_label} · {installment_label} · {amount}"
+    )
+
+
+# --- Durum gecisleri (P8 T5) ---
+#
+# Yeni `AuditAction` ACILMADI: `AuditAction` bir PostgreSQL enum tipidir ve yeni
+# deger MIGRATION gerektirir; ucu de mevcut kaydin durumunu DEGISTIRDIGI icin
+# `update` aksiyonuna oturur. Denetim ekrani aksiyona degil METNE gore okunur,
+# bu yuzden UC AYRI metin yazilir — tek "guncellendi" metnine dusseydi denetimde
+# tapu devri ile fiyat duzeltmesi ayirt edilemezdi.
+#
+# `approve` aksiyonu BILINCLI OLARAK kullanilmadi: o deger hakedis onay is
+# akisina aittir; `activate` bir onay degil ticari bir durum degisikligidir.
+#
+# IPTAL GEREKCESI: `unit_sales`te gerekce KOLONU YOKTUR (T1) ve acilmaz —
+# gerekce kaydin bir NITELIGI degil, bir OLAYIN aciklamasidir ve tam olarak
+# denetim gunlugunun tasidigi seydir (`progress_payments` reject gerekcesi K12).
+
+
+def sale_activated(project_name: str, unit_label: str, customer_name: str) -> str:
+    return (
+        "Satış kaydı aktifleştirildi (rezervasyon → satış): "
+        f"{project_name} · {unit_label} · {customer_name}"
+    )
+
+
+def sale_deed_transferred(project_name: str, unit_label: str, customer_name: str) -> str:
+    return f"Tapu devri işlendi: {project_name} · {unit_label} · {customer_name}"
+
+
+def sale_cancelled(project_name: str, unit_label: str, customer_name: str, reason: str) -> str:
+    return (
+        f"Ünite satışı iptal edildi: {project_name} · {unit_label} · {customer_name} "
+        f"· Gerekçe: {reason}"
+    )

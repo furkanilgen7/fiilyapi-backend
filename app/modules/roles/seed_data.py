@@ -117,6 +117,13 @@ MODULES: list[dict] = [
     # mockup'ında bu satır YOK — `boq`'daki gibi BİLİNÇLİ SAPMA, geri alınmaz.
     # sort_order 18: mevcut modüllerin sırası KAYDIRILMAZ (boq da 17 ile sona eklendi).
     {"key": "contracts", "name": "Sözleşmeler", "group": ModuleGroup.MALI, "sort_order": 18},
+    # P8 spec §8 S1 (kullanıcı onayı 2026-08-02): AYRI modül. Gerekçe: ünite satışı
+    # proje yetkisinden ayrılır — projeyi gören her rol (şef, saha, İK) alıcı kimlik
+    # bilgisini, satış bedelini ve tahsilat planını görmemeli. `Satış Yönetimi`
+    # mockup'ında sidebar maddesi olarak geçer; `boq`/`contracts` gibi İzin Matrisi
+    # mockup'ında satırı YOKTUR — bilinçli sapma, geri alınmaz.
+    # sort_order 19: mevcut modüllerin sırası KAYDIRILMAZ (sona eklenir).
+    {"key": "sales", "name": "Satış Yönetimi", "group": ModuleGroup.MALI, "sort_order": 19},
 ]
 
 # Kısayollar — matrisi okunur tutmak için.
@@ -185,6 +192,14 @@ MATRIX: dict[str, list[tuple[AccessLevel, Scope]]] = {
     # deseni, oluşturmaz). project_manager = full (taşeron sözleşmesini
     # pratikte proje müdürü yapar).
     "contracts": [_A, _F, _N, _N, _N, _FIN, _F, _N],
+    # P8 spec §8 S1: `contracts` satırıyla BİREBİR aynı seviyeler — gerekçe de aynı.
+    # site_chief/field_engineer/hr_manager/procurement = none: satış bedeli, alıcı
+    # TCKN'si ve tahsilat planı saha/İK/satınalma rollerini ilgilendirmez (en az
+    # ayrıcalık). accounting = view/finance: tahsilatı mali gözle izler ama satış
+    # kaydı AÇMAZ (invoicing/treasury/contracts'taki mali görünürlük deseni).
+    # project_manager = full: ayrı bir "satış müdürü" rolü YOK; satışı pratikte
+    # proje müdürü yönetir. Silme yalnız admin'de (full silmeyi kapsamaz).
+    "sales": [_A, _F, _N, _N, _N, _FIN, _F, _N],
 }
 
 
@@ -193,7 +208,7 @@ async def seed_reference_data(session: AsyncSession) -> None:
 
     Idempotent: hangi başlangıç durumundan çalıştırılırsa çalıştırılsın (boş DB,
     tamamen seed edilmiş DB, ya da roller/modüller var ama role_permissions boş)
-    sonuçta 8 rol, 18 modül ve 144 izin satırı bulunur; mevcut satırlar
+    sonuçta 8 rol, 19 modül ve 152 izin satırı bulunur; mevcut satırlar
     üzerine yazılmaz ve `uq_role_module` UNIQUE kısıtı asla ihlal edilmez.
     """
     existing_role_rows = (await session.execute(select(Role))).scalars().all()

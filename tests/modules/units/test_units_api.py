@@ -1720,10 +1720,22 @@ async def test_floor_gonderilmezse_none_201(client, db_session, user_factory, pr
     assert resp.json()["floor"] is None
 
 
-async def test_patch_sales_status_sold_200(client, db_session, user_factory, project_factory):
-    """Kullanici karari 2: satis durumu BUGUN ELLE degistirilebilir (spec §4.4).
+async def test_patch_sales_status_artik_elle_degistirilemez(
+    client, db_session, user_factory, project_factory
+):
+    """P8 T3 ILE TERSINE CEVRILDI (satis spec §3) — eski adi
 
-    P8 geldiginde bu alan otomatiklesecek ve elle giris KILITLENECEKTIR.
+    `test_patch_sales_status_sold_200`di ve "durum BUGUN elle degistirilebilir"
+    diyordu. O test kendi docstring'inde "P8 geldiginde bu alan otomatiklesecek
+    ve elle giris KILITLENECEKTIR" diye yazmisti; P8 T3 geldi ve
+    `sales_status` `UnitUpdate` semasindan CIKARILDI. Artik unitenin vitrin
+    durumu YALNIZ satis kaydindan turer
+    (`sales/service.sync_unit_sales_status`).
+
+    Alan semada olmadigi icin Pydantic'in `extra='ignore'` varsayilaniyla
+    SESSIZCE duser: istek 200 doner ama durum DEGISMEZ. Kirici degildir —
+    alani kullanan bir UI henuz yoktur (spec §3). Otomasyonun kendisi
+    `tests/sales/test_sales_unit_sync.py`de test edilir.
     """
     project = await project_factory("T6-6")
     site = await _site(db_session, project)
@@ -1736,7 +1748,7 @@ async def test_patch_sales_status_sold_200(client, db_session, user_factory, pro
     )
 
     assert resp.status_code == 200
-    assert resp.json()["sales_status"] == "sold"
+    assert resp.json()["sales_status"] == "listed"
 
 
 async def test_expected_profit_ve_unit_cost_yer_tutucu(
@@ -1907,9 +1919,13 @@ async def test_floor_suzgeci_tam_eslesme(client, db_session, user_factory, proje
     assert [u["unit_no"] for u in sayi.json()["blocks"][0]["units"]] == ["2"]
 
 
-async def test_sales_revenue_hala_yer_tutucu(client, db_session, user_factory, project_factory):
-    """P8 SINIRI KORUNUYOR: GERCEKLESEN satis tutari hâlâ P8'in verisidir —
-    `sales_status` sutunu acildi diye ciro uydurulmaz (spec §8.2)."""
+async def test_sales_revenue_artik_gercek_deger(client, db_session, user_factory, project_factory):
+    """P8 T5: ciro YER TUTUCU DEGIL — `unit_sales`ten toplanir.
+
+    Bu projede hic SATIS KAYDI yoktur (yalniz `sales_status` elle kurulmustur),
+    bu yuzden ciro 0.00'dir ve ortalama `None`dir. Sifir ile "veri yok" ayrimi
+    korunur: ortalama 0 basilsaydi "satis var ama bedeli sifir" anlamina gelirdi.
+    """
     project = await project_factory("T7-5")
     site = await _site(db_session, project)
     await _satis_durumu_seti(db_session, project, site)
@@ -1919,6 +1935,5 @@ async def test_sales_revenue_hala_yer_tutucu(client, db_session, user_factory, p
         "totals"
     ]
 
-    for field in ("sales_revenue", "average_sale_price"):
-        assert totals[field]["available"] is False, field
-        assert totals[field]["pending_module"] == "unit_sales", field
+    assert totals["sales_revenue"] == "0.00"
+    assert totals["average_sale_price"] is None

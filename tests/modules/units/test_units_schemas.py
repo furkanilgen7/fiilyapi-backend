@@ -49,8 +49,9 @@ def _unit(**overrides) -> UnitResponse:
         "vat_rate": None,
         # P3.1 §4.4: ARTIK YER TUTUCU DEGIL — kullanici karari 2.
         "sales_status": UnitSalesStatus.listed,
-        "sale_price": _metric(),
-        "buyer_name": _metric(),
+        # P8 T5: yer tutucu DEGIL — acik satis kaydindan gelir, yoksa `None`.
+        "sale_price": None,
+        "buyer_name": None,
         "shareholder": _metric("shareholder_units"),
         "unit_cost": _metric("project_costs"),
         "expected_profit": _metric("project_costs"),
@@ -171,9 +172,10 @@ def test_metric_placeholder_imported_not_redefined():
     """Yer tutucu sozlesmesi TEK yerde tanimlidir (P1); kopyalanmaz."""
     assert schemas.MetricPlaceholder is MetricPlaceholder
     assert schemas.CountPlaceholder is CountPlaceholder
-    # `sales_status` P3.1'de gercek degere dondu (spec §4.4); yer tutucu
-    # sozlesmesinin kanitini `sale_price` tasir.
-    assert UnitResponse.model_fields["sale_price"].annotation is MetricPlaceholder
+    # `sales_status` P3.1'de, `sale_price`/`buyer_name` ise P8 T5'te gercek
+    # degere dondu; yer tutucu sozlesmesinin kanitini artik `shareholder` tasir
+    # (P9 `shareholder_units` hâlâ yazilmadi).
+    assert UnitResponse.model_fields["shareholder"].annotation is MetricPlaceholder
 
 
 # --- P3.1 T6: unite formunun yeni alanlari (spec §4.1-§4.4) ---

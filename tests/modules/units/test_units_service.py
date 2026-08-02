@@ -351,26 +351,25 @@ async def test_placeholders_carry_correct_pending_module(seeded_db, user_factory
 
     # P3.1 §4.4: `sales_status` ARTIK YER TUTUCU DEGIL — gercek sutun degeri.
     assert unit.sales_status is UnitSalesStatus.listed
-    assert unit.sale_price.pending_module == "unit_sales"
-    assert unit.buyer_name.pending_module == "unit_sales"
+    # P8 T5: satis fiyati/alicisi YER TUTUCU DEGIL — satis kaydi yoksa `None`.
+    assert unit.sale_price is None
+    assert unit.buyer_name is None
     assert unit.shareholder.pending_module == "shareholder_units"
     assert unit.unit_cost.pending_module == "project_costs"
     # UE 97-99: maliyet yoksa kâr da yok (karar 3).
     assert unit.expected_profit.pending_module == "project_costs"
-    # P3.1 §8.2: uc sayac GERCEK oldu; GERCEKLESEN satis tutari P8'de KALDI.
+    # P3.1 §8.2: uc sayac GERCEK oldu; ciro P8 T5'te gercege baglandi.
     assert totals.sold_units == 0
     assert totals.available_units == 1
-    assert totals.sales_revenue.pending_module == "unit_sales"
+    # P8 T5: ciro da gercek degerdir; satis kaydi olmayan projede 0.00.
+    assert totals.sales_revenue == Decimal("0.00")
+    assert totals.average_sale_price is None
     assert all(
         placeholder.available is False
         for placeholder in (
-            unit.sale_price,
-            unit.buyer_name,
             unit.shareholder,
             unit.unit_cost,
             unit.expected_profit,
-            totals.sales_revenue,
-            totals.average_sale_price,
         )
     )
 
