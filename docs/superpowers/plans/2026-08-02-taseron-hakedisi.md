@@ -41,3 +41,16 @@ KIRMIZI) · DB komutları HEP override'lı (WORKFLOW §4).
 - Odak: IDOR · kota yarışları · geçiş delikleri · snapshot tutarlılığı · işveren deseniyle kopya kod
   yerine paylaşım yapılmış mı (calculations/transitions yeniden kullanım) · kalıcı karar taraması.
 - `ARCHITECTURE-BACKEND.md` + `ROADMAP-BACKEND.md` güncelle, commit. Push/PR/merge/deploy kullanıcıda.
+
+## Devir notu (T6, 2026-08-02)
+
+`backend/openapi.json` üretildi (T5 sonrası güncel; `EmployerContractDetail` artık `index_type` +
+`has_price_escalation` taşıyor, 18 `subcontractor…` uç yolu şemada). Dosya `.gitignore`'lu, commit
+edilmez.
+
+**Frontend'e KOPYALANMADI — bilinçli karar:** P6 backend dalı (`feat/p6-bolum-detay`) main'e
+girmedi, dolayısıyla bu dalın şeması P6 uçlarını içermiyor. Şimdi devredilirse frontend
+sözleşmesi eksik/kararsız bir ara duruma sabitlenir. Devir **F-P6 kapanışındaki tek seferlik
+akışa** bırakıldı: o akışta P6 + P8 + TH (taşeron hakedişi) şemaları BİRLİKTE üretilip
+`frontend/openapi/openapi.json`'a tek seferde taşınır ve `pnpm gen:api` bir kez koşulur.
+Bu dilimde `frontend/` klasörüne hiç dokunulmadı.
