@@ -24,6 +24,9 @@ from app.modules.roles.router import router as roles_router
 from app.modules.sales.router import router as sales_router
 from app.modules.settings.router import router as settings_router
 from app.modules.sites.router import router as sites_router
+from app.modules.subcontractor_progress_payments.router import (
+    router as subcontractor_progress_payments_router,
+)
 from app.modules.units.router import router as units_router
 from app.modules.users.router import router as users_router
 
@@ -82,6 +85,7 @@ app.include_router(roles_router)
 app.include_router(sales_router)
 app.include_router(settings_router)
 app.include_router(sites_router)
+app.include_router(subcontractor_progress_payments_router)
 app.include_router(units_router)
 app.include_router(users_router)
 

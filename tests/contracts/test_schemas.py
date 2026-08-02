@@ -157,10 +157,31 @@ def test_payment_term_days_negatif_olamaz():
         SubcontractorContractCreate(payment_term_days=-1)
 
 
+def test_vat_pct_varsayilani_yirmi():
+    """Taşeron hakedişi spec §8 S1: mockup çelişkiliydi (liste %18, form %20)."""
+    assert SubcontractorContractCreate().vat_pct == Decimal("20")
+
+
+@pytest.mark.parametrize("oran", [Decimal("1"), Decimal("10"), Decimal("20")])
+def test_vat_pct_izinli_kume(oran: Decimal):
+    assert SubcontractorContractCreate(vat_pct=oran).vat_pct == oran
+    assert SubcontractorContractUpdate(vat_pct=oran).vat_pct == oran
+
+
+@pytest.mark.parametrize("oran", [Decimal("18"), Decimal("0"), Decimal("8")])
+def test_vat_pct_kume_disi_422(oran: Decimal):
+    """%18 eski oran ARTEFAKTIDIR — küme {1, 10, 20} (spec §8 S1)."""
+    with pytest.raises(ValidationError):
+        SubcontractorContractCreate(vat_pct=oran)
+    with pytest.raises(ValidationError):
+        SubcontractorContractUpdate(vat_pct=oran)
+
+
 def test_subcontractor_contract_varsayilanlari_spec_ile_birebir():
     sozlesme = SubcontractorContractCreate()
     assert sozlesme.advance_pct == Decimal("10")
     assert sozlesme.retainage_pct == Decimal("5")
+    assert sozlesme.vat_pct == Decimal("20")
     assert sozlesme.payment_period == PaymentPeriod.monthly
     assert sozlesme.payment_term_days == 30
     assert sozlesme.materials_by_contractor is False
@@ -323,6 +344,7 @@ def test_subcontractor_contract_detail_kapsam_disi_alanlar_acik_doner():
         late_penalty_daily=None,
         advance_pct=Decimal("10"),
         retainage_pct=Decimal("5"),
+        vat_pct=Decimal("20"),
         payment_period=PaymentPeriod.monthly,
         payment_term_days=30,
         materials_by_contractor=False,

@@ -1,0 +1,192 @@
+"""Taşeron hakedişi okuma/yazma sorguları (T2).
+
+`progress_payments/repository.py` deseninin aynısı: filtreler SQL düzeyinde
+uygulanır, kapsam (`visible_project_ids`) HER ZAMAN çağıran servisten gelir —
+bu modül KENDİSİ görünürlük kararı VERMEZ (spec §9.0 iki katman kuralı).
+
+Tek yapısal fark: sayaç ve "açık hakediş" kilidi PROJE değil **SÖZLEŞME**
+kapsamlıdır (spec §2, mockup #47/#48).
+"""
+
+import uuid
+
+from sqlalchemy import func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.modules.contracts.models import SubcontractorContract
+from app.modules.projects.models import Project
+from app.modules.sites.models import Section, Site
+from app.modules.subcontractor_progress_payments.models import (
+    SubcontractorPaymentStatus,
+    SubcontractorProgressPayment,
+)
+
+# "Açık" hakediş: henüz sonuçlanmamış taslak veya onay bekleyen (spec §5) —
+# aynı sözleşmede ikincisi açılamaz.
+OPEN_STATUSES = (SubcontractorPaymentStatus.draft, SubcontractorPaymentStatus.pending_approval)
+
+PaymentRow = tuple[SubcontractorProgressPayment, SubcontractorContract, Project]
+
+
+async def get_payment(
+    session: AsyncSession, payment_id: uuid.UUID
+) -> SubcontractorProgressPayment | None:
+    """`lines` `lazy="selectin"` olduğu için ek sorgu YOK."""
+    return await session.get(SubcontractorProgressPayment, payment_id)
+
+
+async def get_payment_locked(
+    session: AsyncSession, payment_id: uuid.UUID
+) -> SubcontractorProgressPayment | None:
+    """`SELECT … FOR UPDATE`. `populate_existing=True` ZORUNLUDUR (işveren
+
+    `get_payment_locked` gerekçesinin aynısı): kimlik haritasındaki ESKİ nesne
+    dönerse kilit alınmış ama DURUM eski değerinden okunmuş olur — var gibi
+    görünen, aslında olmayan bir koruma.
+    """
+    return await session.get(
+        SubcontractorProgressPayment, payment_id, with_for_update=True, populate_existing=True
+    )
+
+
+async def get_contract_locked(
+    session: AsyncSession, contract_id: uuid.UUID
+) -> SubcontractorContract | None:
+    """`sequence_no` üretimi + açık-hakediş kontrolünün dayandığı kilit satırı.
+
+    Aynı sözleşmede iki eşzamanlı `POST` burada sıraya girer; ikisi de aynı
+    `sequence_no`'yu üretemez ve açık-hakediş kontrolünü aynı anda geçemez.
+    """
+    stmt = (
+        select(SubcontractorContract)
+        .where(SubcontractorContract.id == contract_id)
+        .with_for_update(of=SubcontractorContract)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def get_open_payment(
+    session: AsyncSession, contract_id: uuid.UUID
+) -> SubcontractorProgressPayment | None:
+    """`get_contract_locked` ile AYNI transaction'da, kilit ALINDIKTAN SONRA
+    çağrılmalıdır — aksi hâlde iki eşzamanlı `POST` bu kontrolü boşken geçebilir."""
+    stmt = select(SubcontractorProgressPayment).where(
+        SubcontractorProgressPayment.contract_id == contract_id,
+        SubcontractorProgressPayment.status.in_(OPEN_STATUSES),
+    )
+    return (await session.execute(stmt)).scalars().first()
+
+
+async def get_next_sequence_no(session: AsyncSession, contract_id: uuid.UUID) -> int:
+    """SÖZLEŞME içi maks+1 (işverendeki proje içi sayacın karşılığı, spec §2)."""
+    stmt = select(func.max(SubcontractorProgressPayment.sequence_no)).where(
+        SubcontractorProgressPayment.contract_id == contract_id
+    )
+    return ((await session.execute(stmt)).scalar_one_or_none() or 0) + 1
+
+
+async def get_section_with_site(
+    session: AsyncSession, section_id: uuid.UUID
+) -> tuple[Section, Site] | None:
+    """Bölüm + şantiyesi TEK sorguda — `section_id` sahiplik kontrolü (spec §8 S2)."""
+    stmt = (
+        select(Section, Site).join(Site, Site.id == Section.site_id).where(Section.id == section_id)
+    )
+    row = (await session.execute(stmt)).first()
+    return (row[0], row[1]) if row is not None else None
+
+
+def _list_stmt(
+    visible_project_ids: list[uuid.UUID],
+    *,
+    project_id: uuid.UUID | None,
+    period_year: int | None,
+    period_month: int | None,
+    status_filter: SubcontractorPaymentStatus | None,
+    q: str | None,
+):
+    """Liste ve sayaç sorgusunun PAYLAŞTIĞI `WHERE` gövdesi (L83-101 filtreleri).
+
+    İki sorgu ayrı süzgeç kopyası taşısaydı, `total` ile `items` zamanla farklı
+    kümeleri sayardı — sayfalamanın en sinsi hatası.
+    """
+    stmt = (
+        select(SubcontractorProgressPayment, SubcontractorContract, Project)
+        .join(
+            SubcontractorContract,
+            SubcontractorContract.id == SubcontractorProgressPayment.contract_id,
+        )
+        .join(Project, Project.id == SubcontractorProgressPayment.project_id)
+        .where(SubcontractorProgressPayment.project_id.in_(visible_project_ids))
+    )
+    if project_id is not None:
+        stmt = stmt.where(SubcontractorProgressPayment.project_id == project_id)
+    if period_year is not None:
+        stmt = stmt.where(SubcontractorProgressPayment.period_year == period_year)
+    if period_month is not None:
+        stmt = stmt.where(SubcontractorProgressPayment.period_month == period_month)
+    if status_filter is not None:
+        stmt = stmt.where(SubcontractorProgressPayment.status == status_filter)
+    if q:
+        pattern = f"%{q}%"
+        stmt = stmt.where(
+            or_(
+                SubcontractorContract.subcontractor_name.ilike(pattern),
+                SubcontractorContract.contract_no.ilike(pattern),
+            )
+        )
+    return stmt
+
+
+async def list_payments(
+    session: AsyncSession,
+    visible_project_ids: list[uuid.UUID],
+    *,
+    project_id: uuid.UUID | None,
+    period_year: int | None,
+    period_month: int | None,
+    status_filter: SubcontractorPaymentStatus | None,
+    q: str | None,
+    limit: int,
+    offset: int,
+) -> list[PaymentRow]:
+    if not visible_project_ids:
+        return []
+    stmt = _list_stmt(
+        visible_project_ids,
+        project_id=project_id,
+        period_year=period_year,
+        period_month=period_month,
+        status_filter=status_filter,
+        q=q,
+    ).order_by(
+        Project.code,
+        SubcontractorContract.created_at,
+        SubcontractorProgressPayment.sequence_no,
+    )
+    result = await session.execute(stmt.limit(limit).offset(offset))
+    return [(row[0], row[1], row[2]) for row in result.all()]
+
+
+async def count_payments(
+    session: AsyncSession,
+    visible_project_ids: list[uuid.UUID],
+    *,
+    project_id: uuid.UUID | None,
+    period_year: int | None,
+    period_month: int | None,
+    status_filter: SubcontractorPaymentStatus | None,
+    q: str | None,
+) -> int:
+    if not visible_project_ids:
+        return 0
+    inner = _list_stmt(
+        visible_project_ids,
+        project_id=project_id,
+        period_year=period_year,
+        period_month=period_month,
+        status_filter=status_filter,
+        q=q,
+    ).with_only_columns(SubcontractorProgressPayment.id)
+    stmt = select(func.count()).select_from(inner.subquery())
+    return int((await session.execute(stmt)).scalar_one())

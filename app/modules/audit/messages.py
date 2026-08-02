@@ -375,6 +375,48 @@ def progress_payment_prices_refreshed(project_name: str, sequence_no: int, count
     return f"Hakediş fiyatları tazelendi: {project_name} · #{sequence_no} · {count} kalem"
 
 
+# --- Taşeron hakedişi (T2, spec §6) ---
+#
+# İşveren ailesinin `(project_name, sequence_no)` imzasına TAŞERON ADI eklenir:
+# `sequence_no` burada SÖZLEŞME kapsamlıdır (spec §2), dolayısıyla proje adı tek
+# başına kaydı adreslemez — "#1" aynı projede birden çok sözleşmede vardır.
+
+
+def _subcontractor_payment_label(
+    project_name: str, subcontractor_name: str | None, sequence_no: int
+) -> str:
+    return f"{project_name} · {subcontractor_name or 'taşeron seçilmedi'} · #{sequence_no}"
+
+
+def subcontractor_progress_payment_created(
+    project_name: str, subcontractor_name: str | None, sequence_no: int
+) -> str:
+    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    return f"Taşeron hakedişi oluşturuldu: {label}"
+
+
+def subcontractor_progress_payment_updated(
+    project_name: str, subcontractor_name: str | None, sequence_no: int
+) -> str:
+    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    return f"Taşeron hakedişi güncellendi: {label}"
+
+
+def subcontractor_progress_payment_deleted(
+    project_name: str,
+    subcontractor_name: str | None,
+    sequence_no: int,
+    status_label: str,
+    amount: Decimal,
+) -> str:
+    """`progress_payment_deleted` ile AYNI zorunluluk: özet `session.delete`
+
+    ÖNCESİNDE çıkarılmalıdır — kayıt gittiğinde durum/tutar bir daha okunamaz.
+    """
+    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    return f"Taşeron hakedişi silindi: {label} · {status_label} · {amount:,.2f} TL"
+
+
 # --- Alici (musteri) kartoteksi (P8 T2) ---
 #
 # Yeni `AuditAction` GEREKMEDI: kayit acma/duzenleme mevcut `create`/`update`
