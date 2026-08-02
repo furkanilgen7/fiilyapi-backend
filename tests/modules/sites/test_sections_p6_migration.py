@@ -34,7 +34,11 @@ ALEMBIC_CMD = (sys.executable, "-m", "alembic")
 
 # Revizyonlara ACIKCA cikilir; `head` / `-1` KULLANILMAZ — sonraki dilimler
 # revizyon ekledikce bu test sessizce yanlis seyi olcerdi.
-PARENT_REVISION = "c3d4e5f6a7b8"  # P3.1 blok/unite kolonlari
+# RE-PARENT (2026-08-02): ebeveyn artik `c3d4e5f6a7b8` (P3.1) DEGIL, `f2a3b4c5d6e7`
+# (P8 unite satisi). P8 ayni ebeveyne baglanip ONCE canliya cikinca zincir
+# catallanmisti; iki head `Dockerfile:22`deki `alembic upgrade head && uvicorn`i
+# kirar ve canli uygulama HIC acilmaz.
+PARENT_REVISION = "f2a3b4c5d6e7"  # P8 unite satisi — zincirin yeni ucu
 P6_REVISION = "d4e5f6a7b8c9"
 
 NEW_SECTION_COLUMNS = (

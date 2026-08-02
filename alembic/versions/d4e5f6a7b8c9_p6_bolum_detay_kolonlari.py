@@ -27,8 +27,19 @@ GERI ALMA NOTU: `downgrade` 7 kolonu dusurur, dolayisiyla bu kolonlardaki degerl
 KAYBOLUR. Bu bilinclidir.
 
 Revision ID: d4e5f6a7b8c9
-Revises: c3d4e5f6a7b8
+Revises: f2a3b4c5d6e7
 Create Date: 2026-08-02 10:00:00.000000
+
+RE-PARENT NOTU (2026-08-02): Bu revizyon once `c3d4e5f6a7b8`ye bagliydi. P8
+(`f2a3b4c5d6e7`) AYNI ebeveyne baglanip ONCE merge edilip CANLIYA cikinca zincir
+CATALLANDI (iki head). Ebeveyn P8e cevrildi.
+
+Neden SART: `Dockerfile:22` -> `CMD alembic upgrade head && uvicorn ...`.
+Konteyner ACILISTA migration kosar; iki head varken `upgrade head` "multiple
+heads" ile CIKAR, `&&` kisa devre yapar, uvicorn HIC BASLAMAZ — canli uygulama
+tamamen duser. Bu yalniz yerel bir rahatsizlik degildir.
+
+Tablo cakismasi YOK: P6 `sections`a kolon ekler, P8 uc yeni tablo acar.
 
 """
 
@@ -41,7 +52,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "d4e5f6a7b8c9"
-down_revision: str | Sequence[str] | None = "c3d4e5f6a7b8"
+down_revision: str | Sequence[str] | None = "f2a3b4c5d6e7"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
