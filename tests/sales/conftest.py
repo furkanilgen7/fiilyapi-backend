@@ -10,6 +10,7 @@ kapsam (`visible_projects`) İKİ AYRI katmandır ve ikisi de test edilir.
 """
 
 import uuid
+from decimal import Decimal
 
 import pytest
 from httpx import AsyncClient
@@ -94,7 +95,9 @@ async def unite(seeded_db: AsyncSession, proje: Project, blok: Block) -> Unit:
         block_id=blok.id,
         unit_no="12",
         unit_kind=UnitKind.apartment,
-        list_price="1480000.00",
+        # `Decimal` — ham `str` verilseydi ORM kimlik haritasi flush sonrasi
+        # da metni tutar ve `units/summary._sum` Decimal + str ile patlardi.
+        list_price=Decimal("1480000.00"),
     )
     seeded_db.add(unit)
     await seeded_db.flush()

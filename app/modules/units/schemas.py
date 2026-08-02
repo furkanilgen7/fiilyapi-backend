@@ -212,9 +212,11 @@ class UnitResponse(BaseModel):
     # UE 94 — ARTIK YER TUTUCU DEGIL (kullanici karari 2, spec §4.4). P8
     # geldiginde OTOMATIKLESECEK ve elle giris kilitlenecektir.
     sales_status: UnitSalesStatus | None
+    # KY 275/277 — P8 T5'te YER TUTUCU DEGIL: acik satis kaydindan gelir
+    # (`unit_sales`). Satisi olmayan unitede `None`dir; uydurma deger uretilmez.
+    sale_price: Decimal | None  # P8 (KY 275)
+    buyer_name: str | None  # P8 (KY 277)
     # --- ileri dilim yer tutuculari ---
-    sale_price: MetricPlaceholder  # P8 (KY 275)
-    buyer_name: MetricPlaceholder  # P8 (KY 277)
     shareholder: MetricPlaceholder  # P9 (KKP 91)
     # KARAR 3: maliyet ELLE GIRILMEZ, kolon ACILMAZ (spec §4.5) — ileride Is
     # Kalemleri/satinalmadan hesaplanacak. Maliyet yoksa kâr da yoktur.
@@ -253,8 +255,7 @@ class UnitSideSummary(BaseModel):
     # sutunu) beslendikleri icin onlarla birlikte GERCEK sayaca dondular (spec
     # §8.2). Ayri kalsalardi ekran proje toplaminda "34 satildi" gorup taraf
     # tablosunda "veri yok" basardi. GERCEKLESEN satis TUTARI hâlâ P8'indir ve
-    # `UnitTotals.sales_revenue` yer tutucu KALIR — durum sutunu acildi diye
-    # ciro uydurulmaz.
+    # `UnitTotals.sales_revenue` de P8 T5'te gercek degere dondu.
     sold: int  # KKP 163
     reserved: int
     listed: int  # `closed` (Satisa Kapali) SAYILMAZ: bos olsa bile satista degil
@@ -280,10 +281,11 @@ class UnitTotals(BaseModel):
     sold_units: int  # KY 88, 264
     reserved_units: int  # KY 265
     available_units: int  # KY 266
-    # YER TUTUCU KALIR: GERCEKLESEN satis tutari hâlâ P8'in verisidir — durum
-    # sutunu acildi diye ciro uydurulmaz.
-    sales_revenue: MetricPlaceholder  # P8 (KY 93)
-    average_sale_price: MetricPlaceholder  # P8 (KY 267)
+    # P8 T5'te GERCEK degere dondu: ciro artik `unit_sales`ten toplanir ve
+    # yalniz GERCEKLESEN satislari (`active`/`deed_transferred`) sayar —
+    # rezervasyon ciro DEGILDIR. Satis yoksa ortalama `None`dir, 0 degil.
+    sales_revenue: Decimal  # P8 (KY 93)
+    average_sale_price: Decimal | None  # P8 (KY 267)
 
 
 class UnitBlockGroup(BaseModel):

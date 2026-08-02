@@ -40,6 +40,7 @@ __all__ = [
     "DELETE_NOT_ALLOWED",
     "DUPLICATE_SEQUENCE_NO",
     "INSTALLMENT_MISSING",
+    "INVALID_STATUS_TRANSITION",
     "INSTALLMENT_TOTAL_MISMATCH",
     "LANDOWNER_UNIT_NOT_SELLABLE",
     "PAID_INSTALLMENT_BELOW_PAID",
@@ -62,6 +63,7 @@ __all__ = [
     "unit_in_project",
     "visible_project",
     "visible_sale",
+    "visible_sale_locked",
 ]
 
 # 404 gövdeleri — görünmeyen ile var olmayan AYNI metni döner (`units/guards.py` dersi).
@@ -92,6 +94,12 @@ SALE_NOT_DELETABLE = "Yalnızca rezervasyon kaydı silinebilir; satış iptal ed
 
 # 403 — `can_delete` (`app/core/access.py`) reddi.
 DELETE_NOT_ALLOWED = "Bu satış kaydını silme yetkiniz yok"
+
+# 409 — T5 geçiş matrisinde (bkz. `transitions.TRANSITIONS`) OLMAYAN her çift.
+# `ConflictError` (409), `progress_payments.guards.INVALID_STATUS_TRANSITION` ile
+# AYNI sınıf ve AYNI kod: durum makinesi reddi bir doğrulama hatası (422) değil,
+# kaydın O ANKİ durumuyla çakışmadır.
+INVALID_STATUS_TRANSITION = "Satış kaydının durumu bu işleme uygun değil"
 
 # --- Ödeme planı (T4; spec §2/§4, mockup F110-147) ---
 
@@ -149,6 +157,26 @@ async def visible_sale(
     modeli), ünite üzerinden JOIN etmek her sorguya bir adım eklerdi.
     """
     sale = await repository.get_sale(session, sale_id)
+    if sale is None:
+        raise NotFoundError(SALE_MISSING)
+    project = await visible_project(session, actor, sale.project_id, SALE_MISSING)
+    return sale, project
+
+
+async def visible_sale_locked(
+    session: AsyncSession, actor: User, sale_id: uuid.UUID
+) -> tuple[UnitSale, Project]:
+    """`visible_sale`in KİLİTLİ ikizi — durum geçişlerinin (T5) tek okuma yolu.
+
+    Satır `SELECT … FOR UPDATE` ile okunur ki iki eşzamanlı geçiş isteği AYNI
+    durumu okuyup ikisi de geçerli sanılmasın (`progress_payments.transitions`
+    dersi): kilit alınmasaydı `activate` + `cancel` yarışında ünite senkronu
+    kaybedene göre kalır ve satış kaydıyla ünitenin vitrini AYRIŞIRDI.
+
+    Kapsam süzgeci kilitten SONRA koşar ama gövde AYNIDIR (404): görünmeyen
+    kaydın durumu hakkında 409/422 ile bilgi sızdırılmaz.
+    """
+    sale = await repository.get_sale_locked(session, sale_id)
     if sale is None:
         raise NotFoundError(SALE_MISSING)
     project = await visible_project(session, actor, sale.project_id, SALE_MISSING)

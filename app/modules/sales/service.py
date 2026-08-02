@@ -7,12 +7,12 @@ Yazma fonksiyonları sonucun YANINDA hazır denetim METNİNİ döner; satırı
 kurulmak zorundadır — router silinen satışın ünite etiketini ve alıcı adını
 hiçbir sorguyla geri getiremez.
 
-## Bu dilimde OLMAYAN uçlar
+## Modülün iş bölümü
 
-`generate-plan` / `PUT installments` / `pay` **T4**'ün, durum geçişleri
-(`activate` / `transfer-deed` / `cancel`) ve `summary` **T5**'in işidir. T5
-kendi geçiş haritasını YAZMAZ; buradaki `sync_unit_sales_status` yardımcısını
-ÇAĞIRIR (aşağıdaki nota bakınız).
+Ödeme planı **T4**'te `installments.py`ye, durum geçişleri (`activate` /
+`transfer-deed` / `cancel`) **T5**'te `transitions.py`ye ayrıldı; `transitions`
+kendi ünite haritasını YAZMAZ, buradaki `sync_unit_sales_status` yardımcısını
+ÇAĞIRIR (aşağıdaki nota bakınız). Özetin (T5) saf toplaması `summary.py`dedir.
 """
 
 import uuid
@@ -27,11 +27,12 @@ from app.core.access import AccessLevel, can_delete
 from app.core.errors import DeleteNotAllowedError, DuplicateError, SiteValidationError
 from app.modules.audit import messages
 from app.modules.roles.repository import get_permission
-from app.modules.sales import guards, repository
+from app.modules.sales import guards, repository, summary
 from app.modules.sales.models import SaleType, UnitSale, UnitSaleStatus
 from app.modules.sales.repository import InstallmentStats
 from app.modules.sales.schemas import (
     SALE_FORM_FIELDS,
+    SalesSummaryResponse,
     UnitSaleCreate,
     UnitSaleListResponse,
     UnitSaleResponse,
@@ -45,6 +46,7 @@ from app.modules.sales.schemas import (
 # iki ayrı "atanabilir kullanıcı" tanımı zamanla ayrışır.
 from app.modules.sites.repository import get_assignable_user
 from app.modules.units.models import Unit, UnitSalesStatus
+from app.modules.units.repository import list_units_for_project
 from app.modules.users.models import User
 
 __all__ = [
@@ -52,6 +54,10 @@ __all__ = [
     "delete_sale",
     "get_sale",
     "list_sales",
+    "sales_summary",
+    # T5'in geçiş uçları (`transitions.perform`) yanıt zarfını BURADAN kurar —
+    # ikinci bir `UnitSaleResponse` inşa yolu açılmaz.
+    "response_for",
     "sync_unit_sales_status",
     "unit_status_for",
     "update_sale",
@@ -145,7 +151,7 @@ async def _sale_row(session: AsyncSession, sale_id: uuid.UUID) -> Row:
     return row
 
 
-async def _response_for(session: AsyncSession, sale_id: uuid.UUID) -> UnitSaleResponse:
+async def response_for(session: AsyncSession, sale_id: uuid.UUID) -> UnitSaleResponse:
     stats = await repository.installment_stats(session, [sale_id], date.today())
     return _to_response(await _sale_row(session, sale_id), stats.get(sale_id, InstallmentStats()))
 
@@ -172,9 +178,37 @@ async def list_sales(
     )
 
 
+async def sales_summary(
+    session: AsyncSession, actor: User, project_id: uuid.UUID
+) -> SalesSummaryResponse:
+    """S55-59 + S218-234 (T5). Toplama SAF çekirdekte (`summary.py`) yapılır.
+
+    ÜÇ sorgu atılır ve daha fazlası GEREKMEZ: (1) iptal edilmemiş satışlar
+    etiketleriyle, (2) o satışların TÜM plan satırları tek `IN` sorgusunda,
+    (3) projenin üniteleri ("Boş Ünite" satış tablosundan sayılamaz — boş
+    ünitenin satış kaydı yoktur). Satış başına ek SELECT atmak N+1 olurdu.
+
+    `date.today()` BURADA çağrılır ve aşağı geçirilir: saf çekirdek saati
+    okumaz (`summary.py` notu).
+    """
+    await guards.visible_project(session, actor, project_id)
+    sale_rows = await repository.list_sale_rows(session, project_id, exclude_cancelled=True)
+    installment_rows = await repository.list_installments_for_sales(
+        session, [row[0].id for row in sale_rows]
+    )
+    units = await list_units_for_project(session, project_id)
+    return summary.build_summary(
+        project_id=project_id,
+        sale_rows=sale_rows,
+        installments=installment_rows,
+        units=units,
+        today=date.today(),
+    )
+
+
 async def get_sale(session: AsyncSession, actor: User, sale_id: uuid.UUID) -> UnitSaleResponse:
     sale, _ = await guards.visible_sale(session, actor, sale_id)
-    return await _response_for(session, sale.id)
+    return await response_for(session, sale.id)
 
 
 # --- Yazma uçları ---
@@ -243,7 +277,7 @@ async def create_sale(
         raise DuplicateError(guards.UNIT_ALREADY_SOLD) from exc
 
     await sync_unit_sales_status(session, unit, sale.status)
-    response = await _response_for(session, sale.id)
+    response = await response_for(session, sale.id)
     return response, messages.sale_created(
         project.name, response.unit_label, response.customer_name
     )
@@ -276,7 +310,7 @@ async def update_sale(
         setattr(sale, field, value)
     await session.flush()
 
-    response = await _response_for(session, sale.id)
+    response = await response_for(session, sale.id)
     return response, messages.sale_updated(
         project.name, response.unit_label, response.customer_name
     )

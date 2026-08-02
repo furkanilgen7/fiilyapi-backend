@@ -19,8 +19,9 @@ ne serviste, ne DB'de — uyarı bile üretilmez.
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from app.modules.customers.models import CustomerType
 from app.modules.projects.schemas import MetricPlaceholder
@@ -208,9 +209,14 @@ class SaleInstallmentResponse(BaseModel):
     payment_method: InstallmentPaymentMethod | None
     paid_amount: Decimal
     paid_at: datetime | None
-    # TÜREV (kolon DEĞİL): satırın kalanı. `is_overdue` burada ÜRETİLMEZ —
-    # "gecikmiş" sayacı satış düzeyinde zaten `installment_stats`ten gelir.
+    # TÜREVLER (kolon DEĞİL): satırın kalanı ve S180'in "gecikmiş" göstergesi.
+    # `is_overdue` T5'te EKLENDİ: satış düzeyindeki sayaç
+    # (`installment_stats.overdue_count`) HANGİ satırın geciktiğini söylemez ve
+    # plan tablosu (F110-147) satır satır boyanır. Sunucu tarafında üretilir ki
+    # "bugün" tanımı TEK yerde kalsın — istemci saati ile sunucu saati ayrışırsa
+    # aynı taksit iki ekranda farklı renkte görünürdü.
     remaining_amount: Decimal
+    is_overdue: bool = False
 
 
 class SalePlanResponse(BaseModel):
@@ -241,3 +247,134 @@ class UnitSaleTotals(BaseModel):
 class UnitSaleListResponse(BaseModel):
     totals: UnitSaleTotals
     items: list[UnitSaleResponse]
+
+
+# --- Durum geçişleri (T5; spec §4) ---
+
+
+class SaleCancelInput(BaseModel):
+    """`POST /sales/{id}/cancel` gövdesi — gerekçe ZORUNLUDUR.
+
+    Gerekçe `unit_sales`te bir kolona DEĞİL denetim günlüğüne yazılır
+    (`transitions.py` gerekçesi): iptal kaydın bir niteliği değil bir olaydır.
+    Boşluk kırpılır ki " " gönderen istemci "gerekçe verdim" sanmasın.
+    """
+
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+
+
+# --- Satış özeti (T5; mockup S55-59, S218-234) ---
+
+
+class SoldKpi(BaseModel):
+    """S55 "Satılan (Tapulu)" · 34 · ₺31,4M.
+
+    Başlık iki şeyi birden söylüyor ("satılan" ve "tapulu"), bu yüzden sayaç
+    İKİYE ayrılır: `count` gerçekleşmiş satışların tamamıdır (`active` +
+    `deed_transferred`), `deed_transferred_count` ise tapusu devredilmiş
+    olanlardır. Tek sayaç dönseydi ekran hangisini gösterdiğini bilemezdi.
+    """
+
+    count: int
+    deed_transferred_count: int
+    amount: Decimal  # Σ `sale_price`
+
+
+class ReservedKpi(BaseModel):
+    """S56 "Rezerve" · 5 · ₺4,2M potansiyel + §8 S4'ün "süresi doldu" sayacı."""
+
+    count: int
+    expired_count: int  # S188 "15 gün süre" — OTOMATİK İPTAL YOK, yalnız gösterge
+    amount: Decimal
+
+
+class AvailableUnitsKpi(BaseModel):
+    """S57 "Boş Ünite" · 13 · ₺12,6M stok.
+
+    Kaynak `unit_sales` DEĞİL `units.sales_status`tur: boş ünitenin satış kaydı
+    yoktur, dolayısıyla satış tablosundan sayılamaz. Değer LİSTE FİYATIDIR
+    (stok değeri), satış bedeli değil — henüz bir bedel üzerinde anlaşılmamıştır.
+    """
+
+    count: int
+    list_price_total: Decimal
+
+
+class CollectionKpi(BaseModel):
+    """S58 "Tahsil Edilen" · ₺24,8M · "%79 tahsilat".
+
+    Payda tfoot TOPLAM'ıdır (S208-210): 24,82 / 31,42 = %79,0 — yani oran
+    "tahsil edilen / açık satışların satış bedeli toplamı"dır. Satış yoksa oran
+    `None`dır: 0/0'ı %0 diye basmak "hiç satış yok" ile "hiç tahsilat yok"u
+    aynı ekrana düşürürdü.
+    """
+
+    collected_amount: Decimal
+    contracted_amount: Decimal
+    collection_pct: Decimal | None
+
+
+class OverdueKpi(BaseModel):
+    """S59 "Vadesi Geçen" · ₺840K · "3 taksit".
+
+    Tutar taksitin TAMAMI değil KALANIDIR: kısmen tahsil edilmiş bir taksitin
+    ödenmiş kısmı borç değildir. `late_fee_amount` §8 S5 gereği yalnız GÖSTERİM
+    türevidir (tahakkuk YAZILMAZ).
+    """
+
+    installment_count: int
+    amount: Decimal
+    late_fee_amount: Decimal
+
+
+class UpcomingCollection(BaseModel):
+    """S220-234'ün tek satırı: "A · Daire 19 — Hasan Demir · Taksit 6 & 7 …"."""
+
+    installment_id: uuid.UUID
+    sale_id: uuid.UUID
+    unit_label: str  # S159 "A · Daire 12"
+    customer_name: str
+    sequence_no: int
+    label: str
+    due_date: date
+    amount: Decimal
+    paid_amount: Decimal
+    remaining_amount: Decimal
+    is_overdue: bool
+    days_overdue: int  # S222 "Vadesi 15 gün geçti"
+    late_fee_amount: Decimal  # S223 "Gecikme faizi: ₺4.200" — GÖSTERİM türevi
+
+
+class ExpiredReservation(BaseModel):
+    """S188 "Kapora alındı · 15 gün süre" süresi DOLMUŞ hâli (§8 S4).
+
+    Zamanlanmış iş YOKTUR: kayıt `reservation` KALIR, bu liste yalnızca
+    kullanıcıyı elle iptale (ya da aktifleştirmeye) yönlendirir.
+    """
+
+    sale_id: uuid.UUID
+    unit_label: str
+    customer_name: str
+    reservation_due_date: date
+    days_expired: int
+    reservation_deposit: Decimal | None
+
+
+class SalesSummaryResponse(BaseModel):
+    """`GET /projects/{id}/sales/summary` — S55-59 + S218-234 TEK yanıtta."""
+
+    project_id: uuid.UUID
+    # "Bugün" sunucuda belirlenir ve yanıtta AÇIKÇA döner: "gecikmiş"/"süresi
+    # doldu" türevlerinin tamamı bu tarihe göredir ve ekran hangi güne göre
+    # hesaplandığını görebilmelidir.
+    as_of: date
+    sold: SoldKpi
+    reserved: ReservedKpi
+    available_units: AvailableUnitsKpi
+    collection: CollectionKpi
+    overdue: OverdueKpi
+    upcoming_collections: list[UpcomingCollection]
+    expired_reservations: list[ExpiredReservation]
+    # KALICI KARAR 3: maliyet/kâr KPI'sı AÇILMAZ; uydurma rakam yerine dürüst
+    # yer tutucu anahtarı döner (P10 `project_costs`).
+    pending_modules: list[str] = Field(default_factory=lambda: [COST_MODULE])

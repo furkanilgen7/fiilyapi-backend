@@ -54,6 +54,26 @@ async def get_sale(session: AsyncSession, sale_id: uuid.UUID) -> UnitSale | None
     return await session.get(UnitSale, sale_id)
 
 
+async def get_sale_locked(session: AsyncSession, sale_id: uuid.UUID) -> UnitSale | None:
+    """Durum geçişleri (T5) için `SELECT … FOR UPDATE`.
+
+    `ORDER BY` YOK: kilit kümesi TEK satırdır (birincil anahtar eşitliği);
+    deadlock riski yalnız çok satırlı kilitlerde doğar (`lock_installments`).
+
+    `populate_existing`: satır session'da zaten yüklüyse kimlik haritasından
+    ESKİ durumla dönerdi ve kilit ALTINDA yeniden okuma amacı boşa çıkardı —
+    iki eşzamanlı `activate` denemesinde ikincisi birincinin yazdığı durumu
+    GÖRMEK ZORUNDADIR.
+    """
+    stmt = (
+        select(UnitSale)
+        .where(UnitSale.id == sale_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    return (await session.execute(stmt)).scalars().first()
+
+
 async def get_open_sale_for_unit(
     session: AsyncSession, unit_id: uuid.UUID, exclude_sale_id: uuid.UUID | None = None
 ) -> UnitSale | None:
@@ -75,14 +95,44 @@ async def get_sale_row(session: AsyncSession, sale_id: uuid.UUID) -> Row | None:
     return (await session.execute(stmt)).first()
 
 
-async def list_sale_rows(session: AsyncSession, project_id: uuid.UUID) -> list[Row]:
-    """Sıralama DB'de: blok adı, sonra ünite sıra numarası (S158-200 tablo düzeni)."""
-    stmt = (
-        _sale_rows_stmt()
-        .where(UnitSale.project_id == project_id)
-        .order_by(Block.sort_order, Block.name, Unit.sort_order, Unit.unit_no)
+async def list_sale_rows(
+    session: AsyncSession, project_id: uuid.UUID, *, exclude_cancelled: bool = False
+) -> list[Row]:
+    """Sıralama DB'de: blok adı, sonra ünite sıra numarası (S158-200 tablo düzeni).
+
+    `exclude_cancelled` YALNIZ özet (T5) içindir: liste ucu iptalleri GÖSTERİR
+    (kullanıcı neyin iptal edildiğini görmelidir), KPI'lar ise göstermez —
+    iptal edilmiş bir satış ne cirodur ne alacaktır.
+    """
+    stmt = _sale_rows_stmt().where(UnitSale.project_id == project_id)
+    if exclude_cancelled:
+        stmt = stmt.where(UnitSale.status != UnitSaleStatus.cancelled)
+    return list(
+        (
+            await session.execute(
+                stmt.order_by(Block.sort_order, Block.name, Unit.sort_order, Unit.unit_no)
+            )
+        ).all()
     )
-    return list((await session.execute(stmt)).all())
+
+
+async def list_installments_for_sales(
+    session: AsyncSession, sale_ids: list[uuid.UUID]
+) -> list[SaleInstallment]:
+    """Özetin (T5) TÜM plan satırlarını TEK sorguda okur — satış başına SELECT yok.
+
+    `installment_stats`ten farkı: orası satış başına TOPLAM döner, burası ham
+    SATIRLARI döner çünkü "yaklaşan tahsilatlar" (S218-234) listesi tek tek
+    taksitleri gösterir ve toplamdan geri üretilemez.
+    """
+    if not sale_ids:
+        return []
+    stmt = (
+        select(SaleInstallment)
+        .where(SaleInstallment.sale_id.in_(sale_ids))
+        .order_by(SaleInstallment.due_date, SaleInstallment.sequence_no)
+    )
+    return list((await session.execute(stmt)).scalars().all())
 
 
 async def installment_stats(

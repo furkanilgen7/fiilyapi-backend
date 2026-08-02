@@ -437,3 +437,37 @@ def sale_installment_paid(
     return (
         f"Taksit tahsilatı işlendi: {project_name} · {unit_label} · {installment_label} · {amount}"
     )
+
+
+# --- Durum gecisleri (P8 T5) ---
+#
+# Yeni `AuditAction` ACILMADI: `AuditAction` bir PostgreSQL enum tipidir ve yeni
+# deger MIGRATION gerektirir; ucu de mevcut kaydin durumunu DEGISTIRDIGI icin
+# `update` aksiyonuna oturur. Denetim ekrani aksiyona degil METNE gore okunur,
+# bu yuzden UC AYRI metin yazilir — tek "guncellendi" metnine dusseydi denetimde
+# tapu devri ile fiyat duzeltmesi ayirt edilemezdi.
+#
+# `approve` aksiyonu BILINCLI OLARAK kullanilmadi: o deger hakedis onay is
+# akisina aittir; `activate` bir onay degil ticari bir durum degisikligidir.
+#
+# IPTAL GEREKCESI: `unit_sales`te gerekce KOLONU YOKTUR (T1) ve acilmaz —
+# gerekce kaydin bir NITELIGI degil, bir OLAYIN aciklamasidir ve tam olarak
+# denetim gunlugunun tasidigi seydir (`progress_payments` reject gerekcesi K12).
+
+
+def sale_activated(project_name: str, unit_label: str, customer_name: str) -> str:
+    return (
+        "Satış kaydı aktifleştirildi (rezervasyon → satış): "
+        f"{project_name} · {unit_label} · {customer_name}"
+    )
+
+
+def sale_deed_transferred(project_name: str, unit_label: str, customer_name: str) -> str:
+    return f"Tapu devri işlendi: {project_name} · {unit_label} · {customer_name}"
+
+
+def sale_cancelled(project_name: str, unit_label: str, customer_name: str, reason: str) -> str:
+    return (
+        f"Ünite satışı iptal edildi: {project_name} · {unit_label} · {customer_name} "
+        f"· Gerekçe: {reason}"
+    )

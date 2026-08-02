@@ -1919,9 +1919,13 @@ async def test_floor_suzgeci_tam_eslesme(client, db_session, user_factory, proje
     assert [u["unit_no"] for u in sayi.json()["blocks"][0]["units"]] == ["2"]
 
 
-async def test_sales_revenue_hala_yer_tutucu(client, db_session, user_factory, project_factory):
-    """P8 SINIRI KORUNUYOR: GERCEKLESEN satis tutari hâlâ P8'in verisidir —
-    `sales_status` sutunu acildi diye ciro uydurulmaz (spec §8.2)."""
+async def test_sales_revenue_artik_gercek_deger(client, db_session, user_factory, project_factory):
+    """P8 T5: ciro YER TUTUCU DEGIL — `unit_sales`ten toplanir.
+
+    Bu projede hic SATIS KAYDI yoktur (yalniz `sales_status` elle kurulmustur),
+    bu yuzden ciro 0.00'dir ve ortalama `None`dir. Sifir ile "veri yok" ayrimi
+    korunur: ortalama 0 basilsaydi "satis var ama bedeli sifir" anlamina gelirdi.
+    """
     project = await project_factory("T7-5")
     site = await _site(db_session, project)
     await _satis_durumu_seti(db_session, project, site)
@@ -1931,6 +1935,5 @@ async def test_sales_revenue_hala_yer_tutucu(client, db_session, user_factory, p
         "totals"
     ]
 
-    for field in ("sales_revenue", "average_sale_price"):
-        assert totals[field]["available"] is False, field
-        assert totals[field]["pending_module"] == "unit_sales", field
+    assert totals["sales_revenue"] == "0.00"
+    assert totals["average_sale_price"] is None

@@ -34,7 +34,7 @@ plan tutarlarını şişirir (bkz. `plan.py` kararı).
 """
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,7 +53,7 @@ from app.modules.sales.schemas import (
 )
 from app.modules.users.models import User
 
-__all__ = ["generate_plan", "pay_installment", "save_installments"]
+__all__ = ["generate_plan", "get_plan", "pay_installment", "save_installments"]
 
 _ZERO = Decimal("0.00")
 
@@ -61,7 +61,12 @@ _ZERO = Decimal("0.00")
 # --- Yanıt zarfı ---
 
 
-def _installment_response(row: SaleInstallment) -> SaleInstallmentResponse:
+def _installment_response(row: SaleInstallment, today: date) -> SaleInstallmentResponse:
+    """`today` DIŞARIDAN gelir (`repository.installment_stats` ile aynı kural):
+
+    "gecikmiş" bir TARİH KARŞILAŞTIRMASIDIR ve burada `date.today()` çağırmak
+    yanıtı çalıştığı güne bağımlı, dolayısıyla test edilemez kılardı.
+    """
     return SaleInstallmentResponse(
         id=row.id,
         sale_id=row.sale_id,
@@ -73,10 +78,14 @@ def _installment_response(row: SaleInstallment) -> SaleInstallmentResponse:
         paid_amount=row.paid_amount,
         paid_at=row.paid_at,
         remaining_amount=row.amount - row.paid_amount,
+        # S180 "⚠ 2 taksit gecikmiş" satır düzeyi türevi: vadesi geçmiş VE
+        # tamamı tahsil edilmemiş. `repository.installment_stats.overdue_count`
+        # ile AYNI tanım — iki farklı "gecikmiş" tanımı olmaz.
+        is_overdue=row.due_date < today and row.paid_amount < row.amount,
     )
 
 
-async def _plan_response(session: AsyncSession, sale: UnitSale) -> SalePlanResponse:
+async def _plan_response(session: AsyncSession, sale: UnitSale, today: date) -> SalePlanResponse:
     rows = await repository.list_installments(session, sale.id)
     return SalePlanResponse(
         sale_id=sale.id,
@@ -86,8 +95,25 @@ async def _plan_response(session: AsyncSession, sale: UnitSale) -> SalePlanRespo
         term_interest_amount=plan.term_interest_amount(
             sale.sale_price, sale.down_payment or _ZERO, sale.term_interest_pct
         ),
-        items=[_installment_response(row) for row in rows],
+        items=[_installment_response(row, today) for row in rows],
     )
+
+
+async def get_plan(session: AsyncSession, actor: User, sale_id: uuid.UUID) -> SalePlanResponse:
+    """`GET /sales/{id}/installments` — planı OKUYAN tek uç (T5).
+
+    T4 planı yazan üç ucu kapattı ama okuyan bir uç bırakmadı: plan yalnız yazma
+    yanıtlarında görülebiliyordu, `GET /sales/{id}` ise satırları taşımıyor.
+    Yanıt zarfı T4'ün `SalePlanResponse`udur — ikinci bir plan şeması AÇILMAZ.
+
+    Planı olmayan satış **404 DEĞİL** boş plan döner: satış vardır, planı yoktur
+    ve "kayıt yok" ile "plan yok" farklı şeylerdir.
+
+    Kilit YOK: okuma ucu hiçbir şey yazmaz ve `FOR UPDATE` almak eşzamanlı
+    tahsilatları gereksiz yere serileştirirdi.
+    """
+    sale, _ = await guards.visible_sale(session, actor, sale_id)
+    return await _plan_response(session, sale, date.today())
 
 
 async def _unit_label(session: AsyncSession, sale: UnitSale) -> str:
@@ -172,7 +198,7 @@ async def generate_plan(
         ]
     )
     await session.flush()
-    response = await _plan_response(session, sale)
+    response = await _plan_response(session, sale, date.today())
     detail = messages.sale_plan_generated(
         project.name, await _unit_label(session, sale), len(response.items)
     )
@@ -252,7 +278,7 @@ async def save_installments(
         row.payment_method = entry.payment_method
         _sync_paid_at(row)
     await session.flush()
-    response = await _plan_response(session, sale)
+    response = await _plan_response(session, sale, date.today())
     detail = messages.sale_plan_saved(
         project.name, await _unit_label(session, sale), len(response.items)
     )
@@ -282,4 +308,4 @@ async def pay_installment(
     detail = messages.sale_installment_paid(
         project.name, await _unit_label(session, sale), installment.label, data.amount
     )
-    return _installment_response(installment), detail
+    return _installment_response(installment, date.today()), detail
