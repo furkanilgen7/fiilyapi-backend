@@ -28,6 +28,7 @@ from app.modules.sites.schemas import (
     CountPlaceholder,
     MetricPlaceholder,
     SectionCreate,
+    SectionDetailResponse,
     SectionListResponse,
     SectionResponse,
     SectionStatusCounts,
@@ -57,6 +58,12 @@ _BOQ = "boq"
 
 # Santiye kodu oneki (spec §3.2, mockup satir 67 yer tutucusu `SNT-2026-003`).
 _SITE_CODE_PREFIX = "SNT"
+
+# Bolum kodu oneki + hane sayisi (P6 §5, `Form - Bolum Ekle` satir 68 yer
+# tutucusu `BLM-06`). Iki hane MUCBIR SINIR DEGILDIR: 99'u asan bir santiyede
+# `:02d` kendiliginden uc haneye tasar, kod uretimi durmaz.
+_SECTION_CODE_PREFIX = "BLM"
+_SECTION_CODE_DIGITS = 2
 
 # ISG "Dış Kaynak — OSGB" secilince `safety_officer_name`e yazilan SABIT etiket
 # (spec §3.3). Bu bir HATA METNI degil bir VERI DEGERIDIR, bu yuzden `guards.py`de
@@ -98,6 +105,31 @@ async def _next_site_code(session: AsyncSession) -> str:
         if suffix.isdigit():
             max_seq = max(max_seq, int(suffix))
     return f"{prefix}{max_seq + 1:03d}"
+
+
+async def _next_section_code(session: AsyncSession, site_id: uuid.UUID) -> str:
+    """`BLM-NN` uretir (P6 §5): SANTIYE ICINDEKI en buyuk sira + 1, 2 hane, 1'den.
+
+    `_next_site_code` deseninin birebiri — ayni uc ozellik gecerlidir:
+
+    * **Sayimla DEGIL maksimum+1** — silinen kod yeniden kullanilmaz ve elle
+      verilmis `BLM-06` sayaci ilerletir (sonraki otomatik kod `BLM-07`'dir).
+    * Sayisal soneki ayristirilamayan kodlar (canlidaki ad-turevi `GENEL`)
+      sessizce ATLANIR — hata uretmez, sayaci kaydirmaz, `UPDATE` almazlar.
+    * Yaris durumunda kismi indeks `uq_sections_site_code` ihlali mevcut
+      IntegrityError -> 409 isleyicisine duser; otomatik yeniden deneme YAPILMAZ.
+
+    TEK FARK kapsamdir: santiye sayaci sirket geneli, bolum sayaci SANTIYE
+    ICIDIR — gerekcesi `repository.list_section_codes_with_prefix` docstring'inde.
+    """
+    prefix = f"{_SECTION_CODE_PREFIX}-"
+    codes = await repository.list_section_codes_with_prefix(session, site_id, prefix)
+    max_seq = 0
+    for code in codes:
+        suffix = code[len(prefix) :]
+        if suffix.isdigit():
+            max_seq = max(max_seq, int(suffix))
+    return f"{prefix}{max_seq + 1:0{_SECTION_CODE_DIGITS}d}"
 
 
 def _remaining_days(site: Site) -> int | None:
@@ -164,6 +196,28 @@ def to_section(section: Section) -> SectionResponse:
         boq_item_count=_count(_BOQ),
         budget=_metric(_BOQ),
         worker_count=_count(_TIMESHEET),
+    )
+
+
+def to_section_detail(section: Section) -> SectionDetailResponse:
+    """P6 §5 — bolum detay govdesi: `to_section`in TUM alanlari + T1 kolonlari.
+
+    Yer tutucular `to_section`ten AYNEN devralinir (yeniden kurulmaz): dort
+    `pending_module` degeri tek yerde tanimli kalir, aksi hâlde liste ve detay
+    ekranlari zamanla farkli modul anahtarlari gosterirdi.
+    """
+    return SectionDetailResponse(
+        **to_section(section).model_dump(),
+        site_id=section.site_id,
+        section_type=section.section_type,
+        description=section.description,
+        deputy_manager_user_id=section.deputy_manager_user_id,
+        deputy_manager_name=section.deputy_manager_name,
+        planned_worker_count=section.planned_worker_count,
+        budget_amount=section.budget_amount,
+        is_draft=section.is_draft,
+        created_at=section.created_at,
+        updated_at=section.updated_at,
     )
 
 
@@ -323,6 +377,23 @@ async def list_sections_for_site(
     return SectionListResponse(
         counts=_section_counts(sections), items=[to_section(s) for s in sections]
     )
+
+
+async def get_section_detail(
+    session: AsyncSession, actor: User, section_id: uuid.UUID
+) -> SectionDetailResponse:
+    """P6 §5 — `GET /sections/{section_id}`.
+
+    Gorunurluk suzgeci `_visible_section`tir (bolum -> santiye -> proje):
+    OKUMA ucu de YENI BIR IDOR YUZEYIDIR. Kendi erisim mantigini yazmaz,
+    silme/guncelleme uclariyla AYNI fonksiyonu cagirir — iki ayri suzgec zamanla
+    ayrisir ve ayrisan taraf sessiz bir yetki sizintisi olur.
+
+    Gorunmeyen bolum 404 `Bölüm bulunamadı` doner ve govdesi var olmayan bir
+    UUID'ninkiyle BIREBIR AYNIDIR.
+    """
+    section, _ = await _visible_section(session, actor, section_id)
+    return to_section_detail(section)
 
 
 # --- Yazma uclari ---
@@ -508,7 +579,9 @@ _VALIDATED_FIELDS = (
 )
 
 
-def _merged_for_validation(site: Site, changes: dict) -> SimpleNamespace:
+def _merged_for_validation(
+    row: object, changes: dict, fields: tuple[str, ...], **extra: object
+) -> SimpleNamespace:
     """Mevcut satir + patch = dogrulamanin gordugu kayit (§5.3).
 
     Yalniz patch'i dogrulamak yanlis olurdu: `end_date` gonderilip `start_date`
@@ -516,11 +589,15 @@ def _merged_for_validation(site: Site, changes: dict) -> SimpleNamespace:
     dogrulamak da yanlis olurdu: yayina gecirirken eksik alani AYNI istekte
     gonderen kullanici haksiz yere reddedilirdi.
 
-    `sections` bilincli olarak BOSTUR: bolumler PATCH govdesinde YOKTUR (§7.3),
-    mevcut bolumleri yeniden dogrulamak ise bu istegin isi degildir.
+    SANTIYE VE BOLUM PAYLASIR (P6 T5): iki PATCH da ayni birlestirme kuralina
+    ihtiyac duyar ve ikinci bir kopya zamanla ilkinden ayrisirdi. Fark yalnizca
+    okunan ALAN LISTESIDIR; `extra` ise dogrulayicinin bekledigi ama satirdan
+    turemeyen alanlara ayrilmistir (`validate_site` icin `sections=[]`:
+    bolumler PATCH govdesinde YOKTUR (§7.3) ve mevcut bolumleri yeniden
+    dogrulamak bu istegin isi degildir).
     """
-    merged = {field: changes.get(field, getattr(site, field)) for field in _VALIDATED_FIELDS}
-    return SimpleNamespace(**merged, sections=[])
+    merged = {field: changes.get(field, getattr(row, field)) for field in fields}
+    return SimpleNamespace(**merged, **extra)
 
 
 async def update_site(
@@ -547,7 +624,10 @@ async def update_site(
     # Yayina gecis YALNIZCA taslak bir satir icin tanimlidir; `false -> false`
     # bir gecis degildir ve zorunluluk kurallarini tetiklemez.
     is_publishing = site.is_draft and changes.get("is_draft") is False
-    guards.validate_site(_merged_for_validation(site, changes), is_draft=not is_publishing)
+    guards.validate_site(
+        _merged_for_validation(site, changes, _VALIDATED_FIELDS, sections=[]),
+        is_draft=not is_publishing,
+    )
     # Kod cakismasi ON KONTROLU — POST'takiyle AYNI Turkce mesaj (karar 2026-07-30).
     # Onceden bu dal `uq_sites_project_code` -> IntegrityError'a dusuyor ve genel
     # "Veri bütünlüğü hatası" doniyordu; kullanici hangi ALANIN sorunlu oldugunu
@@ -566,7 +646,7 @@ async def update_site(
             session, changes["site_manager_user_id"]
         )
     if "safety_officer_user_id" in changes or "safety_officer_is_outsourced" in changes:
-        merged = _merged_for_validation(site, changes)
+        merged = _merged_for_validation(site, changes, _VALIDATED_FIELDS, sections=[])
         changes["safety_officer_name"] = await _resolve_safety_officer(
             session, merged.safety_officer_user_id, merged.safety_officer_is_outsourced
         )
@@ -582,25 +662,71 @@ async def update_site(
     return site, detail
 
 
+# Bolumun IKI sorumlu alani ve ad anlik goruntuleri. FK -> ad esleme TEK yerde
+# durur; POST (T3) ve PATCH (T2) bunu KOPYALAMAZ, PAYLASIR — iki kopya zamanla
+# ayrisir ve ayrisan taraf, adi FK'sindan farkli bir kayit uretir.
+_SECTION_MANAGER_FIELDS = (
+    ("manager_user_id", "manager_name"),
+    ("deputy_manager_user_id", "deputy_manager_name"),
+)
+
+
+async def _resolved_manager_names(session: AsyncSession, values: dict) -> dict[str, str]:
+    """Verilen govdedeki sorumlu FK'lerinin ad anlik goruntulerini cozer.
+
+    Kosul `is not None`dir: FK'yi acikca NULL'lamak ad anlik goruntusunu SILMEZ
+    (kullanici silinse bile evrakta kalmasiyla ayni gerekce). Cozum 422
+    (`Seçilen kullanıcı bulunamadı`) uretebildigi icin cagiran taraf bunu HER
+    ZAMAN ilk `session.add`den ONCE calistirir; gecersiz kullanici hicbir alani
+    degistirmemelidir. Izinli (`on_leave`) personel atanabilir, pasif olan 422 —
+    gerekcesi `repository.get_assignable_user` docstring'inde.
+    """
+    return {
+        name_field: await _resolve_user_name(session, values[fk_field])
+        for fk_field, name_field in _SECTION_MANAGER_FIELDS
+        if values.get(fk_field) is not None
+    }
+
+
 async def create_section(
     session: AsyncSession, actor: User, site_id: uuid.UUID, data: SectionCreate
 ) -> Section:
+    """P6 §5 — `Form - Bolum Ekle`. Sira `create_site`in adimlarinin aynisidir:
+    gorunurluk -> dogrulama -> kullanici cozumu -> kod -> YAZMA.
+
+    422 ureten her adim ilk `session.add`den ONCE biter (§8.2): eksik alanli ya
+    da pasif kullanicili bir istek YARIM bir bolum satiri birakmaz.
+    """
     site, _ = await _visible_site(session, actor, site_id)
+    # Taslak-farkindalikli dogrulama (kalici karar 4): "Taslak Kaydet" (Form 242)
+    # zorunlulugu kaldirir, TUTARLILIGI kaldirmaz.
+    guards.validate_section(data, is_draft=data.is_draft)
     # FK verilmisse ad govdedeki serbest metnin UZERINE yazilir (create_site ile
     # ayni kural): ad FK'nin turevidir, ikinci bir gercek kaynak degildir.
-    manager_name = data.manager_name
-    if data.manager_user_id is not None:
-        manager_name = await _resolve_user_name(session, data.manager_user_id)
+    names = {"manager_name": data.manager_name, "deputy_manager_name": data.deputy_manager_name}
+    names.update(await _resolved_manager_names(session, data.model_dump()))
+    # Kod uretimi (bossa) + cakisma on-kontrolu -> 409 alanina ozel Turkce mesajla;
+    # santiye kodununkiyle AYNI desen, yeni bir desen icat edilmez.
+    code = data.code or await _next_section_code(session, site.id)
+    if await repository.get_section_by_code(session, site.id, code) is not None:
+        raise DuplicateError(guards.DUPLICATE_SECTION_CODE)
     section = Section(
         site_id=site.id,
-        code=data.code,
+        code=code,
         name=data.name,
         status=data.status,
         manager_user_id=data.manager_user_id,
-        manager_name=manager_name,
         start_date=data.start_date,
         end_date=data.end_date,
         sort_order=data.sort_order,
+        # --- P6 · T3: `Form - Bolum Ekle` alanlari ---
+        section_type=data.section_type,
+        description=data.description,
+        deputy_manager_user_id=data.deputy_manager_user_id,
+        planned_worker_count=data.planned_worker_count,
+        budget_amount=data.budget_amount,
+        is_draft=data.is_draft,
+        **names,
     )
     session.add(section)
     await session.flush()
@@ -608,18 +734,76 @@ async def create_section(
     return section
 
 
+# `guards.validate_section`in okudugu alanlar (`_SectionLike`) — santiyedeki
+# `_VALIDATED_FIELDS`in bolum karsiligi. PATCH bunlarin BIRLESIK degerini kurar:
+# gonderilen alan patch'ten, gonderilmeyen MEVCUT SATIRDAN gelir.
+_SECTION_VALIDATED_FIELDS = (
+    "section_type",
+    "manager_user_id",
+    "manager_name",
+    "start_date",
+    "end_date",
+    "budget_amount",
+)
+
+
 async def update_section(
     session: AsyncSession, actor: User, section_id: uuid.UUID, data: SectionUpdate
-) -> Section:
-    section, _ = await _visible_section(session, actor, section_id)
+) -> tuple[Section, str]:
+    """PATCH GEVSEK, YAYIN SIKI — `update_site`in dalinin BIREBIRI (P6 T5).
+
+    Zorunluluk dogrulamasi duz PATCH'te KOSMAZ: kossaydi canlidaki eksik alanli
+    eski bolumler duzenlenemez hale gelir, yalnizca adi degistirmek isteyen
+    kullanici "Bölüm tipi seçiniz." duvarina carpardi. Tek istisna
+    `is_draft: true -> false` gecisidir: orada BIRLESIK kayit (mevcut satir +
+    patch) uzerinde tum kurallar kosar ve gecmezse satir TASLAK KALIR.
+
+    Bu dal OLMADAN T3'un zorunluluklari YALNIZ POST'ta baglayici kalir, yani
+    etkisizdir: `is_draft: true` ile eksik bolum acip `PATCH {"is_draft": false}`
+    gondermek hepsini atlatirdi.
+
+    Denetim metnini de DONER (`update_site` / `units.update_unit` deseni):
+    yayina gecis olup olmadigi yalniz BURADA bilinir — router `is_draft`in
+    ONCEKI degerini goremez, dolayisiyla ayrimi disariya tasimak "Bölüm
+    güncellendi" ile "yayına alındı" satirlarini birbirine karistirirdi.
+    """
+    section, site = await _visible_section(session, actor, section_id)
     changes = data.model_dump(exclude_unset=True)
-    if changes.get("manager_user_id") is not None:
-        changes["manager_name"] = await _resolve_user_name(session, changes["manager_user_id"])
+    # `false -> false` bir gecis DEGILDIR ve zorunluluk kurallarini tetiklemez.
+    is_publishing = section.is_draft and changes.get("is_draft") is False
+    guards.validate_section(
+        _merged_for_validation(section, changes, _SECTION_VALIDATED_FIELDS),
+        is_draft=not is_publishing,
+    )
+    # Kod cakismasi ON KONTROLU — POST'takiyle AYNI Turkce mesaj (karar
+    # 2026-07-30, `update_site` ile birebir). Onceden bu dal
+    # `uq_sections_site_code` -> IntegrityError'a dusuyor ve genel "Veri
+    # bütünlüğü hatası" doniyordu; kullanici hangi ALANIN sorunlu oldugunu
+    # goremiyordu. `exclude_section_id` sarttir: kendi kodunu yeniden gondermek
+    # cakisma DEGILDIR, aksi hâlde formun tum alanlarini birlikte gonderen her
+    # PATCH 409 verirdi. Kisit YARIS DURUMU emniyet agi olarak KALIR.
+    # `code` acikca NULL'lanirsa kontrol KOSMAZ: kismi indeks yalniz
+    # `code IS NOT NULL` satirlarini kapsar.
+    if changes.get("code") is not None and changes["code"] != section.code:
+        clash = await repository.get_section_by_code(
+            session, section.site_id, changes["code"], exclude_section_id=section.id
+        )
+        if clash is not None:
+            raise DuplicateError(guards.DUPLICATE_SECTION_CODE)
+    # Kullanici cozumu YAZMADAN ONCE (update_site ile ayni sira): gecersiz
+    # kullanici govdedeki HICBIR alani degistirmez. Esleme POST ile PAYLASILIR
+    # (`_resolved_manager_names`), kopyalanmaz.
+    changes.update(await _resolved_manager_names(session, changes))
     for field, value in changes.items():
         setattr(section, field, value)
     await session.flush()
     await session.refresh(section)
-    return section
+    detail = (
+        messages.section_published(site.name, section.name)
+        if is_publishing
+        else messages.section_updated(site.name, section.name)
+    )
+    return section, detail
 
 
 # --- Silme uclari (spec §7.1) ---

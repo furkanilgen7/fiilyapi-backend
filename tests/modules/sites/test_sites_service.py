@@ -7,6 +7,7 @@ import pytest
 
 from app.core.errors import NotFoundError
 from app.core.timezone import today
+from app.modules.audit import messages
 from app.modules.sites import service
 from app.modules.sites.models import Section, SectionStatus, Site, SiteStatus
 from app.modules.sites.schemas import SectionCreate, SectionUpdate, SiteCreate, SiteUpdate
@@ -362,7 +363,12 @@ async def test_create_section_defaults_to_planned(seeded_db, user_factory, proje
     site = await _site(seeded_db, project)
     user = await _patron(seeded_db, user_factory, "s23@t.co")
 
-    section = await service.create_section(seeded_db, user, site.id, SectionCreate(name="Kat 6-10"))
+    # `is_draft=True`: bu test yalnizca DURUM VARSAYILANINI olcer. P6 T3'ten beri
+    # taslak-disi bir bolum `Form - Bolum Ekle`in `*` alanlarini ister; onlari
+    # buraya tasimak testin konusunu degistirirdi (bkz. `test_section_create.py`).
+    section = await service.create_section(
+        seeded_db, user, site.id, SectionCreate(name="Kat 6-10", is_draft=True)
+    )
 
     assert section.status is SectionStatus.planned
     assert section.site_id == site.id
@@ -376,12 +382,15 @@ async def test_update_section_changes_fields(seeded_db, user_factory, project_fa
     await seeded_db.flush()
     user = await _patron(seeded_db, user_factory, "s24@t.co")
 
-    updated = await service.update_section(
+    # P6 T5: servis denetim metnini DE doner (`update_site` deseni) — yayina
+    # gecis ayrimi yalniz burada gorunur.
+    updated, detail = await service.update_section(
         seeded_db, user, section.id, SectionUpdate(name="Yeni", status=SectionStatus.active)
     )
 
     assert updated.name == "Yeni"
     assert updated.status is SectionStatus.active
+    assert detail == messages.section_updated(site.name, "Yeni")
 
 
 async def test_section_list_response_counts(seeded_db, user_factory, project_factory):

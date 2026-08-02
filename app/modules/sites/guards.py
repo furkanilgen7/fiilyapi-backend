@@ -54,6 +54,27 @@ CITY_REQUIRED = "İl / ilçe zorunludur."
 CONSTRUCTION_AREA_REQUIRED = "İnşaat alanı zorunludur."
 DATES_REQUIRED = "Başlangıç ve planlanan bitiş tarihi zorunludur."
 
+# 422 — bolum zorunluluk kurallari (YALNIZ taslak-disinda). KAYNAK:
+# `Form - Bolum Ekle.dc.html` icinde `<span class="req">*</span>` TASIYAN alanlar
+# — goz karari alan eklenmez, `*` tasimayan alan zorunlu YAPILMAZ:
+#
+#   * 67  Bölüm Adı            -> `name`        (Pydantic `min_length=1` ile zorunlu)
+#   * 69  Bölüm Sırası         -> `sort_order`  (varsayilani 0; ASLA bos olamaz)
+#   * 70  Bölüm Tipi           -> SECTION_TYPE_REQUIRED
+#   * 83  Bölüm Sorumlusu      -> SECTION_MANAGER_REQUIRED
+#   * 107 Başlangıç Tarihi     -> SECTION_DATES_REQUIRED
+#   * 108 Planlanan Bitiş      -> SECTION_DATES_REQUIRED
+#   * 110 Bölüm Bedeli (₺)     -> SECTION_BUDGET_REQUIRED
+#   * 66  Şantiye              -> YOL PARAMETRESI, govdede aranmaz.
+#
+# `*` TASIMAYAN ve bu yuzden zorunlu OLMAYANLAR: 68 Bölüm Kodu (ipucu: "Boş
+# bırakılırsa otomatik"), 71 Durum, 74 Açıklama, 84 Yardımcı Sorumlu,
+# 85 Planlanan İşçi Sayısı. 109 Süre (Gün) `readonly` turevdir, hic saklanmaz.
+SECTION_TYPE_REQUIRED = "Bölüm tipi seçiniz."
+SECTION_MANAGER_REQUIRED = "Bölüm sorumlusu seçiniz."
+SECTION_DATES_REQUIRED = "Başlangıç ve planlanan bitiş tarihi zorunludur."
+SECTION_BUDGET_REQUIRED = "Bölüm bedeli zorunludur."
+
 # 422 — tutarlilik kurallari (HER ZAMAN).
 END_BEFORE_START = "Planlanan bitiş tarihi başlangıçtan önce olamaz."
 SAFETY_OFFICER_CONFLICT = "İSG uzmanı ya sistem kullanıcısı ya dış kaynak (OSGB) olabilir."
@@ -166,3 +187,59 @@ def validate_site(data: _SiteLike, *, is_draft: bool) -> None:
 
     if data.start_date is None or data.end_date is None:
         raise SiteValidationError(DATES_REQUIRED)
+
+
+class _SectionLike(Protocol):
+    """`validate_section`'in okudugu alanlar (`_SiteLike` deseninin birebiri).
+
+    `SectionCreate`'e BAGLANMAZ: PATCH'in ileride bir yayina gecis dali acmasi
+    hâlinde ayni kurallar BIRLESIK bir kayit (mevcut satir + patch) uzerinde
+    kosturulabilsin. Somut tipe baglamak orada ikinci bir kopya kural yazmayi
+    zorunlu kilardi.
+    """
+
+    section_type: object
+    manager_user_id: object
+    manager_name: object
+    start_date: object
+    end_date: object
+    budget_amount: object
+
+
+def validate_section(data: _SectionLike, *, is_draft: bool) -> None:
+    """`Form - Bolum Ekle` kurallari. Modul docstring'indeki TEK CUMLELIK KURAL
+    bolume aynen gecer: **tutarlilik HER ZAMAN, zorunluluk YALNIZ taslak-disinda.**
+
+    Zorunlu alanlarin kaynagi mockup'taki `*` isaretidir (bkz. yukaridaki metin
+    sabitleri). `name` ve `sort_order` burada TEKRARLANMAZ: ikisini de Pydantic
+    zorunlu kilar (`min_length=1` / varsayilan 0) ve iki kopya kural zamanla
+    ayrisir.
+    """
+    # --- Tutarlilik: HER ZAMAN ---
+    if (
+        data.start_date is not None
+        and data.end_date is not None
+        and data.end_date < data.start_date
+    ):
+        raise SiteValidationError(END_BEFORE_START)
+
+    # --- Zorunluluk: YALNIZ taslak-disinda ---
+    if is_draft:
+        return
+
+    if data.section_type is None:
+        raise SiteValidationError(SECTION_TYPE_REQUIRED)
+
+    # Sorumlu ya sistem kullanicisi ya serbest metin olarak verilir — santiye
+    # sefindeki (`SITE_MANAGER_REQUIRED`) ayrimin birebiri: ikisinden biri yeter.
+    if data.manager_user_id is None and not (data.manager_name or "").strip():
+        raise SiteValidationError(SECTION_MANAGER_REQUIRED)
+
+    if data.start_date is None or data.end_date is None:
+        raise SiteValidationError(SECTION_DATES_REQUIRED)
+
+    # Bölüm Bedeli (Form 110) ELLE girilir: BOQ-bolum bagi kapali oldugu icin
+    # turetilemez (spec §7 S2a). `0` GECERLI bir bedeldir — bu yuzden kontrol
+    # `is None`dir, dogruluk (`falsy`) kontrolu DEGIL.
+    if data.budget_amount is None:
+        raise SiteValidationError(SECTION_BUDGET_REQUIRED)

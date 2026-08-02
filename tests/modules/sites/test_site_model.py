@@ -25,7 +25,8 @@ def test_site_status_values():
 
 
 def test_section_status_values():
-    assert {s.value for s in SectionStatus} == {"planned", "active", "completed"}
+    # `on_hold` P6'da eklendi (spec §4, Form 71 "Beklemede").
+    assert {s.value for s in SectionStatus} == {"planned", "active", "on_hold", "completed"}
 
 
 async def test_site_defaults_to_active(db_session, project_factory):
