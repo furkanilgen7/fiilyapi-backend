@@ -166,6 +166,9 @@ class SubcontractorContract(Base):
             name="ck_subcontract_pct_range",
         ),
         CheckConstraint("payment_term_days >= 0", name="ck_subcontract_payment_term"),
+        # Ayri kisit (mevcut `ck_subcontract_pct_range`e eklenmedi): kolon sonradan
+        # geldi, kisiti yeniden yazmak yerine additive tutuldu.
+        CheckConstraint("vat_pct BETWEEN 0 AND 100", name="ck_subcontract_vat_pct_range"),
         # Sozlesme no doldurulmussa global tekildir, NULL (taslak) coklanabilir.
         Index(
             "uq_subcontractor_contracts_contract_no",
@@ -213,6 +216,12 @@ class SubcontractorContract(Base):
     )
     retainage_pct: Mapped[Decimal] = mapped_column(
         Numeric(5, 2), nullable=False, default=5, server_default=text("5")
+    )
+    # Taseron hakedisi spec §8 S1: mockup celiskiliydi (liste %18, form %20) ->
+    # sozlesme duzeyinde tasinir, default 20; %18 eski oran artefakti sayildi.
+    # Hakedis olusturmada snapshot'lanir.
+    vat_pct: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2), nullable=False, default=20, server_default=text("20")
     )
     payment_period: Mapped[PaymentPeriod] = mapped_column(
         Enum(PaymentPeriod, name="payment_period"),
