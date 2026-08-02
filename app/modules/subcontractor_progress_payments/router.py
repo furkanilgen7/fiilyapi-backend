@@ -23,13 +23,17 @@ from app.core.ratelimit import client_ip
 from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
-from app.modules.subcontractor_progress_payments import read, service
+from app.modules.subcontractor_progress_payments import read, service, summary
 from app.modules.subcontractor_progress_payments.models import SubcontractorPaymentStatus
+from app.modules.subcontractor_progress_payments.router_transitions import (
+    router as transitions_router,
+)
 from app.modules.subcontractor_progress_payments.schemas import (
     SubcontractorProgressPaymentCreate,
     SubcontractorProgressPaymentDetail,
     SubcontractorProgressPaymentLinesSave,
     SubcontractorProgressPaymentListResponse,
+    SubcontractorProgressPaymentSummary,
     SubcontractorProgressPaymentUpdate,
     SubcontractorRefreshPricesResponse,
 )
@@ -68,6 +72,40 @@ async def list_subcontractor_progress_payments_endpoint(
         q=q,
         limit=limit,
         offset=offset,
+    )
+
+
+@router.get(
+    "/subcontractor-progress-payments/summary",
+    response_model=SubcontractorProgressPaymentSummary,
+    dependencies=[_VIEW],
+)
+async def subcontractor_progress_payment_summary_endpoint(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    project_id: uuid.UUID | None = None,
+    period_year: int | None = None,
+    period_month: Annotated[int | None, Query(ge=1, le=12)] = None,
+    status_filter: Annotated[SubcontractorPaymentStatus | None, Query(alias="status")] = None,
+    q: Annotated[str | None, Query(description="Taşeron adı veya sözleşme no araması")] = None,
+) -> SubcontractorProgressPaymentSummary:
+    """L105-122 KPI şeridi (4 kart). Kapı `_VIEW`: özet yalnız OKUMA'dır.
+
+    ⚠️ Bu tanım `/{payment_id}` ŞABLONUNDAN ÖNCE durmak ZORUNDADIR: FastAPI
+    rotaları TANIM SIRASINA göre eşler, sonra tanımlansaydı `summary` bir UUID
+    sanılır ve uç 422 ile ulaşılamaz olurdu.
+
+    Süzgeçler liste ucuyla BİREBİR aynıdır (aynı `_list_stmt` gövdesi) — KPI
+    şeridi ile altındaki tablo aynı kümeyi göstermek zorundadır.
+    """
+    return await summary.get_summary(
+        session,
+        user,
+        project_id=project_id,
+        period_year=period_year,
+        period_month=period_month,
+        status_filter=status_filter,
+        q=q,
     )
 
 
@@ -241,3 +279,11 @@ async def delete_subcontractor_progress_payment_endpoint(
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
+
+
+# Durum aksiyonları (T4) AYRI dosyadadır (`router_transitions.py`, dosya başına
+# ~400 satır kuralı) ama modül dışına TEK router çıkar. `include_router` en SONDA
+# durur: `/{payment_id}/…` yolları `/{payment_id}` şablonuyla çakışmaz (segment
+# sayısı farklı), buna karşılık `/summary` SABİTİ `/{payment_id}` şablonundan
+# ÖNCE tanımlanmak ZORUNDADIR — yukarıdaki sıra bilinçlidir.
+router.include_router(transitions_router)

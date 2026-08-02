@@ -14,13 +14,17 @@ Bu modüle ÖZGÜ kurallar (`ITEM_PRICE_REQUIRED`, `SECTION_MISMATCH`) burada ta
 """
 
 from decimal import Decimal
+from typing import Protocol
 
+from app.core.errors import SiteValidationError
 from app.modules.progress_payments.guards import (
     DELETE_NOT_ALLOWED,
     INVALID_STATUS_TRANSITION,
+    LINES_REQUIRED,
     OPEN_PAYMENT_EXISTS,
     PAYMENT_MISSING,
     PAYMENT_NOT_DELETABLE,
+    PERIOD_REQUIRED,
 )
 
 __all__ = [
@@ -29,11 +33,16 @@ __all__ = [
     "INVALID_STATUS_TRANSITION",
     "ITEM_CONTRACT_MISMATCH",
     "ITEM_PRICE_REQUIRED",
+    "LINES_REQUIRED",
     "OPEN_PAYMENT_EXISTS",
     "PAYMENT_MISSING",
     "PAYMENT_NOT_DELETABLE",
+    "PERIOD_REQUIRED",
+    "REJECTION_REASON_REQUIRED",
     "SECTION_MISMATCH",
     "quantity_exceeds_quota",
+    "validate_reject",
+    "validate_submit",
 ]
 
 # 422 (spec §2 guard'ı): "girilmedi ≠ 0 TL" — fiyatı girilmemiş sözleşme kalemi
@@ -76,3 +85,50 @@ def quantity_exceeds_quota(code: str, remaining: Decimal, unit: str) -> str:
     return (
         f"Kümülatif hakediş miktarı sözleşme miktarını aşamaz: {code} · kalan {kalan:,.3f} {unit}"
     )
+
+
+# --- T4: durum makinesi korkulukları (spec §5) ---
+
+# 422 — ret gerekçesi ZORUNLUDUR (işverenden AYRILAN nokta): işverende gerekçe
+# yalnız denetim günlüğüne giden opsiyonel bir metindir, burada ise KALICI
+# `rejection_reason` kolonuna yazılır ve L177 "Revize Gerekli" rozetinin
+# kullanıcıya gösterilen açıklamasıdır — gerekçesiz bir rozet, taşerona neyi
+# revize edeceğini söylemez.
+REJECTION_REASON_REQUIRED = "Ret gerekçesi zorunludur."
+
+
+class _LineLike(Protocol):
+    quantity: object
+
+
+class _PaymentLike(Protocol):
+    period_year: object
+    lines: list[_LineLike]
+
+
+def validate_submit(payment: _PaymentLike) -> None:
+    """Onaya gönderme zorunlulukları (spec §5) — YALNIZ `submit`te koşar.
+
+    İşveren `progress_payments.guards.validate_submit`in İKİ kuralı burada da
+    geçerlidir ve metinleri ORADAN gelir (kullanıcı aynı ekran ailesinde iki
+    farklı cümle görmemeli). ÜÇÜNCÜ kuralı ("sözleşme bedeli girilmeden onaya
+    gönderilemez") burada YOKTUR: taşeron sözleşmesinde `amount` kolonu yoktur
+    (K3 türev ilkesi), bedel `Σ quantity × unit_price`tır ve fiyatsız kalem zaten
+    hakedişe ALINAMAZ (`ITEM_PRICE_REQUIRED`) — kural ölü bir kontrol olurdu.
+    """
+    if payment.period_year is None:
+        raise SiteValidationError(PERIOD_REQUIRED)
+    if not payment.lines or sum(line.quantity for line in payment.lines) <= 0:
+        raise SiteValidationError(LINES_REQUIRED)
+
+
+def validate_reject(reason: str | None) -> str:
+    """Ret gerekçesini doğrular ve KIRPILMIŞ hâlini döner.
+
+    Boş/yalnız boşluktan oluşan gerekçe 422'dir: Pydantic `min_length` tek başına
+    yetmez ("   " üç karakterdir), kırpma kuralı TEK kopya burada durur.
+    """
+    trimmed = (reason or "").strip()
+    if not trimmed:
+        raise SiteValidationError(REJECTION_REASON_REQUIRED)
+    return trimmed

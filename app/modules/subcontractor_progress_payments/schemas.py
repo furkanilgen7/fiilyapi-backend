@@ -29,8 +29,10 @@ __all__ = [
     "SubcontractorProgressPaymentLinesSave",
     "SubcontractorProgressPaymentListItem",
     "SubcontractorProgressPaymentListResponse",
+    "SubcontractorProgressPaymentSummary",
     "SubcontractorProgressPaymentUpdate",
     "SubcontractorRefreshPricesResponse",
+    "SubcontractorRejectBody",
 ]
 
 
@@ -97,6 +99,22 @@ class SubcontractorProgressPaymentUpdate(BaseModel):
     description: str | None = None
     default_coefficient: Decimal | None = Field(default=None, gt=0)
     section_id: uuid.UUID | None = None
+
+
+class SubcontractorRejectBody(BaseModel):
+    """`POST …/reject` gövdesi (T4, spec §5).
+
+    İşveren `RejectBody`den AYRILIR: gerekçe ZORUNLUDUR (`str`, opsiyonel değil)
+    çünkü burada `rejection_reason` KOLONUNA yazılır ve L177 "Revize Gerekli"
+    rozetinin kullanıcıya gösterilen açıklamasıdır — gerekçesiz bir rozet
+    taşerona neyi revize edeceğini söylemez.
+
+    Boş/yalnız boşluktan oluşan metnin reddi `min_length` ile YAPILMAZ ("   " üç
+    karakterdir): kırpma kuralı `guards.validate_reject`te TEK kopyadır.
+    `max_length=500` işveren gövdesindeki gerekçenin aynısıdır.
+    """
+
+    reason: str = Field(max_length=500)
 
 
 # --- Okuma şemaları ---
@@ -166,6 +184,32 @@ class SubcontractorProgressPaymentListItem(BaseModel):
     net_total: Decimal
     """L143-146: liste ekranı brüt ve NET taşır. Mockup'ın "Net = Brüt − KDV"
     görünümü hesap hatasıdır — doğru formül (`calculations.net_amount`) uygulanır."""
+    is_revision_required: bool
+    """L177 "Revize Gerekli" rozeti — BEŞİNCİ durum DEĞİL, `draft AND rejected_at
+    IS NOT NULL` türevi (spec §5). Rozet listede gösterildiği için liste satırı
+    da taşır; türev TEK kopya `read._is_revision_required`tedir."""
+
+
+class SubcontractorProgressPaymentSummary(BaseModel):
+    """L105-122 KPI şeridi — DÖRT kart (T4). Gövde `summary.py`dedir.
+
+    Para KPI'ları BRÜTtür (mockup kanıtı: L118 "Onay Bekliyor ₺1,24M" = L143
+    Brüt Tutar hücresi ₺1.240.000, Net Ödeme ₺1.016.800 DEĞİL).
+    """
+
+    total_gross: Decimal
+    """L108 "Toplam Hakediş" — süzgeçteki TÜM hakedişlerin brütü."""
+    pending_gross: Decimal
+    """L112 "Onay Bekliyor" — `pending_approval` durumundakilerin brütü."""
+    paid_period_gross: Decimal
+    """L116 "Bu Ay Ödenen" — `paid` + ETKİN DÖNEM'dekilerin brütü."""
+    active_subcontractor_count: int
+    """L120 "Aktif Taşeron" — süzgeçteki farklı taşeron SÖZLEŞMESİ sayısı
+    (şemada ayrı taşeron cari tablosu yoktur; `subcontractor_name` NULL olabilir)."""
+    period_year: int
+    period_month: int
+    """"Bu Ay Ödenen"in dayandığı dönemin ECHO'su: dönem süzgeci verilmişse o,
+    verilmemişse içinde bulunulan ay — ekran hangi ayı gösterdiğini bilmelidir."""
 
 
 class SubcontractorProgressPaymentListResponse(BaseModel):
@@ -202,6 +246,9 @@ class SubcontractorProgressPaymentDetail(BaseModel):
     paid_at: datetime | None
     rejected_at: datetime | None
     rejection_reason: str | None
+    is_revision_required: bool
+    """`draft AND rejected_at IS NOT NULL` türevi (spec §5) — `SubcontractorProgress
+    PaymentListItem` ile AYNI kaynaktan gelir."""
     created_by: uuid.UUID
     created_at: datetime
     updated_at: datetime

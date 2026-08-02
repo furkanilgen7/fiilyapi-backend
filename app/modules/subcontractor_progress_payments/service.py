@@ -118,7 +118,7 @@ async def visible_payment(
     return PaymentContext(payment=payment, contract=contract, project=project)
 
 
-async def _visible_payment_locked(
+async def visible_payment_locked(
     session: AsyncSession, actor: User, payment_id: uuid.UUID
 ) -> PaymentContext:
     """Kapsam kararı (404) kilitten ÖNCE verilir — görünmeyen kaydın satırı
@@ -288,14 +288,14 @@ async def save_lines(
     `lines.py` görünürlük katmanını çağırsaydı `service → lines → service`
     döngüsel importu doğardı).
 
-    Satır yazma KİLİTLİ satır üzerinden yapılır (`_visible_payment_locked`,
+    Satır yazma KİLİTLİ satır üzerinden yapılır (`visible_payment_locked`,
     kilit sırası `create`/`delete` ile AYNI: önce sözleşme, sonra hakediş).
     Kilitsiz okunsaydı iki eşzamanlı `PUT` kota tavanını TOCTOU ile aşabilirdi:
     ikisi de kümülatifi aynı anda okur, ikisi de "tavana sığıyor" der.
 
     İkinci öğe: gövdeden adreslenemediği için düşen bağı-kopmuş satır sayısı.
     """
-    context = await _visible_payment_locked(session, actor, payment_id)
+    context = await visible_payment_locked(session, actor, payment_id)
     if context.payment.status != SubcontractorPaymentStatus.draft:
         raise ConflictError(guards.INVALID_STATUS_TRANSITION)
 
@@ -322,7 +322,7 @@ async def refresh_prices(
 
     Değişmemiş satır/yüzde YAZILMAZ (no-op tazeleme `refreshed_count=0` döner).
     """
-    context = await _visible_payment_locked(session, actor, payment_id)
+    context = await visible_payment_locked(session, actor, payment_id)
     payment, contract, _ = context
     if payment.status != SubcontractorPaymentStatus.draft:
         raise ConflictError(guards.INVALID_STATUS_TRANSITION)
@@ -354,7 +354,7 @@ async def delete_payment(
     okunursa eşzamanlı bir onay katman-1 kontrolünü TOCTOU ile atlatabilir —
     bu yüzden kararlar KİLİTLİ satır üzerinden verilir.
     """
-    payment, contract, project = await _visible_payment_locked(session, actor, payment_id)
+    payment, contract, project = await visible_payment_locked(session, actor, payment_id)
 
     if payment.status in (SubcontractorPaymentStatus.approved, SubcontractorPaymentStatus.paid):
         raise ConflictError(guards.PAYMENT_NOT_DELETABLE)

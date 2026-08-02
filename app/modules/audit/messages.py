@@ -431,6 +431,56 @@ def subcontractor_progress_payment_deleted(
     return f"Taşeron hakedişi silindi: {label} · {status_label} · {amount:,.2f} TL"
 
 
+# --- Taşeron hakedişi durum geçişleri (T4, spec §5) ---
+
+
+def subcontractor_progress_payment_submitted(
+    project_name: str, subcontractor_name: str | None, sequence_no: int
+) -> str:
+    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    return f"Taşeron hakedişi onaya gönderildi: {label}"
+
+
+def subcontractor_progress_payment_approved(
+    project_name: str, subcontractor_name: str | None, sequence_no: int
+) -> str:
+    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    return f"Taşeron hakedişi onaylandı: {label}"
+
+
+def subcontractor_progress_payment_rejected(
+    project_name: str, subcontractor_name: str | None, sequence_no: int, reason: str
+) -> str:
+    """İşverenin `reason`ı OPSİYONELDİR; burada ZORUNLUDUR (spec §5) — gerekçe
+    `rejection_reason` kolonuna da yazılır, günlük onun İKİNCİ değil KALICI
+    kopyasıdır (kolon güncellenebilir, günlük satırı değişmez)."""
+    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    return f"Taşeron hakedişi reddedildi: {label} · Gerekçe: {reason}"
+
+
+def subcontractor_progress_payment_paid(
+    project_name: str, subcontractor_name: str | None, sequence_no: int
+) -> str:
+    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    return f"Taşeron hakedişi ödendi olarak işaretlendi: {label}"
+
+
+def subcontractor_progress_payment_unapproved(
+    project_name: str,
+    subcontractor_name: str | None,
+    sequence_no: int,
+    previous_approver_name: str | None,
+    previous_approved_at: datetime | None,
+) -> str:
+    """`progress_payment_unapproved` ile AYNI ZORUNLULUK: bu iki değer
+    `transitions._stamp` onları NULL'lamadan ÖNCE okunmalıdır, sonra okunursa
+    `unapprove` sessiz bir tarih silme işlemi olur."""
+    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    approver = previous_approver_name or "Bilinmiyor"
+    when = previous_approved_at.strftime("%d.%m.%Y %H:%M") if previous_approved_at else "Bilinmiyor"
+    return f"Taşeron hakediş onayı geri çekildi: {label} · Önceki onay: {approver} · {when}"
+
+
 # --- Alici (musteri) kartoteksi (P8 T2) ---
 #
 # Yeni `AuditAction` GEREKMEDI: kayit acma/duzenleme mevcut `create`/`update`

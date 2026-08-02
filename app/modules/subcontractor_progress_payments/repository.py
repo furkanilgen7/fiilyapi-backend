@@ -273,6 +273,38 @@ async def list_payments(
     return [(row[0], row[1], row[2]) for row in result.all()]
 
 
+async def list_payments_for_summary(
+    session: AsyncSession,
+    visible_project_ids: list[uuid.UUID],
+    *,
+    project_id: uuid.UUID | None,
+    period_year: int | None,
+    period_month: int | None,
+    status_filter: SubcontractorPaymentStatus | None,
+    q: str | None,
+) -> list[PaymentRow]:
+    """KPI şeridinin (T4) kümesi: `list_payments` ile AYNI `WHERE` gövdesi,
+    SAYFALAMA YOK.
+
+    Sayfalanmış küme üzerinden KPI hesaplansaydı kartlar yalnız görünen sayfayı
+    özetlerdi — "Toplam Hakediş" adının tersi. Süzgeç kopyası da AÇILMAZ
+    (`_list_stmt` paylaşılır): KPI şeridi ile altındaki tablo aynı kümeyi
+    göstermek ZORUNDADIR.
+    """
+    if not visible_project_ids:
+        return []
+    stmt = _list_stmt(
+        visible_project_ids,
+        project_id=project_id,
+        period_year=period_year,
+        period_month=period_month,
+        status_filter=status_filter,
+        q=q,
+    )
+    result = await session.execute(stmt)
+    return [(row[0], row[1], row[2]) for row in result.all()]
+
+
 async def count_payments(
     session: AsyncSession,
     visible_project_ids: list[uuid.UUID],

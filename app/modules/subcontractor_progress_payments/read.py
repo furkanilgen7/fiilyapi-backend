@@ -17,6 +17,7 @@ from app.modules.projects.service import visible_projects
 from app.modules.subcontractor_progress_payments import amounts, repository
 from app.modules.subcontractor_progress_payments.models import (
     SubcontractorPaymentStatus,
+    SubcontractorProgressPayment,
     SubcontractorProgressPaymentLine,
 )
 from app.modules.subcontractor_progress_payments.schemas import (
@@ -27,6 +28,20 @@ from app.modules.subcontractor_progress_payments.schemas import (
 )
 from app.modules.subcontractor_progress_payments.service import PaymentContext, visible_payment
 from app.modules.users.models import User
+
+
+def is_revision_required(payment: SubcontractorProgressPayment) -> bool:
+    """L177 "Revize Gerekli" rozetinin TEK kopya türevi (T4, spec §5).
+
+    Rozet BEŞİNCİ bir durum DEĞİLDİR: `reject` kaydı `draft`a döndürür ve
+    `rejected_at`'i damgalar; `submit` damgayı temizler. `draft` şartı
+    ZORUNLUDUR — damgası duran ama yeniden onaya gönderilip onaylanmış bir kayıt
+    rozet ALMAZ.
+
+    Liste ve detay uçları AYNI fonksiyondan okur: iki kopya türev, ekranın iki
+    yerinde farklı rozet göstermenin en kısa yoludur.
+    """
+    return payment.status == SubcontractorPaymentStatus.draft and payment.rejected_at is not None
 
 
 def _line_read(line: SubcontractorProgressPaymentLine) -> SubcontractorProgressPaymentLineRead:
@@ -88,6 +103,7 @@ async def build_detail(
         paid_at=payment.paid_at,
         rejected_at=payment.rejected_at,
         rejection_reason=payment.rejection_reason,
+        is_revision_required=is_revision_required(payment),
         created_by=payment.created_by,
         created_at=payment.created_at,
         updated_at=payment.updated_at,
@@ -149,6 +165,7 @@ async def list_payments(
                 created_at=payment.created_at,
                 gross_total=blocks[payment.id].gross,
                 net_total=blocks[payment.id].net,
+                is_revision_required=is_revision_required(payment),
             )
             for payment, contract, project in rows
         ],

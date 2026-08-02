@@ -88,24 +88,45 @@ class TransitionResult(NamedTuple):
     previous_approved_at: datetime | None = None
 
 
-#: Spec §7 tablosu — TEK KOPYA. Burada olmayan çift 409'dur.
-TRANSITIONS: dict[tuple[ProgressPaymentStatus, PaymentAction], ProgressPaymentStatus] = {
-    (ProgressPaymentStatus.draft, PaymentAction.submit): ProgressPaymentStatus.pending_approval,
-    (
-        ProgressPaymentStatus.pending_approval,
-        PaymentAction.approve,
-    ): ProgressPaymentStatus.approved,
-    (ProgressPaymentStatus.pending_approval, PaymentAction.reject): ProgressPaymentStatus.draft,
-    (ProgressPaymentStatus.approved, PaymentAction.mark_paid): ProgressPaymentStatus.paid,
+#: Spec §7 tablosunun ŞEKLİ — TEK KOPYA, durum ADLARIYLA (enum tipinden bağımsız).
+#:
+#: Taşeron hakedişi (`subcontractor_progress_payments`) AYNI dört durumlu makineyi
+#: kullanır ama kendi enum TİPİNİ taşır (`SubcontractorPaymentStatus`; iki evrak
+#: ailesinin durum kümesi ileride ayrışabilsin diye bilinçli ayrı tip). Tablo
+#: enum'a sabitlenseydi taşeron tarafı onu KOPYALAMAK zorunda kalırdı ve iki kopya
+#: zamanla ayrışırdı; adlarla tutulup `build_transition_table` ile TİPLENDİRİLİR.
+_TRANSITION_SHAPE: tuple[tuple[str, "PaymentAction", str], ...] = (
+    ("draft", PaymentAction.submit, "pending_approval"),
+    ("pending_approval", PaymentAction.approve, "approved"),
+    ("pending_approval", PaymentAction.reject, "draft"),
+    ("approved", PaymentAction.mark_paid, "paid"),
     # §7: "approved → pending_approval (geri çek)" — taslağa DÖNMEZ. Taslağa
     # dönüş iki adımdır (unapprove + reject) ve her adım ayrı denetim kaydıdır.
     # `paid` bu tablonun hiçbir çiftinde KAYNAK değildir (K7: ödenmiş hakedişin
     # geri dönüşü yoktur).
-    (
-        ProgressPaymentStatus.approved,
-        PaymentAction.unapprove,
-    ): ProgressPaymentStatus.pending_approval,
-}
+    ("approved", PaymentAction.unapprove, "pending_approval"),
+)
+
+
+def build_transition_table[StatusT: enum.Enum](
+    status_enum: type[StatusT],
+) -> dict[tuple[StatusT, PaymentAction], StatusT]:
+    """`_TRANSITION_SHAPE`i verilen durum enum'una bağlar.
+
+    Enum'da eksik bir üye varsa `KeyError` İTHALAT ANINDA patlar — sessizce
+    yarım bir tabloyla çalışmaktansa (ve o durumun her geçişini 409 yapmaktansa)
+    açılışta durmak tercih edilir.
+    """
+    return {
+        (status_enum[source], action): status_enum[target]
+        for source, action, target in _TRANSITION_SHAPE
+    }
+
+
+#: İşveren hakedişinin tiplenmiş tablosu. Burada olmayan çift 409'dur.
+TRANSITIONS: dict[tuple[ProgressPaymentStatus, PaymentAction], ProgressPaymentStatus] = (
+    build_transition_table(ProgressPaymentStatus)
+)
 
 
 async def _revalidate_quota(session: AsyncSession, payment: ProgressPayment) -> None:
