@@ -397,7 +397,15 @@ class UnitCreate(_UnitFormFields):
 
 class UnitUpdate(_UnitFormFields):
     """TUM alanlar opsiyoneldir; "gonderilmedi" ile "null yapildi" ayrimi servis
-    katmaninda `model_fields_set` ile cozulur (P1/P2/P4 deseni)."""
+    katmaninda `model_fields_set` ile cozulur (P1/P2/P4 deseni).
+
+    **`sales_status` BU SEMADAN CIKARILDI (P8 T3, satis spec §3).** Sinif
+    docstring'indeki (`models.py:232-240`) "GELECEK IS — P8" notunun kapanisidir:
+    unitenin vitrin durumu artik SATIS KAYDINDAN turetilir
+    (`sales/service.sync_unit_sales_status`) ve elle giris kilitlenir. Iki yazma
+    yolu birakmak, satis kaydiyla vitrin durumunun sessizce ayrismasi demekti.
+    Kirici DEGILDIR: alani kullanan bir UI henuz yoktur (spec §3). `UnitCreate`te
+    KALIR — orada henuz satis kaydi yoktur, deger yalnizca acilis vitrinidir."""
 
     block_id: uuid.UUID | None = None
     unit_no: str | None = Field(default=None, min_length=1, max_length=30)
@@ -409,8 +417,6 @@ class UnitUpdate(_UnitFormFields):
     appraisal_value: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=2)
     owner_side: UnitOwnerSide | None = None
     sort_order: int | None = Field(default=None, ge=0)
-    # Kullanici karari 2: satis durumu BUGUN elle degistirilebilir (spec §4.4).
-    sales_status: UnitSalesStatus | None = None
 
 
 class UnitAllocationItem(BaseModel):

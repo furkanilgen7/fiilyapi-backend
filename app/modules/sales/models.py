@@ -228,6 +228,17 @@ class UnitSale(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
+    @property
+    def is_draft(self) -> bool:
+        """`Deletable` protokolu (`app/core/access.py:47-52`) icin — KOLON DEGIL.
+
+        `progress_payments.ProgressPayment.is_draft` deseninin aynisi: ayri bir
+        `is_draft` sutunu ACILMAZ, cunku satisin durum makinesi taslak karsiligini
+        (`reservation`) zaten bir DURUM olarak icerir. Spec §4: yalniz rezervasyon
+        silinebilir; `active`/`deed_transferred` iptal edilir (T5).
+        """
+        return self.status is UnitSaleStatus.reservation
+
 
 class SaleInstallment(Base):
     """Odeme plani satiri (F110-147).

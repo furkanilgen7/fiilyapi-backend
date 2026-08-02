@@ -388,3 +388,28 @@ def customer_created(name: str) -> str:
 
 def customer_updated(name: str) -> str:
     return f"Müşteri güncellendi: {name}"
+
+
+# --- Unite satisi (P8 T3) ---
+#
+# Yeni `AuditAction` GEREKMEDI: satis kaydi acma/duzenleme/silme mevcut
+# `create`/`update`/`delete` aksiyonlarina birebir oturuyor (`unit_created`
+# ailesinin deseni). Durum GECISLERININ metinleri (`activate`/`transfer-deed`/
+# `cancel`) T5'in isidir ve `approve` aksiyonu orada degerlendirilecektir.
+#
+# Ucunun de imzasi AYNIDIR — silme metni ek parametre ALMAZ cunku etiket
+# (`A Blok · 12`) ve alici adi zaten kaydin kim oldugunu tam olarak soyler.
+# Cagiran (`sales/service.delete_sale`) bu ikisini `session.delete` ONCESINDE
+# okur; sonrasinda hicbir sorguyla geri getirilemezler.
+
+
+def sale_created(project_name: str, unit_label: str, customer_name: str) -> str:
+    return f"Ünite satışı oluşturuldu: {project_name} · {unit_label} · {customer_name}"
+
+
+def sale_updated(project_name: str, unit_label: str, customer_name: str) -> str:
+    return f"Ünite satışı güncellendi: {project_name} · {unit_label} · {customer_name}"
+
+
+def sale_deleted(project_name: str, unit_label: str, customer_name: str) -> str:
+    return f"Ünite satışı silindi: {project_name} · {unit_label} · {customer_name}"

@@ -1720,10 +1720,22 @@ async def test_floor_gonderilmezse_none_201(client, db_session, user_factory, pr
     assert resp.json()["floor"] is None
 
 
-async def test_patch_sales_status_sold_200(client, db_session, user_factory, project_factory):
-    """Kullanici karari 2: satis durumu BUGUN ELLE degistirilebilir (spec §4.4).
+async def test_patch_sales_status_artik_elle_degistirilemez(
+    client, db_session, user_factory, project_factory
+):
+    """P8 T3 ILE TERSINE CEVRILDI (satis spec §3) — eski adi
 
-    P8 geldiginde bu alan otomatiklesecek ve elle giris KILITLENECEKTIR.
+    `test_patch_sales_status_sold_200`di ve "durum BUGUN elle degistirilebilir"
+    diyordu. O test kendi docstring'inde "P8 geldiginde bu alan otomatiklesecek
+    ve elle giris KILITLENECEKTIR" diye yazmisti; P8 T3 geldi ve
+    `sales_status` `UnitUpdate` semasindan CIKARILDI. Artik unitenin vitrin
+    durumu YALNIZ satis kaydindan turer
+    (`sales/service.sync_unit_sales_status`).
+
+    Alan semada olmadigi icin Pydantic'in `extra='ignore'` varsayilaniyla
+    SESSIZCE duser: istek 200 doner ama durum DEGISMEZ. Kirici degildir —
+    alani kullanan bir UI henuz yoktur (spec §3). Otomasyonun kendisi
+    `tests/sales/test_sales_unit_sync.py`de test edilir.
     """
     project = await project_factory("T6-6")
     site = await _site(db_session, project)
@@ -1736,7 +1748,7 @@ async def test_patch_sales_status_sold_200(client, db_session, user_factory, pro
     )
 
     assert resp.status_code == 200
-    assert resp.json()["sales_status"] == "sold"
+    assert resp.json()["sales_status"] == "listed"
 
 
 async def test_expected_profit_ve_unit_cost_yer_tutucu(
