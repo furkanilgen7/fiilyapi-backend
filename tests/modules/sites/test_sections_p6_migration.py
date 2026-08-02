@@ -38,7 +38,7 @@ ALEMBIC_CMD = (sys.executable, "-m", "alembic")
 # (P8 unite satisi). P8 ayni ebeveyne baglanip ONCE canliya cikinca zincir
 # catallanmisti; iki head `Dockerfile:22`deki `alembic upgrade head && uvicorn`i
 # kirar ve canli uygulama HIC acilmaz.
-PARENT_REVISION = "f2a3b4c5d6e7"  # P8 unite satisi — zincirin yeni ucu
+PARENT_REVISION = "a3b4c5d6e7f8"  # TH taseron hakedisi — zincirin yeni ucu (IKINCI re-parent)
 P6_REVISION = "d4e5f6a7b8c9"
 
 NEW_SECTION_COLUMNS = (
