@@ -4,6 +4,10 @@ Tarih: 2026-08-02 · Durum: **ONAYLANDI (2026-08-02)** — §8'in TÜM soruları
 S1 yeni `sales` izin modülü (matris 18→19) · S2 taksit üstü manuel tahsilat + `pay` ucu BU dilimde ·
 S3 `landowner` üniteler satışa kapalı · S4 rezervasyonda otomatik iptal yok · S5 gecikme faizi yalnız
 gösterim türevi · S6 "Fiyat Listesi" kapsam dışı.
+**ONAYLI SAPMA (2026-08-02, kapanışta):** Vade farkı (F106) plan tutarlarını ŞİŞİRMEZ — oran bilgi
+alanı olarak saklanır, "plan toplamı = sale_price" kuralı korunur (mockup'taki tek örnekte oran 0 ve
+TOPLAM = satış bedeli). Vade farkının tutara yansıma iş kuralı netleşirse ayrı dilimde `sales/plan.py`
+üzerinde ele alınır.
 Mockup'lar: `projedesign/Form - Daire Satisi.dc.html` (F) · `projedesign/Satış Yönetimi.dc.html` (S)
 Mevcut zemin: `units` tablosu satışa hazır (`list_price`, `min_sale_price`, `vat_rate`, `sales_status`,
 `owner_side`, `appraisal_value`, m² alanları) · `units/models.py:232-240` bu dilimi açıkça tarifliyor:
