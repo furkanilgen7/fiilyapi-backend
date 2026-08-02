@@ -373,3 +373,18 @@ def progress_payment_lines_saved(project_name: str, sequence_no: int, count: int
 
 def progress_payment_prices_refreshed(project_name: str, sequence_no: int, count: int) -> str:
     return f"Hakediş fiyatları tazelendi: {project_name} · #{sequence_no} · {count} kalem"
+
+
+# --- Alici (musteri) kartoteksi (P8 T2) ---
+#
+# Yeni `AuditAction` GEREKMEDI: kayit acma/duzenleme mevcut `create`/`update`
+# aksiyonlarina birebir oturuyor (`subcontractor_created` deseni). Silme metni
+# YOK cunku DELETE ucu da yok (spec §4).
+
+
+def customer_created(name: str) -> str:
+    return f"Müşteri oluşturuldu: {name}"
+
+
+def customer_updated(name: str) -> str:
+    return f"Müşteri güncellendi: {name}"
