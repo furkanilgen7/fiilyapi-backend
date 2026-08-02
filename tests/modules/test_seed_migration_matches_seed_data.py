@@ -11,6 +11,7 @@ Matris tek bir migration'da degil, uc uca eklenen migration'larda birikir:
   * a477fdf00fdf -> ilk 8 rol x 13 modul (bulk_insert)
   * 2cffc2fcfcf0 -> 14. modul "invoicing" + 8 izin satiri + sort_order kaydirmasi
   * b7fcd67bde1e -> 15. modul "projects", c41a7e2b9d05 -> 16. modul "sites" (ayni desen)
+  * e9e8e6a52f96 -> 18. modul "contracts", f2a3b4c5d6e7 -> 19. modul "sales" (ayni desen)
 Bu yuzden karsilastirma, migration'larin BILESKESI ile seed_data arasinda yapilir.
 
 DB gerektirmez: ilk migration'in upgrade() fonksiyonu, gercek `alembic.op` yerine
@@ -36,6 +37,7 @@ P2_MIGRATION_PATH = next(VERSIONS_DIR.glob("*_p2_santiye_bolum.py"))
 BOQ_MIGRATION_PATH = next(VERSIONS_DIR.glob("*_boq_izin_modulu.py"))
 BOQ_PROCUREMENT_FIX_MIGRATION_PATH = next(VERSIONS_DIR.glob("*_boq_procurement_izin_duzeltmesi.py"))
 P5_MIGRATION_PATH = next(VERSIONS_DIR.glob("*_p5_sozlesmeler.py"))
+P8_MIGRATION_PATH = next(VERSIONS_DIR.glob("*_p8_unite_satisi.py"))
 EXTENSION_MIGRATION_PATHS = [
     INVOICING_MIGRATION_PATH,
     P1_MIGRATION_PATH,
@@ -43,6 +45,7 @@ EXTENSION_MIGRATION_PATHS = [
     BOQ_MIGRATION_PATH,
     BOQ_PROCUREMENT_FIX_MIGRATION_PATH,
     P5_MIGRATION_PATH,
+    P8_MIGRATION_PATH,
 ]
 
 
@@ -168,11 +171,11 @@ def test_migration_permission_matrix_matches_seed_data():
     assert _permission_map_from_app() == _permission_map_from_migrations()
 
 
-def test_migration_permission_matrix_has_144_cells():
+def test_migration_permission_matrix_has_152_cells():
     app_map = _permission_map_from_app()
     migration_map = _permission_map_from_migrations()
-    assert len(app_map) == 144
-    assert len(migration_map) == 144
+    assert len(app_map) == 152
+    assert len(migration_map) == 152
 
 
 def test_migration_role_keys_match_seed_data():
