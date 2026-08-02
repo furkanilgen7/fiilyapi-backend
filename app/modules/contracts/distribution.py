@@ -399,6 +399,18 @@ async def save_distribution(
     if project.contract is None:
         raise NotFoundError(CONTRACT_MISSING)
 
+    # --- 0. KİLİT (TB1/T2, spec §2) ---
+    # Doğrulamayı besleyen HİÇBİR okumadan önce sözleşme kalemleri satır kilidi
+    # altına alınır (`repository.lock_employer_items`, `get_contract_locked`
+    # deseni). Aksi hâlde "önce doğrula, sonra yaz" sırası tek başına yetmez:
+    # iki eşzamanlı istek aynı "kalan"ı okur, ikisi de kotayı geçerli sanır,
+    # ikisi de yazar ve toplam dağıtım sözleşme kalemini AŞAR (TOCTOU). Kilit
+    # ALTINDA ikinci istek beklemek zorunda kalır, kilidi alınca birincinin
+    # yazdığını GÖRÜR ve `DISTRIBUTION_EXCEEDS` (422) ile döner.
+    # Kilit sırası `ORDER BY id`'dir ve tek yazma yolu burasıdır — sıra
+    # tutarsızlığından doğacak deadlock riski repository docstring'inde.
+    await repository.lock_employer_items(session, project_id)
+
     sites = await sites_repository.list_sites_for_project(session, project_id)
     site_ids = {site.id for site in sites}
     groups = await repository.list_employer_groups(session, project_id)
