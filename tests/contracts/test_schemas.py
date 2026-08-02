@@ -280,6 +280,7 @@ def test_employer_contract_detail_kapsam_disi_alanlar_acik_doner():
         vat_pct=Decimal("20"),
         late_penalty_daily=None,
         has_price_escalation=False,
+        index_type=None,
         status=ContractStatus.active,
         start_date=None,
         end_date=None,

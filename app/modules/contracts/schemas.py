@@ -26,6 +26,10 @@ from app.modules.contracts.models import ContractStatus, PaymentPeriod
 # `progress_payments.schemas` yalnız kendi modellerini okur.
 from app.modules.progress_payments.schemas import ProgressPaymentSummary
 
+# `PriceIndexType` sözleşme kolonunun kendi enum'udur (`projects.models`) —
+# okuma şemasında yeniden tanımlanmaz (T5).
+from app.modules.projects.models import PriceIndexType
+
 # KDV kümesi ({1, 10, 20}) `units.schemas`ten GELİR (`sales.schemas` ile aynı
 # gerekçe): oran yasayla değişen TEK bir listedir, üç modülde üç kopya olamaz.
 from app.modules.units.schemas import RequiredVatRate, VatRate
@@ -220,6 +224,11 @@ class EmployerContractDetail(BaseModel):
     vat_pct: Decimal
     late_penalty_daily: Decimal | None
     has_price_escalation: bool
+    index_type: PriceIndexType | None
+    """T5 (spec §6 ek task, P7 bulgusu): fiyat farkı endeks tipi additive olarak
+    okuma ucuna eklendi — sözleşmenin yazma yolu bu dilimde DEĞİŞMEZ
+    (`PATCH /projects/{id}` nested `contract`'ında kalır). Fiyat farkı kapalıyken
+    (`has_price_escalation=false`) model kısıtı gereği daima `None`."""
     status: ContractStatus
     # Tarihler `projects.start_date`/`end_date`'ten okunur (spec §3.1 — ikinci
     # bir tarih kaynağı açılmaz).
