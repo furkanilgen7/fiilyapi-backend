@@ -123,6 +123,7 @@ async def list_payments(
     actor: User,
     *,
     project_id: uuid.UUID | None,
+    site_id: uuid.UUID | None,
     period_year: int | None,
     period_month: int | None,
     status_filter: SubcontractorPaymentStatus | None,
@@ -135,6 +136,7 @@ async def list_payments(
     visible_ids = [p.id for p in await visible_projects(session, actor)]
     filters = {
         "project_id": project_id,
+        "site_id": site_id,
         "period_year": period_year,
         "period_month": period_month,
         "status_filter": status_filter,

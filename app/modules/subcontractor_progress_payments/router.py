@@ -54,6 +54,10 @@ async def list_subcontractor_progress_payments_endpoint(
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
     project_id: uuid.UUID | None = None,
+    site_id: Annotated[
+        uuid.UUID | None,
+        Query(description="Sözleşmesi bu şantiyeye bağlı hakedişler (proje geneli olanlar hariç)"),
+    ] = None,
     period_year: int | None = None,
     period_month: Annotated[int | None, Query(ge=1, le=12)] = None,
     status_filter: Annotated[SubcontractorPaymentStatus | None, Query(alias="status")] = None,
@@ -61,11 +65,16 @@ async def list_subcontractor_progress_payments_endpoint(
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> SubcontractorProgressPaymentListResponse:
-    """L83-101 filtreleri + `audit`/`users` sayfalama deseni (`total`/`limit`/`offset`)."""
+    """L83-101 filtreleri + `audit`/`users` sayfalama deseni (`total`/`limit`/`offset`).
+
+    `site_id` (TB2/U2) SÖZLEŞME üzerinden süzer — hakedişin şantiye kolonu yoktur.
+    Kapsamı GENİŞLETMEZ: `visible_projects` süzgeci her hâlükârda üstte kalır.
+    """
     return await read.list_payments(
         session,
         user,
         project_id=project_id,
+        site_id=site_id,
         period_year=period_year,
         period_month=period_month,
         status_filter=status_filter,
@@ -84,6 +93,10 @@ async def subcontractor_progress_payment_summary_endpoint(
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
     project_id: uuid.UUID | None = None,
+    site_id: Annotated[
+        uuid.UUID | None,
+        Query(description="Sözleşmesi bu şantiyeye bağlı hakedişler (proje geneli olanlar hariç)"),
+    ] = None,
     period_year: int | None = None,
     period_month: Annotated[int | None, Query(ge=1, le=12)] = None,
     status_filter: Annotated[SubcontractorPaymentStatus | None, Query(alias="status")] = None,
@@ -102,6 +115,7 @@ async def subcontractor_progress_payment_summary_endpoint(
         session,
         user,
         project_id=project_id,
+        site_id=site_id,
         period_year=period_year,
         period_month=period_month,
         status_filter=status_filter,
