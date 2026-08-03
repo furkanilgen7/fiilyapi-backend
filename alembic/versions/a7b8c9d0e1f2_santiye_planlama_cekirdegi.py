@@ -87,6 +87,10 @@ def upgrade() -> None:
             "section_id",
             "label",
             name="uq_site_plan_rows_site_kind_section_label",
+            # DEFERRABLE: `PUT rows` tek istekte satir silip baskasini silinenin
+            # etiketine tasiyabilir; anlik kontrol o istegi 409'a dusururdu.
+            deferrable=True,
+            initially="DEFERRED",
         ),
     )
     op.create_index("ix_site_plan_rows_site_id", "site_plan_rows", ["site_id"])

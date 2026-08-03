@@ -72,6 +72,14 @@ class SitePlanRow(Base):
     NULL olan ekipman satirlarinda kisit fiilen ISLEMEZ — tekillik o dalda
     yazma ucunun (PUT rows, DEGISTIRME semantigi) sorumlulugundadir.
 
+    Kisit DEFERRABLE INITIALLY DEFERRED'dir (T5 final review bulgusu):
+    `PUT rows` tek istekte bir satiri silip BASKA bir satiri silinenin
+    etiketine tasiyabilir (ya da iki etiketi takas edebilir). Anlik kontrolde
+    UPDATE, DELETE'ten once flush edildigi icin gecici olarak iki satir ayni
+    etiketi tasir ve istek 409'a duserdi. Ertelenmis kontrol kisiti
+    transaction SONUNDA uygular; gercek cakisma hala yakalanir ve govde-ici
+    tekillik zaten `write._assert_row_shape`te dogrulanir.
+
     `project_id` santiyeden turetilebilir ama her izgara sorgusunda JOIN
     gerektirirdi — `visible_projects` suzgeci icin santiyeden KOPYALANIR
     (site_diary / puantaj deseni).
@@ -87,6 +95,8 @@ class SitePlanRow(Base):
             "section_id",
             "label",
             name="uq_site_plan_rows_site_kind_section_label",
+            deferrable=True,
+            initially="DEFERRED",
         ),
     )
 
