@@ -29,6 +29,7 @@ from app.modules.sites.router import router as sites_router
 from app.modules.subcontractor_progress_payments.router import (
     router as subcontractor_progress_payments_router,
 )
+from app.modules.timesheet.router import router as timesheet_router
 from app.modules.units.router import router as units_router
 from app.modules.users.router import router as users_router
 
@@ -90,6 +91,7 @@ app.include_router(settings_router)
 app.include_router(site_diary_router)
 app.include_router(sites_router)
 app.include_router(subcontractor_progress_payments_router)
+app.include_router(timesheet_router)
 app.include_router(units_router)
 app.include_router(users_router)
 

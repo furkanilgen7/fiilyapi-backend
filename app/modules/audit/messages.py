@@ -654,3 +654,20 @@ def personnel_updated(full_name: str) -> str:
     """Puantaj T2. PASIFLESTIRME de buraya duser: DELETE ucu yoktur, cikarma
     `is_active=false` PATCH'idir ve ayri bir aksiyon acilmaz (spec §3)."""
     return f"Personel güncellendi: {full_name}"
+
+
+def timesheet_saved(
+    project_name: str, site_name: str, year: int, month: int, cell_count: int
+) -> str:
+    """Puantaj T3 `PUT …/timesheet`. TEK donem-ozeti olayidir: hucre basina olay
+    yazmak 31 gun x 48 isci'lik bir kaydetmede 1488 satir uretir ve denetim
+    gunlugunu kullanilamaz hale getirirdi (spec §3).
+
+    `update` aksiyonuna oturur: kaydetme donemin ICERIGINI degistirir, yeni bir
+    kayit ACMAZ (`AuditAction.approve` hakedis onayina ayrilmistir — puantajda
+    onay akisi YOKTUR, spec §7 S3).
+    """
+    return (
+        f"Puantaj kaydedildi: {project_name} · {site_name} · {year}-{month:02d} "
+        f"· {cell_count} hücre"
+    )

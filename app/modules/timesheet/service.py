@@ -1,0 +1,234 @@
+"""Puantaj kapsam kararları + toplu DEĞİŞTİRME (spec §3, §7 S4).
+
+İKİ KATMANLI koruma (`site_diary/service.py` deseninin birebiri): `timesheet`
+izni router'da YETKİYİ verir (saha mühendisi `view` → PUT'ta 403), bu modül
+`projects.service.visible_projects` ile KAPSAMI belirler. Görünmeyen projedeki
+GERÇEK şantiye ile var OLMAYAN kimlik AYIRT EDİLEMEZ 404 döner.
+
+## ⚠️ Kapsam sınırı — bu dosyanın en kritik kuralı
+
+Silme koşulu `site_id = <şantiye> AND work_date ∈ [ayın ilk günü, ayın son günü]`
+üçlüsüdür ve tek yerden (`repository.period_bounds`) gelir. Koşulun herhangi bir
+parçası düşerse bir ayın kaydetmesi komşu ayın ya da komşu şantiyenin verisini
+sessizce süpürür — geri alınamaz veri kaybı.
+
+## Sıra — ÖNCE TÜM DOĞRULAMALAR, SONRA TEK YAZMA
+
+`site_diary/lines.py` kuralının aynısı: ikinci hücrede patlayan istek birincisini
+session'a eklemiş OLMAMALIDIR (kısmi yazma yok).
+
+## Onay akışı YOKTUR (spec §7 S3)
+
+Mockup'ta yalnız "Kaydet" vardır (ŞP 101). `submit`/`approve` geçişi, durum
+kolonu ya da kilitleme AÇILMAZ — denetim izi yeterlidir. Sonraki okuyucu buraya
+durum makinesi EKLEMESİN.
+"""
+
+import uuid
+from datetime import date
+from typing import NamedTuple
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.errors import ConflictError, DuplicateError, NotFoundError, SiteValidationError
+from app.modules.personnel.models import Personnel
+from app.modules.projects.models import Project
+from app.modules.projects.service import visible_projects
+from app.modules.sites import repository as sites_repository
+from app.modules.sites.models import Section, Site
+from app.modules.timesheet import guards, repository
+from app.modules.timesheet.models import TimesheetCode, TimesheetEntry
+from app.modules.timesheet.schemas import TimesheetCellInput, TimesheetSave
+from app.modules.users.models import User
+
+PERMISSION_MODULE = "timesheet"
+"""Seed'de HAZIR (satır 171): şef `full`, saha mühendisi `view`. Matris DEĞİŞMEZ."""
+
+
+class SiteContext(NamedTuple):
+    """Kapsam süzgecinden geçmiş şantiye + projesi."""
+
+    site: Site
+    project: Project
+
+
+# --- Kapsam ---
+
+
+async def visible_site(session: AsyncSession, actor: User, site_id: uuid.UUID) -> SiteContext:
+    """Şantiye → proje. Görünmeyen projenin şantiyesi ile var olmayan şantiye AYNI
+    404 gövdesini döner; metin `sites` modülünün TEK cümlesidir (kopya üretilmez)."""
+    site = await sites_repository.get_site(session, site_id)
+    if site is None:
+        raise NotFoundError(guards.SITE_MISSING)
+    visible = await visible_projects(session, actor)
+    project = next((p for p in visible if p.id == site.project_id), None)
+    if project is None:
+        raise NotFoundError(guards.SITE_MISSING)
+    return SiteContext(site=site, project=project)
+
+
+async def visible_section(
+    session: AsyncSession, site: Site, section_id: uuid.UUID | None
+) -> Section | None:
+    """Okuma süzgecinin bölümü (ŞP 99). Başka şantiyenin bölümü **404**tür.
+
+    Boş matris dönmek, kullanıcıya "o bölümde kimse çalışmamış" YALANINI
+    söylerdi; var olmayan bölümle aynı 404 ise kimlik varlığını sızdırmaz.
+    """
+    if section_id is None:
+        return None
+    section = await sites_repository.get_section(session, section_id)
+    if section is None or section.site_id != site.id:
+        raise NotFoundError(guards.SECTION_MISSING)
+    return section
+
+
+# --- Gövde doğrulaması (hiçbir şey YAZMAZ) ---
+
+
+class _Plan(NamedTuple):
+    """Doğrulaması BİTMİŞ kaydetme planı — henüz hiçbir şey yazılmadı."""
+
+    cells: dict[tuple[uuid.UUID, date], TimesheetCellInput]
+    personnel: dict[uuid.UUID, Personnel]
+
+
+def _assert_period(cell: TimesheetCellInput, year: int, month: int) -> None:
+    start, end = repository.period_bounds(year, month)
+    if not (start <= cell.work_date <= end):
+        raise SiteValidationError(guards.format_out_of_period(cell.work_date, year, month))
+
+
+def _assert_overtime_hours(cell: TimesheetCellInput) -> None:
+    """Saat yalnız FM hücresinde anlamlıdır (gerekçe `guards.py` docstring'inde)."""
+    if cell.overtime_hours is not None and cell.code is not TimesheetCode.overtime:
+        raise SiteValidationError(guards.OVERTIME_HOURS_ONLY_FOR_OVERTIME)
+
+
+async def _assert_sections(session: AsyncSession, site: Site, section_ids: set[uuid.UUID]) -> None:
+    """Bölüm bilgi alanıdır ama SAHİPSİZ olamaz: hücrenin ŞANTİYESİNE ait olmalı.
+
+    Yazmada 422'dir (okumadaki 404 değil): burada bölüm bir SÜZGEÇ değil gövdenin
+    düzeltilebilir bir ALANIDIR (`site_diary` `SECTION_MISMATCH` deseni).
+    """
+    if not section_ids:
+        return
+    for section_id in section_ids:
+        section = await sites_repository.get_section(session, section_id)
+        if section is None or section.site_id != site.id:
+            raise SiteValidationError(guards.SECTION_MISMATCH)
+
+
+async def _plan(
+    session: AsyncSession, site: Site, data: TimesheetSave, *, year: int, month: int
+) -> _Plan:
+    cells: dict[tuple[uuid.UUID, date], TimesheetCellInput] = {}
+    for cell in data.cells:
+        _assert_period(cell, year, month)
+        _assert_overtime_hours(cell)
+        key = guards.cell_key(cell.personnel_id, cell.work_date)
+        if key in cells:
+            # Kismi UQ ihlali GOVDE ICINDE yakalanir; `IntegrityError` emniyet agi kalir.
+            raise DuplicateError(guards.DUPLICATE_CELL)
+        cells[key] = cell
+
+    personnel = await repository.get_personnel_by_ids(
+        session, [cell.personnel_id for cell in data.cells]
+    )
+    if any(cell.personnel_id not in personnel for cell in data.cells):
+        # Var OLMAYAN personel ile silinmis kayit AYNI 422'yi alir.
+        raise SiteValidationError(guards.PERSONNEL_UNKNOWN)
+
+    await _assert_sections(
+        session, site, {cell.section_id for cell in data.cells if cell.section_id is not None}
+    )
+    return _Plan(cells=cells, personnel=personnel)
+
+
+async def _assert_person_days_free(session: AsyncSession, site: Site, plan: _Plan) -> None:
+    """UQ (personnel_id, work_date) — kişi bir günde TEK şantiyededir (spec §2).
+
+    Dönem kapsamındaki satırlar kilitlidir; BAŞKA şantiyedeki satırlar değildir,
+    bu yüzden burası bir yarış penceresi bırakır. Pencere `IntegrityError` → 409
+    handler'ıyla kapanır; buradaki açık SELECT'in işi kullanıcıya HANGİ personelin
+    HANGİ günü çakıştığını söylemektir.
+    """
+    conflicts = await repository.conflicting_entries(
+        session, list(plan.cells), exclude_site_id=site.id
+    )
+    if not conflicts:
+        return
+    first = min(conflicts, key=lambda entry: (entry.work_date, str(entry.personnel_id)))
+    personnel = plan.personnel[first.personnel_id]
+    raise ConflictError(guards.person_day_conflict(personnel.full_name, first.work_date))
+
+
+# --- Yazma ---
+
+
+def _apply(
+    site: Site, existing: list[TimesheetEntry], plan: _Plan, actor: User
+) -> tuple[list[TimesheetEntry], list[uuid.UUID]]:
+    """DEĞİŞTİRME: mevcut hücre GÜNCELLENİR, eksik olan silinir, yeni olan eklenir.
+
+    Mevcut satırın KİMLİĞİ korunur (sil + yeniden yaz DEĞİL): aksi hâlde her
+    kaydetme `created_by`yi ve kaydın yaşını sıfırlar, üstelik aynı transaction
+    içinde silinen ve eklenen satır UQ üzerinde gereksiz yere yarışırdı.
+    """
+    by_key = {guards.cell_key(row.personnel_id, row.work_date): row for row in existing}
+    yeniler: list[TimesheetEntry] = []
+
+    for key, cell in plan.cells.items():
+        row = by_key.get(key)
+        if row is None:
+            yeniler.append(
+                TimesheetEntry(
+                    personnel_id=cell.personnel_id,
+                    site_id=site.id,
+                    # Kapsam alani SANTIYEDEN kopyalanir, govdeden ASLA.
+                    project_id=site.project_id,
+                    section_id=cell.section_id,
+                    work_date=cell.work_date,
+                    code=cell.code,
+                    overtime_hours=cell.overtime_hours,
+                    created_by=actor.id,
+                )
+            )
+        else:
+            row.code = cell.code
+            # Gonderilmeyen saat NULL'a duser: hucre govdedeki haline ESITLENIR,
+            # eski deger "sessizce" kalmaz.
+            row.overtime_hours = cell.overtime_hours
+            row.section_id = cell.section_id
+
+    silinecekler = [row.id for key, row in by_key.items() if key not in plan.cells]
+    return yeniler, silinecekler
+
+
+async def save(
+    session: AsyncSession,
+    actor: User,
+    context: SiteContext,
+    data: TimesheetSave,
+    *,
+    year: int,
+    month: int,
+) -> int:
+    """Dönem+şantiye kapsamını gövdeye eşitler; yazılan hücre sayısını döner.
+
+    Kapsam kararı (404) kilitten ÖNCE verilmiştir (`visible_site`, router'da):
+    görünmeyen şantiyenin satırları boşuna kilitlenmez.
+    """
+    site = context.site
+    plan = await _plan(session, site, data, year=year, month=month)
+
+    existing = await repository.locked_period_entries(session, site.id, year=year, month=month)
+    await _assert_person_days_free(session, site, plan)
+
+    # --- Buradan itibaren yazma; dogrulama YOK (yukaridaki sira kisiti). ---
+    yeniler, silinecekler = _apply(site, existing, plan, actor)
+    await repository.delete_entries(session, silinecekler)
+    session.add_all(yeniler)
+    await session.flush()
+    return len(plan.cells)
