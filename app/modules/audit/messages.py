@@ -642,3 +642,15 @@ def site_diary_entry_deleted(
         f"Günlük kayıt silindi: {project_name} · {site_name} · {entry_date.isoformat()} "
         f"· {status_label} · {line_count} poz"
     )
+
+
+def personnel_created(full_name: str) -> str:
+    """Puantaj T2. Personel kartı ACMAK bir `create` olayidir; puantaj kayitlari
+    bu karta baglanacagi icin denetim izi kritiktir."""
+    return f"Personel eklendi: {full_name}"
+
+
+def personnel_updated(full_name: str) -> str:
+    """Puantaj T2. PASIFLESTIRME de buraya duser: DELETE ucu yoktur, cikarma
+    `is_active=false` PATCH'idir ve ayri bir aksiyon acilmaz (spec §3)."""
+    return f"Personel güncellendi: {full_name}"
