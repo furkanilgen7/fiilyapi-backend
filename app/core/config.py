@@ -67,6 +67,17 @@ class Settings(BaseSettings):
     default_accent_color: str = "#2563eb"
     default_vat_rate: Decimal = Decimal("20.00")
 
+    # Belge arşivi (belge çekirdeği spec §4 / §7 S5). v1'de baytlar DB'de bytea
+    # olarak durur (`document_blobs`), object storage YOK — sınır bu yüzden
+    # config'ten gelir, hardcode DEĞİLDİR.
+    # 50 MB: mockup'ta 48 MB'lık bir ZIP var (E12), tavan onun hemen üstünde.
+    document_max_bytes: int = 50 * 1024 * 1024
+    # GENİŞ beyaz liste (spec §4): zip + heic dahil. `allowed_logo_content_types`
+    # deseniyle aynı — virgülle ayrılmış env dizesi, kümeye `..._set` ile çevrilir.
+    # UZANTI listesidir (MIME değil): mockup dosya adına göre tip ikonu basıyor ve
+    # dwg gibi tiplerin güvenilir tek bir MIME'i yok.
+    allowed_document_extensions: str = "pdf,doc,docx,xls,xlsx,csv,dwg,jpg,jpeg,png,heic,zip"
+
     @field_validator("database_url", "test_database_url")
     @classmethod
     def _normalize_pg_driver(cls, value: str) -> str:
@@ -95,6 +106,19 @@ class Settings(BaseSettings):
     def allowed_logo_content_type_set(self) -> set[str]:
         """Izin verilen logo MIME tiplerini kume olarak dondurur."""
         return {t.strip() for t in self.allowed_logo_content_types.split(",") if t.strip()}
+
+    @property
+    def allowed_document_extension_set(self) -> set[str]:
+        """İzin verilen belge uzantılarını küçük harfe indirgenmiş küme olarak döndürür.
+
+        Baştaki nokta tolere edilir (`.pdf` == `pdf`) — env'i yazan kişinin
+        biçim tercihi beyaz listeyi sessizce boşaltmamalı.
+        """
+        return {
+            ext.strip().lstrip(".").lower()
+            for ext in self.allowed_document_extensions.split(",")
+            if ext.strip().lstrip(".")
+        }
 
 
 settings = Settings()

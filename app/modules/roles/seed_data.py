@@ -124,6 +124,15 @@ MODULES: list[dict] = [
     # mockup'ında satırı YOKTUR — bilinçli sapma, geri alınmaz.
     # sort_order 19: mevcut modüllerin sırası KAYDIRILMAZ (sona eklenir).
     {"key": "sales", "name": "Satış Yönetimi", "group": ModuleGroup.MALI, "sort_order": 19},
+    # Belge çekirdeği spec §6 / §7 S2 (kullanıcı onayı 2026-08-03): AYRI modül.
+    # Gerekçe: belge arşivi hiçbir mevcut modülün altına düşmüyor — E12 global bir
+    # ekran, şantiye sekmesi ise `sites` iznine bağlanırsa muhasebe (sites=_FIN)
+    # fatura/sözleşme ekini yükleyemez, İK ise özlük belgesini hiç göremezdi.
+    # Grup MALI: E12 sidebar'ında Mali grubunun sonunda durur. `boq`/`contracts`/
+    # `sales` gibi `Ayarlar - İzin Matrisi` mockup'ında satırı YOKTUR — bilinçli
+    # sapma, geri alınmaz.
+    # sort_order 20: mevcut modüllerin sırası KAYDIRILMAZ (sona eklenir).
+    {"key": "documents", "name": "Belgeler", "group": ModuleGroup.MALI, "sort_order": 20},
 ]
 
 # Kısayollar — matrisi okunur tutmak için.
@@ -200,6 +209,14 @@ MATRIX: dict[str, list[tuple[AccessLevel, Scope]]] = {
     # project_manager = full: ayrı bir "satış müdürü" rolü YOK; satışı pratikte
     # proje müdürü yönetir. Silme yalnız admin'de (full silmeyi kapsamaz).
     "sales": [_A, _F, _N, _N, _N, _FIN, _F, _N],
+    # Belge çekirdeği spec §6: `contracts`/`sales`ten BİLİNÇLİ olarak AYRIŞIR —
+    # arşiv gizli veri değil ORTAK hafızadır, hiçbir rol `_N` değildir.
+    # site_chief/field_engineer = _F: sahanın belgesini (ruhsat, tutanak, fotoğraf)
+    # zaten onlar üretir; yükleyemezlerse arşiv boş kalır. accounting = _F: fatura
+    # ve sözleşme ekini muhasebe yükler (mali görünürlük deseni burada YETMEZ).
+    # hr_manager/project_manager/procurement = _V: okurlar, arşive yazmazlar.
+    # Silme yalnız system_admin'dedir (`_A`; `full` silmeyi kapsamaz).
+    "documents": [_A, _F, _F, _F, _V, _F, _V, _V],
 }
 
 
@@ -208,7 +225,7 @@ async def seed_reference_data(session: AsyncSession) -> None:
 
     Idempotent: hangi başlangıç durumundan çalıştırılırsa çalıştırılsın (boş DB,
     tamamen seed edilmiş DB, ya da roller/modüller var ama role_permissions boş)
-    sonuçta 8 rol, 19 modül ve 152 izin satırı bulunur; mevcut satırlar
+    sonuçta 8 rol, 20 modül ve 160 izin satırı bulunur; mevcut satırlar
     üzerine yazılmaz ve `uq_role_module` UNIQUE kısıtı asla ihlal edilmez.
     """
     existing_role_rows = (await session.execute(select(Role))).scalars().all()
