@@ -27,6 +27,7 @@ from app.modules.roles.seed_data import seed_reference_data
 from app.modules.sales import models as sales_models  # noqa: F401
 from app.modules.settings import models as settings_models  # noqa: F401
 from app.modules.site_diary import models as site_diary_models  # noqa: F401
+from app.modules.site_planning import models as site_planning_models  # noqa: F401
 from app.modules.sites import models as sites_models  # noqa: F401
 from app.modules.subcontractor_progress_payments import (  # noqa: F401
     models as subcontractor_progress_payments_models,

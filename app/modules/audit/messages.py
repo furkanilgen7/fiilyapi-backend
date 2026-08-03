@@ -671,3 +671,44 @@ def timesheet_saved(
         f"Puantaj kaydedildi: {project_name} · {site_name} · {year}-{month:02d} "
         f"· {cell_count} hücre"
     )
+
+
+# --- Santiye planlama (site_planning T3) ---
+#
+# Dort ucun dordu de `AuditAction.update`tir: kaydetme planin ICERIGINI
+# degistirir, yeni bir kayit ACMAZ. Her uc TEK ozet olayi yazar — satir/hucre/
+# hedef basina olay yazmak 7 gun x N satirlik bir kaydetmede denetim gunlugunu
+# kullanilamaz hale getirirdi (planlama spec §3, puantajin `timesheet_saved`
+# gerekcesinin aynisi).
+#
+# Kaydin kimligi UUID degil INSAN-OKUR ucludur (proje · santiye · hafta).
+
+
+def site_plan_rows_saved(project_name: str, site_name: str, row_count: int) -> str:
+    """`PUT …/plan/rows`. Hafta YOKTUR: satir listesi haftadan bagimsizdir."""
+    return f"Şantiye planı satırları kaydedildi: {project_name} · {site_name} · {row_count} satır"
+
+
+def site_plan_cells_saved(
+    project_name: str, site_name: str, week_start: date, cell_count: int
+) -> str:
+    return (
+        f"Şantiye planı hücreleri kaydedildi: {project_name} · {site_name} "
+        f"· {week_start.isoformat()} haftası · {cell_count} hücre"
+    )
+
+
+def site_plan_goals_saved(
+    project_name: str, site_name: str, week_start: date, goal_count: int
+) -> str:
+    return (
+        f"Şantiye planı haftalık hedefleri kaydedildi: {project_name} · {site_name} "
+        f"· {week_start.isoformat()} haftası · {goal_count} hedef"
+    )
+
+
+def site_plan_sprint_saved(project_name: str, site_name: str, name: str | None) -> str:
+    """Sprint ADI degistirildi ya da (ad bossa) aktif sprint kapatildi."""
+    if name is None:
+        return f"Şantiye planı aktif sprinti kaldırıldı: {project_name} · {site_name}"
+    return f"Şantiye planı aktif sprinti kaydedildi: {project_name} · {site_name} · {name}"
