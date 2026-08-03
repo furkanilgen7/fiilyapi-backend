@@ -41,6 +41,7 @@ from app.modules.contracts.schemas import (
     SubcontractorContractItemResponse,
     SubcontractorContractItemsLoadResponse,
     SubcontractorContractItemUpdate,
+    SubcontractorContractListResponse,
     SubcontractorContractUpdate,
     SubcontractorCreate,
     SubcontractorListResponse,
@@ -426,6 +427,39 @@ async def create_subcontractor_contract_endpoint(
         ip_address=client_ip(request),
     )
     return await subcontracts.to_subcontract_detail(session, contract)
+
+
+# ⚠️ ROTA SIRASI: statik `/subcontractor-contracts` yolu, ŞABLONLU
+# `/subcontractor-contracts/{contract_id}` yolundan ÖNCE tanımlanır
+# (`subcontractor_progress_payments` `/summary` ucundaki kuralın aynısı).
+# Bekçi testi: `tests/contracts/test_subcontract_list.py::
+# test_liste_yolu_detay_ucuyla_carpismaz`.
+@router.get(
+    "/subcontractor-contracts",
+    response_model=SubcontractorContractListResponse,
+    dependencies=[_VIEW],
+)
+async def list_subcontractor_contracts_endpoint(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    project_id: uuid.UUID | None = None,
+    site_id: uuid.UUID | None = None,
+    status_filter: Annotated[ContractStatus | None, Query(alias="status")] = None,
+    q: str | None = None,
+) -> SubcontractorContractListResponse:
+    """TB2 U1 (spec §1): hakediş açma akışının seçim adımı bu uçtan beslenir —
+
+    hakedişlerden türetme, hiç hakedişi olmayan sözleşmeyi göremiyordu.
+    Sayfalama YOK (`/contracts` liste ucu deseni), sıralama `contract_no`+`id`.
+    """
+    return await subcontracts.list_subcontractor_contracts(
+        session,
+        user,
+        project_id=project_id,
+        site_id=site_id,
+        status_filter=status_filter,
+        q=q,
+    )
 
 
 @router.get(

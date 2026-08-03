@@ -24,7 +24,11 @@ from app.core.errors import (
     SiteValidationError,
 )
 from app.modules.contracts import guards, repository
-from app.modules.contracts.models import SubcontractorContract, SubcontractorContractItem
+from app.modules.contracts.models import (
+    ContractStatus,
+    SubcontractorContract,
+    SubcontractorContractItem,
+)
 from app.modules.contracts.schemas import (
     SubcontractorContractCreate,
     SubcontractorContractDetail,
@@ -32,10 +36,13 @@ from app.modules.contracts.schemas import (
     SubcontractorContractItemGroup,
     SubcontractorContractItemResponse,
     SubcontractorContractItemUpdate,
+    SubcontractorContractListItem,
+    SubcontractorContractListResponse,
     SubcontractorContractUpdate,
 )
 from app.modules.contracts.service import _subcontractor_amount, _visible_project
 from app.modules.projects.models import Project
+from app.modules.projects.service import visible_projects
 from app.modules.roles.repository import get_permission
 from app.modules.sites import repository as sites_repository
 from app.modules.users.models import User
@@ -192,6 +199,49 @@ async def get_subcontractor_contract(
 ) -> SubcontractorContract:
     contract, _ = await _visible_contract(session, actor, contract_id)
     return contract
+
+
+async def list_subcontractor_contracts(
+    session: AsyncSession,
+    actor: User,
+    *,
+    project_id: uuid.UUID | None,
+    site_id: uuid.UUID | None,
+    status_filter: ContractStatus | None,
+    q: str | None,
+) -> SubcontractorContractListResponse:
+    """TB2 U1 — `GET /subcontractor-contracts` (spec §1).
+
+    `service.list_contracts` deseninin aynısı: kapsam `visible_projects`ten
+    gelir ve SQL'de kalır — görünmeyen projenin sözleşmesi hiç ÇEKİLMEZ, filtre
+    verilse bile (`project_id` süzgeci kapsamı GENİŞLETMEZ, daraltır).
+    """
+    visible_ids = [project.id for project in await visible_projects(session, actor)]
+    rows = await repository.list_subcontractor_contract_rows(
+        session,
+        visible_ids,
+        project_id=project_id,
+        site_id=site_id,
+        status_filter=status_filter,
+        q=q,
+    )
+    return SubcontractorContractListResponse(
+        items=[
+            SubcontractorContractListItem(
+                id=contract.id,
+                contract_no=contract.contract_no,
+                subcontractor_name=contract.subcontractor_name,
+                work_category=contract.work_category,
+                project_id=contract.project_id,
+                project_name=project_name,
+                site_id=contract.site_id,
+                site_name=site_name,
+                status=contract.status,
+                is_draft=contract.is_draft,
+            )
+            for contract, project_name, site_name in rows
+        ]
+    )
 
 
 async def _visible_subcontract_item(

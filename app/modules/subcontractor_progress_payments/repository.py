@@ -205,6 +205,7 @@ def _list_stmt(
     visible_project_ids: list[uuid.UUID],
     *,
     project_id: uuid.UUID | None,
+    site_id: uuid.UUID | None,
     period_year: int | None,
     period_month: int | None,
     status_filter: SubcontractorPaymentStatus | None,
@@ -214,6 +215,11 @@ def _list_stmt(
 
     İki sorgu ayrı süzgeç kopyası taşısaydı, `total` ile `items` zamanla farklı
     kümeleri sayardı — sayfalamanın en sinsi hatası.
+
+    `site_id` (TB2/U2) hakediş tablosundan DEĞİL, zaten kurulu olan sözleşme
+    join'inden okunur: hakedişin şantiye kolonu YOKTUR, bağ sözleşmededir. Eşitlik
+    süzgeci `site_id IS NULL` (proje geneli) sözleşmeleri kendiliğinden eler —
+    şantiye sekmesi proje geneli hakedişleri GÖSTERMEZ (SD S5 tek-anlamlılık).
     """
     stmt = (
         select(SubcontractorProgressPayment, SubcontractorContract, Project)
@@ -226,6 +232,8 @@ def _list_stmt(
     )
     if project_id is not None:
         stmt = stmt.where(SubcontractorProgressPayment.project_id == project_id)
+    if site_id is not None:
+        stmt = stmt.where(SubcontractorContract.site_id == site_id)
     if period_year is not None:
         stmt = stmt.where(SubcontractorProgressPayment.period_year == period_year)
     if period_month is not None:
@@ -248,6 +256,7 @@ async def list_payments(
     visible_project_ids: list[uuid.UUID],
     *,
     project_id: uuid.UUID | None,
+    site_id: uuid.UUID | None,
     period_year: int | None,
     period_month: int | None,
     status_filter: SubcontractorPaymentStatus | None,
@@ -260,6 +269,7 @@ async def list_payments(
     stmt = _list_stmt(
         visible_project_ids,
         project_id=project_id,
+        site_id=site_id,
         period_year=period_year,
         period_month=period_month,
         status_filter=status_filter,
@@ -278,6 +288,7 @@ async def list_payments_for_summary(
     visible_project_ids: list[uuid.UUID],
     *,
     project_id: uuid.UUID | None,
+    site_id: uuid.UUID | None,
     period_year: int | None,
     period_month: int | None,
     status_filter: SubcontractorPaymentStatus | None,
@@ -296,6 +307,7 @@ async def list_payments_for_summary(
     stmt = _list_stmt(
         visible_project_ids,
         project_id=project_id,
+        site_id=site_id,
         period_year=period_year,
         period_month=period_month,
         status_filter=status_filter,
@@ -310,6 +322,7 @@ async def count_payments(
     visible_project_ids: list[uuid.UUID],
     *,
     project_id: uuid.UUID | None,
+    site_id: uuid.UUID | None,
     period_year: int | None,
     period_month: int | None,
     status_filter: SubcontractorPaymentStatus | None,
@@ -320,6 +333,7 @@ async def count_payments(
     inner = _list_stmt(
         visible_project_ids,
         project_id=project_id,
+        site_id=site_id,
         period_year=period_year,
         period_month=period_month,
         status_filter=status_filter,
