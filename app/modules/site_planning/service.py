@@ -34,6 +34,17 @@ hiç göremez.
 """
 
 
+MAX_SUMMARY_DAYS = 31
+"""T4 gün özetinin (spec §4) `days` TAVANI — sorgu tek istekte tarayabileceği
+aralığın sınırıdır.
+
+GK bloğu BEŞ gün çizer (mockup 321-348); tavan yine de aya çekilir ki ekran
+ileride "önümüzdeki ay" görünümü isterse uç değişmesin. Sınırsız bırakılsaydı
+`days=100000` tek istekle şantiyenin TÜM hücre geçmişini taratır ve dönüşte
+yüz binlerce gün kutusu üretirdi (ucuz bir DoS yüzeyi). Tavan DAHİLDİR.
+"""
+
+
 class SiteContext(NamedTuple):
     """Kapsam süzgecinden geçmiş şantiye + projesi."""
 

@@ -1,4 +1,4 @@
-"""Şantiye planlama uçları (T2 okuma + T3 yazma).
+"""Şantiye planlama uçları (T2 okuma + T3 yazma + T4 gün özeti).
 
 Kapı **`site_diary`** iznidir (spec §6 S1; yeni izin modülü AÇILMAZ): okuma
 `view`, yazma (T3) `full`. Bu ayrım proje müdürünü (matriste `site_diary=_V`)
@@ -11,7 +11,8 @@ Dört yazma ucunun dördü de **DEĞİŞTİRME** semantiğindedir: mockup'ta tek
 düğmesi vardır (P97), taslak/onay akışı YOKTUR (spec §3). Kesin kararlar
 `write.py`dedir ve burada TEKRARLANMAZ.
 
-Kapsam DIŞI: gün özeti (T4) · malzeme planı (spec §5).
+T4 gün özeti de bir OKUMADIR: `view` yeter, audit yazmaz. Kapsam DIŞI: malzeme
+planı (spec §5) · GK bloğunun yazma karşılığı (spec §4 ONAYLI SAPMA).
 """
 
 import uuid
@@ -33,6 +34,7 @@ from app.modules.audit.service import record_audit
 from app.modules.site_planning import read, service, write
 from app.modules.site_planning.schemas import (
     SitePlanCellsSave,
+    SitePlanDaySummaryRange,
     SitePlanGoalsSave,
     SitePlanRowSaved,
     SitePlanRowsResult,
@@ -69,6 +71,36 @@ async def get_site_plan_endpoint(
     ekranın başka bir haftayı gösterdiğini fark etmesini engellerdi.
     """
     return await read.get_week(session, user, site_id, week_start)
+
+
+@router.get(
+    "/sites/{site_id}/plan/day-summary",
+    response_model=SitePlanDaySummaryRange,
+    dependencies=[_VIEW],
+)
+async def get_site_plan_day_summary_endpoint(
+    site_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    start: Annotated[date, Query()],
+    days: Annotated[int, Query(ge=1, le=service.MAX_SUMMARY_DAYS)] = 5,
+) -> SitePlanDaySummaryRange:
+    """F-SD'nin GK gömülü "Önümüzdeki 5 Gün" bloğu (mockup 321-348) — SALT OKUNUR.
+
+    Izgaradan TÜRETİLİR (spec §4): gün başına hücre metinlerinin birleşimi +
+    `crew` satırlarının işçi toplamı + bölüm etiketleri. Planı olmayan gün
+    pencereden DÜŞMEZ, `has_plan: false` ile işaretlenir — blok beş kutu çizer.
+
+    ⚠️ Bu ucun YAZMA karşılığı YOKTUR ve açılmayacaktır (spec §4 ONAYLI SAPMA):
+    mockup'taki textarea/number/select girişleri basılmaz, ızgara TEK kaynaktır.
+
+    `start` HERHANGİ bir gün olabilir — Pazartesi şartı YOKTUR (`GET …/plan`ten
+    bilinçli fark): bu haftalık ızgara değil, kayan bir penceredir.
+
+    `days` varsayılanı 5'tir (GK bloğunun kutu sayısı) ve `MAX_SUMMARY_DAYS` ile
+    tavanlanır — gerekçe `service.MAX_SUMMARY_DAYS` yanındadır.
+    """
+    return await read.get_day_summary(session, user, site_id, start, days)
 
 
 @router.put("/sites/{site_id}/plan/rows", response_model=SitePlanRowsResult, dependencies=[_FULL])

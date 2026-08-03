@@ -299,3 +299,12 @@ def goals_url(site_id: uuid.UUID, week_start: date = HAFTA) -> str:
 
 def sprint_url(site_id: uuid.UUID) -> str:
     return f"/sites/{site_id}/plan/sprint"
+
+
+def day_summary_url(site_id: uuid.UUID, start: date = HAFTA, days: int | None = None) -> str:
+    """`GET …/plan/day-summary` — `start` HERHANGİ bir gün olabilir (Pazartesi
+    şartı YOKTUR: bu haftalık ızgara değil, GK'nin kayan 5-gün bloğudur)."""
+    url = f"/sites/{site_id}/plan/day-summary?start={start.isoformat()}"
+    if days is not None:
+        url += f"&days={days}"
+    return url

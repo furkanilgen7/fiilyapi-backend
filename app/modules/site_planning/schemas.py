@@ -129,6 +129,79 @@ class SitePlanWeek(BaseModel):
     active_sprint: SitePlanSprintRead | None
 
 
+# --- T4 gün özeti (spec §4) — SALT-OKUNUR TÜREV ---
+#
+# GK mockup'ının (`Şantiye - Günlük Kayıt.dc.html` 321-348) "Planlama —
+# Önümüzdeki 5 Gün" bloğu bu şemayı tüketir. Blok gün başına dört şey gösterir:
+#
+# | Mockup | Alan |
+# |---|---|
+# | satır 327 gün kutusu ("Pzt · 20 Tem") | `plan_date` (+ `is_weekend`) |
+# | satır 328 textarea metni | `text` |
+# | satır 329 "İşçi" kutusu ("48") | `planned_worker_total` |
+# | satır 330 "Bölüm" kutusu ("Kat 6–10") | `section_names` |
+# | satır 341-346 kesikli "Henüz planlanmadı..." kutusu | `has_plan: false` |
+#
+# ⚠️ Bu şemanın YAZMA karşılığı YOKTUR ve AÇILMAYACAKTIR (spec §4, ONAYLI SAPMA):
+# mockup'taki textarea/number/select GİRİŞ kontrolleri basılmaz, ızgara (T2/T3)
+# TEK kaynaktır. İki ekranın aynı veriyi farklı granülerlikte düzenlemesi
+# çelişki üretir — blok salt-okunur özet + "Planlama'ya git" linkidir.
+#
+# Alanların HİÇBİRİ DB'de saklanmaz: hepsi `site_plan_rows`/`site_plan_cells`ten
+# TÜRETİLİR. Sonraki okuyucu buraya "gerçekleşen" alanı EKLEMESİN (spec §5).
+
+
+class SitePlanDaySummary(BaseModel):
+    """Bir günün özeti — planı OLMAYAN gün de bir kutudur.
+
+    `has_plan` boş `text`ten TÜRETİLEBİLİRDİ ama açık alan tutulur: mockup planı
+    olmayan günü ayrı bir biçimle çizer (satır 341-346 kesikli çerçeve) ve o
+    kararın ekranda `text == ""` karşılaştırmasına bırakılması, ileride metni
+    olmayan ama işçisi olan bir gün doğduğunda sessizce yanlış biçim seçerdi.
+    """
+
+    plan_date: date
+    # `SitePlanDay` ile AYNI türev kural (`repository.is_weekend`): pencere hafta
+    # sınırını aşabildiği için ekran bunu kendi hesaplayamaz sayılmaz, ama
+    # "hafta sonu" tanımının tek kaynağı backend'de kalsın.
+    is_weekend: bool
+    has_plan: bool
+    # O günün hücre METİNLERİNİN birleşimi (spec §4), ızgara satır sırasında.
+    # Satır etiketi ("Kalıpçı") ÖNEK OLARAK EKLENMEZ: mockup satır 328 düz bir
+    # cümle gösterir, ızgaranın satır kırılımı Planlama ekranının işidir.
+    text: str
+    # YALNIZ `crew` satırlarından (spec §4 "crew satırlarının işçi toplamı"):
+    # ekipman satırının `planned_worker_count`u dolu olsa bile toplama GİRMEZ —
+    # bir vincin "işçi sayısı" yoktur. Sayısı olmayan ekip 0 sayılır.
+    # Toplam GÜNE aittir: o gün hücresi olmayan satır o güne sayılmaz.
+    planned_worker_total: int
+    # O gün çalışan satırların bölüm adları, TEKİLLEŞMİŞ ve ızgara sırasında.
+    # Bölümsüz satır ve ekipman satırı etiket ÜRETMEZ (`null` bölüm adı kutuda
+    # boş bir seçenek olurdu).
+    section_names: list[str]
+
+
+class SitePlanDaySummaryRange(BaseModel):
+    """GK bloğunun kayan penceresi: `[start, end]` DAHİL, `days` gün.
+
+    `week_start` YOKTUR ve Pazartesi şartı ARANMAZ (T2'den bilinçli fark): bu
+    haftalık ızgara değil "önümüzdeki N gün"dür, pencere hafta sınırını aşabilir.
+
+    Şantiye/proje adları başlık içindir; ekran ikinci istek atmasın.
+    """
+
+    site_id: uuid.UUID
+    site_name: str
+    project_id: uuid.UUID
+    project_name: str
+    start: date
+    # TÜREV (`start + days - 1`) ve DAHİLDİR.
+    end: date
+    # Pencerenin HER günü burada vardır — planı olmayan gün ATLANMAZ (blok beş
+    # kutu çizer; eksik gün kutuların takvimle hizasını bozardı).
+    days: list[SitePlanDaySummary]
+
+
 # --- T3 yazma şemaları (DEĞİŞTİRME semantiği) ---
 #
 # Dört ucun DÖRDÜ de "değiştirme"dir: gövde ilgili kapsamın TAM kümesidir,

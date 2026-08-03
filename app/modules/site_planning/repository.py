@@ -96,6 +96,45 @@ async def week_cells(
     return list((await session.execute(stmt)).scalars().all())
 
 
+async def range_cells(
+    session: AsyncSession, site_id: uuid.UUID, start: date, end: date
+) -> list[tuple[SitePlanCell, SitePlanRow, Section | None]]:
+    """T4 gün özetinin (spec §4) TEK sorgusu: `[start, end]` aralığındaki
+    hücreler + satırı + (varsa) bölümü.
+
+    `week_cells` KOPYALANMAZ, yanına konur: orada aralık haftadır ve yanıt satır
+    ağacıdır; burada aralık kayan bir penceredir ve özet satırın `kind`ine
+    (işçi toplamı) ve bölüm adına ihtiyaç duyar. Aynı sorguya iki farklı JOIN
+    setini şart bayrağıyla taşımak iki çağıranı da okunmaz yapardı.
+
+    Şantiye süzgeci `SitePlanRow.site_id` üzerindedir — hücrede `site_id` kolonu
+    YOKTUR (spec §2). JOIN zaten kurulduğu için alt sorgu gerekmez.
+
+    Sıralama gün → satır sırasıdır: gün başına metin birleşimi ızgaranın satır
+    sırasını izlemelidir, aksi hâlde aynı veri istekten isteğe farklı sıralı bir
+    cümle üretirdi.
+    """
+    stmt = (
+        select(SitePlanCell, SitePlanRow, Section)
+        .join(SitePlanRow, SitePlanRow.id == SitePlanCell.row_id)
+        .outerjoin(Section, Section.id == SitePlanRow.section_id)
+        .where(
+            SitePlanRow.site_id == site_id,
+            SitePlanCell.plan_date >= start,
+            SitePlanCell.plan_date <= end,
+        )
+        .order_by(
+            SitePlanCell.plan_date,
+            SitePlanRow.kind,
+            Section.sort_order.nulls_last(),
+            Section.name.nulls_last(),
+            SitePlanRow.sort_order,
+            SitePlanRow.label,
+        )
+    )
+    return [(cell, row, section) for cell, row, section in (await session.execute(stmt)).all()]
+
+
 async def week_goals(
     session: AsyncSession, site_id: uuid.UUID, week_start: date
 ) -> list[SitePlanGoal]:
