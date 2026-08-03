@@ -64,6 +64,8 @@ __all__ = [
     "SubcontractorContractItemResponse",
     "SubcontractorContractItemsLoadResponse",
     "SubcontractorContractItemUpdate",
+    "SubcontractorContractListItem",
+    "SubcontractorContractListResponse",
     "SubcontractorContractUpdate",
     "SubcontractorCreate",
     "SubcontractorListResponse",
@@ -536,3 +538,34 @@ class SubcontractorContractDetail(BaseModel):
     P7 yalnız işveren tarafını yazdı. Anahtar bu yüzden spec §1.2'nin adıyla
     (`subcontractor_progress_payments`) YENİDEN ADLANDIRILDI; listeden
     ÇIKARILMADI: taşeron hakedişi hâlâ ayrı ve yazılmamış bir dilimdir."""
+
+
+# --- Taşeron sözleşmesi seçim listesi (TB2 U1) ---
+
+
+class SubcontractorContractListItem(BaseModel):
+    """`GET /subcontractor-contracts` satırı — hakediş açma akışının seçim adımı.
+
+    Bilinçli olarak DAR: bedel/hakediş türevleri TAŞIMAZ (onlar birleşik
+    `/contracts?type=subcontractor` ucunun işidir). Proje/şantiye adları
+    JOIN'den gelir (`repository.list_subcontractor_contract_rows`), satır başına
+    ek sorgu YOKTUR.
+    """
+
+    id: uuid.UUID
+    contract_no: str | None
+    subcontractor_name: str | None
+    work_category: str | None
+    project_id: uuid.UUID
+    project_name: str
+    site_id: uuid.UUID | None
+    site_name: str | None
+    """`site_id` NULL ise (proje geneli sözleşme, K4) ad da NULL'dır."""
+    status: ContractStatus
+    is_draft: bool
+
+
+class SubcontractorContractListResponse(BaseModel):
+    """`SubcontractorListResponse` deseninin aynısı: sayfalama/KPI YOK."""
+
+    items: list[SubcontractorContractListItem]

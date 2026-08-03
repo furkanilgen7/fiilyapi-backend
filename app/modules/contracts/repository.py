@@ -22,6 +22,7 @@ from app.modules.contracts.models import (
     SubcontractorContractItem,
 )
 from app.modules.projects.models import Project, ProjectContract
+from app.modules.sites.models import Site
 
 
 async def list_employer_contracts(
@@ -89,6 +90,53 @@ async def list_subcontractor_contracts(
         )
     result = await session.execute(stmt)
     return list(result.scalars().all())
+
+
+async def list_subcontractor_contract_rows(
+    session: AsyncSession,
+    visible_project_ids: list[uuid.UUID],
+    *,
+    project_id: uuid.UUID | None,
+    site_id: uuid.UUID | None,
+    status_filter: ContractStatus | None,
+    q: str | None,
+) -> list[tuple[SubcontractorContract, str, str | None]]:
+    """TB2 U1 seçim listesi: sözleşme + proje adı + şantiye adı TEK sorguda.
+
+    `list_subcontractor_contracts` (birleşik `/contracts` ucu) yerine ayrı bir
+    sorgu: o uç bedel türetmek için kalemleri çeker ve ad JOIN'i taşımaz. Adlar
+    burada JOIN'den gelir — satır başına ek sorgu (N+1) YOKTUR. Şantiye bağı
+    NULL olabildiği için (K4 "proje geneli") `sites` OUTER JOIN'dir.
+    """
+    if not visible_project_ids:
+        return []
+    stmt = (
+        select(SubcontractorContract, Project.name, Site.name)
+        .join(Project, Project.id == SubcontractorContract.project_id)
+        .outerjoin(Site, Site.id == SubcontractorContract.site_id)
+        .where(SubcontractorContract.project_id.in_(visible_project_ids))
+        # Deterministik sıra: `contract_no` NULL olabilir (taslak), `id` eşitlik
+        # bozar — sayfalama YOK (mevcut liste uçları deseni).
+        .order_by(SubcontractorContract.contract_no, SubcontractorContract.id)
+    )
+    if project_id is not None:
+        stmt = stmt.where(SubcontractorContract.project_id == project_id)
+    if site_id is not None:
+        # `site_id IS NULL` (proje geneli) sözleşme şantiye filtresiyle GELMEZ:
+        # eşitlik NULL'ı zaten eler (SD S5 tek-anlamlılık kararıyla tutarlı).
+        stmt = stmt.where(SubcontractorContract.site_id == site_id)
+    if status_filter is not None:
+        stmt = stmt.where(SubcontractorContract.status == status_filter)
+    if q:
+        pattern = f"%{q}%"
+        stmt = stmt.where(
+            or_(
+                SubcontractorContract.contract_no.ilike(pattern),
+                SubcontractorContract.subcontractor_name.ilike(pattern),
+            )
+        )
+    result = await session.execute(stmt)
+    return [(row[0], row[1], row[2]) for row in result.all()]
 
 
 # --- İşveren sözleşmesi poz grup/kalem (task C6, `boq/repository.py` deseninin
