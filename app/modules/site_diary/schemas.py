@@ -13,10 +13,15 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.modules.progress_payments.schemas import ProgressPaymentLineInput
 from app.modules.site_diary import guards
 from app.modules.site_diary.models import DiaryStatus, Weather, WorkerSource
+from app.modules.subcontractor_progress_payments.schemas import (
+    SubcontractorProgressPaymentLineInput,
+)
 
 __all__ = [
+    "EmployerDiarySuggestion",
     "SiteDiaryEntryCreate",
     "SiteDiaryEntryDetail",
     "SiteDiaryEntryListItem",
@@ -29,6 +34,7 @@ __all__ = [
     "SiteDiarySummaryItem",
     "SiteDiaryWorkerCountInput",
     "SiteDiaryWorkerCountRead",
+    "SubcontractorDiarySuggestion",
 ]
 
 # `ck_site_diary_entries_temperature_range` ile BİREBİR: DB CHECK'i son savunmadır
@@ -332,3 +338,53 @@ class SiteDiarySummary(BaseModel):
     sıfır" hâllerini ayırır; boş küme 404 değil sıfırlı özettir (zarif düşüş)."""
     items: list[SiteDiarySummaryItem]
     total_amount: Decimal
+
+
+# --- T5: hakediş "günlükten doldur" önerisi (spec §4, §7 S2/S5) ---
+#
+# `lines[]` tipi HAKEDİŞ MODÜLLERİNİN KENDİ giriş şemasıdır — yeni bir "öneri
+# satırı" şeması TANIMLANMAZ. Sözleşme şudur: yanıtın `lines` alanı DEĞİŞTİRİLMEDEN
+# ilgili `PUT …/lines` gövdesine yapıştırılabilir. İkinci bir şekil tanımlansaydı
+# alanlar zamanla ayrışır ve öneri sessizce yapıştırılamaz hâle gelirdi.
+#
+# 🛑 Uçlar SALT OKUNURDUR: hiçbir hakediş satırı YAZILMAZ, hiçbir `quantity_source`
+# damgalanmaz. Öneriyi uygulamak kullanıcının AYRI `PUT …/lines` çağrısıdır
+# (spec §4: otomasyon YOK).
+
+
+class _DiarySuggestionBase(BaseModel):
+    """İki önerinin ORTAK gövdesi."""
+
+    year: int | None
+    month: int | None
+    """Seçilen dönem ECHO edilir — ekran hangi ayı önerdiğini bilmelidir."""
+    skipped_unbridged_count: int
+    """Miktarı olduğu hâlde sözleşme kalemine bağlanamadığı için öneriye GİRMEYEN
+    poz sayısı. Sessiz atlama yok (T3 `dropped_orphan_count` deseninin aynısı)."""
+    reason: str | None
+    """Liste BOŞSA neden boş olduğu (`guards.SUGGESTION_*`). Dolu listede `None`.
+    Sessiz boş liste, kullanıcıyı olmayan bir hatayı aramaya gönderirdi."""
+
+
+class EmployerDiarySuggestion(_DiarySuggestionBase):
+    """`GET /projects/{project_id}/progress-payments/diary-suggestion`.
+
+    Satırların kırılımı (kalem, şantiye) çiftidir — işveren hakediş hücresinin
+    kimliği budur. `coefficient` BİLEREK `None` gelir: katsayı bir GÜNLÜK verisi
+    değildir, hakedişin `default_coefficient`'ı uygulanır (spec §4.1).
+    """
+
+    project_id: uuid.UUID
+    lines: list[ProgressPaymentLineInput]
+
+
+class SubcontractorDiarySuggestion(_DiarySuggestionBase):
+    """`GET /subcontractor-contracts/{contract_id}/progress-payments/diary-suggestion`.
+
+    `site_id` sözleşmenin şantiyesidir; `None` ise (proje geneli sözleşme) öneri
+    kapsam DIŞIDIR (spec §7 S5) ve `reason` bunu AÇIKÇA söyler.
+    """
+
+    contract_id: uuid.UUID
+    site_id: uuid.UUID | None
+    lines: list[SubcontractorProgressPaymentLineInput]

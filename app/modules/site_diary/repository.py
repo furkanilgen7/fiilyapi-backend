@@ -10,11 +10,11 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.boq.models import BoqItem
-from app.modules.contracts.models import EmployerContractItem
+from app.modules.contracts.models import EmployerContractItem, SubcontractorContractItem
 from app.modules.site_diary.models import DiaryStatus, SiteDiaryEntry, SiteDiaryLine
 from app.modules.sites.models import Section, Site
 
@@ -201,6 +201,19 @@ async def count_entries(
 # --- T4: agregasyon (yalnız `submitted`) ---
 
 
+def submitted_period_conditions(*, year: int | None, month: int | None) -> list:
+    """ "YALNIZ gönderilmiş + seçilen dönem" süzgecinin TEK kopyası.
+
+    T4 özeti, T3 kümülatifi ve T5 önerisi bu gövdeyi PAYLAŞIR. Ayrı kopyalar
+    tutulsaydı aynı ekranın üç bölümü (kümülatif · hakediş özeti · günlükten
+    doldur) zamanla FARKLI günleri kapsar, kullanıcı üç farklı sayı görürdü.
+    """
+    return [
+        SiteDiaryEntry.status == DiaryStatus.submitted,
+        *period_conditions(year=year, month=month),
+    ]
+
+
 async def count_submitted_entries(
     session: AsyncSession, site_id: uuid.UUID, *, year: int | None, month: int | None
 ) -> int:
@@ -208,8 +221,7 @@ async def count_submitted_entries(
     (`period_conditions`); `submitted` kısıtı spec §3'ün kuralıdır."""
     stmt = select(func.count(SiteDiaryEntry.id)).where(
         SiteDiaryEntry.site_id == site_id,
-        SiteDiaryEntry.status == DiaryStatus.submitted,
-        *period_conditions(year=year, month=month),
+        *submitted_period_conditions(year=year, month=month),
     )
     return int((await session.execute(stmt)).scalar_one())
 
@@ -238,8 +250,7 @@ async def summary_lines(
         .outerjoin(EmployerContractItem, EmployerContractItem.id == BoqItem.contract_item_id)
         .where(
             SiteDiaryEntry.site_id == site_id,
-            SiteDiaryEntry.status == DiaryStatus.submitted,
-            *period_conditions(year=year, month=month),
+            *submitted_period_conditions(year=year, month=month),
         )
         .order_by(BoqItem.code)
     )
@@ -247,3 +258,161 @@ async def summary_lines(
         (line, item, contract_item)
         for line, item, contract_item in (await session.execute(stmt)).all()
     ]
+
+
+# --- T5: hakediş "günlükten doldur" önerisi (spec §4) ---
+#
+# Üç sorgunun ORTAK gövdesi: gönderilmiş günlük satırı → BOQ pozu. `join`
+# (INNER) bilinçlidir — `boq_item_id IS NULL` olan bağı-kopmuş satır hangi poza
+# yazılacağını KAYBETMİŞTİR ve T4 özetiyle AYNI kuralla düşer.
+#
+# `HAVING SUM(...) > 0`: günlük iskeleti şantiyenin TÜM pozlarını sıfır miktarla
+# açar (T2). Sıfırlar süzülmeseydi öneri her ay BOQ'nun tamamını sıfır miktarla
+# listeler, kullanıcının `PUT …/lines`a yapıştıracağı gövde var olan satırları
+# sıfırlayan bir silme emrine dönerdi.
+
+
+def _submitted_line_stmt(*, year: int | None, month: int | None):
+    return (
+        select(SiteDiaryLine.quantity)
+        .join(SiteDiaryEntry, SiteDiaryEntry.id == SiteDiaryLine.entry_id)
+        .join(BoqItem, BoqItem.id == SiteDiaryLine.boq_item_id)
+        .where(*submitted_period_conditions(year=year, month=month))
+    )
+
+
+async def employer_suggestion_rows(
+    session: AsyncSession, project_id: uuid.UUID, *, year: int | None, month: int | None
+) -> list[tuple[uuid.UUID, uuid.UUID, Decimal]]:
+    """İşveren önerisinin ham satırları: `(contract_item_id, site_id, miktar)`.
+
+    Kırılım (kalem, şantiye) ÇİFTİDİR çünkü işveren hakediş satırının kimliği
+    budur (`uq_progress_payment_lines_cell`): sözleşme kalemi PROJE düzeyindedir,
+    aynı kaleme köprülü iki şantiyenin miktarı TEK satırda toplanamaz.
+
+    `EmployerContractItem` JOIN'i iki iş yapar: köprüsüz pozu düşürür ve kalemin
+    BAŞKA projeye ait olamayacağını (veri bozulması korkuluğu) SQL'de zorlar.
+    İkisi BİRBİRİNİ TUTAR: `project_id` koşulu `WHERE`da olduğu için JOIN
+    `outerjoin`a çevrilse bile köprüsüz satır (NULL kalem) yine düşer — yani
+    korkuluk TEK BİR yerde değil, iki kez durur. Koşul kaldırılırsa hem yabancı
+    projenin kalemi sızar hem de NULL satırlar öneriye girer.
+
+    Sıralama kalem koduna göredir — ekranda BOQ sırasıyla aynı okunur.
+    """
+    total = func.sum(SiteDiaryLine.quantity)
+    stmt = (
+        _submitted_line_stmt(year=year, month=month)
+        .join(EmployerContractItem, EmployerContractItem.id == BoqItem.contract_item_id)
+        .with_only_columns(BoqItem.contract_item_id, SiteDiaryEntry.site_id, total)
+        .where(
+            SiteDiaryEntry.project_id == project_id,
+            EmployerContractItem.project_id == project_id,
+        )
+        .group_by(BoqItem.contract_item_id, SiteDiaryEntry.site_id, EmployerContractItem.code)
+        .having(total > 0)
+        .order_by(EmployerContractItem.code, SiteDiaryEntry.site_id)
+    )
+    return [(row[0], row[1], row[2]) for row in (await session.execute(stmt)).all()]
+
+
+async def subcontractor_suggestion_rows(
+    session: AsyncSession,
+    contract_id: uuid.UUID,
+    site_id: uuid.UUID,
+    *,
+    year: int | None,
+    month: int | None,
+) -> list[tuple[uuid.UUID, Decimal]]:
+    """Taşeron önerisinin ham satırları: `(subcontractor_contract_item_id, miktar)`.
+
+    Köprü İKİ ADIMLIDIR: günlük satırı → `boq_items.contract_item_id` (işveren
+    kalemi) → `subcontractor_contract_items.source_contract_item_id`. Şantiye
+    süzgeci ÇAĞIRANDAN gelir (spec §7 S5 kararı bu modülün işi değildir).
+
+    Taşeron satırında şantiye kırılımı YOKTUR (spec §2) — sözleşme zaten TEK
+    şantiyeye bağlıdır, bu yüzden gruplama yalnız kalemdir. Sıralama sözleşme
+    kaleminin kendi sırasıdır (`items` ilişkisinin `order_by`'ı ile aynı).
+    """
+    total = func.sum(SiteDiaryLine.quantity)
+    stmt = (
+        _submitted_line_stmt(year=year, month=month)
+        .join(
+            SubcontractorContractItem,
+            SubcontractorContractItem.source_contract_item_id == BoqItem.contract_item_id,
+        )
+        .with_only_columns(SubcontractorContractItem.id, total)
+        .where(
+            SiteDiaryEntry.site_id == site_id,
+            SubcontractorContractItem.contract_id == contract_id,
+        )
+        .group_by(
+            SubcontractorContractItem.id,
+            SubcontractorContractItem.sort_order,
+            SubcontractorContractItem.code,
+        )
+        .having(total > 0)
+        .order_by(SubcontractorContractItem.sort_order, SubcontractorContractItem.code)
+    )
+    return [(row[0], row[1]) for row in (await session.execute(stmt)).all()]
+
+
+async def _count_unbridged(session: AsyncSession, stmt) -> int:
+    """Gruplanmış sorgunun SATIR SAYISI (`count_entries` deseninin aynısı):
+    `HAVING`li bir sorguda `func.count()` doğrudan sarılamaz, alt sorgu şarttır."""
+    sayac = select(func.count()).select_from(stmt.subquery())
+    return int((await session.execute(sayac)).scalar_one())
+
+
+async def employer_unbridged_item_count(
+    session: AsyncSession, project_id: uuid.UUID, *, year: int | None, month: int | None
+) -> int:
+    """Miktarı OLAN ama sözleşme kalemine köprülenmemiş poz sayısı.
+
+    Sessiz atlama YOKTUR (T3 `dropped_orphan_count` deseninin aynısı): öneri
+    listesinde görünmeyen miktarların varlığı kullanıcıya SAYIYLA bildirilir,
+    yoksa "günlüğe yazdım, öneride yok" durumu sessiz bir veri kaybı gibi görünür.
+    """
+    total = func.sum(SiteDiaryLine.quantity)
+    stmt = (
+        _submitted_line_stmt(year=year, month=month)
+        .with_only_columns(SiteDiaryLine.boq_item_id)
+        .where(SiteDiaryEntry.project_id == project_id, BoqItem.contract_item_id.is_(None))
+        .group_by(SiteDiaryLine.boq_item_id)
+        .having(total > 0)
+    )
+    return await _count_unbridged(session, stmt)
+
+
+async def subcontractor_unbridged_item_count(
+    session: AsyncSession,
+    contract_id: uuid.UUID,
+    site_id: uuid.UUID,
+    *,
+    year: int | None,
+    month: int | None,
+) -> int:
+    """Şantiyede miktarı olan ama BU sözleşmede karşılığı olmayan poz sayısı.
+
+    İki hâli birlikte sayar: pozun işveren kalemine köprüsü hiç yok, ya da köprü
+    var ama sözleşmenin hiçbir kalemi o kaleme bağlı değil (`source_contract_item_id`).
+    Kullanıcı için ikisi de aynı şeydir: "bu miktar öneriye giremedi".
+    """
+    total = func.sum(SiteDiaryLine.quantity)
+    eslesenler = select(SubcontractorContractItem.source_contract_item_id).where(
+        SubcontractorContractItem.contract_id == contract_id,
+        SubcontractorContractItem.source_contract_item_id.is_not(None),
+    )
+    stmt = (
+        _submitted_line_stmt(year=year, month=month)
+        .with_only_columns(SiteDiaryLine.boq_item_id)
+        .where(
+            SiteDiaryEntry.site_id == site_id,
+            or_(
+                BoqItem.contract_item_id.is_(None),
+                BoqItem.contract_item_id.not_in(eslesenler),
+            ),
+        )
+        .group_by(SiteDiaryLine.boq_item_id)
+        .having(total > 0)
+    )
+    return await _count_unbridged(session, stmt)

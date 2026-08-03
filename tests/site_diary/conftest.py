@@ -20,7 +20,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.boq.models import BoqGroup, BoqItem
-from app.modules.contracts.models import EmployerContractGroup, EmployerContractItem
+from app.modules.contracts.models import (
+    EmployerContractGroup,
+    EmployerContractItem,
+    Subcontractor,
+    SubcontractorContract,
+    SubcontractorContractItem,
+)
 from app.modules.projects.models import Project, ProjectContract
 from app.modules.site_diary.models import DiaryStatus, SiteDiaryEntry, SiteDiaryLine
 from app.modules.sites.models import Section, Site
@@ -137,6 +143,21 @@ async def patron_headers(
     """
     return await _scoped_headers(
         client, seeded_db, user_factory, "patron", "patron@sd-t2.co", proje
+    )
+
+
+@pytest.fixture
+async def muhasebe_headers(
+    client: AsyncClient, seeded_db: AsyncSession, user_factory, proje: Project
+) -> dict[str, str]:
+    """`accounting` — matriste `progress_payments=_APR` ama `site_diary=_N`.
+
+    T5 izin kararının KANITI: hakediş yolunun altındaki öneri ucu YALNIZ hakediş
+    izniyle korunsaydı, günlük verisi matriste günlüğü açıkça REDDEDİLEN role
+    sızardı. İki kapı da istenir → bu rol 403 alır.
+    """
+    return await _scoped_headers(
+        client, seeded_db, user_factory, "accounting", "muhasebe@sd-t5.co", proje
     )
 
 
@@ -320,6 +341,55 @@ def sozlesme_kalemi_fabrikasi(seeded_db: AsyncSession):
         boq_item.contract_item_id = item.id
         await seeded_db.flush()
         return item
+
+    return _create
+
+
+@pytest.fixture
+def taseron_sozlesmesi_fabrikasi(seeded_db: AsyncSession, admin_kullanicisi: User):
+    """Taşeron sözleşmesi + kalemleri kurar; kalemler işveren kalemine KÖPRÜLENİR.
+
+    T5 taşeron önerisinin köprüsü `source_contract_item_id`tir. `site` PARAMETRE
+    olarak verilir çünkü spec §7 S5'in kuralı (yalnız `contract.site_id =
+    günlük.site_id`) ancak site'sız ve BAŞKA şantiyeli sözleşmelerle kanıtlanır.
+    """
+
+    async def _create(
+        project: Project,
+        *,
+        site: Site | None = None,
+        kalemler: list[tuple[str, EmployerContractItem | None]] | None = None,
+        code: str = "TS",
+        quantity: Decimal = Decimal("500.000"),
+    ) -> SubcontractorContract:
+        taseron = Subcontractor(name=f"{code} Taşeronluk")
+        seeded_db.add(taseron)
+        await seeded_db.flush()
+        contract = SubcontractorContract(
+            project_id=project.id,
+            site_id=site.id if site is not None else None,
+            subcontractor_id=taseron.id,
+            subcontractor_name=taseron.name,
+            contract_no=f"{code}-{uuid.uuid4().hex[:8]}",
+            created_by=admin_kullanicisi.id,
+        )
+        seeded_db.add(contract)
+        await seeded_db.flush()
+        for index, (item_code, source_item) in enumerate(kalemler or []):
+            seeded_db.add(
+                SubcontractorContractItem(
+                    contract_id=contract.id,
+                    source_contract_item_id=None if source_item is None else source_item.id,
+                    code=item_code,
+                    description=f"{item_code} taşeron kalemi",
+                    unit="Ton",
+                    quantity=quantity,
+                    unit_price=Decimal("1000.00"),
+                    sort_order=index,
+                )
+            )
+        await seeded_db.flush()
+        return contract
 
     return _create
 

@@ -22,6 +22,9 @@ __all__ = [
     "LINE_ITEM_MISMATCH",
     "SECTION_MISMATCH",
     "SITE_MISSING",
+    "SUGGESTION_CONTRACT_WITHOUT_SITE",
+    "SUGGESTION_NO_BRIDGE",
+    "SUGGESTION_NO_QUANTITY",
     "TRADE_REQUIRED",
     "WORKER_COUNTS_NULL",
     "YEAR_REQUIRED_FOR_MONTH",
@@ -94,6 +97,34 @@ WORKER_COUNTS_NULL = "İşçi kırılımı listesi null olamaz; temizlemek için
 # deseninin aynısı): hangi geçişin neden reddedildiğini ayrıştırmak, kaydın
 # durumunu bilmeyen bir istemciye durum bilgisi sızdırmaktır.
 INVALID_STATUS_TRANSITION = "Bu durum geçişi yapılamaz"
+
+# --- T5: hakediş "günlükten doldur" önerisi (spec §4, §7 S2/S5) ---
+#
+# Bu ÜÇ metin bir HATA DEĞİL, 200 yanıtın `reason` alanıdır: öneri BOŞ döndüğünde
+# kullanıcı NEDEN boş olduğunu görmelidir. Sessiz boş liste, "günlüğe hiç miktar
+# girilmemiş" ile "girilmiş ama köprü kurulmamış" hâllerini ayırt edilemez kılar
+# ve kullanıcıyı var olmayan bir veri hatasını aramaya gönderir.
+
+# Spec §7 S5 (ONAYLI): proje geneli (site_id NULL) taşeron sözleşmesi öneri
+# kapsamı DIŞIDIR — bir günlük kaydı hangi şantiyeye ait olduğunu bilir, ama
+# şantiyesiz bir sözleşmenin miktarını hangi günlüğün besleyeceği TEK ANLAMLI
+# değildir. Miktarlar elle girilir.
+SUGGESTION_CONTRACT_WITHOUT_SITE = (
+    "Bu taşeron sözleşmesi bir şantiyeye bağlı değil; günlük kaydından öneri "
+    "üretilemez, miktarlar elle girilmelidir"
+)
+
+# Dönemde gönderilmiş günlük miktarı YOK (ya da hepsi sıfır). Taslak günlükler
+# SAYILMAZ (spec §3) — kullanıcı "girdim ama görünmüyor" derse cevabı budur:
+# kayıt henüz GÖNDERİLMEMİŞTİR.
+SUGGESTION_NO_QUANTITY = "Seçilen dönemde gönderilmiş günlük miktarı yok"
+
+# Miktar VAR ama poz sözleşme kalemine köprülenmemiş: `boq_items.contract_item_id`
+# NULL (işveren) ya da hiçbir taşeron kalemi o kaleme bağlı değil. Öneri hangi
+# hakediş satırına yazılacağını BİLEMEZ; köprü BOQ ekranında kurulur.
+SUGGESTION_NO_BRIDGE = (
+    "Günlükte miktar var ama pozlar sözleşme kalemine bağlanmamış; öneri üretilemedi"
+)
 
 # 422 — `month` tek başına anlamsızdır ("her yılın temmuzu" bir dönem değildir).
 # Sessizce yok saymak, kullanıcının filtrelediğini sandığı bir listeyi filtresiz

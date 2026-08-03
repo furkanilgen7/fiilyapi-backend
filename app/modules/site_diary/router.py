@@ -30,7 +30,14 @@ from app.core.ratelimit import client_ip
 from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
-from app.modules.site_diary import guards, read, router_transitions, service, summary
+from app.modules.site_diary import (
+    guards,
+    read,
+    router_suggestion,
+    router_transitions,
+    service,
+    summary,
+)
 from app.modules.site_diary.schemas import (
     SiteDiaryEntryCreate,
     SiteDiaryEntryDetail,
@@ -226,6 +233,8 @@ async def delete_site_diary_entry_endpoint(
     )
 
 
-# Durum aksiyonları (T4) AYRI dosyadadır ama modül dışına TEK router çıkar —
-# `app/main.py` yalnız bu nesneyi bağlar (taşeron `router.py` deseninin aynısı).
+# Durum aksiyonları (T4) ve hakediş öneri uçları (T5) AYRI dosyalardadır ama
+# modül dışına TEK router çıkar — `app/main.py` yalnız bu nesneyi bağlar
+# (taşeron `router.py` deseninin aynısı).
 router.include_router(router_transitions.router)
+router.include_router(router_suggestion.router)

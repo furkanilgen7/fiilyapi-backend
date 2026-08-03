@@ -80,7 +80,7 @@ class DeletedEntrySummary(NamedTuple):
 # --- Kapsam ---
 
 
-async def _visible_project(
+async def visible_project(
     session: AsyncSession, actor: User, project_id: uuid.UUID, message: str
 ) -> Project:
     visible = await visible_projects(session, actor)
@@ -96,7 +96,7 @@ async def visible_site(session: AsyncSession, actor: User, site_id: uuid.UUID) -
     site = await sites_repository.get_site(session, site_id)
     if site is None:
         raise NotFoundError(guards.SITE_MISSING)
-    project = await _visible_project(session, actor, site.project_id, guards.SITE_MISSING)
+    project = await visible_project(session, actor, site.project_id, guards.SITE_MISSING)
     return SiteContext(site=site, project=project)
 
 
@@ -109,7 +109,7 @@ async def visible_entry(session: AsyncSession, actor: User, entry_id: uuid.UUID)
     entry = await repository.get_entry(session, entry_id)
     if entry is None:
         raise NotFoundError(guards.ENTRY_MISSING)
-    project = await _visible_project(session, actor, entry.project_id, guards.ENTRY_MISSING)
+    project = await visible_project(session, actor, entry.project_id, guards.ENTRY_MISSING)
     site = await sites_repository.get_site(session, entry.site_id)
     if site is None:
         # FK CASCADE'i sayesinde ulaşılamaz; yine de sessizce None taşımak yerine
