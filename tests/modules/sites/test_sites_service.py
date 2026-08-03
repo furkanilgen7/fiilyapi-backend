@@ -200,12 +200,19 @@ async def test_list_placeholders_use_correct_pending_modules(
     result = await service.list_sites_overview(seeded_db, user, project.id)
     card = result.items[0]
 
-    assert card.worker_count.available is False
+    # T4 (puantaj §4): `worker_count` artik YER TUTUCU DEGIL — puantaj kaydi
+    # olmayan santiyede bile `available` true'dur ve sayi UYDURULMAZ, 0'dir.
+    # Baglama davranisinin tamami `tests/timesheet/test_worker_count_binding.py`de.
+    assert card.worker_count.available is True
+    assert card.worker_count.count == 0
     assert card.worker_count.pending_module == "timesheet"
     assert card.progress_pct.available is False
     assert card.progress_pct.pending_module == "progress_payments"
     assert result.totals.total_progress_payment.pending_module == "progress_payments"
     assert result.totals.subcontractor_count.pending_module == "subcontracts"
+    # T4: alt KPI seridinde YALNIZ `active_worker_count` baglandi.
+    assert result.totals.active_worker_count.available is True
+    assert result.totals.active_worker_count.count == 0
     assert result.totals.active_worker_count.pending_module == "timesheet"
     assert result.totals.average_margin.pending_module == "project_costs"
     assert all(
@@ -213,7 +220,6 @@ async def test_list_placeholders_use_correct_pending_modules(
         for placeholder in (
             result.totals.total_progress_payment,
             result.totals.subcontractor_count,
-            result.totals.active_worker_count,
             result.totals.average_margin,
         )
     )
@@ -235,6 +241,9 @@ async def test_detail_and_section_placeholders(seeded_db, user_factory, project_
     assert section.progress_pct.pending_module == "progress_payments"
     assert section.boq_item_count.pending_module == "boq"
     assert section.budget.pending_module == "boq"
+    # T4: bolum sayaci da BAGLANDI — kaydi olmayan bolumde `available` true, sayi 0.
+    assert section.worker_count.available is True
+    assert section.worker_count.count == 0
     assert section.worker_count.pending_module == "timesheet"
 
 

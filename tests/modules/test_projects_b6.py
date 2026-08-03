@@ -65,10 +65,15 @@ async def test_detail_exposes_employer_contract_budget_lines(db_session):
     assert detail.employer_name == "ACME İnşaat"
 
 
-def get_project_detail_from_orm(project):
+def get_project_detail_from_orm(project, worker_count: int = 0):
+    """`to_detail` T4'te isci sayacini PARAMETRE olarak alir (puantaj spec §4):
+
+    sayim `timesheet.counts`ta toplu sorguyla yapilir, saf donusturucu DB'ye
+    dokunmaz. Bu testlerin ilgi alani puantaj degil, bu yuzden 0 gecilir.
+    """
     from app.modules.projects.service import to_detail
 
-    return to_detail(project)
+    return to_detail(project, worker_count)
 
 
 async def test_draft_project_has_none_employer_contract(db_session):

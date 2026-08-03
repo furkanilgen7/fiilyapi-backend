@@ -11,13 +11,15 @@ matrisi şantiye şefi (`_F`) doldurur. Proje müdürü (`_N`) okuyamaz bile.
 Genel ekran (E5 `Ekran 5 - Puantaj.dc.html`) AYRI uç GEREKTİRMEZ (spec §3):
 aynı iki uç bir şantiye seçicisiyle (E5 78) kullanılır.
 
-Kapsam DIŞI: `export.xlsx` (T4) — bu dosyaya EKLENMEZ.
+`export.xlsx` (T4) da AYNI `_VIEW` kapısındadır: indirme bir OKUMADIR, matrisi
+görebilen indirebilir. Denetim günlüğüne YAZMAZ (T7 kuralı: okumalar denetlenmez).
 """
 
 import uuid
 from typing import Annotated
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel
@@ -29,7 +31,7 @@ from app.core.ratelimit import client_ip
 from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
-from app.modules.timesheet import matrix, service
+from app.modules.timesheet import export, matrix, service
 from app.modules.timesheet.schemas import TimesheetMatrix, TimesheetSave
 from app.modules.users.models import User
 
@@ -62,6 +64,50 @@ async def get_site_timesheet_endpoint(
     site, project = await service.visible_site(session, user, site_id)
     section = await service.visible_section(session, site, section_id)
     return await matrix.build(session, site, project, section, year=year, month=month)
+
+
+def _content_disposition(name: str) -> str:
+    """`boq/router.py._content_disposition` ile BİREBİR aynı kural.
+
+    Dosya adı Türkçe karakter içerebilir: RFC 5987 `filename*` (UTF-8) yanında
+    eski istemciler için ASCII'ye indirgenmiş bir `filename` de yollanır.
+    """
+    ascii_fallback = name.encode("ascii", errors="ignore").decode("ascii").replace('"', "")
+    if not ascii_fallback:
+        ascii_fallback = "puantaj.xlsx"
+    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(name)}"
+
+
+@router.get(
+    "/sites/{site_id}/timesheet/export.xlsx",
+    dependencies=[_VIEW],
+    response_class=Response,
+    responses={200: {"content": {export.XLSX_MEDIA_TYPE: {}}, "description": "Excel dosyasi"}},
+)
+async def export_site_timesheet_endpoint(
+    site_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    year: _YEAR,
+    month: _MONTH,
+    section_id: uuid.UUID | None = None,
+) -> Response:
+    """ŞP matrisinin Excel çıktısı (spec §3).
+
+    Matris `matrix.build` ile AYNI çağrıdan gelir — kapsam süzgeci, bölüm 404'ü
+    ve TÜM toplamlar okuma ucuyla birebir aynıdır. Okuma ucudur: `record_audit`
+    ÇAĞIRMAZ.
+    """
+    site, project = await service.visible_site(session, user, site_id)
+    section = await service.visible_section(session, site, section_id)
+    built = await matrix.build(session, site, project, section, year=year, month=month)
+    buffer = export.build_timesheet_workbook(built)
+    name = export.filename(site.code, year, month)
+    return Response(
+        content=buffer.getvalue(),
+        media_type=export.XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": _content_disposition(name)},
+    )
 
 
 @router.put("/sites/{site_id}/timesheet", response_model=TimesheetMatrix, dependencies=[_FULL])

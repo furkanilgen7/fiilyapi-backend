@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Mapping
 from types import SimpleNamespace
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,6 +46,11 @@ from app.modules.sites.schemas import (
     SiteSectionInput,
     SiteUpdate,
 )
+
+# Isci sayaclarinin TEK kaynagi puantaj modulüdur (T4, spec §4): bu modul kendi
+# `SELECT`ini yazmaz, aksi halde santiye karti ile proje karti ayni ayda farkli
+# sayi gosterir. Donem karari (icinde bulunulan ay) orada gerekcelenmistir.
+from app.modules.timesheet import counts as timesheet_counts
 from app.modules.users.models import User
 
 # Spec §3: bos durum alanlari ve bagli olduklari dilim anahtarlari. Bunlar
@@ -79,6 +85,18 @@ def _metric(pending_module: str) -> MetricPlaceholder:
 
 def _count(pending_module: str) -> CountPlaceholder:
     return CountPlaceholder(pending_module=pending_module)
+
+
+def _worker_count(value: int) -> CountPlaceholder:
+    """T4 — `_TIMESHEET` yer tutucusunun BAGLANMIS hali (spec §4).
+
+    Zarf (`CountPlaceholder`) KORUNUR, yalnizca doldurulur: `available=True` +
+    gercek `count`. Kartin diger sayaclari (`boq_item_count`, `subcontractor_count`,
+    `progress_pct`...) hâlâ yer tutucudur; alanin TIPINI degistirmek ekranin ayni
+    seridinde iki farkli sozlesme birakirdi. `pending_module` kaynak modulu
+    isaretlemeye devam eder — artik "bekleyen" degil "besleyen" moduldur.
+    """
+    return CountPlaceholder(available=True, count=value, pending_module=_TIMESHEET)
 
 
 async def _next_site_code(session: AsyncSession) -> str:
@@ -181,7 +199,7 @@ def _facilities(site: Site) -> SiteFacilities:
     )
 
 
-def to_section(section: Section) -> SectionResponse:
+def to_section(section: Section, worker_count: int) -> SectionResponse:
     return SectionResponse(
         id=section.id,
         code=section.code,
@@ -195,11 +213,11 @@ def to_section(section: Section) -> SectionResponse:
         progress_pct=_metric(_PROGRESS_PAYMENTS),
         boq_item_count=_count(_BOQ),
         budget=_metric(_BOQ),
-        worker_count=_count(_TIMESHEET),
+        worker_count=_worker_count(worker_count),
     )
 
 
-def to_section_detail(section: Section) -> SectionDetailResponse:
+def to_section_detail(section: Section, worker_count: int) -> SectionDetailResponse:
     """P6 §5 — bolum detay govdesi: `to_section`in TUM alanlari + T1 kolonlari.
 
     Yer tutucular `to_section`ten AYNEN devralinir (yeniden kurulmaz): dort
@@ -207,7 +225,7 @@ def to_section_detail(section: Section) -> SectionDetailResponse:
     ekranlari zamanla farkli modul anahtarlari gosterirdi.
     """
     return SectionDetailResponse(
-        **to_section(section).model_dump(),
+        **to_section(section, worker_count).model_dump(),
         site_id=section.site_id,
         section_type=section.section_type,
         description=section.description,
@@ -221,7 +239,7 @@ def to_section_detail(section: Section) -> SectionDetailResponse:
     )
 
 
-def _card_fields(site: Site, project: Project) -> dict:
+def _card_fields(site: Site, project: Project, worker_count: int) -> dict:
     city, city_inherited = _resolve_city(site, project)
     return {
         "id": site.id,
@@ -237,7 +255,7 @@ def _card_fields(site: Site, project: Project) -> dict:
         "delivery_date": site.delivery_date,
         "remaining_days": _remaining_days(site),
         "section_count": len(site.sections),
-        "worker_count": _count(_TIMESHEET),
+        "worker_count": _worker_count(worker_count),
         "progress_pct": _metric(_PROGRESS_PAYMENTS),
         # --- Santiye formu genislemesi (§6.2): YALNIZ EKLEME ---
         "is_draft": site.is_draft,
@@ -259,28 +277,34 @@ def _card_fields(site: Site, project: Project) -> dict:
     }
 
 
-def to_card(site: Site, project: Project) -> SiteCard:
-    return SiteCard(**_card_fields(site, project))
+def to_card(site: Site, project: Project, worker_count: int) -> SiteCard:
+    return SiteCard(**_card_fields(site, project, worker_count))
 
 
-def to_detail(site: Site, project: Project) -> SiteDetailResponse:
+def to_detail(
+    site: Site,
+    project: Project,
+    worker_count: int,
+    section_worker_counts: Mapping[uuid.UUID, int],
+) -> SiteDetailResponse:
     sections = list(site.sections)
     return SiteDetailResponse(
-        **_card_fields(site, project),
+        **_card_fields(site, project, worker_count),
         project=SiteProjectSummary.model_validate(project),
         section_status_counts=_section_counts(sections),
-        sections=[to_section(s) for s in sections],
+        sections=[to_section(s, section_worker_counts.get(s.id, 0)) for s in sections],
         total_progress_payment=_metric(_PROGRESS_PAYMENTS),
         contract_amount=_metric(_CONTRACTS),
     )
 
 
-def _totals() -> SiteListTotals:
-    """Alt KPI seridi — bu dilimde TAMAMI yer tutucu (spec §4.1)."""
+def _totals(active_worker_count: int) -> SiteListTotals:
+    """Alt KPI seridi. T4'te YALNIZ `active_worker_count` baglandi; gerisi hâlâ
+    yer tutucudur (spec §4.1) ve kendi dilimlerini bekler."""
     return SiteListTotals(
         total_progress_payment=_metric(_PROGRESS_PAYMENTS),
         subcontractor_count=_count(_SUBCONTRACTS),
-        active_worker_count=_count(_TIMESHEET),
+        active_worker_count=_worker_count(active_worker_count),
         average_margin=_metric(_PROJECT_COSTS),
     )
 
@@ -353,20 +377,43 @@ async def _visible_section(
 async def list_sites_overview(
     session: AsyncSession, actor: User, project_id: uuid.UUID
 ) -> SiteListResponse:
+    """Isci sayaclari IKI TOPLU sorgudan gelir (santiye kirilimi + proje toplami).
+
+    Kart basina sorgu KOSULMAZ (N+1 yok) ve alt KPI seridi kart sayaclarinin
+    TOPLAMI DEGILDIR: iki santiyede birden calisan kisi projede BIR kez sayilir.
+    """
     project = await _visible_project(session, actor, project_id)
     sites = await repository.list_sites_for_project(session, project_id)
+    worker_counts = await timesheet_counts.by_site(session, [site.id for site in sites])
+    project_counts = await timesheet_counts.by_project(session, [project.id])
     return SiteListResponse(
         counts=_site_counts(sites),
-        items=[to_card(site, project) for site in sites],
-        totals=_totals(),
+        items=[to_card(site, project, worker_counts.get(site.id, 0)) for site in sites],
+        totals=_totals(project_counts.get(project.id, 0)),
     )
+
+
+async def build_site_detail(
+    session: AsyncSession, site: Site, project: Project
+) -> SiteDetailResponse:
+    """Santiye detay zarfi + isci sayaclari. YAZMA uclarinin yaniti da buradan
+    gecer: okuma ve yazma ayni zarfi tasimazsa ekran kaydettikten sonra sayaci
+    kaybeder."""
+    site_counts = await timesheet_counts.by_site(session, [site.id])
+    section_counts = await timesheet_counts.by_section(session, [s.id for s in site.sections])
+    return to_detail(site, project, site_counts.get(site.id, 0), section_counts)
+
+
+async def build_section_detail(session: AsyncSession, section: Section) -> SectionDetailResponse:
+    section_counts = await timesheet_counts.by_section(session, [section.id])
+    return to_section_detail(section, section_counts.get(section.id, 0))
 
 
 async def get_site_detail(
     session: AsyncSession, actor: User, site_id: uuid.UUID
 ) -> SiteDetailResponse:
     site, project = await _visible_site(session, actor, site_id)
-    return to_detail(site, project)
+    return await build_site_detail(session, site, project)
 
 
 async def list_sections_for_site(
@@ -374,8 +421,10 @@ async def list_sections_for_site(
 ) -> SectionListResponse:
     site, _ = await _visible_site(session, actor, site_id)
     sections = await repository.list_sections(session, site.id)
+    section_counts = await timesheet_counts.by_section(session, [s.id for s in sections])
     return SectionListResponse(
-        counts=_section_counts(sections), items=[to_section(s) for s in sections]
+        counts=_section_counts(sections),
+        items=[to_section(s, section_counts.get(s.id, 0)) for s in sections],
     )
 
 
@@ -393,7 +442,7 @@ async def get_section_detail(
     UUID'ninkiyle BIREBIR AYNIDIR.
     """
     section, _ = await _visible_section(session, actor, section_id)
-    return to_section_detail(section)
+    return await build_section_detail(session, section)
 
 
 # --- Yazma uclari ---
