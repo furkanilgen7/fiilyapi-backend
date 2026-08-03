@@ -87,7 +87,7 @@ async def _visible_project(
     return project
 
 
-async def _visible_contract(
+async def visible_contract(
     session: AsyncSession, actor: User, contract_id: uuid.UUID
 ) -> tuple[SubcontractorContract, Project]:
     """Sözleşme → proje. Görünmeyen projenin sözleşmesi ile var olmayan sözleşme
@@ -211,7 +211,7 @@ async def create(
     `project_id` sözleşmeden KOPYALANIR (görünürlük süzgeci her liste sorgusunda
     JOIN gerektirmesin diye, model docstring'i).
     """
-    contract, project = await _visible_contract(session, actor, contract_id)
+    contract, project = await visible_contract(session, actor, contract_id)
 
     locked = await repository.get_contract_locked(session, contract.id)
     if locked is None:

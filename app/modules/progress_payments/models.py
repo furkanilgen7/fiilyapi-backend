@@ -22,6 +22,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
 
+# Enum PAYLASILIR: `quantity_source` DB tipi taseron hakedisi diliminde
+# (a3b4c5d6e7f8) yaratildi; isveren satiri AYNI tipi kullanir. Yeni tip acmak iki
+# tarafta ayni rozetin iki farkli tipini dogururdu (site_diary spec §4).
+from app.modules.subcontractor_progress_payments.models import QuantitySource
+
 
 class ProgressPaymentStatus(str, enum.Enum):
     """Hakediş durum makinesi — spec §7. OLU 24 / E15 69 "Onay Bekliyor" / SHK 129
@@ -179,6 +184,15 @@ class ProgressPaymentLine(Base):
     quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False)
     group_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # Miktarin kaynagi — taseron satirindaki kolonun BIREBIR karsiligi (site_diary
+    # spec §4). Enum TIPI PAYLASILIR (`quantity_source`, a3b4c5d6e7f8'de yaratildi):
+    # ayni anlam kumesi, iki tarafta ayni rozet — yeni tip ACILMAZ.
+    quantity_source: Mapped[QuantitySource] = mapped_column(
+        Enum(QuantitySource, name="quantity_source"),
+        nullable=False,
+        default=QuantitySource.manual,
+        server_default="manual",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -4,7 +4,7 @@ Kullaniciya gorunen tum detay metinleri Turkce ve TEK yerde tutulur; router'lara
 string gomulmez. Metinlere parola, token veya baska gizli deger YAZILMAZ.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from app.core.access import AccessLevel
@@ -583,4 +583,62 @@ def sale_cancelled(project_name: str, unit_label: str, customer_name: str, reaso
     return (
         f"Ünite satışı iptal edildi: {project_name} · {unit_label} · {customer_name} "
         f"· Gerekçe: {reason}"
+    )
+
+
+# --- Santiye gunlugu (site_diary T2) ---
+#
+# Yeni `AuditAction` GEREKMEDI: gunluk kayit acmak `create`, basligini
+# duzenlemek `update`, silmek `delete` aksiyonuna oturur. Denetim ekrani
+# aksiyona degil METNE gore okunur.
+#
+# Kaydin kimligi UUID degil INSAN-OKUR uclusudur (proje · santiye · gun):
+# denetim satirini okuyan kisi hangi gunun kaydinin silindigini gormek ister,
+# bir kimlik dizisini degil.
+
+
+def site_diary_entry_created(
+    project_name: str, site_name: str, entry_date: date, line_count: int
+) -> str:
+    return (
+        f"Günlük kayıt oluşturuldu: {project_name} · {site_name} · {entry_date.isoformat()} "
+        f"· {line_count} poz"
+    )
+
+
+def site_diary_entry_updated(project_name: str, site_name: str, entry_date: date) -> str:
+    return f"Günlük kayıt güncellendi: {project_name} · {site_name} · {entry_date.isoformat()}"
+
+
+def site_diary_lines_saved(
+    project_name: str, site_name: str, entry_date: date, line_count: int
+) -> str:
+    """T3 `PUT …/lines`. `update` aksiyonuna oturur: satir kaydetmek kaydin
+    ICERIGINI degistirir, yeni bir kayit ACMAZ."""
+    return (
+        f"Günlük kayıt poz satırları kaydedildi: {project_name} · {site_name} "
+        f"· {entry_date.isoformat()} · {line_count} poz"
+    )
+
+
+def site_diary_entry_submitted(project_name: str, site_name: str, entry_date: date) -> str:
+    """T4 `POST …/submit`. `update` aksiyonuna oturur: `AuditAction.approve` HAKEDIS
+    onayina ayrilmistir — gunluk gonderimi bir onay DEGILDIR (iki durumlu akis)."""
+    return f"Günlük kayıt gönderildi: {project_name} · {site_name} · {entry_date.isoformat()}"
+
+
+def site_diary_entry_reopened(project_name: str, site_name: str, entry_date: date) -> str:
+    """T4 `POST …/reopen` — YALNIZ admin. Denetim satiri kritiktir: gonderilmis bir
+    kaydin yeniden yazilabilir hale gelmesi hakedise giden veriyi degistirir."""
+    return (
+        f"Günlük kayıt taslağa geri alındı: {project_name} · {site_name} · {entry_date.isoformat()}"
+    )
+
+
+def site_diary_entry_deleted(
+    project_name: str, site_name: str, entry_date: date, status_label: str, line_count: int
+) -> str:
+    return (
+        f"Günlük kayıt silindi: {project_name} · {site_name} · {entry_date.isoformat()} "
+        f"· {status_label} · {line_count} poz"
     )
