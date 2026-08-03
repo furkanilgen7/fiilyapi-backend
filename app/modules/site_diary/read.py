@@ -27,6 +27,7 @@ from app.modules.site_diary.service import EntryContext, visible_entry, visible_
 from app.modules.users.models import User
 
 _ZERO_MONEY = Decimal("0.00")
+_ZERO_QUANTITY = Decimal("0.000")
 
 
 def line_amount(line: SiteDiaryLine) -> Decimal:
@@ -51,7 +52,23 @@ def worker_total(entry: SiteDiaryEntry) -> int:
     return sum(row.count for row in entry.worker_counts)
 
 
-def _line_read(line: SiteDiaryLine) -> SiteDiaryLineRead:
+def cumulative_quantity(line: SiteDiaryLine, prior: dict[uuid.UUID, Decimal]) -> Decimal:
+    """GK229 kümülatifi — TÜREV (kolon yok, spec §2).
+
+    `prior` = ay başından bu güne kadarki **gönderilmiş** kayıtların poz bazlı
+    toplamı (`repository.cumulative_quantities_before`); üstüne BU kaydın kendi
+    miktarı eklenir. Gerekçe `schemas.SiteDiaryLineRead.cumulative_quantity`
+    docstring'indedir.
+
+    Bağı kopmuş satırın (`boq_item_id IS NULL`) geçmişi ADRESLENEMEZ: yalnız
+    kendi miktarını gösterir, sessizce başka bir pozun toplamına yazılmaz.
+    """
+    if line.boq_item_id is None:
+        return line.quantity
+    return prior.get(line.boq_item_id, _ZERO_QUANTITY) + line.quantity
+
+
+def _line_read(line: SiteDiaryLine, prior: dict[uuid.UUID, Decimal]) -> SiteDiaryLineRead:
     return SiteDiaryLineRead(
         id=line.id,
         boq_item_id=line.boq_item_id,
@@ -60,16 +77,23 @@ def _line_read(line: SiteDiaryLine) -> SiteDiaryLineRead:
         unit=line.unit,
         unit_price=line.unit_price,
         quantity=line.quantity,
+        cumulative_quantity=cumulative_quantity(line, prior),
         line_amount=line_amount(line),
     )
 
 
-def build_detail(context: EntryContext) -> SiteDiaryEntryDetail:
+async def build_detail(session: AsyncSession, context: EntryContext) -> SiteDiaryEntryDetail:
     """GÖRÜNÜRLÜK KONTROLÜ YAPMAZ — çağıranın kapsam kararını çoktan vermiş
-    olması ŞARTTIR. `POST`/`PATCH` uçları bu yüzden `get_detail` değil bunu
-    çağırır: aksi hâlde `visible_projects` sorgusu istek başına İKİ KEZ koşardı.
+    olması ŞARTTIR. `POST`/`PATCH`/`PUT …/lines` uçları bu yüzden `get_detail`
+    değil bunu çağırır: aksi hâlde `visible_projects` sorgusu istek başına İKİ
+    KEZ koşardı.
+
+    T3'te `async` oldu: kümülatif türevi (GK229) TEK toplu sorgu ister
+    (`prior`, satır başına sorgu YOK). Sorgu ilişkilere DOKUNMAZ, bu yüzden
+    `worker_counts`/`lines` `selectin` yüklemesi bozulmaz.
     """
     entry = context.entry
+    prior = await repository.cumulative_quantities_before(session, entry.site_id, entry.entry_date)
     return SiteDiaryEntryDetail(
         id=entry.id,
         site_id=entry.site_id,
@@ -89,7 +113,7 @@ def build_detail(context: EntryContext) -> SiteDiaryEntryDetail:
         created_by=entry.created_by,
         created_at=entry.created_at,
         updated_at=entry.updated_at,
-        lines=[_line_read(line) for line in entry.lines],
+        lines=[_line_read(line, prior) for line in entry.lines],
         worker_counts=[
             SiteDiaryWorkerCountRead(id=row.id, trade=row.trade, source=row.source, count=row.count)
             for row in entry.worker_counts
@@ -102,7 +126,7 @@ def build_detail(context: EntryContext) -> SiteDiaryEntryDetail:
 async def get_detail(
     session: AsyncSession, actor: User, entry_id: uuid.UUID
 ) -> SiteDiaryEntryDetail:
-    return build_detail(await visible_entry(session, actor, entry_id))
+    return await build_detail(session, await visible_entry(session, actor, entry_id))
 
 
 async def list_entries(

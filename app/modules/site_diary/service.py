@@ -27,9 +27,13 @@ from app.core.errors import (
 from app.modules.projects.models import Project
 from app.modules.projects.service import visible_projects
 from app.modules.roles.repository import get_permission
-from app.modules.site_diary import guards, repository
+from app.modules.site_diary import guards, lines, repository
 from app.modules.site_diary.models import DiaryStatus, SiteDiaryEntry, SiteDiaryLine
-from app.modules.site_diary.schemas import SiteDiaryEntryCreate, SiteDiaryEntryUpdate
+from app.modules.site_diary.schemas import (
+    SiteDiaryEntryCreate,
+    SiteDiaryEntryUpdate,
+    SiteDiaryLinesSave,
+)
 from app.modules.sites import repository as sites_repository
 from app.modules.sites.models import Site
 from app.modules.users.models import User
@@ -236,13 +240,20 @@ async def update(
     """Gönderilmiş kayda YAZMA YASAK (409): geri almanın tek yolu `reopen`dır (T4).
 
     `exclude_unset` ZORUNLUDUR: gönderilmeyen alanlar `None`a düşürülseydi tek
-    alan güncelleyen bir istek diğer her alanı SESSİZCE silerdi.
+    alan güncelleyen bir istek diğer her alanı SESSİZCE silerdi. Aynı kural
+    `worker_counts` için de geçerlidir: alan gönderilmezse kırılım KORUNUR,
+    boş liste gönderilirse TEMİZLENİR (T3).
     """
     context = await visible_entry_locked(session, actor, entry_id)
     if context.entry.status != DiaryStatus.draft:
         raise ConflictError(guards.ENTRY_NOT_EDITABLE)
 
     changes = data.model_dump(exclude_unset=True)
+    # İşçi kırılımı bir KOLON DEĞİL bir İLİŞKİDİR: aşağıdaki `setattr` döngüsüne
+    # girseydi ham `dict` listesi ilişkiye atanır, SQLAlchemy patlardı. Pydantic
+    # nesneleri `data`dan okunur — `model_dump` onları `dict`e çevirmiştir.
+    worker_counts = data.worker_counts if "worker_counts" in changes else None
+    changes.pop("worker_counts", None)
     if "entry_date" in changes and changes["entry_date"] != context.entry.entry_date:
         await _assert_date_free(
             session, context.entry.site_id, changes["entry_date"], exclude_entry_id=entry_id
@@ -252,9 +263,38 @@ async def update(
 
     for field, value in changes.items():
         setattr(context.entry, field, value)
+    if worker_counts is not None:
+        lines.apply_worker_counts(context.entry, worker_counts)
     await session.flush()
     await session.refresh(context.entry)
     return context
+
+
+# --- Poz satırları (T3) ---
+
+
+async def save_lines(
+    session: AsyncSession, actor: User, entry_id: uuid.UUID, data: SiteDiaryLinesSave
+) -> tuple[EntryContext, int]:
+    """`PUT /diary/{entry_id}/lines` — DEĞİŞTİRME semantiği (gövde ekranın TAMAMI).
+
+    Bu katman YALNIZ kapsam (404), KİLİT ve durum kapısını kurar; gövdenin
+    doğrulaması ve uygulanması `lines.apply_lines`tadır (ayrım bilinçlidir:
+    `lines.py` görünürlük katmanını çağırsaydı `service → lines → service`
+    döngüsel importu doğardı).
+
+    Kilit ZORUNLUDUR: kilitsiz okunsaydı eşzamanlı bir `submit` (T4) durum
+    kapısını TOCTOU ile atlatır, gönderilmiş kayda satır yazılabilirdi.
+
+    İkinci öğe: gövdeden adreslenemediği için düşen bağı-kopmuş satır sayısı.
+    """
+    context = await visible_entry_locked(session, actor, entry_id)
+    if context.entry.status != DiaryStatus.draft:
+        raise ConflictError(guards.ENTRY_NOT_EDITABLE)
+
+    dropped = await lines.apply_lines(session, context.entry, data.lines)
+    await session.refresh(context.entry)
+    return context, dropped
 
 
 # --- Silme (iki katmanlı kural) ---

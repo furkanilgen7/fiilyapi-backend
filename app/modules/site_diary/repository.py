@@ -8,12 +8,13 @@ KENDİSİ görünürlük kararı VERMEZ (iki katman kuralı).
 import calendar
 import uuid
 from datetime import date
+from decimal import Decimal
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.boq.models import BoqItem
-from app.modules.site_diary.models import SiteDiaryEntry
+from app.modules.site_diary.models import DiaryStatus, SiteDiaryEntry, SiteDiaryLine
 from app.modules.sites.models import Section, Site
 
 
@@ -89,6 +90,51 @@ async def list_boq_items(session: AsyncSession, site_id: uuid.UUID) -> list[BoqI
     """
     stmt = select(BoqItem).where(BoqItem.site_id == site_id).order_by(BoqItem.code)
     return list((await session.execute(stmt)).scalars().all())
+
+
+async def get_boq_items_by_ids(
+    session: AsyncSession, item_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, BoqItem]:
+    """`PUT …/lines` gövdesindeki TÜM pozlar TEK sorguda (satır başına sorgu YOK).
+
+    Şantiye süzgeci BURADA uygulanmaz: sahiplik kararı çağıran katmanın işidir
+    (`lines._resolve`), çünkü "poz yok" ile "poz başka şantiyenin" AYNI cevabı
+    almalıdır ve bu karar bir SORGU değil bir KURALDIR.
+    """
+    if not item_ids:
+        return {}
+    stmt = select(BoqItem).where(BoqItem.id.in_(item_ids))
+    return {item.id: item for item in (await session.execute(stmt)).scalars().all()}
+
+
+async def cumulative_quantities_before(
+    session: AsyncSession, site_id: uuid.UUID, entry_date: date
+) -> dict[uuid.UUID, Decimal]:
+    """GK229 kümülatifinin ÖN-TOPLAMI: aynı ayda, aynı şantiyede, bu günden ÖNCE
+    **gönderilmiş** kayıtların poz bazlı miktar toplamı.
+
+    `submitted` süzgeci T4 `summary` ucuyla (spec §3) BİLEREK aynıdır: iki ekran
+    aynı sayıyı söylemek zorundadır. Kaydın KENDİ miktarı buraya girmez —
+    okuma katmanı onu üstüne ekler (`read._line_read`), böylece taslak da
+    "gönderirsem ne olacak" değerini gösterir.
+
+    Bağı kopmuş satır (`boq_item_id IS NULL`) hangi poza yazılacağını KAYBETMİŞTİR;
+    toplamdan düşer (taşeron `completed_quantities` deseninin aynısı).
+    """
+    start, _ = _month_bounds(entry_date.year, entry_date.month)
+    stmt = (
+        select(SiteDiaryLine.boq_item_id, func.sum(SiteDiaryLine.quantity))
+        .join(SiteDiaryEntry, SiteDiaryEntry.id == SiteDiaryLine.entry_id)
+        .where(
+            SiteDiaryEntry.site_id == site_id,
+            SiteDiaryEntry.status == DiaryStatus.submitted,
+            SiteDiaryEntry.entry_date >= start,
+            SiteDiaryEntry.entry_date < entry_date,
+            SiteDiaryLine.boq_item_id.is_not(None),
+        )
+        .group_by(SiteDiaryLine.boq_item_id)
+    )
+    return {item_id: total for item_id, total in (await session.execute(stmt)).all()}
 
 
 def _month_bounds(year: int, month: int | None) -> tuple[date, date]:

@@ -33,6 +33,7 @@ from app.modules.site_diary.schemas import (
     SiteDiaryEntryDetail,
     SiteDiaryEntryListResponse,
     SiteDiaryEntryUpdate,
+    SiteDiaryLinesSave,
 )
 from app.modules.users.models import User
 
@@ -110,7 +111,7 @@ async def create_site_diary_entry_endpoint(
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
-    return read.build_detail(context)
+    return await read.build_detail(session, context)
 
 
 @router.patch("/diary/{entry_id}", response_model=SiteDiaryEntryDetail, dependencies=[_FULL])
@@ -133,7 +134,42 @@ async def update_site_diary_entry_endpoint(
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
-    return read.build_detail(context)
+    return await read.build_detail(session, context)
+
+
+@router.put("/diary/{entry_id}/lines", response_model=SiteDiaryEntryDetail, dependencies=[_FULL])
+async def save_site_diary_lines_endpoint(
+    request: Request,
+    entry_id: uuid.UUID,
+    data: SiteDiaryLinesSave,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> SiteDiaryEntryDetail:
+    """GK'nin miktar girişi — **DEĞİŞTİRME** semantiği.
+
+    ⚠️ Gövdede geçmeyen satır SİLİNİR. Yalnız `status=draft` (409); poz sahipliği
+    (poz günlüğün ŞANTİYESİNİN BOQ'suna ait olmalı) her yazımda koşar. Snapshot
+    dörtlüsü gövdede YOKTUR — fiyat BOQ'dan gelir, istemciden değil.
+
+    Pozu silinmiş satırlar gövdeden adreslenemediği için düşer; sayıları yanıtın
+    `dropped_orphan_count` alanında BİLDİRİLİR (sessiz atlama yok). Kesin
+    kararlar `service.save_lines` + `lines.apply_lines`tadır.
+    """
+    context, dropped_orphan_count = await service.save_lines(session, user, entry_id, data)
+    await record_audit(
+        session,
+        action=AuditAction.update,
+        detail=messages.site_diary_lines_saved(
+            context.project.name,
+            context.site.name,
+            context.entry.entry_date,
+            len(context.entry.lines),
+        ),
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    detail = await read.build_detail(session, context)
+    return detail.model_copy(update={"dropped_orphan_count": dropped_orphan_count})
 
 
 @router.delete("/diary/{entry_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[_FULL])

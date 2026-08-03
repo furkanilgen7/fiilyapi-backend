@@ -12,12 +12,17 @@ from app.modules.sites.guards import SITE_MISSING
 
 __all__ = [
     "DELETE_NOT_ALLOWED",
+    "DUPLICATE_LINE",
+    "DUPLICATE_WORKER_COUNT",
     "ENTRY_DATE_TAKEN",
     "ENTRY_MISSING",
     "ENTRY_NOT_DELETABLE",
     "ENTRY_NOT_EDITABLE",
+    "LINE_ITEM_MISMATCH",
     "SECTION_MISMATCH",
     "SITE_MISSING",
+    "TRADE_REQUIRED",
+    "WORKER_COUNTS_NULL",
     "YEAR_REQUIRED_FOR_MONTH",
 ]
 
@@ -50,6 +55,33 @@ DELETE_NOT_ALLOWED = "Bu kaydı silme yetkiniz yok"
 # ayrı bir kaynak değil (`subcontractor_progress_payments.guards.SECTION_MISMATCH`
 # gerekçesinin aynısı).
 SECTION_MISMATCH = "Seçilen bölüm bu şantiyeye ait değil"
+
+# --- T3: satır + işçi kırılımı yazma ---
+
+# 422 — `PUT …/lines` gövdesindeki poz günlüğün ŞANTİYESİNİN BOQ'suna ait değil.
+# Var OLMAYAN poz da AYNI cümleyi alır: `boq_item_id` bir alan DEĞERİDİR, ayrı bir
+# kaynak değil — iki hâl ayrıştırılsaydı elinde UUID olan kullanıcı komşu
+# şantiyenin pozunun varlığını 404/422 farkından çıkarabilirdi.
+LINE_ITEM_MISMATCH = "Seçilen poz bu şantiyenin BOQ'suna ait değil"
+
+# 409 (`DuplicateError`) — kısmi UQ `uq_site_diary_lines_boq_item` ihlali GÖVDE
+# İÇİNDE yakalanır. `IntegrityError` emniyet ağı olarak kalır ama kullanıcının
+# normalde göreceği cümle budur ("Veri bütünlüğü hatası" değil).
+DUPLICATE_LINE = "Aynı poz gövdede birden fazla kez gönderildi"
+
+# 409 (`DuplicateError`) — UQ (entry_id, trade, source) ihlali. Aynı meslek FARKLI
+# kaynakla meşrudur (GK418-430 rozetleri); çakışan yalnız ÜÇLÜNÜN tamamıdır.
+DUPLICATE_WORKER_COUNT = "Aynı meslek ve kaynak için birden fazla işçi satırı gönderildi"
+
+# 422 — `trade` serbest metindir (katalog YOK, spec §2); katalogsuz bir alanın tek
+# korkuluğu boşluğun reddidir. Kırpılmadan kabul edilseydi " Kalıpçı" ile "Kalıpçı"
+# UQ'da AYRI iki satır olur, ekranda aynı meslek iki kez görünürdü.
+TRADE_REQUIRED = "Meslek adı boş olamaz"
+
+# 422 — `worker_counts: null`. `null` bir NİYET DEĞİLDİR: sessizce yok sayılsaydı
+# "hepsini sil" demek isteyen kullanıcı sildiğini sanırdı. Temizlemenin tek yolu
+# BOŞ LİSTEDİR; alanın hiç gönderilmemesi ise "dokunma" demektir.
+WORKER_COUNTS_NULL = "İşçi kırılımı listesi null olamaz; temizlemek için boş liste gönderin"
 
 # 422 — `month` tek başına anlamsızdır ("her yılın temmuzu" bir dönem değildir).
 # Sessizce yok saymak, kullanıcının filtrelediğini sandığı bir listeyi filtresiz

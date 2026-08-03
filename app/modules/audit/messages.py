@@ -610,6 +610,17 @@ def site_diary_entry_updated(project_name: str, site_name: str, entry_date: date
     return f"Günlük kayıt güncellendi: {project_name} · {site_name} · {entry_date.isoformat()}"
 
 
+def site_diary_lines_saved(
+    project_name: str, site_name: str, entry_date: date, line_count: int
+) -> str:
+    """T3 `PUT …/lines`. `update` aksiyonuna oturur: satir kaydetmek kaydin
+    ICERIGINI degistirir, yeni bir kayit ACMAZ."""
+    return (
+        f"Günlük kayıt poz satırları kaydedildi: {project_name} · {site_name} "
+        f"· {entry_date.isoformat()} · {line_count} poz"
+    )
+
+
 def site_diary_entry_deleted(
     project_name: str, site_name: str, entry_date: date, status_label: str, line_count: int
 ) -> str:
