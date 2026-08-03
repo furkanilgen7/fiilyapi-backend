@@ -20,7 +20,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.boq.models import BoqGroup, BoqItem
-from app.modules.projects.models import Project
+from app.modules.contracts.models import EmployerContractGroup, EmployerContractItem
+from app.modules.projects.models import Project, ProjectContract
 from app.modules.site_diary.models import DiaryStatus, SiteDiaryEntry, SiteDiaryLine
 from app.modules.sites.models import Section, Site
 from app.modules.users.models import User, UserProjectAccess
@@ -122,6 +123,34 @@ async def pm_headers(
     """`project_manager` (`site_diary=_V`) — SALT OKUR; yazma uçlarında 403."""
     return await _scoped_headers(
         client, seeded_db, user_factory, "project_manager", "pm@sd-t2.co", proje
+    )
+
+
+@pytest.fixture
+async def patron_headers(
+    client: AsyncClient, seeded_db: AsyncSession, user_factory, proje: Project
+) -> dict[str, str]:
+    """`patron` — matriste `site_diary=_F` (şef/saha ile AYNI seviye).
+
+    T4 `reopen` kapısı `admin` seviyesidir; bu fixture "tam yetkili ama admin
+    DEĞİL" hâlinin ikinci kanıtıdır (matris DEĞİŞMEZ — spec §1).
+    """
+    return await _scoped_headers(
+        client, seeded_db, user_factory, "patron", "patron@sd-t2.co", proje
+    )
+
+
+@pytest.fixture
+async def kapsamli_admin_headers(
+    client: AsyncClient, seeded_db: AsyncSession, user_factory, proje: Project
+) -> dict[str, str]:
+    """`system_admin` (`site_diary=_A`) ama kapsamı TEK projeye kısıtlı.
+
+    `admin_headers` TÜM projeleri görür; `admin` kapılı `reopen` ucunun IDOR
+    yüzeyi ancak kapsamı kısıtlı bir admin ile kanıtlanabilir.
+    """
+    return await _scoped_headers(
+        client, seeded_db, user_factory, "system_admin", "kapsamli@sd-t4.co", proje
     )
 
 
@@ -233,6 +262,64 @@ def gunluk_fabrikasi(seeded_db: AsyncSession):
         seeded_db.add(entry)
         await seeded_db.flush()
         return entry
+
+    return _create
+
+
+@pytest.fixture
+def sozlesme_kalemi_fabrikasi(seeded_db: AsyncSession):
+    """İşveren sözleşmesi kalemi kurar ve BOQ pozuna KÖPRÜLER.
+
+    T4 `summary` ucunun `contract_item_*` alanlarının kaynağı budur
+    (`boq_items.contract_item_id`); T5 "günlükten doldur" önerisi de aynı köprüyü
+    tüketecektir.
+    """
+
+    async def _create(
+        boq_item: BoqItem,
+        project: Project,
+        *,
+        quantity: Decimal = Decimal("1200.000"),
+        unit_price: Decimal = Decimal("1850.00"),
+    ) -> EmployerContractItem:
+        if await seeded_db.get(ProjectContract, project.id) is None:
+            seeded_db.add(
+                ProjectContract(
+                    project_id=project.id,
+                    contract_no=f"{project.code}-SZL",
+                    amount=Decimal("11200000"),
+                )
+            )
+            await seeded_db.flush()
+        group = (
+            (
+                await seeded_db.execute(
+                    select(EmployerContractGroup).where(
+                        EmployerContractGroup.project_id == project.id
+                    )
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if group is None:
+            group = EmployerContractGroup(project_id=project.id, name="A — Betonarme", sort_order=0)
+            seeded_db.add(group)
+            await seeded_db.flush()
+        item = EmployerContractItem(
+            project_id=project.id,
+            group_id=group.id,
+            code=f"SZL-{boq_item.code}",
+            description=f"{boq_item.code} sözleşme kalemi",
+            unit=boq_item.unit,
+            quantity=quantity,
+            unit_price=unit_price,
+        )
+        seeded_db.add(item)
+        await seeded_db.flush()
+        boq_item.contract_item_id = item.id
+        await seeded_db.flush()
+        return item
 
     return _create
 

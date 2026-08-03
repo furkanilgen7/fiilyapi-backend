@@ -621,6 +621,20 @@ def site_diary_lines_saved(
     )
 
 
+def site_diary_entry_submitted(project_name: str, site_name: str, entry_date: date) -> str:
+    """T4 `POST …/submit`. `update` aksiyonuna oturur: `AuditAction.approve` HAKEDIS
+    onayina ayrilmistir — gunluk gonderimi bir onay DEGILDIR (iki durumlu akis)."""
+    return f"Günlük kayıt gönderildi: {project_name} · {site_name} · {entry_date.isoformat()}"
+
+
+def site_diary_entry_reopened(project_name: str, site_name: str, entry_date: date) -> str:
+    """T4 `POST …/reopen` — YALNIZ admin. Denetim satiri kritiktir: gonderilmis bir
+    kaydin yeniden yazilabilir hale gelmesi hakedise giden veriyi degistirir."""
+    return (
+        f"Günlük kayıt taslağa geri alındı: {project_name} · {site_name} · {entry_date.isoformat()}"
+    )
+
+
 def site_diary_entry_deleted(
     project_name: str, site_name: str, entry_date: date, status_label: str, line_count: int
 ) -> str:

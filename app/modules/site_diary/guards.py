@@ -13,6 +13,7 @@ from app.modules.sites.guards import SITE_MISSING
 __all__ = [
     "DELETE_NOT_ALLOWED",
     "DUPLICATE_LINE",
+    "INVALID_STATUS_TRANSITION",
     "DUPLICATE_WORKER_COUNT",
     "ENTRY_DATE_TAKEN",
     "ENTRY_MISSING",
@@ -82,6 +83,17 @@ TRADE_REQUIRED = "Meslek adı boş olamaz"
 # "hepsini sil" demek isteyen kullanıcı sildiğini sanırdı. Temizlemenin tek yolu
 # BOŞ LİSTEDİR; alanın hiç gönderilmemesi ise "dokunma" demektir.
 WORKER_COUNTS_NULL = "İşçi kırılımı listesi null olamaz; temizlemek için boş liste gönderin"
+
+# --- T4: durum akışı ---
+
+# 409 (`ConflictError`) — geçiş tablosunda (`transitions.TRANSITIONS`) OLMAYAN
+# hücre. Sessiz/idempotent geçiş YOKTUR: ikinci kez "Gönder"e basan kullanıcıya
+# "gönderdim" demek ilk gönderimin damgasını sessizce üzerine yazmak olurdu,
+# taslak bir kaydı "geri al"mak da hiç yapılmamış bir işi yapılmış göstermek.
+# TEK cümle iki yönü de kapsar (`subcontractor_progress_payments.guards`
+# deseninin aynısı): hangi geçişin neden reddedildiğini ayrıştırmak, kaydın
+# durumunu bilmeyen bir istemciye durum bilgisi sızdırmaktır.
+INVALID_STATUS_TRANSITION = "Bu durum geçişi yapılamaz"
 
 # 422 — `month` tek başına anlamsızdır ("her yılın temmuzu" bir dönem değildir).
 # Sessizce yok saymak, kullanıcının filtrelediğini sandığı bir listeyi filtresiz

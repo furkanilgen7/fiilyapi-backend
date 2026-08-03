@@ -25,6 +25,8 @@ __all__ = [
     "SiteDiaryLineInput",
     "SiteDiaryLineRead",
     "SiteDiaryLinesSave",
+    "SiteDiarySummary",
+    "SiteDiarySummaryItem",
     "SiteDiaryWorkerCountInput",
     "SiteDiaryWorkerCountRead",
 ]
@@ -264,4 +266,69 @@ class SiteDiaryEntryDetail(BaseModel):
     dropped_orphan_count: int | None = None
     """YALNIZ `PUT …/lines` yanıtında dolar (T3). Bağı kopmuş satır (`boq_item_id
     IS NULL`, FK `SET NULL`) gövdeden ADRESLENEMEZ, bu yüzden ilk kaydetmede
-    düşer — kaçınılmaz ama SESSİZ değil: sayısı kullanıcıya bildirilir."""
+    düşer — kaçınılmaz ama SESSİZ değil: sayısı kullanıcıya bildirilir.
+
+    `submit`/`reopen` yanıtlarında NULL kalır: durum geçişi satır DÜŞÜRMEZ."""
+
+
+# --- Agregasyon (T4) — `Şantiye - Hakediş Özeti` ekranının veri sözleşmesi ---
+
+
+class SiteDiarySummaryItem(BaseModel):
+    """Hakediş Özeti tablosunun bir SATIRI (mockup `Şantiye - Hakediş Özeti` L127).
+
+    Sütun eşlemesi mockup'tan okunur, tahmin EDİLMEZ:
+    L131 "İş Kalemi" → `code`/`description` · L132 "Sözleşme" → `boq_quantity` ×
+    `unit_price` = `boq_amount` (GK L226 "Sözleşme: 1.200 m³ · Birim fiyat:
+    ₺1.850") · L133 "Bu Ay" → `quantity`/`amount` · L134 "%" → `completion_ratio`.
+    """
+
+    boq_item_id: uuid.UUID
+    code: str = Field(max_length=50)
+    description: str
+    unit: str = Field(max_length=50)
+    unit_price: Decimal
+    """BOQ kaleminin GÜNCEL birim fiyatı ("Sözleşme" sütununun çarpanı). `amount`
+    bundan HESAPLANMAZ — o, satırların DONMUŞ snapshot fiyatlarından gelir."""
+    quantity: Decimal
+    """Dönemde **gönderilmiş** günlerin poz bazlı miktar toplamı (HÖ L133).
+    Taslak günler GİRMEZ (spec §3) — T3 kümülatifiyle AYNI süzgeç."""
+    amount: Decimal
+    """Dönemin ₺ katkısı: satır bazında yuvarlanmış `line_amount` toplamı
+    (`read.line_amount`, TEK kopya). Fiyat SATIRIN snapshot'ından gelir: geçmiş
+    ayın hakedişi, BOQ fiyatı bugün değiştiği için yeniden yazılamaz."""
+    boq_quantity: Decimal
+    boq_amount: Decimal
+    completion_ratio: Decimal | None
+    """HÖ L134 "%" — `quantity / boq_quantity` (GK L229 "900 / 1.200" = %75).
+    Sözleşme miktarı sıfırsa NULL: sıfıra bölmek yerine "oran tanımsız" denir."""
+    contract_item_id: uuid.UUID | None
+    """`boq_items.contract_item_id` KÖPRÜSÜ (plan T4). T5 "günlükten doldur"
+    önerisi günlük miktarını bu kimlik üzerinden işveren hakedişi satırına
+    eşleyecektir. Şantiyenin kendi açtığı poz için NULL'dur — sessizce
+    düşürülmez, ekranda "sözleşmesiz" olarak görünür."""
+    contract_item_quantity: Decimal | None
+    contract_item_unit_price: Decimal | None
+
+
+class SiteDiarySummary(BaseModel):
+    """`GET /sites/{site_id}/diary/summary` — YALNIZ `submitted` günler (spec §3).
+
+    `total_amount` mockup'ın tfoot'udur (HÖ L165-168 "Bu Ay Toplam ₺269.200").
+    Sözleşme sütununun TOPLAMI YOKTUR: mockup'ta o tfoot hücresi BOŞTUR (L166) —
+    icat edilmez.
+
+    Ekranın diğer KPI kartları (HÖ L101 "İşveren Hakediş", L106 "Taşeron
+    Ödemeleri", L111 "Brüt Kar", L116 "Kümülatif Hakediş") günlükten DEĞİL
+    hakediş modüllerinden beslenir; bu uç onları ÜRETMEZ.
+    """
+
+    site_id: uuid.UUID
+    year: int | None
+    month: int | None
+    """Seçilen dönem ECHO edilir — ekran hangi ayı gösterdiğini bilmelidir (HÖ L86)."""
+    entry_count: int
+    """Özete giren GÜN sayısı. "Hiç gönderilmemiş" ile "gönderilmiş ama miktarı
+    sıfır" hâllerini ayırır; boş küme 404 değil sıfırlı özettir (zarif düşüş)."""
+    items: list[SiteDiarySummaryItem]
+    total_amount: Decimal

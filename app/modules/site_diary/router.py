@@ -7,8 +7,11 @@ uçlarında 403 alır; şef ve saha mühendisi (`_F`) tam yetkilidir.
 Denetim günlüğü (`record_audit`) TÜM yazma uçlarına bağlıdır; mesajlar
 `app/modules/audit/messages.py`de merkezîdir.
 
-Kapsam DIŞI: `PUT …/lines` + işçi kırılımı yazma (T3), `submit`/`reopen` ve
-`summary` (T4), `diary-suggestion` (T5).
+T4'te eklenenler: `GET …/diary/summary` (aşağıda) ve durum aksiyonları
+(`submit`/`reopen` — `router_transitions.py`de, dosya sonunda `include_router`
+ile BAĞLANIR; modül dışına tek bir router çıkar).
+
+Kapsam DIŞI: `diary-suggestion` (T5).
 """
 
 import uuid
@@ -27,13 +30,14 @@ from app.core.ratelimit import client_ip
 from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
-from app.modules.site_diary import guards, read, service
+from app.modules.site_diary import guards, read, router_transitions, service, summary
 from app.modules.site_diary.schemas import (
     SiteDiaryEntryCreate,
     SiteDiaryEntryDetail,
     SiteDiaryEntryListResponse,
     SiteDiaryEntryUpdate,
     SiteDiaryLinesSave,
+    SiteDiarySummary,
 )
 from app.modules.users.models import User
 
@@ -68,6 +72,29 @@ async def list_site_diary_entries_endpoint(
     return await read.list_entries(
         session, user, site_id, year=year, month=month, limit=limit, offset=offset
     )
+
+
+@router.get(
+    "/sites/{site_id}/diary/summary",
+    response_model=SiteDiarySummary,
+    dependencies=[_VIEW],
+)
+async def get_site_diary_summary_endpoint(
+    site_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    year: int | None = None,
+    month: Annotated[int | None, Query(ge=1, le=12)] = None,
+) -> SiteDiarySummary:
+    """Hakediş Özeti ekranının veri kaynağı — YALNIZ `submitted` günler (spec §3).
+
+    Dönem kuralı liste ucuyla BİREBİR AYNIDIR (`month` tek başına 422): iki uç
+    farklı süzgeç kabul etseydi aynı ekranın iki bölümü farklı dönemi gösterirdi.
+    Kesin kararlar `summary.get_summary`dedir.
+    """
+    if month is not None and year is None:
+        raise SiteValidationError(guards.YEAR_REQUIRED_FOR_MONTH)
+    return await summary.get_summary(session, user, site_id, year=year, month=month)
 
 
 @router.get("/diary/{entry_id}", response_model=SiteDiaryEntryDetail, dependencies=[_VIEW])
@@ -197,3 +224,8 @@ async def delete_site_diary_entry_endpoint(
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
+
+
+# Durum aksiyonları (T4) AYRI dosyadadır ama modül dışına TEK router çıkar —
+# `app/main.py` yalnız bu nesneyi bağlar (taşeron `router.py` deseninin aynısı).
+router.include_router(router_transitions.router)

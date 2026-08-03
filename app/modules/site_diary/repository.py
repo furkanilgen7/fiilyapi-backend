@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.boq.models import BoqItem
+from app.modules.contracts.models import EmployerContractItem
 from app.modules.site_diary.models import DiaryStatus, SiteDiaryEntry, SiteDiaryLine
 from app.modules.sites.models import Section, Site
 
@@ -145,17 +146,28 @@ def _month_bounds(year: int, month: int | None) -> tuple[date, date]:
     return date(year, month, 1), date(year, month, calendar.monthrange(year, month)[1])
 
 
+def period_conditions(*, year: int | None, month: int | None) -> list:
+    """Dönem süzgecinin TEK kopyası — liste, sayaç ve T4 `summary` aynı gövdeyi okur.
+
+    Süzgeci her uç kendi kopyasıyla kursaydı, aynı ekranda görünen liste ile
+    hakediş özeti zamanla FARKLI günleri kapsardı. `year is None` = süzgeç yok
+    (tüm dönem); `month` YALNIZ `year` ile anlamlıdır (router 422 verir).
+    """
+    if year is None:
+        return []
+    start, end = _month_bounds(year, month)
+    return [SiteDiaryEntry.entry_date.between(start, end)]
+
+
 def _list_stmt(site_id: uuid.UUID, *, year: int | None, month: int | None):
     """Liste ve sayaç sorgusunun PAYLAŞTIĞI `WHERE` gövdesi.
 
     İki sorgu ayrı süzgeç kopyası taşısaydı `total` ile `items` zamanla farklı
     kümeleri sayardı — sayfalamanın en sinsi hatası.
     """
-    stmt = select(SiteDiaryEntry).where(SiteDiaryEntry.site_id == site_id)
-    if year is not None:
-        start, end = _month_bounds(year, month)
-        stmt = stmt.where(SiteDiaryEntry.entry_date.between(start, end))
-    return stmt
+    return select(SiteDiaryEntry).where(
+        SiteDiaryEntry.site_id == site_id, *period_conditions(year=year, month=month)
+    )
 
 
 async def list_entries(
@@ -184,3 +196,54 @@ async def count_entries(
     inner = _list_stmt(site_id, year=year, month=month).with_only_columns(SiteDiaryEntry.id)
     stmt = select(func.count()).select_from(inner.subquery())
     return int((await session.execute(stmt)).scalar_one())
+
+
+# --- T4: agregasyon (yalnız `submitted`) ---
+
+
+async def count_submitted_entries(
+    session: AsyncSession, site_id: uuid.UUID, *, year: int | None, month: int | None
+) -> int:
+    """Özetin kaç GÜNDEN oluştuğu. Süzgeç gövdesi liste ucuyla ORTAKTIR
+    (`period_conditions`); `submitted` kısıtı spec §3'ün kuralıdır."""
+    stmt = select(func.count(SiteDiaryEntry.id)).where(
+        SiteDiaryEntry.site_id == site_id,
+        SiteDiaryEntry.status == DiaryStatus.submitted,
+        *period_conditions(year=year, month=month),
+    )
+    return int((await session.execute(stmt)).scalar_one())
+
+
+async def summary_lines(
+    session: AsyncSession, site_id: uuid.UUID, *, year: int | None, month: int | None
+) -> list[tuple[SiteDiaryLine, BoqItem, EmployerContractItem | None]]:
+    """Hakediş Özeti ekranının HAM satırları: dönemdeki **gönderilmiş** günlerin
+    poz satırları + BOQ kalemi + (varsa) köprülendiği işveren sözleşmesi kalemi.
+
+    Toplama SQL'de DEĞİL bellekte yapılır (`summary.py`): satır ₺'si kuruş
+    bazında satır düzeyinde yuvarlanır (`read.line_amount`) — SQL'de `SUM`
+    almak para matematiğinin ikinci bir kopyasını doğururdu.
+
+    `join` (INNER) bilinçlidir: `boq_item_id IS NULL` olan bağı-kopmuş satır
+    hangi poza yazılacağını KAYBETMİŞTİR, düşer — `cumulative_quantities_before`
+    ile AYNI kural (iki ekran aynı sayıyı söylemek zorundadır).
+
+    Sıralama `BoqItem.code`tur: günlük satırları da (`SiteDiaryLine.code`) böyle
+    sıralanır.
+    """
+    stmt = (
+        select(SiteDiaryLine, BoqItem, EmployerContractItem)
+        .join(SiteDiaryEntry, SiteDiaryEntry.id == SiteDiaryLine.entry_id)
+        .join(BoqItem, BoqItem.id == SiteDiaryLine.boq_item_id)
+        .outerjoin(EmployerContractItem, EmployerContractItem.id == BoqItem.contract_item_id)
+        .where(
+            SiteDiaryEntry.site_id == site_id,
+            SiteDiaryEntry.status == DiaryStatus.submitted,
+            *period_conditions(year=year, month=month),
+        )
+        .order_by(BoqItem.code)
+    )
+    return [
+        (line, item, contract_item)
+        for line, item, contract_item in (await session.execute(stmt)).all()
+    ]
