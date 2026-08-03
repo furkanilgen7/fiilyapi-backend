@@ -112,6 +112,11 @@ async def test_taahhut_item_has_contracting_placeholders(seeded_db, user_factory
     assert item.contract_amount == Decimal("11200000.00")
     assert item.contracting.spent.available is False
     assert item.contracting.spent.pending_module == "progress_payments"
+    # T4 (puantaj §4): `worker_count` YER TUTUCU DEGIL — kaydi olmayan projede
+    # bile `available` true, sayi UYDURULMAZ (0). Davranisin tamami
+    # `tests/timesheet/test_worker_count_binding.py`de.
+    assert item.contracting.worker_count.available is True
+    assert item.contracting.worker_count.count == 0
     assert item.contracting.worker_count.pending_module == "timesheet"
     assert item.contracting.subcontractor_count.pending_module == "subcontracts"
 

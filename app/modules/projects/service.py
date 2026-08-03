@@ -50,6 +50,10 @@ from app.modules.roles.repository import get_permission
 # okuyabilmek icin o modulun yuklenmis olmasi sarttir. Dongusel import YOK:
 # sites.models yalniz projects.models'i import eder, projects.service'i degil.
 from app.modules.sites.models import Site  # noqa: F401
+
+# Isci sayacinin TEK kaynagi puantaj modulüdur (T4, puantaj spec §4): donem
+# karari (icinde bulunulan ay) ve DISTINCT kurali orada gerekcelenmistir.
+from app.modules.timesheet import counts as timesheet_counts
 from app.modules.users.models import User
 
 # Spec §2: bos durum alanlari ve bagli olduklari dilim anahtarlari.
@@ -97,12 +101,23 @@ def _count(pending_module: str) -> CountPlaceholder:
     return CountPlaceholder(pending_module=pending_module)
 
 
-def _contracting_card() -> ContractingCard:
+def _worker_count(value: int) -> CountPlaceholder:
+    """T4 — `_TIMESHEET` yer tutucusunun BAGLANMIS hali (puantaj spec §4).
+
+    Zarf KORUNUR, yalnizca doldurulur (`available=True` + gercek `count`):
+    taahhut kartinin diger sayaclari hâlâ yer tutucudur ve ayni serit iki farkli
+    sozlesme tasimamalidir. Sayim `timesheet.counts`tadir — bu modul kendi
+    `SELECT`ini yazmaz.
+    """
+    return CountPlaceholder(available=True, count=value, pending_module=_TIMESHEET)
+
+
+def _contracting_card(worker_count: int) -> ContractingCard:
     return ContractingCard(
         spent=_metric(_PROGRESS_PAYMENTS),
         physical_progress=_metric(_PROGRESS_PAYMENTS),
         final_progress_payment=_metric(_PROGRESS_PAYMENTS),
-        worker_count=_count(_TIMESHEET),
+        worker_count=_worker_count(worker_count),
         subcontractor_count=_count(_SUBCONTRACTS),
     )
 
@@ -149,7 +164,7 @@ def _land_share_card(project: Project) -> LandShareCard | None:
     )
 
 
-def _to_item(project: Project) -> ProjectListItem:
+def _to_item(project: Project, worker_count: int) -> ProjectListItem:
     """ProjectListItem.model_validate(project) calisamaz: ORM nesnesinde
     contracting/investment/land_share alanlari (bunlar turetilmis karttir, DB
     sutunu degil) yok — bu yuzden ortak alanlar elle cikarilir."""
@@ -182,14 +197,23 @@ def _to_item(project: Project) -> ProjectListItem:
         is_draft=project.is_draft,
         budget=project.budget,
         progress_pct=project.progress_pct,
-        contracting=_contracting_card() if is_contracting else None,
+        contracting=_contracting_card(worker_count) if is_contracting else None,
         investment=_investment_card(project) if is_investment else None,
         land_share=_land_share_card(project) if is_land_share else None,
     )
 
 
-def to_detail(project: Project) -> ProjectDetailResponse:
-    return ProjectDetailResponse(**_to_item(project).model_dump(), site_count=len(project.sites))
+def to_detail(project: Project, worker_count: int) -> ProjectDetailResponse:
+    return ProjectDetailResponse(
+        **_to_item(project, worker_count).model_dump(), site_count=len(project.sites)
+    )
+
+
+async def build_project_detail(session: AsyncSession, project: Project) -> ProjectDetailResponse:
+    """Proje detay zarfi + isci sayaci. YAZMA uclarinin yaniti da buradan gecer:
+    okuma ve yazma ayni zarfi tasimazsa ekran kaydettikten sonra sayaci kaybeder."""
+    worker_counts = await timesheet_counts.by_project(session, [project.id])
+    return to_detail(project, worker_counts.get(project.id, 0))
 
 
 async def visible_projects(session: AsyncSession, actor: User) -> list[Project]:
@@ -233,7 +257,11 @@ async def list_projects_overview(
     if status_filter is not None:
         wanted_status = ProjectStatus(status_filter)
         selected = [p for p in selected if p.status is wanted_status]
-    return ProjectListResponse(counts=_counts(visible), items=[_to_item(p) for p in selected])
+    worker_counts = await timesheet_counts.by_project(session, [p.id for p in selected])
+    return ProjectListResponse(
+        counts=_counts(visible),
+        items=[_to_item(p, worker_counts.get(p.id, 0)) for p in selected],
+    )
 
 
 async def _visible_project(session: AsyncSession, actor: User, project_id: uuid.UUID) -> Project:
@@ -253,7 +281,7 @@ async def _visible_project(session: AsyncSession, actor: User, project_id: uuid.
 async def get_project_detail(
     session: AsyncSession, actor: User, project_id: uuid.UUID
 ) -> ProjectDetailResponse:
-    return to_detail(await _visible_project(session, actor, project_id))
+    return await build_project_detail(session, await _visible_project(session, actor, project_id))
 
 
 def _ensure_type_consistency(

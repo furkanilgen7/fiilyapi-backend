@@ -66,6 +66,18 @@ class CustomerValidationError(DomainError):
     """
 
 
+class PersonnelValidationError(DomainError):
+    """Personel kaynak/taşeron uyuşmazlığı (puantaj spec §2) — 422.
+
+    `CustomerValidationError` deseninin aynısı: DB `CHECK`
+    (`ck_personnel_subcontractor_only_for_subcontractor_source`) VARDIR ama ihlali
+    409 "Veri bütünlüğü hatası" verirdi; kullanıcı hangi alanı düzelteceğini
+    öğrenemezdi. Servis korkuluğu DB'ye düşmeden Türkçe 422 atar, CHECK ikinci
+    katman olarak kalır. Pydantic'te DEĞİL: PATCH kısmi gövde gönderir, kural
+    ancak DB'deki kayıtla birleştirilmiş değerler üzerinde anlamlıdır.
+    """
+
+
 class RelatedRecordsExistError(DomainError):
     """Silinmek istenen kayda bağlı alt kayıtlar var (Alt-Proje 2 P3 spec §7.9) — 409.
 

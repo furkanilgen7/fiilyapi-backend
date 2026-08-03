@@ -17,6 +17,7 @@ from app.modules.company.router import router as company_router
 from app.modules.contracts.router import router as contracts_router
 from app.modules.customers.router import router as customers_router
 from app.modules.dashboard.router import router as dashboard_router
+from app.modules.personnel.router import router as personnel_router
 from app.modules.progress_payments.router import router as progress_payments_router
 from app.modules.projects.router import employers_router
 from app.modules.projects.router import router as projects_router
@@ -28,6 +29,7 @@ from app.modules.sites.router import router as sites_router
 from app.modules.subcontractor_progress_payments.router import (
     router as subcontractor_progress_payments_router,
 )
+from app.modules.timesheet.router import router as timesheet_router
 from app.modules.units.router import router as units_router
 from app.modules.users.router import router as users_router
 
@@ -80,6 +82,7 @@ app.include_router(contracts_router)
 app.include_router(customers_router)
 app.include_router(dashboard_router)
 app.include_router(employers_router)
+app.include_router(personnel_router)
 app.include_router(progress_payments_router)
 app.include_router(projects_router)
 app.include_router(roles_router)
@@ -88,6 +91,7 @@ app.include_router(settings_router)
 app.include_router(site_diary_router)
 app.include_router(sites_router)
 app.include_router(subcontractor_progress_payments_router)
+app.include_router(timesheet_router)
 app.include_router(units_router)
 app.include_router(users_router)
 

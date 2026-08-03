@@ -68,7 +68,7 @@ async def _audit(
 async def _detail_of(session: AsyncSession, site: Site) -> SiteDetailResponse:
     """Yazma uclarinin yaniti da okuma ucuyla ayni zarfi tasir."""
     await session.refresh(site, attribute_names=["sections", "project"])
-    return service.to_detail(site, site.project)
+    return await service.build_site_detail(session, site, site.project)
 
 
 @router.get("/projects/{project_id}/sites", response_model=SiteListResponse, dependencies=[_VIEW])
@@ -198,7 +198,7 @@ async def create_section_endpoint(
         AuditAction.create,
         messages.section_created(await _owning_site_name(session, section), section.name),
     )
-    return service.to_section_detail(section)
+    return await service.build_section_detail(session, section)
 
 
 @router.get("/sections/{section_id}", response_model=SectionDetailResponse, dependencies=[_VIEW])
@@ -251,4 +251,4 @@ async def update_section_endpoint(
     # `is_draft` degeri yalniz orada gorunur.
     section, detail = await service.update_section(session, current_user, section_id, data)
     await _audit(request, session, current_user, AuditAction.update, detail)
-    return service.to_section_detail(section)
+    return await service.build_section_detail(session, section)
