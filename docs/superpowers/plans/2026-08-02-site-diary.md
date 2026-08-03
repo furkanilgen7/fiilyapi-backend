@@ -43,3 +43,38 @@ Her task = tek subagent + commit · TDD (önce test, KIRMIZI) · DB komutları H
 - Odak: IDOR · UQ/409 · draft-kilidi (submitted kayda yazma delikleri) · öneri uçlarının salt-okunurluğu ·
   türev tutarlılığı (summary ↔ lines) · kalıcı karar taraması (fotoğraf/planlama/malzeme sızıntısı var mı).
 - `ARCHITECTURE-BACKEND.md` + `ROADMAP-BACKEND.md` güncelle, commit. Push/PR/merge/deploy kullanıcıda.
+
+---
+
+## T6 devir notu — frontend ekran dilimi için (2026-08-03)
+
+Backend T1-T5 bitti, kapanış doğrulamaları temiz (2160 test · ruff check+format tüm repo ·
+`alembic check` "No new upgrade operations" · tek head `b5c6d7e8f9a0` · sıfır DB'de
+upgrade→downgrade(`d4e5f6a7b8c9`)→upgrade turu hatasız).
+
+**Sözleşme devri YAPILDI:** `backend/openapi.json` üretildi ve
+`frontend/openapi/openapi.json`'a kopyalandı. Yol sayısı **91 → 99** (8 yeni yol, silinen yok):
+
+| Yol | Metotlar |
+|---|---|
+| `/sites/{site_id}/diary` | POST, GET |
+| `/sites/{site_id}/diary/summary` | GET |
+| `/diary/{entry_id}` | GET, PATCH, DELETE |
+| `/diary/{entry_id}/lines` | PUT |
+| `/diary/{entry_id}/submit` | POST |
+| `/diary/{entry_id}/reopen` | POST |
+| `/projects/{project_id}/progress-payments/diary-suggestion` | GET |
+| `/subcontractor-contracts/{contract_id}/progress-payments/diary-suggestion` | GET |
+
+### Ekran diliminde yapılacaklar (sırayla)
+
+1. **`pnpm gen:api` KOŞULMALI.** Frontend'de yalnız `openapi/openapi.json` güncellendi;
+   `src/lib/api/schema.d.ts` YENİDEN ÜRETİLMEDİ (bu dilimin işi değildi). Tipler olmadan
+   yeni uçlar tip-güvenli çağrılamaz.
+2. **BFF `ALLOWED_ROOTS`'a `diary` kökü EKLENMELİ** —
+   `frontend/src/app/api/backend/[...path]/route.ts`. 2026-08-03 itibarıyla listede **YOK**
+   (grep'le doğrulandı). Eksikse `/diary/{entry_id}`, `.../lines`, `.../submit`, `.../reopen`
+   uçlarının hepsi **yalnız canlıda 404** alır — bilinen tuzak, jsdom testleri görmez.
+   Günlük oluşturma/listeleme/özet `/sites/...` altından gelir, o kök zaten izinlidir.
+3. **Öneri uçlarının kökleri zaten izinli** (doğrulandı): `projects` ✅ ve
+   `subcontractor-contracts` ✅ listede var — bu iki uç için ek BFF işi yok.
