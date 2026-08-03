@@ -11,7 +11,7 @@ yalnız SQL kurar, yetki/kapsam kararı vermez.
 import uuid
 from datetime import date, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.site_planning.models import (
@@ -114,3 +114,100 @@ async def active_sprint(session: AsyncSession, site_id: uuid.UUID) -> SitePlanSp
         SitePlanSprint.site_id == site_id, SitePlanSprint.is_active.is_(True)
     )
     return (await session.execute(stmt)).scalars().first()
+
+
+# --- T3 yazma yolu: kilitli okumalar + toplu silme ---
+#
+# Kilit KAPSAM BAŞINA alınır, kayıt başına değil (`timesheet.locked_period_entries`
+# gerekçesinin aynısı): "değiştirme" tek bir mantıksal işlemdir ve iki eşzamanlı
+# kaydetme birbirinin sildiği/eklediği satırları yarıştırırsa ızgara ikisinin de
+# olmadığı bir hâlde kalır. Sıralama her sorguda SABİTTİR — iki istek kayıtları
+# farklı sırada kilitlerse kilitlenme (deadlock) doğar.
+
+
+async def locked_site_rows(session: AsyncSession, site_id: uuid.UUID) -> list[SitePlanRow]:
+    """`SELECT … FOR UPDATE` — şantiyenin TÜM plan satırları.
+
+    Satır kümesi bir bütün olarak değiştirilir (etiket tekilliği kümenin
+    tamamına bakar), bu yüzden kilit de kümenin tamamınadır.
+    """
+    stmt = (
+        select(SitePlanRow)
+        .where(SitePlanRow.site_id == site_id)
+        .order_by(SitePlanRow.id)
+        .with_for_update()
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def locked_week_cells(
+    session: AsyncSession, site_id: uuid.UUID, week_start: date
+) -> list[SitePlanCell]:
+    """`SELECT … FOR UPDATE` — YALNIZ o hafta + o şantiyenin hücreleri.
+
+    ⚠️ Kilidin kapsamı silme koşuluyla BİREBİR aynıdır (`week_cells` ile aynı üç
+    koşul): kilit daha darsa yarış penceresi kalır, daha genişse komşu haftanın
+    kaydetmesi gereksiz yere bloklanır.
+    """
+    start, end = week_bounds(week_start)
+    site_rows = select(SitePlanRow.id).where(SitePlanRow.site_id == site_id)
+    stmt = (
+        select(SitePlanCell)
+        .where(
+            SitePlanCell.row_id.in_(site_rows),
+            SitePlanCell.plan_date >= start,
+            SitePlanCell.plan_date <= end,
+        )
+        .order_by(SitePlanCell.row_id, SitePlanCell.plan_date)
+        .with_for_update()
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def locked_week_goals(
+    session: AsyncSession, site_id: uuid.UUID, week_start: date
+) -> list[SitePlanGoal]:
+    """`SELECT … FOR UPDATE` — o haftanın hedefleri (silme koşuluyla aynı ikili)."""
+    stmt = (
+        select(SitePlanGoal)
+        .where(SitePlanGoal.site_id == site_id, SitePlanGoal.week_start == week_start)
+        .order_by(SitePlanGoal.id)
+        .with_for_update()
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def locked_site_sprints(session: AsyncSession, site_id: uuid.UUID) -> list[SitePlanSprint]:
+    """`SELECT … FOR UPDATE` — şantiyenin TÜM sprintleri (pasifler dahil).
+
+    Yalnız aktifi kilitlemek YETMEZ: iki eşzamanlı istek "aktif yok" görüp ikisi
+    de yeni aktif satır açarsa kısmi UQ ihlali doğar. Şantiye başına kilit bu
+    pencereyi kapatır.
+    """
+    stmt = (
+        select(SitePlanSprint)
+        .where(SitePlanSprint.site_id == site_id)
+        .order_by(SitePlanSprint.id)
+        .with_for_update()
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def delete_rows(session: AsyncSession, row_ids: list[uuid.UUID]) -> None:
+    """Satırları siler; hücreleri FK `ondelete="CASCADE"` ile DB'de düşer —
+    uygulama katmanı hücreleri ayrıca silmez (iki kaynak ayrışırdı)."""
+    if not row_ids:
+        return
+    await session.execute(delete(SitePlanRow).where(SitePlanRow.id.in_(row_ids)))
+
+
+async def delete_cells(session: AsyncSession, cell_ids: list[uuid.UUID]) -> None:
+    if not cell_ids:
+        return
+    await session.execute(delete(SitePlanCell).where(SitePlanCell.id.in_(cell_ids)))
+
+
+async def delete_goals(session: AsyncSession, goal_ids: list[uuid.UUID]) -> None:
+    if not goal_ids:
+        return
+    await session.execute(delete(SitePlanGoal).where(SitePlanGoal.id.in_(goal_ids)))

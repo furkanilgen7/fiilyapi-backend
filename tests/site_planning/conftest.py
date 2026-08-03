@@ -171,6 +171,21 @@ async def pm_headers(
 
 
 @pytest.fixture
+async def saha_muh_headers(
+    client: AsyncClient, seeded_db: AsyncSession, user_factory, proje: Project
+) -> dict[str, str]:
+    """`field_engineer` (`site_diary=_F`) — T3 yazma uçlarını KULLANABİLMELİ.
+
+    Puantajdan (`timesheet=_V`) bilinçli fark: planı saha mühendisi de doldurur,
+    matrisi yalnız şef doldurur. İkisi AYNI izin modülünde olsaydı bu ayrım
+    kaybolurdu.
+    """
+    return await _scoped_headers(
+        client, seeded_db, user_factory, "field_engineer", "saha@pl-t3.co", proje
+    )
+
+
+@pytest.fixture
 async def ik_headers(client: AsyncClient, seeded_db: AsyncSession, user_factory) -> dict[str, str]:
     """`hr_manager` (`site_diary=_N`) — okumada bile 403 (kapı en dışta)."""
     token = await _login(client, user_factory, "hr_manager", "ik@pl-t2.co")
@@ -266,3 +281,21 @@ def sprint_fabrikasi(seeded_db: AsyncSession):
 
 def plan_url(site_id: uuid.UUID, week_start: date = HAFTA) -> str:
     return f"/sites/{site_id}/plan?week_start={week_start.isoformat()}"
+
+
+def rows_url(site_id: uuid.UUID) -> str:
+    """`PUT …/plan/rows` — satır listesi HAFTADAN BAĞIMSIZDIR (spec §2): satır
+    ızgaranın kaynağıdır, hücre haftaya aittir."""
+    return f"/sites/{site_id}/plan/rows"
+
+
+def cells_url(site_id: uuid.UUID, week_start: date = HAFTA) -> str:
+    return f"/sites/{site_id}/plan/cells?week_start={week_start.isoformat()}"
+
+
+def goals_url(site_id: uuid.UUID, week_start: date = HAFTA) -> str:
+    return f"/sites/{site_id}/plan/goals?week_start={week_start.isoformat()}"
+
+
+def sprint_url(site_id: uuid.UUID) -> str:
+    return f"/sites/{site_id}/plan/sprint"

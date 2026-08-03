@@ -24,7 +24,7 @@ katmanının işidir. Sonraki okuyucu buraya "gerçekleşen" alanı EKLEMESİN.
 import uuid
 from datetime import date
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.modules.site_planning.models import PlanCellTag, PlanGoalStatus, PlanResourceKind
 
@@ -127,3 +127,138 @@ class SitePlanWeek(BaseModel):
     goals: list[SitePlanGoalRead]
     # Aktif sprint YOKSA `null` — geçmiş sprint şeride yazılmaz.
     active_sprint: SitePlanSprintRead | None
+
+
+# --- T3 yazma şemaları (DEĞİŞTİRME semantiği) ---
+#
+# Dört ucun DÖRDÜ de "değiştirme"dir: gövde ilgili kapsamın TAM kümesidir,
+# gönderilmeyen kayıt SİLİNİR. Mockup'ta tek "Kaydet" düğmesi vardır (P97) —
+# taslak/onay akışı, durum kolonu ya da kilitleme AÇILMAZ (spec §3). Sonraki
+# okuyucu buraya durum makinesi EKLEMESİN.
+#
+# `project_id` HİÇBİR giriş şemasında YOKTUR: kapsam alanı şantiyeden KOPYALANIR.
+# İstemciden alınsaydı görünür bir şantiyeye görünmez bir projenin satırı
+# yazılabilirdi. `extra="forbid"` bunu sessiz yok saymak yerine 422 yapar.
+
+
+class SitePlanRowInput(BaseModel):
+    """`PUT …/plan/rows` gövdesinin tek satırı.
+
+    `id` VARSA mevcut satır güncellenir, YOKSA yeni satır açılır. Kimlik gövdede
+    taşınır çünkü etiketi değişen bir satırın hücreleri KORUNMALIDIR: doğal
+    anahtarla eşleşseydi her yeniden adlandırma sil+ekle olur ve hücreler
+    CASCADE ile giderdi (sessiz veri kaybı).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: uuid.UUID | None = None
+    kind: PlanResourceKind
+    # Ekipmanda NULL ZORUNLUDUR (spec §2) — korkuluk
+    # `guards.EQUIPMENT_ROW_HAS_SECTION`.
+    section_id: uuid.UUID | None = None
+    label: str = Field(min_length=1, max_length=100)
+    planned_worker_count: int | None = Field(default=None, ge=0)
+    sort_order: int = 0
+
+
+class SitePlanRowsSave(BaseModel):
+    """⚠️ Gövde ŞANTİYENİN satır kümesinin TAMAMIDIR; geçmeyen satır SİLİNİR ve
+    hücreleri CASCADE ile gider."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    rows: list[SitePlanRowInput] = Field(default_factory=list)
+
+
+class SitePlanRowSaved(BaseModel):
+    """Kaydedilmiş satır. `cells` alanı YOKTUR (`SitePlanRowRead`ten farkı budur):
+    bu uç haftadan bağımsızdır, boş bir `cells` listesi "hücre yok" YALANINI
+    söylerdi."""
+
+    id: uuid.UUID
+    kind: PlanResourceKind
+    section_id: uuid.UUID | None
+    label: str
+    planned_worker_count: int | None
+    sort_order: int
+
+
+class SitePlanRowsResult(BaseModel):
+    """`PUT …/plan/rows` yanıtı — kaydedilen satırlar, okuma ucuyla AYNI sırada.
+
+    Haftalık ızgara (`SitePlanWeek`) DÖNÜLMEZ: satır listesi haftadan bağımsızdır
+    (uçta `week_start` yoktur) ve bir hafta uydurmak ekranın hangi haftayı
+    gösterdiğine backend'in karar vermesi demek olurdu. Ekran yeni satır
+    kimliklerini buradan alır, ızgarayı `GET …/plan` ile tazeler.
+    """
+
+    rows: list[SitePlanRowSaved]
+
+
+class SitePlanCellInput(BaseModel):
+    """`PUT …/plan/cells` gövdesinin tek hücresi.
+
+    Hücrenin kendi `id`si YOKTUR: kimliği `(row_id, plan_date)` ikilisidir (UQ) —
+    ızgarada bir satırın bir gününde tek hücre vardır.
+
+    **Boş `text` hücreyi YOK SAYAR** (spec §2 "hücre yokluğu = plan yok"): ekranın
+    boşalttığı hücre için boş metinli bir kayıt yazmak, "planlanmamış gün" ile
+    "planı silinmiş gün"ü ayırt edilemez hâle getirirdi. Boşluklar kırpılır.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    row_id: uuid.UUID
+    plan_date: date
+    text: str = Field(max_length=200)
+    tag: PlanCellTag | None = None
+
+
+class SitePlanCellsSave(BaseModel):
+    """⚠️ Gövde YALNIZ `week_start` haftasının + o şantiyenin hücre kümesidir;
+    geçmeyen hücre SİLİNİR. Başka haftaya/şantiyeye DOKUNULMAZ."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    cells: list[SitePlanCellInput] = Field(default_factory=list)
+
+
+class SitePlanGoalInput(BaseModel):
+    """`PUT …/plan/goals` gövdesinin tek hedefi (P205-227).
+
+    `week_start` gövdede YOKTUR — sorgu parametresinden gelir; iki kaynak olsaydı
+    bir haftanın kaydetmesi gövdedeki tarihle başka bir haftaya taşabilirdi.
+
+    `is_done` ile `status` AYRI alanlardır ve biri diğerinden TÜRETİLMEZ (spec §2).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: uuid.UUID | None = None
+    title: str = Field(min_length=1)
+    note: str | None = None
+    is_done: bool = False
+    status: PlanGoalStatus
+    sort_order: int = 0
+
+
+class SitePlanGoalsSave(BaseModel):
+    """⚠️ Gövde YALNIZ o haftanın hedef kümesidir; geçmeyen hedef SİLİNİR."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    goals: list[SitePlanGoalInput] = Field(default_factory=list)
+
+
+class SitePlanSprintSave(BaseModel):
+    """`PUT …/plan/sprint` — aktif sprintin ADI (P107).
+
+    `null`/boş ad = şantiyenin aktif sprinti YOK; kayıt SİLİNMEZ, `is_active`
+    false'a çekilir (geçmiş sprint yan yana durabilir, kısmi UQ yalnız aktifleri
+    kısıtlar). Tarih alanı YOKTUR — mockup göstermiyor (spec §2).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, max_length=150)

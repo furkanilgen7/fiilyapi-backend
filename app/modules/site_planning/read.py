@@ -99,7 +99,20 @@ async def get_week(
     kalır (var olmayan şantiye + Salı → yine 422, bilgi sızmaz).
     """
     week_start = service.assert_week_start(week_start)
-    site, project = await service.visible_site(session, actor, site_id)
+    context = await service.visible_site(session, actor, site_id)
+    return await build_week(session, context, week_start)
+
+
+async def build_week(
+    session: AsyncSession, context: service.SiteContext, week_start: date
+) -> SitePlanWeek:
+    """Yanıtın İNŞASI — kapsam kararı ÇOKTAN verilmiştir (`context`).
+
+    T3 yazma uçları kaydetmeden sonra güncel ızgarayı buradan alır: `get_week`
+    çağrılsaydı kapsam sorgusu istek başına İKİ KEZ koşardı (`site_diary`
+    `read.build_detail` gerekçesinin aynısı).
+    """
+    site, project = context
 
     rows = await repository.plan_rows(session, site.id)
     by_row = _cells_by_row(await repository.week_cells(session, site.id, week_start))
