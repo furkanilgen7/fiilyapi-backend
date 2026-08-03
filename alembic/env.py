@@ -21,6 +21,7 @@ from app.modules.boq import models as boq_models  # noqa: F401
 from app.modules.company import models as company_models  # noqa: F401
 from app.modules.contracts import models as contracts_models  # noqa: F401
 from app.modules.customers import models as customers_models  # noqa: F401
+from app.modules.personnel import models as personnel_models  # noqa: F401
 from app.modules.progress_payments import models as progress_payments_models  # noqa: F401
 from app.modules.projects import models as projects_models  # noqa: F401
 from app.modules.roles import models as roles_models  # noqa: F401
@@ -31,6 +32,7 @@ from app.modules.sites import models as sites_models  # noqa: F401
 from app.modules.subcontractor_progress_payments import (  # noqa: F401
     models as subcontractor_progress_payments_models,
 )
+from app.modules.timesheet import models as timesheet_models  # noqa: F401
 from app.modules.units import models as units_models  # noqa: F401
 from app.modules.users import models as users_models  # noqa: F401
 
