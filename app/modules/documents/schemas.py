@@ -3,16 +3,13 @@
 Versiyon/onay/etiket alanı YOKTUR (spec §1): model de taşımıyor, şema da uydurmaz.
 Thumbnail/önizleme alanı da YOKTUR (mockup yalnız emoji tip ikonu basar).
 
-## `document_count` — T2 kararının GERİ ALINMASI (şef kararı, 2026-08-04)
+## Klasör listesinde belge SAYACI YOKTUR (T2 kararı; T4'te yeniden onaylandı)
 
-T2 klasör listesine belge sayacı KOYMAMIŞTI ("her kök çizilişinde gereksiz bir
-toplama sorgusu"). Karar değişti: sayaç klasör LİSTE ucunda döner ve maliyeti
-"gereksiz bir sorgu" değildir — mevcut sorguya bir `LEFT JOIN … GROUP BY`
-eklenir, uç yine TEK sorgu koşar (N+1 testle yasaklanmıştır).
-
-Sayaç YALNIZ liste öğesindedir (`DocumentFolderListItem`); POST/PATCH yanıtları
-sade `DocumentFolderRead` kalır — yeni açılan klasörün sayacı tanım gereği 0'dır
-ve yazma yolunda ek bir toplama sorgusu koşturmanın karşılığı yoktur.
+T3 bir ara sayaç alanı eklemişti; dayanağı "mockup'ta 'Sözleşmeler (12)' rozeti
+var" idi ve mockup taraması bu rozetin VAR OLMADIĞINI gösterdi — spec §3 de
+sayaçtan söz etmez, alan T4'te icat yasağı gereği tamamen söküldü. Sonuç: klasör
+listesi her kök çizilişinde `documents` tablosuna bir toplama sorgusu
+koşturmaz. F-BC gerçek bir ihtiyaç kanıtlarsa tek sorguyla geri eklenebilir.
 """
 
 import uuid
@@ -62,24 +59,10 @@ class DocumentFolderRead(BaseModel):
     created_at: datetime
 
 
-class DocumentFolderListItem(DocumentFolderRead):
-    """Liste öğesi = klasör künyesi + belge sayacı (mockup rozeti).
-
-    KAPSAM: sayaç YALNIZ klasörün DOĞRUDAN içindeki belgeleri sayar, alt
-    klasörleri DAHİL ETMEZ. Ölçüt tutarlılıktır — kullanıcı klasöre tıkladığında
-    `GET /documents?folder_id=` tam olarak bu belgeleri gösterir. Alt klasörler
-    sayılsaydı hem rozet ile ekran çelişir hem de mockup ağacı ebeveyni ve
-    çocuğu YAN YANA listelediği için (E12:78-92) aynı belge iki rozette birden
-    sayılırdı.
-    """
-
-    document_count: int
-
-
 class DocumentFolderListResponse(BaseModel):
     """Düz liste; ağacı ekran `parent_id`den kurar (UI iki seviye çizer)."""
 
-    folders: list[DocumentFolderListItem]
+    folders: list[DocumentFolderRead]
 
 
 # --- Belge künyesi (T3) ---

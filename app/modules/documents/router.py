@@ -59,7 +59,6 @@ from app.modules.documents import files, guards, service
 from app.modules.documents.deps import get_storage_backend
 from app.modules.documents.schemas import (
     DocumentFolderCreate,
-    DocumentFolderListItem,
     DocumentFolderListResponse,
     DocumentFolderRead,
     DocumentFolderUpdate,
@@ -117,18 +116,11 @@ async def list_document_folders_endpoint(
 
     Görünmeyen proje 404 döner ve gövdesi var olmayan kimliğinkiyle AYNIDIR.
 
-    Her klasör `document_count` taşır (mockup rozeti; şef kararı 2026-08-04):
-    DOĞRUDAN içindeki belge sayısı, alt klasörler hariç. Sayaç aynı sorgudan
-    gelir — klasör başına ek sorgu YOKTUR (N+1 testle yasaklanmıştır).
+    Belge SAYACI YOKTUR — gerekçe `schemas` başlığındadır.
     """
     folders = await service.list_folders(session, user, project_id, site_id)
     return DocumentFolderListResponse(
-        folders=[
-            DocumentFolderListItem(
-                **DocumentFolderRead.model_validate(folder).model_dump(), document_count=sayi
-            )
-            for folder, sayi in folders
-        ]
+        folders=[DocumentFolderRead.model_validate(folder) for folder in folders]
     )
 
 

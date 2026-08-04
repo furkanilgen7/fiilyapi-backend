@@ -105,7 +105,7 @@ async def visible_folder(session: AsyncSession, actor: User, folder_id: uuid.UUI
 
 async def list_folders(
     session: AsyncSession, actor: User, project_id: uuid.UUID, site_id: uuid.UUID | None
-) -> list[tuple[DocumentFolder, int]]:
+) -> list[DocumentFolder]:
     """KARAR (T2, spec §3 netleştirmesi): `site_id` bir SÜZGEÇTİR, "hepsi" DEĞİL.
 
     * parametre YOKSA → yalnız PROJE DÜZEYİ klasörler (`site_id IS NULL`)
@@ -120,13 +120,9 @@ async def list_folders(
     `site_id`nin bu projeye ait olduğu AYRICA doğrulanmaz: yabancı bir şantiye
     kimliği zaten BOŞ liste döner ve hiçbir veri sızdırmaz — 422 dönmek, kimliğin
     var olduğunu ele verirdi.
-
-    Her klasörle birlikte DOĞRUDAN içindeki belge sayısı döner (şef kararı,
-    2026-08-04; kapsam gerekçesi `schemas.DocumentFolderListItem`). Sayaç aynı
-    sorgudan gelir — klasör başına ek sorgu YOKTUR.
     """
     await visible_project(session, actor, project_id)
-    return await repository.list_folders_with_counts(session, project_id, site_id)
+    return await repository.list_folders(session, project_id, site_id)
 
 
 # --- Klasör yazma ---

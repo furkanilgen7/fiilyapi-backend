@@ -50,10 +50,52 @@ from app.modules.documents import files
         # Kontrol karakterleri (başlık enjeksiyonu yüzeyi) atılır.
         ("rapor\r\n.pdf", "rapor.pdf"),
         ("rapor\x00.pdf", "rapor.pdf"),
+        # GÖRÜNMEZ biçim karakterleri (T4 final review) atılır.
+        ("rapor‮.pdf", "rapor.pdf"),
+        ("ra​por.pdf", "rapor.pdf"),
+        ("﻿rapor.pdf", "rapor.pdf"),
+        ("rapor⁦⁩.pdf", "rapor.pdf"),
     ],
 )
 def test_dosya_adi_normalize_edilir(ham: str, beklenen: str) -> None:
     assert files.normalize_filename(ham) == beklenen
+
+
+@pytest.mark.parametrize(
+    "gorunmez",
+    ["‮", "​", "‏", "⁠", "⁦", "﻿", "­", " "],
+)
+def test_gorunmez_karakterler_adan_silinir(gorunmez: str) -> None:
+    """T4 FINAL REVIEW BULGUSU (MEDIUM, düzeltildi).
+
+    Bunlar beyaz listeyi ATLATMIYORDU — uzantı kararı adın gerçek son uzantısına
+    bakar, `Fatura‮exe.fdp` zaten `fdp` diye reddedilir (kapı KAPALI başarısız
+    olur). Kırılma GÖRÜNTÜDEYDİ: U+202E taşıyan bir ad arşiv listesinde ve
+    indirme diyaloğunda gerçek uzantısından BAŞKA bir uzantıyla görünür, yani
+    kullanıcı ne indirdiğini yanlış okur. Sıfır genişlikliler ise aynı GÖRÜNEN
+    iki ayrı ad üretip klasör/belge ad tekilliğini anlamsızlaştırırdı.
+    """
+    assert files.normalize_filename(f"Fatura{gorunmez}.pdf") == "Fatura.pdf"
+
+
+def test_bidi_override_uzanti_sahteciligi_kapali() -> None:
+    """Saldırının iki ayağı da kapalı: ad temizlenir VE uzantı kapısı kapalıdır.
+
+    `Fatura‮exe.fdp` ekranda "Fatura pdf.exe" gibi okunurdu; temizlikten
+    sonra gerçek adı `Faturaexe.fdp`dir ve `fdp` beyaz listede olmadığı için
+    yükleme 422 alır.
+    """
+    temiz = files.normalize_filename("Fatura‮exe.fdp")
+
+    assert "‮" not in temiz
+    with pytest.raises(DocumentValidationError):
+        files.assert_allowed_extension(temiz)
+
+
+def test_yalniz_gorunmez_karakterden_olusan_ad_reddedilir() -> None:
+    """Temizlikten sonra geriye ad kalmazsa 422 — boş adla künye yazılmaz."""
+    with pytest.raises(DocumentValidationError):
+        files.normalize_filename("‮​﻿")
 
 
 @pytest.mark.parametrize("ham", [None, "", "   ", "...", "/", "../", "\x00"])

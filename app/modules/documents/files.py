@@ -45,6 +45,19 @@ kararını anlamsızlaştırır ve kullanıcıya sebebi anlaşılmaz bir hata ve
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 """CR/LF dahil kontrol karakterleri — `Content-Disposition` enjeksiyon yüzeyi."""
 
+_INVISIBLE_CHARS = re.compile(
+    "[\u00ad\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]"
+)
+"""GÖRÜNMEZ biçim karakterleri: bidi gömme/override/izolat, sıfır genişlikliler,
+yumuşak tire, BOM, satır/paragraf ayracı.
+
+Beyaz listeyi ATLATMAZLAR — uzantı kararı adın gerçek son uzantısına bakar ve
+`rapor‮exe.fdp` gibi bir ad `fdp` uzantısıyla zaten reddedilir (kapı KAPALI
+başarısız olur). Temizliğin sebebi GÖRÜNTÜ SAHTECİLİĞİDİR: U+202E taşıyan bir ad
+arşiv listesinde ve indirme diyaloğunda gerçek uzantısından BAŞKA bir uzantıyla
+görünür, yani kullanıcı ne indirdiğini yanlış okur. Sıfır genişlikliler ise aynı
+görünen iki ayrı klasör/belge adı üretip tekillik kontrolünü anlamsızlaştırır."""
+
 _EDGE_NOISE = re.compile(r"^[\s.]+|[\s.]+$")
 """Baştaki/sondaki boşluk ve noktalar. `rapor.exe .` gibi adlarda gerçek uzantıyı
 gizlemeye çalışan girişimler bu temizlikten SONRA sınanır."""
@@ -79,6 +92,8 @@ def normalize_filename(raw: str | None) -> str:
     arşivde kendi verdiği adı görmelidir. Temizlenen şeyler:
 
     * kontrol karakterleri (CR/LF ile başlık bölme),
+    * GÖRÜNMEZ biçim karakterleri (bidi override, sıfır genişlikliler, BOM) —
+      gerekçe `_INVISIBLE_CHARS`ta: uzantı SAHTECİLİĞİ ve aynı görünen ikiz adlar,
     * dizin bileşenleri — yalnız SON bileşen kalır, böylece `../../etc/x.pdf`
       `x.pdf` olur (hem `/` hem `\\` ayracı; Windows istemcileri tam yol gönderir),
     * baştaki/sondaki boşluk ve noktalar.
@@ -88,6 +103,7 @@ def normalize_filename(raw: str | None) -> str:
     if not raw:
         raise DocumentValidationError(guards.FILENAME_INVALID)
     temiz = _CONTROL_CHARS.sub("", raw)
+    temiz = _INVISIBLE_CHARS.sub("", temiz)
     temiz = temiz.replace("\\", "/").rsplit("/", 1)[-1]
     temiz = _EDGE_NOISE.sub("", temiz)
     if not temiz:

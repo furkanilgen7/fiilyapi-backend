@@ -40,33 +40,6 @@ async def list_folders(
     return list((await session.execute(stmt)).scalars().all())
 
 
-async def list_folders_with_counts(
-    session: AsyncSession, project_id: uuid.UUID, site_id: uuid.UUID | None
-) -> list[tuple[DocumentFolder, int]]:
-    """`list_folders` + her klasörün DOĞRUDAN içindeki belge sayısı — TEK sorgu.
-
-    N+1 YASAK: klasör başına ayrı bir `COUNT` koşulsaydı 8 klasörlü bir kök
-    (SB:45-68) 9 sorgu üretirdi. `LEFT OUTER JOIN` seçilir ki BOŞ klasörler de
-    (sayaç 0) listede kalsın — `INNER JOIN` onları tamamen düşürürdü.
-
-    Sayaç alt klasörleri KAPSAMAZ (gerekçe `schemas.DocumentFolderListItem`).
-    Blob tablosuna DOKUNULMAZ; sayım `documents` künyesi üzerindedir.
-    """
-    stmt = (
-        select(DocumentFolder, func.count(Document.id))
-        .outerjoin(Document, Document.folder_id == DocumentFolder.id)
-        .where(
-            DocumentFolder.project_id == project_id,
-            DocumentFolder.site_id.is_(None)
-            if site_id is None
-            else DocumentFolder.site_id == site_id,
-        )
-        .group_by(DocumentFolder.id)
-        .order_by(DocumentFolder.name)
-    )
-    return [(folder, sayi) for folder, sayi in (await session.execute(stmt)).all()]
-
-
 async def get_folder(session: AsyncSession, folder_id: uuid.UUID) -> DocumentFolder | None:
     return await session.get(DocumentFolder, folder_id)
 

@@ -1,4 +1,4 @@
-"""`GET /documents` — künye listesi (T3, spec §3) + klasör sayaçları.
+"""`GET /documents` — künye listesi (T3, spec §3).
 
 Kapı `documents:view`. Sıralama SABİTTİR (`created_at` azalan): mockup'ın tek
 sıralama kavramı "Son Eklenenler"dir (E12:168, SB:139) ve seçilebilir bir `sort`
@@ -261,95 +261,6 @@ async def test_liste_ucu_blob_tablosuna_DOKUNMAZ(
     assert len(resp.json()["documents"]) == 3
     assert kaydedici.ifadeler, "hiç SQL yakalanmadı — kanıt geçersiz"
     assert kaydedici.blob_dokunuslari() == []
-
-
-# --- Klasör listesi sayacı (mockup rozeti; şef kararı 2026-08-04) ---
-
-
-async def test_klasor_listesi_belge_sayaci_dondurur(
-    client: AsyncClient, proje, santiye, klasor_fabrikasi, belge_fabrikasi, sef_headers
-) -> None:
-    klasor = await klasor_fabrikasi(proje, "Sözleşmeler", site=santiye)
-    bos = await klasor_fabrikasi(proje, "Faturalar", site=santiye)
-    for i in range(2):
-        await belge_fabrikasi(proje, f"S-{i}.pdf", site=santiye, folder=klasor)
-
-    resp = await client.get(
-        f"/projects/{proje.id}/document-folders",
-        params={"site_id": str(santiye.id)},
-        headers=sef_headers,
-    )
-
-    assert resp.status_code == 200, resp.text
-    sayaclar = {k["name"]: k["document_count"] for k in resp.json()["folders"]}
-    assert sayaclar == {"Sözleşmeler": 2, "Faturalar": 0}
-    assert bos.name == "Faturalar"
-
-
-async def test_sayac_yalniz_DOGRUDAN_icindeki_belgeleri_sayar(
-    client: AsyncClient, proje, santiye, klasor_fabrikasi, belge_fabrikasi, sef_headers
-) -> None:
-    """KAPSAM KARARI: alt klasörler DAHİL DEĞİL.
-
-    Rozetin sözü, kullanıcı o klasöre TIKLADIĞINDA göreceği belge sayısıdır;
-    `GET /documents?folder_id=` yalnız doğrudan içindekileri döndürür. Alt
-    klasörler sayılsaydı ekranda "12" yazan klasör tıklanınca 5 belge gösterir,
-    üstelik alt klasörün kendi rozetiyle çifte sayım yapılırdı (mockup ağacı
-    ebeveyni ve çocuğu YAN YANA listeler — E12:78-92).
-    """
-    ust = await klasor_fabrikasi(proje, "Sözleşmeler", site=santiye)
-    alt = await klasor_fabrikasi(proje, "2026", site=santiye, parent=ust)
-    await belge_fabrikasi(proje, "Ust.pdf", site=santiye, folder=ust)
-    await belge_fabrikasi(proje, "Alt-1.pdf", site=santiye, folder=alt)
-    await belge_fabrikasi(proje, "Alt-2.pdf", site=santiye, folder=alt)
-
-    resp = await client.get(
-        f"/projects/{proje.id}/document-folders",
-        params={"site_id": str(santiye.id)},
-        headers=sef_headers,
-    )
-
-    sayaclar = {k["name"]: k["document_count"] for k in resp.json()["folders"]}
-    assert sayaclar == {"Sözleşmeler": 1, "2026": 2}
-
-
-async def test_sayac_tek_sorguda_hesaplanir_N_ARTI_BIR_YOK(
-    client: AsyncClient, seeded_db, proje, santiye, klasor_fabrikasi, belge_fabrikasi, sef_headers
-) -> None:
-    """Klasör sayısı arttıkça sorgu sayısı ARTMAMALI (N+1 yasağı).
-
-    Ölçüt SABİT bir sayı değil, DEĞİŞMEZLİKTİR: aynı istek önce 1, sonra 6
-    klasörle koşulur ve koşan SQL ifadesi sayısının AYNI kaldığı doğrulanır.
-    "Tek klasör sorgusu var" demek yeterli olmazdı — klasör başına `documents`
-    tablosuna atılan ayrı bir `COUNT` bu kontrolden kaçardı (mutasyonla
-    doğrulandı).
-    """
-    bind = seeded_db.sync_session.get_bind()
-
-    async def _sorgu_sayisi() -> int:
-        kaydedici = _SqlKaydedici()
-        event.listen(bind, "before_cursor_execute", kaydedici)
-        try:
-            resp = await client.get(
-                f"/projects/{proje.id}/document-folders",
-                params={"site_id": str(santiye.id)},
-                headers=sef_headers,
-            )
-        finally:
-            event.remove(bind, "before_cursor_execute", kaydedici)
-        assert resp.status_code == 200, resp.text
-        return len(kaydedici.ifadeler)
-
-    ilk = await klasor_fabrikasi(proje, "Klasör-0", site=santiye)
-    await belge_fabrikasi(proje, "D-0.pdf", site=santiye, folder=ilk)
-    tek_klasorle = await _sorgu_sayisi()
-
-    for i in range(1, 6):
-        klasor = await klasor_fabrikasi(proje, f"Klasör-{i}", site=santiye)
-        await belge_fabrikasi(proje, f"D-{i}.pdf", site=santiye, folder=klasor)
-    alti_klasorle = await _sorgu_sayisi()
-
-    assert alti_klasorle == tek_klasorle, "klasör başına ek sorgu koşuyor (N+1)"
 
 
 # --- IDOR + yetki ---
