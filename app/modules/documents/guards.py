@@ -32,9 +32,15 @@ kimlik varlığı sızdırılmaz.
 from app.modules.sites.guards import PROJECT_MISSING, SITE_MISSING
 
 __all__ = [
+    "DOCUMENT_MISSING",
+    "DOCUMENT_TOO_LARGE",
+    "EXTENSION_NOT_ALLOWED",
+    "FILENAME_INVALID",
+    "FILENAME_TOO_LONG",
     "FOLDER_HAS_CHILDREN",
     "FOLDER_HAS_DOCUMENTS",
     "FOLDER_MISSING",
+    "FOLDER_SCOPE_MISMATCH",
     "PARENT_SCOPE_MISMATCH",
     "PROJECT_MISSING",
     "SITE_MISSING",
@@ -68,3 +74,33 @@ PARENT_SCOPE_MISMATCH = "Üst klasör bu kapsamda değil"
 # 409 — silme korkulukları. Sıra sabittir ve İLK ENGELDE DURUR.
 FOLDER_HAS_DOCUMENTS = "Bu klasörde belge var, önce belgeleri silin"
 FOLDER_HAS_CHILDREN = "Bu klasörde alt klasör var, önce alt klasörleri silin"
+
+
+# --- T3: belge uçları ---
+
+# 404 — görünmeyen belge ile var olmayan kimlik AYNI gövdeyi alır.
+DOCUMENT_MISSING = "Belge bulunamadı"
+
+# 422 — hedef klasör belgenin kapsamında değil (başka proje ya da başka şantiye
+# düzeyi). Kabul edilseydi belge, klasörünün kapsamıyla künyesinin kapsamı
+# ayrıştığı için E12 kökü ile şantiye sekmesinde FARKLI yerlerde görünürdü.
+FOLDER_SCOPE_MISMATCH = "Seçilen klasör bu kapsamda değil"
+
+# 422 — dosya adından geriye anlamlı bir şey kalmadı (yalnız ayraç/nokta/boşluk).
+FILENAME_INVALID = "Geçerli bir dosya adı gerekli"
+
+# 422 — künye sütunu String(255); ad KIRPILMAZ, reddedilir (gerekçe `files.py`).
+FILENAME_TOO_LONG = "Dosya adı çok uzun (en fazla 255 karakter)"
+
+# 422 — beyaz liste dışı uzantı (spec §4). Metin İZİNLİ LİSTEYİ VERMEZ mi?
+# Verir: kullanıcı neyi yükleyebileceğini bilmeden dosyayı dönüştüremez ve
+# liste zaten gizli bir bilgi değildir (config'te, ekranda da yazılıdır).
+EXTENSION_NOT_ALLOWED = (
+    "Desteklenmeyen dosya türü (izinli: pdf, doc, docx, xls, xlsx, csv, dwg, "
+    "jpg, jpeg, png, heic, zip)"
+)
+
+# 413 — spec §4 tavanı (`document_max_bytes`, varsayılan 50 MB). 422 DEĞİL:
+# HTTP'nin bu durum için ayrı bir kodu vardır ve ekran "dosyayı küçült"
+# mesajını doğrudan bu koda bağlayabilir.
+DOCUMENT_TOO_LARGE = "Dosya çok büyük (en fazla 50 MB)"

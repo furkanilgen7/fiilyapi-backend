@@ -40,8 +40,87 @@ async def list_folders(
     return list((await session.execute(stmt)).scalars().all())
 
 
+async def list_folders_with_counts(
+    session: AsyncSession, project_id: uuid.UUID, site_id: uuid.UUID | None
+) -> list[tuple[DocumentFolder, int]]:
+    """`list_folders` + her klasörün DOĞRUDAN içindeki belge sayısı — TEK sorgu.
+
+    N+1 YASAK: klasör başına ayrı bir `COUNT` koşulsaydı 8 klasörlü bir kök
+    (SB:45-68) 9 sorgu üretirdi. `LEFT OUTER JOIN` seçilir ki BOŞ klasörler de
+    (sayaç 0) listede kalsın — `INNER JOIN` onları tamamen düşürürdü.
+
+    Sayaç alt klasörleri KAPSAMAZ (gerekçe `schemas.DocumentFolderListItem`).
+    Blob tablosuna DOKUNULMAZ; sayım `documents` künyesi üzerindedir.
+    """
+    stmt = (
+        select(DocumentFolder, func.count(Document.id))
+        .outerjoin(Document, Document.folder_id == DocumentFolder.id)
+        .where(
+            DocumentFolder.project_id == project_id,
+            DocumentFolder.site_id.is_(None)
+            if site_id is None
+            else DocumentFolder.site_id == site_id,
+        )
+        .group_by(DocumentFolder.id)
+        .order_by(DocumentFolder.name)
+    )
+    return [(folder, sayi) for folder, sayi in (await session.execute(stmt)).all()]
+
+
 async def get_folder(session: AsyncSession, folder_id: uuid.UUID) -> DocumentFolder | None:
     return await session.get(DocumentFolder, folder_id)
+
+
+async def get_document(session: AsyncSession, document_id: uuid.UUID) -> Document | None:
+    return await session.get(Document, document_id)
+
+
+def _like_escape(deger: str) -> str:
+    """LIKE joker karakterlerini KAÇIRIR.
+
+    Kaçırılmazsa arama kutusuna `%` yazan kullanıcı tüm arşivi, `_` yazan ise
+    beklemediği satırları görür — kullanıcı serbest METİN aradığını sanır.
+    Kaçış karakterinin kendisi ÖNCE kaçırılır, yoksa sonraki değişimler onu
+    ikinci kez bozardı.
+    """
+    return deger.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+async def list_documents(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    site_id: uuid.UUID | None,
+    folder_id: uuid.UUID | None,
+    q: str | None,
+    limit: int | None,
+) -> list[Document]:
+    """Künye listesi — `document_blobs`a DOKUNULMAZ (spec §2; testle dondurulur).
+
+    Süzgeç semantiği (gerekçeler `service.list_documents`ta):
+      * `site_id is None` → `IS NULL` (proje düzeyi), "hepsi" DEĞİL.
+      * `folder_id is None` → klasör süzgeci YOK (kapsamın tamamı).
+      * `q` → yalnız `filename` + `description`, büyük/küçük harf duyarsız.
+
+    Sıralama SEÇİLEBİLİR DEĞİLDİR: `created_at` azalan, eşitlikte `id` ile
+    kırılır. İkinci ölçüt olmasaydı aynı saniyede yüklenen belgeler her istekte
+    farklı sırada gelir ve `limit`li "Son Eklenenler" paneli titrerdi.
+    """
+    stmt = select(Document).where(
+        Document.project_id == project_id,
+        Document.site_id.is_(None) if site_id is None else Document.site_id == site_id,
+    )
+    if folder_id is not None:
+        stmt = stmt.where(Document.folder_id == folder_id)
+    if q:
+        desen = f"%{_like_escape(q)}%"
+        stmt = stmt.where(
+            Document.filename.ilike(desen, escape="\\")
+            | Document.description.ilike(desen, escape="\\")
+        )
+    stmt = stmt.order_by(Document.created_at.desc(), Document.id.desc())
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    return list((await session.execute(stmt)).scalars().all())
 
 
 async def find_folder_by_name(
