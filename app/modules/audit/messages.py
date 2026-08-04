@@ -712,3 +712,37 @@ def site_plan_sprint_saved(project_name: str, site_name: str, name: str | None) 
     if name is None:
         return f"Şantiye planı aktif sprinti kaldırıldı: {project_name} · {site_name}"
     return f"Şantiye planı aktif sprinti kaydedildi: {project_name} · {site_name} · {name}"
+
+
+# --- Belge arşivi (documents T2 — klasör uçları) ---
+#
+# Kaydın kimliği UUID değil İNSAN-OKUR kapsamdır: proje · (varsa) şantiye · ad.
+# Şantiyesiz klasör PROJE DÜZEYİDİR (spec §2) ve metinde şantiye parçası hiç
+# görünmez — "—" gibi bir yer tutucu koymak günlüğü gürültüye boğardı.
+
+
+def _document_scope(project_name: str, site_name: str | None) -> str:
+    if site_name is None:
+        return project_name
+    return f"{project_name} · {site_name}"
+
+
+def document_folder_created(project_name: str, site_name: str | None, folder_name: str) -> str:
+    return f"Belge klasörü oluşturuldu: {_document_scope(project_name, site_name)} · {folder_name}"
+
+
+def document_folder_renamed(
+    project_name: str, site_name: str | None, old_name: str, new_name: str
+) -> str:
+    """Eski ad çağrı noktasında değişiklikten ÖNCE okunmalı (`role_renamed` dersi);
+    sonra okunursa günlükte yeni ad iki kez çıkar."""
+    return (
+        f"Belge klasörü yeniden adlandırıldı: {_document_scope(project_name, site_name)} "
+        f"· {old_name} → {new_name}"
+    )
+
+
+def document_folder_deleted(project_name: str, site_name: str | None, folder_name: str) -> str:
+    """Metin `session.delete`ten ÖNCE kurulur — sonra kurulsaydı proje/şantiye
+    adları güvenilir okunamaz ve silinenin NE OLDUĞU kaybolurdu."""
+    return f"Belge klasörü silindi: {_document_scope(project_name, site_name)} · {folder_name}"

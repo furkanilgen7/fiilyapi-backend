@@ -15,17 +15,28 @@ Yani: şef ve saha mühendisi belge yükleyebilir (arşivi sahada onlar besler),
 muhasebe de tam yetkilidir (fatura/sözleşme eki); İK, proje müdürü ve satınalma
 SALT OKUR. Silme yalnız system_admin'dedir (`_A`).
 
-T1 kapsamı yalnız tablolar + izin satırı olduğu için burada UÇ fixture'ı YOKTUR
-(T2/T3 klasör ve belge uçlarını eklerken bu dosya genişler); T1 testleri doğrudan
-DB katmanına bakar.
+T1 testleri doğrudan DB katmanına bakar; T2 ile birlikte KLASÖR uçlarının HTTP
+fixture'ları (kimlik + kapsam) eklendi. Yetki fixture'ları seçilirken üç seviyeyi
+de temsil eden roller alındı:
+
+* `admin_headers` — `system_admin` (`_A`): DELETE'i yalnız o geçer, tüm projeleri görür.
+* `sef_headers` — `site_chief` (`_F`), kapsamı TEK projeye kısıtlı: yazar, SİLEMEZ.
+* `pm_headers` — `project_manager` (`_V`), aynı kapsam: okur, YAZAMAZ.
+
+`documents` satırında hiçbir rol `_N` DEĞİLDİR (spec §6 gerekçesi: arşiv ortak
+hafızadır), bu yüzden "okumada 403" senaryosu YOKTUR — izin ayrımı ancak
+`full` (POST/PATCH) ve `admin` (DELETE) kapılarında sınanabilir.
 """
 
 import pytest
+from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.documents.models import Document, DocumentBlob, DocumentFolder
 from app.modules.projects.models import Project
 from app.modules.sites.models import Site
+from app.modules.users.models import User, UserProjectAccess
 
 # Beyaz listeye göre tipik bir künye (spec §4): PDF, 48 MB'ın çok altında.
 ORNEK_MIME = "application/pdf"
@@ -107,3 +118,73 @@ def belge_fabrikasi(seeded_db: AsyncSession):
         return document
 
     return _create
+
+
+# --- Kapsam dışı kayıtlar (IDOR yüzeyi) ---
+
+
+@pytest.fixture
+async def gorunmeyen_santiye(seeded_db: AsyncSession, ikinci_proje: Project) -> Site:
+    """Kapsamı kısıtlı kullanıcıların ASLA göremediği projenin şantiyesi.
+
+    İki işi birden görür: (a) görünmeyen kapsamda gerçek bir kayıt üretir, (b)
+    `site_id` başka projeye aitken 422 dönen kural için hedef sağlar.
+    """
+    site = Site(project_id=ikinci_proje.id, code="BC-G", name="Görünmeyen Şantiye")
+    seeded_db.add(site)
+    await seeded_db.flush()
+    return site
+
+
+# --- Kimlik / yetki ---
+
+
+async def _login(client: AsyncClient, user_factory, role_key: str, email: str) -> dict[str, str]:
+    await user_factory(email=email, password="parola1234", role_key=role_key)
+    resp = await client.post("/auth/login", json={"email": email, "password": "parola1234"})
+    assert resp.status_code == 200, resp.text
+    return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+
+async def _scoped_headers(
+    client: AsyncClient,
+    seeded_db: AsyncSession,
+    user_factory,
+    role_key: str,
+    email: str,
+    project: Project,
+) -> dict[str, str]:
+    """Rolü verilen ama kapsamı TEK projeye kısıtlanmış kullanıcı (IDOR yüzeyi)."""
+    headers = await _login(client, user_factory, role_key, email)
+    user = (await seeded_db.execute(select(User).where(User.email == email))).scalar_one()
+    seeded_db.add(UserProjectAccess(user_id=user.id, project_id=project.id, all_projects=False))
+    await seeded_db.flush()
+    return headers
+
+
+@pytest.fixture
+async def admin_headers(
+    client: AsyncClient, seeded_db: AsyncSession, user_factory
+) -> dict[str, str]:
+    """`system_admin` (`documents=_A`) — silme kapısını yalnız bu rol geçer."""
+    return await _login(client, user_factory, "system_admin", "admin@bc-t2.co")
+
+
+@pytest.fixture
+async def sef_headers(
+    client: AsyncClient, seeded_db: AsyncSession, user_factory, proje: Project
+) -> dict[str, str]:
+    """`site_chief` (`documents=_F`), kapsamı `proje` ile SINIRLI — yazar, silemez."""
+    return await _scoped_headers(
+        client, seeded_db, user_factory, "site_chief", "sef@bc-t2.co", proje
+    )
+
+
+@pytest.fixture
+async def pm_headers(
+    client: AsyncClient, seeded_db: AsyncSession, user_factory, proje: Project
+) -> dict[str, str]:
+    """`project_manager` (`documents=_V`), aynı kapsam — okur, YAZAMAZ."""
+    return await _scoped_headers(
+        client, seeded_db, user_factory, "project_manager", "pm@bc-t2.co", proje
+    )

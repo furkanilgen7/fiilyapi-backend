@@ -98,6 +98,18 @@ class BoqGroupSiteMismatchError(DomainError):
     """
 
 
+class DocumentValidationError(DomainError):
+    """Belge/klasör kapsam kuralı ihlali (belge çekirdeği spec §2, §3) — 422.
+
+    `UnitValidationError`/`CustomerValidationError` deseninin aynısı: DB ile
+    zorlanamayan (klasörün `site_id`/`parent_id`sinin AYNI kapsamda olması)
+    kurallar tek yazma yolunda servis korkuluğuyla tutulur. 404 DEĞİL: istenen
+    kaynak projedir, `site_id`/`parent_id` gövdedeki düzeltilebilir ALAN
+    DEĞERLERİDİR; 404 verilseydi ekran "proje yok" ile "şantiye başka projede"yi
+    ayırt edemezdi.
+    """
+
+
 class ConflictError(DomainError):
     """Durum makinesi / iş kuralı çakışması — 409 (P7 hakediş spec §7, §9.2, §9.7).
 
