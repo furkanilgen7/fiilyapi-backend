@@ -35,6 +35,7 @@ EXPECTED_MODULE_KEYS = {
     "boq",
     "contracts",
     "sales",
+    "documents",
 }
 
 
@@ -53,15 +54,15 @@ async def test_seeds_eight_roles(seeded_db):
     assert keys == EXPECTED_ROLE_KEYS
 
 
-async def test_seeds_nineteen_modules(seeded_db):
+async def test_seeds_twenty_modules(seeded_db):
     keys = set((await seeded_db.execute(select(Module.key))).scalars())
     assert keys == EXPECTED_MODULE_KEYS
 
 
 async def test_matrix_is_complete(seeded_db):
-    """8 rol × 19 modül = 152 hücre; hiçbiri eksik olamaz."""
+    """8 rol × 20 modül = 160 hücre; hiçbiri eksik olamaz."""
     rows = (await seeded_db.execute(select(RolePermission))).scalars().all()
-    assert len(rows) == 152
+    assert len(rows) == 160
 
 
 async def test_system_admin_has_admin_level_everywhere(seeded_db):
@@ -99,7 +100,7 @@ async def test_hr_manager_is_confined_to_people_modules(seeded_db):
 
 async def test_reseed_after_permissions_wiped_restores_full_matrix(db_session):
     """roles/modules mevcutken role_permissions bosaltilip yeniden seed edilirse
-    152 izin satirinin tamami geri gelmeli - kismi/basarisiz bir onceki calistirma
+    160 izin satirinin tamami geri gelmeli - kismi/basarisiz bir onceki calistirma
     sonrasi operasyonel yeniden calistirmayi simule eder."""
     await seed_reference_data(db_session)
 
@@ -111,12 +112,12 @@ async def test_reseed_after_permissions_wiped_restores_full_matrix(db_session):
     await seed_reference_data(db_session)
 
     rows = (await db_session.execute(select(RolePermission))).scalars().all()
-    assert len(rows) == 152
+    assert len(rows) == 160
 
     role_count = (await db_session.execute(select(Role))).scalars().all()
     module_count = (await db_session.execute(select(Module))).scalars().all()
     assert len(role_count) == 8
-    assert len(module_count) == 19
+    assert len(module_count) == 20
 
 
 async def test_invoicing_module_is_in_mali_group_between_accounting_and_treasury(seeded_db):
@@ -144,7 +145,7 @@ async def test_invoicing_permissions_follow_accounting_row(seeded_db):
 async def test_module_sort_orders_are_unique_and_contiguous(seeded_db):
     """invoicing/projects/sites/boq araya girince sonraki moduller kayar; boşluk/çakışma olmaz."""
     orders = sorted((await seeded_db.execute(select(Module.sort_order))).scalars())
-    assert orders == list(range(1, 20))
+    assert orders == list(range(1, 21))
 
 
 async def test_users_table_exists_in_test_schema(seeded_db):
@@ -280,12 +281,16 @@ async def test_contracts_view_implies_progress_payments_view(seeded_db):
 
 
 async def test_sales_module_row_and_sort(seeded_db):
-    """sales: MALI grubunda, en sonda (P8 spec §8 S1 — mevcut sira KAYDIRILMAZ)."""
+    """sales: MALI grubunda, 19. sirada (P8 spec §8 S1 — mevcut sira KAYDIRILMAZ).
+
+    Artik EN SON degildir: `documents` 20. sira olarak arkasina eklendi (belge
+    cekirdegi spec §6). Sira sabiti acikca yazilir ki bir sonraki modul sona
+    eklendiginde bu test sessizce kaymasin."""
     modules = (await seeded_db.execute(select(Module))).scalars().all()
     by_key = {m.key: m for m in modules}
     assert by_key["sales"].group is ModuleGroup.MALI
     assert by_key["sales"].name == "Satış Yönetimi"
-    assert by_key["sales"].sort_order == max(m.sort_order for m in modules)
+    assert by_key["sales"].sort_order == 19
 
 
 async def test_sales_permissions_match_contracts_row(seeded_db):
@@ -303,3 +308,34 @@ async def test_field_roles_cannot_see_sales(seeded_db):
     assert await _level_of(seeded_db, "accounting", "sales") == AccessLevel.view
     assert await _level_of(seeded_db, "project_manager", "sales") == AccessLevel.full
     assert await _level_of(seeded_db, "system_admin", "sales") == AccessLevel.admin
+
+
+async def test_documents_module_row_and_sort(seeded_db):
+    """documents: MALI grubunda, en sonda (belge cekirdegi spec §6 / §7 S2)."""
+    modules = (await seeded_db.execute(select(Module))).scalars().all()
+    by_key = {m.key: m for m in modules}
+    assert by_key["documents"].group is ModuleGroup.MALI
+    assert by_key["documents"].name == "Belgeler"
+    assert by_key["documents"].sort_order == 20
+    assert by_key["documents"].sort_order == max(m.sort_order for m in modules)
+
+
+async def test_documents_permissions_match_spec_row(seeded_db):
+    """Arsiv ORTAK hafizadir: hicbir rol `none` degil (contracts/sales'ten ayrim).
+
+    Saha (sef + saha muhendisi) ve muhasebe YAZAR; IK, proje muduru ve satinalma
+    yalniz OKUR; silme yalniz system_admin'dedir.
+    """
+    beklenen = {
+        "system_admin": AccessLevel.admin,
+        "patron": AccessLevel.full,
+        "site_chief": AccessLevel.full,
+        "field_engineer": AccessLevel.full,
+        "hr_manager": AccessLevel.view,
+        "accounting": AccessLevel.full,
+        "project_manager": AccessLevel.view,
+        "procurement": AccessLevel.view,
+    }
+    for role_key, level in beklenen.items():
+        assert await _level_of(seeded_db, role_key, "documents") == level
+        assert level is not AccessLevel.none
