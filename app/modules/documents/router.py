@@ -58,6 +58,7 @@ from app.modules.audit.service import record_audit
 from app.modules.documents import files, guards, service
 from app.modules.documents.deps import get_storage_backend
 from app.modules.documents.schemas import (
+    DESCRIPTION_MAX_LENGTH,
     DocumentFolderCreate,
     DocumentFolderListResponse,
     DocumentFolderRead,
@@ -251,7 +252,7 @@ async def upload_document_endpoint(
     project_id: Annotated[uuid.UUID, Form()],
     site_id: Annotated[uuid.UUID | None, Form()] = None,
     folder_id: Annotated[uuid.UUID | None, Form()] = None,
-    description: Annotated[str | None, Form()] = None,
+    description: Annotated[str | None, Form(max_length=DESCRIPTION_MAX_LENGTH)] = None,
 ) -> DocumentRead:
     """Multipart yükleme (spec §3/§4).
 

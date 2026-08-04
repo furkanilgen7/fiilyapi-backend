@@ -113,6 +113,29 @@ async def test_aciklama_degistirilir_ve_silinebilir(
     assert temiz.json()["description"] is None
 
 
+async def test_aciklama_tavani_asilirsa_422(
+    client: AsyncClient, proje, belge_fabrikasi, sef_headers
+) -> None:
+    """Açıklama tavanı (kullanıcı kararı 2026-08-04): 2000 karakter.
+
+    Kolon `Text` olduğu için DB hiçbir şeyi engellemez — tavanı yalnız şema
+    koyar. Sınır DEĞERİ de sınanır: 2000 geçer, 2001 geçmez; yoksa off-by-one
+    bir düzeltme testi kırmadan geçebilir.
+    """
+    belge = await belge_fabrikasi(proje, "Foto.zip")
+
+    tam = await client.patch(
+        f"/documents/{belge.id}", json={"description": "ç" * 2000}, headers=sef_headers
+    )
+    asan = await client.patch(
+        f"/documents/{belge.id}", json={"description": "ç" * 2001}, headers=sef_headers
+    )
+
+    assert tam.status_code == 200, tam.text
+    assert len(tam.json()["description"]) == 2000
+    assert asan.status_code == 422, asan.text
+
+
 async def test_gonderilmeyen_alan_degismez(
     client: AsyncClient, proje, belge_fabrikasi, sef_headers
 ) -> None:

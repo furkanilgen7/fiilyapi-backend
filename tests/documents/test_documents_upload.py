@@ -115,6 +115,30 @@ async def test_aciklama_kaydedilir(client: AsyncClient, proje, sef_headers) -> N
     assert resp.json()["description"] == "48 fotoğraf"
 
 
+async def test_aciklama_tavani_asilirsa_422(client: AsyncClient, proje, sef_headers) -> None:
+    """Açıklama tavanı yüklemede de geçerli (kullanıcı kararı 2026-08-04).
+
+    PATCH'teki ikizi `test_documents_patch_delete.py`de. İKİSİ birden gerekli:
+    tek noktaya konan sınır, diğer uçtan girilen sınırsız metni engellemez.
+    """
+    tam = await client.post(
+        "/documents",
+        data=_form(proje.id, description="ç" * 2000),
+        files=_multipart(),
+        headers=sef_headers,
+    )
+    asan = await client.post(
+        "/documents",
+        data=_form(proje.id, description="ç" * 2001),
+        files=_multipart(),
+        headers=sef_headers,
+    )
+
+    assert tam.status_code == 201, tam.text
+    assert len(tam.json()["description"]) == 2000
+    assert asan.status_code == 422, asan.text
+
+
 async def test_yukleyen_adi_snapshot_alinir(
     client: AsyncClient, seeded_db: AsyncSession, proje, sef_headers
 ) -> None:

@@ -21,6 +21,13 @@ from pydantic import BaseModel, ConfigDict, Field
 # ad Pydantic'i geçer ve kullanıcıya anlaşılmaz bir 409/500 olarak döner.
 _NAME = Field(min_length=1, max_length=150)
 
+# Açıklama sınırı (kullanıcı kararı, 2026-08-04 — T4 review bulgusu #2).
+# Kolon `Text` (DB sınırsız); tavanı şema koyar. 2000, `roles.description`
+# emsaliyle aynı. İKİ giriş noktası da bu sabiti kullanır — multipart yükleme
+# `Form(max_length=...)` ve `DocumentUpdate`. Ayrı ayrı yazılsaydı biri
+# güncellenip diğeri unutulur, PATCH yükleme kapısını atlatırdı.
+DESCRIPTION_MAX_LENGTH = 2000
+
 
 class DocumentFolderCreate(BaseModel):
     """`POST /projects/{id}/document-folders` gövdesi.
@@ -114,5 +121,5 @@ class DocumentUpdate(BaseModel):
     """
 
     filename: str | None = Field(default=None, min_length=1, max_length=255)
-    description: str | None = None
+    description: str | None = Field(default=None, max_length=DESCRIPTION_MAX_LENGTH)
     folder_id: uuid.UUID | None = None
