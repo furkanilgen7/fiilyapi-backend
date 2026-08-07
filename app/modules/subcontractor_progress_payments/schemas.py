@@ -173,6 +173,11 @@ class SubcontractorProgressPaymentListItem(BaseModel):
     project_name: str
     subcontractor_name: str | None
     contract_no: str | None
+    work_category: str | None
+    """L131 "İş Kategorisi" — SÖZLEŞMEDEN okunur (`subcontractor_contracts.
+    work_category`), hakediş tablosunda KOLONU YOKTUR: liste sorgusunda zaten
+    kurulu olan sözleşme JOIN'inden gelir, ek istek AÇILMAZ (TB3-A).
+    Taslak sözleşmede boş bırakılabildiği için NULL meşrudur."""
     sequence_no: int
     period_year: int | None
     period_month: int | None
@@ -230,6 +235,9 @@ class SubcontractorProgressPaymentDetail(BaseModel):
     project_name: str
     subcontractor_name: str | None
     contract_no: str | None
+    work_category: str | None
+    """Liste satırıyla TUTARLILIK için detayda da bulunur (TB3-A) — kaynağı aynı:
+    sözleşmenin kendi kolonu, hakedişte snapshot'ı YOKTUR."""
     sequence_no: int
     period_year: int | None
     period_month: int | None
