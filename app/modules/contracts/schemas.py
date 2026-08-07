@@ -566,6 +566,13 @@ class SubcontractorContractListItem(BaseModel):
 
 
 class SubcontractorContractListResponse(BaseModel):
-    """`SubcontractorListResponse` deseninin aynısı: sayfalama/KPI YOK."""
+    """TB3 T2: `subcontractor_progress_payments` liste deseninin aynısı —
+
+    `items` + `total`/`limit`/`offset`. Alanlar ADDITIVE: öğe gövdesi TB2'deki
+    hâliyle birebir aynıdır, mevcut tüketici (F-TH seçim adımı) kırılmaz.
+    """
 
     items: list[SubcontractorContractListItem]
+    total: int
+    limit: int
+    offset: int

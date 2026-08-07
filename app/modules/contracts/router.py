@@ -446,11 +446,16 @@ async def list_subcontractor_contracts_endpoint(
     site_id: uuid.UUID | None = None,
     status_filter: Annotated[ContractStatus | None, Query(alias="status")] = None,
     q: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> SubcontractorContractListResponse:
     """TB2 U1 (spec §1): hakediş açma akışının seçim adımı bu uçtan beslenir —
 
     hakedişlerden türetme, hiç hakedişi olmayan sözleşmeyi göremiyordu.
-    Sayfalama YOK (`/contracts` liste ucu deseni), sıralama `contract_no`+`id`.
+    Sıralama `contract_no`+`id`. TB3 T2: `subcontractor_progress_payments`
+    liste ucunun sayfalama deseni (`total`/`limit`/`offset`) — parametresiz
+    çağrı varsayılan limiti uygular ama `total`ı döndürür, böylece istemci
+    kırpılmayı GÖREBİLİR.
     """
     return await subcontracts.list_subcontractor_contracts(
         session,
@@ -459,6 +464,8 @@ async def list_subcontractor_contracts_endpoint(
         site_id=site_id,
         status_filter=status_filter,
         q=q,
+        limit=limit,
+        offset=offset,
     )
 
 
