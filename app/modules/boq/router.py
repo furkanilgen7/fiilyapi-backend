@@ -176,6 +176,33 @@ async def update_boq_item_endpoint(
 
 
 @router.delete(
+    "/boq/groups/{group_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[_ADMIN],
+)
+async def delete_boq_group_endpoint(
+    request: Request,
+    group_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """TB3-C: YALNIZ BOS grup silinir; kalemi olan grup 409 doner.
+
+    Kapi `_ADMIN`'dir — `delete_boq_item_endpoint` ile BIREBIR ayni gerekce
+    (`full` silmeyi KAPSAMAZ). F-SD smoke'unda canlida bos test grubu 405
+    aldigi icin acildi.
+    """
+    name = await service.delete_group(session, user, group_id)
+    await record_audit(
+        session,
+        action=AuditAction.delete,
+        detail=messages.boq_group_deleted(name),
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+
+
+@router.delete(
     "/boq/items/{item_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[_ADMIN],
