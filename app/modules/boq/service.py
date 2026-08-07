@@ -3,7 +3,12 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import BoqGroupSiteMismatchError, DuplicateError, NotFoundError
+from app.core.errors import (
+    BoqGroupSiteMismatchError,
+    DuplicateError,
+    NotFoundError,
+    RelatedRecordsExistError,
+)
 from app.modules.boq import repository
 from app.modules.boq.models import BoqGroup, BoqItem
 from app.modules.boq.schemas import (
@@ -33,6 +38,9 @@ _GROUP_MISSING = "İş kalemi grubu bulunamadı"
 _ITEM_MISSING = "İş kalemi bulunamadı"
 _GROUP_SITE_MISMATCH = "Grup bu şantiyeye ait değil"
 _DUPLICATE_CODE = "Bu poz numarası bu şantiyede zaten kullanılıyor"
+# TB3-C: kalemi olan grup silinemez. `contracts/guards.py.GROUP_HAS_ITEMS`
+# deseninin aynısı — metinde ADET VERİLMEZ, eyleme dönüktür.
+_GROUP_HAS_ITEMS = "Bu grupta iş kalemi var, önce kalemleri silin"
 
 # Spec §3.2/§5.1: bu dilimde YAZILMAYAN turev alanlarin bagli oldugu modul
 # anahtarlari. Kullaniciya gosterilecek metin degil, B6 sozlesmesindeki
@@ -235,6 +243,29 @@ async def update_item(
     await session.flush()
     await session.refresh(item)
     return item
+
+
+async def delete_group(session: AsyncSession, actor: User, group_id: uuid.UUID) -> str:
+    """YALNIZ BOS grubu siler; denetim satiri icin grup adini doner (TB3-C).
+
+    `BoqGroup`'ta `parent_id` YOKTUR — hiyerarsi olmadigi icin "bos" tanimi
+    tektir: grupta is kalemi bulunmamasi. Kalem varsa 409
+    `RelatedRecordsExistError` (`contracts.service.delete_employer_group`
+    emsali): iliski `cascade="all, delete-orphan"` + DB `ON DELETE CASCADE`
+    tanimli oldugu icin korkuluk olmadan tum kalemler tek istekte SESSIZCE yok
+    olurdu.
+
+    Gorunmeyen grup `_visible_group` uzerinden 404 doner, 403 DEGIL (P2 IDOR
+    dersi) — var olmayan UUID ile ayirt edilemez. Ad SILMEDEN ONCE okunur
+    (`delete_item` deseni): sonra okunursa `ObjectDeletedError` riski vardir.
+    """
+    group, _ = await _visible_group(session, actor, group_id)
+    if await repository.group_has_items(session, group.id):
+        raise RelatedRecordsExistError(_GROUP_HAS_ITEMS)
+    name = group.name
+    await session.delete(group)
+    await session.flush()
+    return name
 
 
 async def delete_item(session: AsyncSession, actor: User, item_id: uuid.UUID) -> tuple[str, str]:

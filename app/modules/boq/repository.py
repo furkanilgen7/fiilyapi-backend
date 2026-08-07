@@ -25,6 +25,19 @@ async def get_group(session: AsyncSession, group_id: uuid.UUID) -> BoqGroup | No
     return await session.get(BoqGroup, group_id)
 
 
+async def group_has_items(session: AsyncSession, group_id: uuid.UUID) -> bool:
+    """Grupta is kalemi var mi (`boq_items.group_id` -> CASCADE).
+
+    `contracts/repository.py.employer_group_has_items` gerekcesinin aynisi: DB
+    CASCADE ile korur ama korkuluksuz birakilirsa kalemler sessizce yok olur.
+    `group.items` koleksiyonu YUKLENMEZ — tek EXISTS sorgusu yeter.
+    """
+    result = await session.execute(
+        select(select(BoqItem.id).where(BoqItem.group_id == group_id).exists())
+    )
+    return bool(result.scalar())
+
+
 async def get_item(session: AsyncSession, item_id: uuid.UUID) -> BoqItem | None:
     return await session.get(BoqItem, item_id)
 

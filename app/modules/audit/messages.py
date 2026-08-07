@@ -211,6 +211,12 @@ def boq_item_deleted(code: str, description: str) -> str:
     return f"İş kalemi silindi: {code} — {description}"
 
 
+def boq_group_deleted(name: str) -> str:
+    """`boq_group_updated` ailesinin devami. YENI `AuditAction` ACILMAZ —
+    aksiyon `delete`tir (`boq_item_deleted` ile ayni), ayrim METINDEDIR."""
+    return f"İş kalemi grubu silindi: {name}"
+
+
 # --- Sözleşmeler (P5, spec §8, task C13) ---
 #
 # C6-C12 bu aileleri `contracts/router.py`de geçici, modül-içi yardımcılar

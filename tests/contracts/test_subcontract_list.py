@@ -292,3 +292,131 @@ async def test_birlesik_liste_ucu_degismedi(
     govde = yanit.json()
     assert set(govde) == {"summary", "items"}
     assert Decimal(govde["items"][0]["amount"]) == Decimal("0.00")
+
+
+# --- TB3 T2: sayfalama (`limit`/`offset`/`total`) -----------------------------
+# Desen kaynağı: `subcontractor_progress_payments` liste ucu
+# (`schemas.SubcontractorProgressPaymentListResponse` = items/total/limit/offset,
+# `router.py` L65-66 = `Query(ge=1, le=200)` / `Query(ge=0)`).
+
+
+@pytest.fixture
+async def cok_sozlesme(seeded_db, ornek_proje, kayit_sahibi) -> list[str]:
+    """Görünür projede 5 sözleşme, `contract_no` sırası belirli."""
+    numaralar = [f"TSD-2027-{sira:03d}" for sira in range(1, 6)]
+    for numara in numaralar:
+        await _contract(
+            seeded_db,
+            ornek_proje,
+            kayit_sahibi,
+            contract_no=numara,
+            subcontractor_name=f"Sayfalama {numara}",
+            status=ContractStatus.active,
+            is_draft=False,
+        )
+    return numaralar
+
+
+async def test_parametresiz_cagri_varsayilan_sayfalama_alanlarini_doner(
+    client: AsyncClient, admin_headers: dict[str, str], kayitlar: dict
+) -> None:
+    """Additive: zarf `items`in yanına `total`/`limit`/`offset` ekler."""
+    yanit = await client.get(UC, headers=admin_headers)
+
+    assert yanit.status_code == 200, yanit.text
+    govde = yanit.json()
+    assert set(govde) == {"items", "total", "limit", "offset"}
+    assert govde["limit"] == 50
+    assert govde["offset"] == 0
+    assert govde["total"] == len(govde["items"])
+
+
+async def test_parametresiz_cagri_oge_alanlari_degismedi(
+    client: AsyncClient, admin_headers: dict[str, str], kayitlar: dict
+) -> None:
+    """GERİYE UYUM: F-TH seçim adımının okuduğu alanlar BİREBİR aynı."""
+    yanit = await client.get(UC, headers=admin_headers)
+
+    assert yanit.status_code == 200, yanit.text
+    satir = next(k for k in yanit.json()["items"] if k["id"] == str(kayitlar["santiyeli"].id))
+    assert set(satir) == {
+        "id",
+        "contract_no",
+        "subcontractor_name",
+        "work_category",
+        "project_id",
+        "project_name",
+        "site_id",
+        "site_name",
+        "status",
+        "is_draft",
+    }
+
+
+async def test_limit_uygulanir_total_limitten_bagimsiz(
+    client: AsyncClient, admin_headers: dict[str, str], kayitlar: dict, cok_sozlesme: list[str]
+) -> None:
+    tamami = await client.get(UC, headers=admin_headers)
+    assert tamami.status_code == 200, tamami.text
+    beklenen_total = tamami.json()["total"]
+    assert beklenen_total >= 5
+
+    yanit = await client.get(f"{UC}?limit=2", headers=admin_headers)
+
+    assert yanit.status_code == 200, yanit.text
+    govde = yanit.json()
+    assert len(govde["items"]) == 2
+    assert govde["limit"] == 2
+    assert govde["total"] == beklenen_total
+
+
+async def test_offset_deterministik_sayfa_dondurur(
+    client: AsyncClient, admin_headers: dict[str, str], kayitlar: dict, cok_sozlesme: list[str]
+) -> None:
+    tamami = await client.get(f"{UC}?q=TSD-2027", headers=admin_headers)
+    assert tamami.status_code == 200, tamami.text
+    sirali = [k["contract_no"] for k in tamami.json()["items"]]
+    assert sirali == cok_sozlesme
+
+    sayfa = await client.get(f"{UC}?q=TSD-2027&limit=2&offset=2", headers=admin_headers)
+
+    assert sayfa.status_code == 200, sayfa.text
+    govde = sayfa.json()
+    assert [k["contract_no"] for k in govde["items"]] == sirali[2:4]
+    assert govde["offset"] == 2
+    assert govde["total"] == 5
+
+
+async def test_limit_tavani_asilirsa_422(
+    client: AsyncClient, admin_headers: dict[str, str], kayitlar: dict
+) -> None:
+    """Referans desenin AYNISI: `Query(ge=1, le=200)` -> tavan aşımı 422."""
+    assert (await client.get(f"{UC}?limit=201", headers=admin_headers)).status_code == 422
+    assert (await client.get(f"{UC}?limit=0", headers=admin_headers)).status_code == 422
+    assert (await client.get(f"{UC}?offset=-1", headers=admin_headers)).status_code == 422
+    tavan = await client.get(f"{UC}?limit=200", headers=admin_headers)
+    assert tavan.status_code == 200, tavan.text
+    assert tavan.json()["limit"] == 200
+
+
+async def test_total_yalniz_gorulebilen_kayitlari_sayar(
+    client: AsyncClient, kisitli_headers: dict[str, str], kayitlar: dict
+) -> None:
+    """IDOR: görünürlük süzgeci sayfalamadan ÖNCE — `total` kapsam dışını SAYMAZ."""
+    yanit = await client.get(UC, headers=kisitli_headers)
+
+    assert yanit.status_code == 200, yanit.text
+    govde = yanit.json()
+    assert govde["total"] == 2
+    assert str(kayitlar["gizli"].id) not in {k["id"] for k in govde["items"]}
+
+
+async def test_total_filtrelenmis_kumeyi_sayar(
+    client: AsyncClient, admin_headers: dict[str, str], kayitlar: dict, cok_sozlesme: list[str]
+) -> None:
+    yanit = await client.get(f"{UC}?q=TSD-2027&limit=1", headers=admin_headers)
+
+    assert yanit.status_code == 200, yanit.text
+    govde = yanit.json()
+    assert govde["total"] == 5
+    assert len(govde["items"]) == 1

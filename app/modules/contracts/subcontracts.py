@@ -209,15 +209,28 @@ async def list_subcontractor_contracts(
     site_id: uuid.UUID | None,
     status_filter: ContractStatus | None,
     q: str | None,
+    limit: int,
+    offset: int,
 ) -> SubcontractorContractListResponse:
-    """TB2 U1 — `GET /subcontractor-contracts` (spec §1).
+    """TB2 U1 — `GET /subcontractor-contracts` (spec §1), TB3 T2 ile sayfalamalı.
 
     `service.list_contracts` deseninin aynısı: kapsam `visible_projects`ten
     gelir ve SQL'de kalır — görünmeyen projenin sözleşmesi hiç ÇEKİLMEZ, filtre
-    verilse bile (`project_id` süzgeci kapsamı GENİŞLETMEZ, daraltır).
+    verilse bile (`project_id` süzgeci kapsamı GENİŞLETMEZ, daraltır). `total`
+    de bu kapsamın İÇİNDEN sayılır: sayfalama görünürlükten SONRA uygulanır.
     """
     visible_ids = [project.id for project in await visible_projects(session, actor)]
     rows = await repository.list_subcontractor_contract_rows(
+        session,
+        visible_ids,
+        project_id=project_id,
+        site_id=site_id,
+        status_filter=status_filter,
+        q=q,
+        limit=limit,
+        offset=offset,
+    )
+    total = await repository.count_subcontractor_contract_rows(
         session,
         visible_ids,
         project_id=project_id,
@@ -240,7 +253,10 @@ async def list_subcontractor_contracts(
                 is_draft=contract.is_draft,
             )
             for contract, project_name, site_name in rows
-        ]
+        ],
+        total=total,
+        limit=limit,
+        offset=offset,
     )
 
 

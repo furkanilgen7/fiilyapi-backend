@@ -92,32 +92,25 @@ async def list_subcontractor_contracts(
     return list(result.scalars().all())
 
 
-async def list_subcontractor_contract_rows(
-    session: AsyncSession,
+def _subcontract_list_stmt(
     visible_project_ids: list[uuid.UUID],
     *,
     project_id: uuid.UUID | None,
     site_id: uuid.UUID | None,
     status_filter: ContractStatus | None,
     q: str | None,
-) -> list[tuple[SubcontractorContract, str, str | None]]:
-    """TB2 U1 seçim listesi: sözleşme + proje adı + şantiye adı TEK sorguda.
+):
+    """TB2 U1 seçim listesinin ORTAK `WHERE` gövdesi.
 
-    `list_subcontractor_contracts` (birleşik `/contracts` ucu) yerine ayrı bir
-    sorgu: o uç bedel türetmek için kalemleri çeker ve ad JOIN'i taşımaz. Adlar
-    burada JOIN'den gelir — satır başına ek sorgu (N+1) YOKTUR. Şantiye bağı
-    NULL olabildiği için (K4 "proje geneli") `sites` OUTER JOIN'dir.
+    Satır sorgusu ile `total` sayımı bu tek yerden beslenir
+    (`subcontractor_progress_payments.repository._list_stmt` deseninin aynısı):
+    süzgeç kopyası açılırsa sayı ile tablo AYRIŞIR.
     """
-    if not visible_project_ids:
-        return []
     stmt = (
         select(SubcontractorContract, Project.name, Site.name)
         .join(Project, Project.id == SubcontractorContract.project_id)
         .outerjoin(Site, Site.id == SubcontractorContract.site_id)
         .where(SubcontractorContract.project_id.in_(visible_project_ids))
-        # Deterministik sıra: `contract_no` NULL olabilir (taslak), `id` eşitlik
-        # bozar — sayfalama YOK (mevcut liste uçları deseni).
-        .order_by(SubcontractorContract.contract_no, SubcontractorContract.id)
     )
     if project_id is not None:
         stmt = stmt.where(SubcontractorContract.project_id == project_id)
@@ -135,8 +128,67 @@ async def list_subcontractor_contract_rows(
                 SubcontractorContract.subcontractor_name.ilike(pattern),
             )
         )
-    result = await session.execute(stmt)
+    return stmt
+
+
+async def list_subcontractor_contract_rows(
+    session: AsyncSession,
+    visible_project_ids: list[uuid.UUID],
+    *,
+    project_id: uuid.UUID | None,
+    site_id: uuid.UUID | None,
+    status_filter: ContractStatus | None,
+    q: str | None,
+    limit: int,
+    offset: int,
+) -> list[tuple[SubcontractorContract, str, str | None]]:
+    """TB2 U1 seçim listesi: sözleşme + proje adı + şantiye adı TEK sorguda.
+
+    `list_subcontractor_contracts` (birleşik `/contracts` ucu) yerine ayrı bir
+    sorgu: o uç bedel türetmek için kalemleri çeker ve ad JOIN'i taşımaz. Adlar
+    burada JOIN'den gelir — satır başına ek sorgu (N+1) YOKTUR. Şantiye bağı
+    NULL olabildiği için (K4 "proje geneli") `sites` OUTER JOIN'dir.
+    """
+    if not visible_project_ids:
+        return []
+    # Deterministik sıra sayfalamanın ÖNKOŞULU: `contract_no` NULL olabilir
+    # (taslak), `id` eşitliği bozar — yoksa sayfalar arası kayıt kaçar/tekrarlar.
+    stmt = _subcontract_list_stmt(
+        visible_project_ids,
+        project_id=project_id,
+        site_id=site_id,
+        status_filter=status_filter,
+        q=q,
+    ).order_by(SubcontractorContract.contract_no, SubcontractorContract.id)
+    result = await session.execute(stmt.limit(limit).offset(offset))
     return [(row[0], row[1], row[2]) for row in result.all()]
+
+
+async def count_subcontractor_contract_rows(
+    session: AsyncSession,
+    visible_project_ids: list[uuid.UUID],
+    *,
+    project_id: uuid.UUID | None,
+    site_id: uuid.UUID | None,
+    status_filter: ContractStatus | None,
+    q: str | None,
+) -> int:
+    """TB3 T2 `total`: `limit`/`offset`ten BAĞIMSIZ, filtrelenmiş küme sayısı.
+
+    Görünürlük süzgeci (`visible_project_ids`) sayımın da İÇİNDE — kullanıcı
+    göremediği kaydı sayı olarak da görmez (IDOR).
+    """
+    if not visible_project_ids:
+        return 0
+    inner = _subcontract_list_stmt(
+        visible_project_ids,
+        project_id=project_id,
+        site_id=site_id,
+        status_filter=status_filter,
+        q=q,
+    ).with_only_columns(SubcontractorContract.id)
+    stmt = select(func.count()).select_from(inner.subquery())
+    return int((await session.execute(stmt)).scalar_one())
 
 
 # --- İşveren sözleşmesi poz grup/kalem (task C6, `boq/repository.py` deseninin
