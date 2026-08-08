@@ -56,6 +56,7 @@ __all__ = [
     "to_block",
     "to_unit",
     "unit_response",
+    "units_for_project",
     "update_block",
     "update_unit",
     "visible_projects",
@@ -140,6 +141,37 @@ async def list_units(
     tamamini sayar. `site_id` suzgeci blok uzerinden calisir — `units`'te
     `site_id` sutunu YOKTUR (spec §4.0). Unitesi olmayan blok listede KALIR."""
     project = await guards.visible_project(session, actor, project_id)
+    return await units_for_project(
+        session,
+        project,
+        block_id=block_id,
+        site_id=site_id,
+        kind=kind,
+        owner_side=owner_side,
+        floor=floor,
+        sales_status=sales_status,
+    )
+
+
+async def units_for_project(
+    session: AsyncSession,
+    project: Project,
+    *,
+    block_id: uuid.UUID | None = None,
+    site_id: uuid.UUID | None = None,
+    kind: UnitKind | None = None,
+    owner_side: UnitOwnerSideFilter | None = None,
+    floor: str | None = None,
+    sales_status: UnitSalesStatus | None = None,
+) -> UnitListResponse:
+    """`list_units`'in gorunurluk kapisi COZULDUKTEN sonraki cekirdegi.
+
+    P9 T4: Excel ucu projeyi dosya adi icin ZATEN cozmek zorundadir; ayni
+    kapiyi ikinci kez calmak yerine cozulmus projeyi buraya verir
+    (`timesheet`in `visible_site` → `matrix.build` deseni). Zarf tek noktada
+    kuruldugu icin ekran ile dosya AYRISAMAZ.
+    """
+    project_id = project.id
     blocks, by_block, units = await _blocks_with_units(session, project_id)
     basis = VALUE_BASIS_BY_TYPE[project.project_type]
     # P8 T5: satis fiyati/alicisi (KY 275/277) ve ciro (KY 93/267) TEK sorgudan
