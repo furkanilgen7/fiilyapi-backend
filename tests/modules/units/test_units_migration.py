@@ -479,3 +479,104 @@ async def test_r3_mevcut_satirlar_degismez():
             assert block_after[column] is None, f"blocks.{column} mevcut satirda NULL degil"
         for column in P31_R3_UNIT_COLUMNS:
             assert unit_after[column] is None, f"units.{column} mevcut satirda NULL degil"
+
+
+# --- P9 / `units.shareholder_id` (izole revizyon) ---
+
+P9_PARENT = "b8c9d0e1f2a3"
+# `head` / `-1` KULLANILMAZ: revizyon ACIK id'siyle olculur (WORKFLOW §4).
+P9_REVISION = "c9d0e1f2a3b4"
+P9_COLUMN = "shareholder_id"
+P9_INDEX = "ix_units_shareholder_id"
+P9_FK = "units_shareholder_id_fkey"
+
+
+async def _index_exists(conn: asyncpg.Connection, name: str) -> bool:
+    return await conn.fetchval(
+        "SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = $1)",
+        name,
+    )
+
+
+async def _fk_delete_rule(conn: asyncpg.Connection, name: str) -> str | None:
+    """`confdeltype`: 'n' = SET NULL, 'r' = RESTRICT, 'c' = CASCADE, 'a' = NO ACTION."""
+    return await conn.fetchval(
+        # `::text` SART: asyncpg `"char"` tipini bytes olarak dondurur.
+        "SELECT confdeltype::text FROM pg_constraint WHERE conname = $1 AND contype = 'f'",
+        name,
+    )
+
+
+async def _seed_shareholder(conn: asyncpg.Connection, project_id: str) -> str:
+    shareholder_id = str(uuid.uuid4())
+    await conn.execute(
+        "INSERT INTO land_share_shareholder (id, project_id, name, share_pct) "
+        "VALUES ($1::uuid, $2::uuid, 'Hissedar A', 50)",
+        shareholder_id,
+        project_id,
+    )
+    return shareholder_id
+
+
+async def test_p9_upgrade_downgrade_upgrade():
+    """Tur donusu: kolon + indeks acilir, downgrade ikisini de dusurur, ikinci upgrade patlamaz."""
+    async with _temp_database("p9_units_mig") as database:
+        _run_alembic("upgrade", P9_PARENT, database=database)
+        async with _connect(database) as conn:
+            assert P9_COLUMN not in await _columns(conn, "units")
+            assert not await _index_exists(conn, P9_INDEX)
+
+        _run_alembic("upgrade", P9_REVISION, database=database)
+        async with _connect(database) as conn:
+            units = await _columns(conn, "units")
+            # NULLABLE: paylasim kademeli girilir (spec §4.2).
+            assert units.get(P9_COLUMN) == "YES"
+            assert await _index_exists(conn, P9_INDEX)
+            # SET NULL: proje silme kaskadinin DB emniyeti (spec §3).
+            assert await _fk_delete_rule(conn, P9_FK) == "n"
+            assert await _current_revision(conn) == P9_REVISION
+
+        _run_alembic("downgrade", P9_PARENT, database=database)
+        async with _connect(database) as conn:
+            assert P9_COLUMN not in await _columns(conn, "units")
+            assert not await _index_exists(conn, P9_INDEX)
+            assert await _current_revision(conn) == P9_PARENT
+
+        _run_alembic("upgrade", P9_REVISION, database=database)
+        async with _connect(database) as conn:
+            assert P9_COLUMN in await _columns(conn, "units")
+            assert await _index_exists(conn, P9_INDEX)
+            assert await _current_revision(conn) == P9_REVISION
+
+
+async def test_p9_mevcut_uniteler_null_dogar_ve_hissedar_silinince_bosalir():
+    """Veri gecisi YOKTUR: mevcut satir NULL kalir. Hissedar silinince FK SET NULL isler."""
+    async with _temp_database("p9_units_data") as database:
+        _run_alembic("upgrade", P9_PARENT, database=database)
+        async with _connect(database) as conn:
+            _, unit_id = await _seed_block_and_unit(conn)
+            project_id = await conn.fetchval(
+                "SELECT project_id FROM units WHERE id = $1::uuid", unit_id
+            )
+
+        _run_alembic("upgrade", P9_REVISION, database=database)
+        async with _connect(database) as conn:
+            assert (
+                await conn.fetchval("SELECT shareholder_id FROM units WHERE id = $1::uuid", unit_id)
+                is None
+            )
+
+            shareholder_id = await _seed_shareholder(conn, str(project_id))
+            await conn.execute(
+                "UPDATE units SET shareholder_id = $1::uuid WHERE id = $2::uuid",
+                shareholder_id,
+                unit_id,
+            )
+            await conn.execute(
+                "DELETE FROM land_share_shareholder WHERE id = $1::uuid", shareholder_id
+            )
+            # RESTRICT olsaydi proje silme kaskadi RASTGELE kirilirdi (spec §3).
+            assert (
+                await conn.fetchval("SELECT shareholder_id FROM units WHERE id = $1::uuid", unit_id)
+                is None
+            )
