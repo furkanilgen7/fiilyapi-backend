@@ -274,7 +274,9 @@ async def test_get_units_happy_path_matches_spec_envelope(
         "sales_status",
         "sale_price",
         "buyer_name",
-        "shareholder",
+        # P9 T3: `shareholder` yer tutucusu KALKTI — iki gercek alan geldi.
+        "shareholder_id",
+        "shareholder_name",
         "unit_cost",
         "expected_profit",
     }

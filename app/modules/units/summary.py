@@ -31,7 +31,11 @@ from app.modules.units.schemas import (
 # kaynagi artik VAR — `unit_sales` tablosu P8'de acildi. `sales_status`un
 # P3.1'de yer tutucudan gercek sutuna donusunun aynisi. Geriye kalan iki anahtar
 # hâlâ verisi YAZILMAMIS modulleri gosterir.
-_SHAREHOLDER_UNITS = "shareholder_units"
+#
+# `_SHAREHOLDER_UNITS` KALDIRILDI (P9 T3): KKP 91'in hissedar yarisinin veri
+# kaynagi artik VAR — `units.shareholder_id` T1'de acildi. `_UNIT_SALES`in P8
+# T5'teki kalkisinin aynisi. Geriye TEK anahtar kalir ve o hâlâ verisi
+# YAZILMAMIS bir modulu gosterir.
 _PROJECT_COSTS = "project_costs"
 
 
@@ -151,11 +155,18 @@ def to_block(block: Block, site_name: str, units: list[Unit]) -> BlockResponse:
     )
 
 
-def to_unit(unit: Unit, block_name: str, sale: UnitSaleInfo | None = None) -> UnitResponse:
+def to_unit(
+    unit: Unit,
+    block_name: str,
+    sale: UnitSaleInfo | None = None,
+    shareholder_name: str | None = None,
+) -> UnitResponse:
     """Satis FIYATI/ALICISI (KY 275/277) P8 T5'te GERCEK degere baglandi; satis
     yoksa `None` doner — uydurma deger uretilmez. Satis DURUMU (UE 94) P3.1'de
     gercek sutuna donmustu (kullanici karari 2, spec §4.4). HISSEDAR (KKP 91)
-    hâlâ P9'un isidir ve yer tutucu KALIR."""
+    P9 T3'te ayni yolu izledi: `shareholder_id` gercek kolondur, ADI ise
+    CAGIRANDAN gelir — bu modul veritabanina dokunmaz (dosya basligi) ve ad
+    cozumu boylece tek toplu sorguda kalir (N+1 yok, spec §4.3)."""
     return UnitResponse(
         id=unit.id,
         block_id=unit.block_id,
@@ -181,7 +192,10 @@ def to_unit(unit: Unit, block_name: str, sale: UnitSaleInfo | None = None) -> Un
         # KY 275/277 — P8 T5'te ACIK satis kaydina baglandi (yer tutucu bitti).
         sale_price=sale.sale_price if sale is not None else None,
         buyer_name=sale.customer_name if sale is not None else None,
-        shareholder=_metric(_SHAREHOLDER_UNITS),
+        # KKP 91 — P9 T3'te yer tutucu bitti. Ad `None` kalabilir: atama zorunlu
+        # DEGILDIR (KKP 119 "—") ve uydurma ad uretilmez.
+        shareholder_id=unit.shareholder_id,
+        shareholder_name=shareholder_name,
         # Maliyet kolonu ACILMAZ (karar 3): maliyet yoksa kâr da yoktur.
         unit_cost=_metric(_PROJECT_COSTS),
         expected_profit=_metric(_PROJECT_COSTS),

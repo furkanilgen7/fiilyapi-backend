@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import RelatedRecordsExistError
 from app.modules.audit import messages
+from app.modules.projects.models import Project
 from app.modules.sites import repository as sites_repository
 
 # Gorunurluk suzgeci P1'DEN GELIR (spec §8): kopya bir erisim mantigi YAZILMAZ.
@@ -144,6 +145,12 @@ async def list_units(
     # P8 T5: satis fiyati/alicisi (KY 275/277) ve ciro (KY 93/267) TEK sorgudan
     # gelir — unite basina SELECT atmak 24 daireli blokta N+1 demekti.
     sales_by_unit = await _open_sales_by_unit(session, project_id)
+    # P9 T3 (KKP 91): hissedar adlari EK SORGU ACMADAN gelir — `project` zaten
+    # gorunurluk sorgusuyla yuklendi ve `Project.shareholders` `lazy="selectin"`
+    # oldugu icin koleksiyon elimizdedir. `sales_by_unit` ile ayni gerekce:
+    # unite basina `session.get(LandShareShareholder, ...)` 24 daireli blokta 24
+    # gidis-donus demekti (spec §4.3 "N+1 yok").
+    shareholder_names = _shareholder_names(project)
 
     selected = [
         (block, site_name)
@@ -155,7 +162,12 @@ async def list_units(
         UnitBlockGroup(
             block=to_block(block, site_name, by_block[block.id]),
             units=[
-                to_unit(unit, block.name, sales_by_unit.get(unit.id))
+                to_unit(
+                    unit,
+                    block.name,
+                    sales_by_unit.get(unit.id),
+                    _shareholder_name(shareholder_names, unit),
+                )
                 for unit in by_block[block.id]
                 if _matches(unit, kind, owner_side, floor, sales_status)
             ],
@@ -203,16 +215,33 @@ async def _open_sales_by_unit(
     }
 
 
+def _shareholder_names(project: Project) -> dict[uuid.UUID, str]:
+    """`shareholder_id` → ad sozlugu, ZATEN yuklu koleksiyondan (spec §4.3)."""
+    return {row.id: row.name for row in project.shareholders}
+
+
+def _shareholder_name(names: dict[uuid.UUID, str], unit: Unit) -> str | None:
+    """Hissedari olmayan unitede `None` — sozlukte aranmaz bile."""
+    return None if unit.shareholder_id is None else names.get(unit.shareholder_id)
+
+
 async def unit_response(session: AsyncSession, unit: Unit) -> UnitResponse:
-    """Tekil yanit da satis bilgisini LISTEYLE AYNI kaynaktan alir — POST/PATCH
-    sonrasi ekranin gordugu satir listedekiyle ayrisamaz."""
+    """Tekil yanit da satis/hissedar bilgisini LISTEYLE AYNI kaynaktan alir —
+    POST/PATCH sonrasi ekranin gordugu satir listedekiyle ayrisamaz."""
     row = await repository.get_open_sale_for_unit(session, unit.id)
     sale = (
         UnitSaleInfo(sale_price=row[0].sale_price, customer_name=row[1].name, status=row[0].status)
         if row is not None
         else None
     )
-    return to_unit(unit, await _block_name(session, unit.block_id), sale)
+    # Tek satirlik yanitta projenin TUM hissedarlarini cekmenin anlami yok; ad
+    # yalnizca atama VARSA sorulur (`get_open_sale_for_unit` ile ayni desen).
+    shareholder_name = (
+        None
+        if unit.shareholder_id is None
+        else await repository.get_shareholder_name(session, unit.shareholder_id)
+    )
+    return to_unit(unit, await _block_name(session, unit.block_id), sale, shareholder_name)
 
 
 # --- Blok yazma uclari (spec §7.2, §7.3) ---

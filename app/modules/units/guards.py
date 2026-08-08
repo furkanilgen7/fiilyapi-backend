@@ -49,6 +49,12 @@ NO_SITE_FOR_BLOCK = "Blok tanımlamadan önce projeye şantiye eklenmelidir"
 SITE_REQUIRED = "Birden fazla şantiye var, blok için şantiye seçilmelidir"
 OWNER_SIDE_NOT_ALLOWED = "Ünite payı yalnızca kat karşılığı projelerde belirlenebilir"
 ALLOCATION_WRONG_TYPE = "Paylaşım yalnızca kat karşılığı projelerde kaydedilebilir"
+# P9 spec §4.2 (PG 190/221): hissedar secimi YALNIZ ARSA satirinda vardir;
+# "Yuklenici payi"na hissedar atanmasi anlamsizdir.
+SHAREHOLDER_WRONG_SIDE = "Hissedar yalnızca arsa payı ünitesine atanabilir"
+# Baska projenin hissedari VAR OLMAYANLA ayni yaniti alir (IDOR-8): aksi hâlde
+# elinde UUID olan kullanici kaydin var oldugunu ayirt edebilirdi.
+SHAREHOLDER_MISSING = "Hissedar bulunamadı"
 NET_GT_GROSS = "Net alan brüt alandan büyük olamaz"
 # Karar 9 (spec §4.2, §8.3): kume KODDA sabittir ve `schemas.VatRate` zorlar —
 # metin diger tum alan mesajlariyla birlikte BURADA durur.

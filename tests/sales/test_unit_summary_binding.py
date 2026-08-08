@@ -6,8 +6,9 @@ P3'te dört alan "veri kaynağı henüz yazılmadı" yer tutucusuydu (`pending_m
 (KY 267). P8 satış kaydını açtığı için dördü de artık gerçek değerdir —
 `sales_status`ün P3.1'de yer tutucudan gerçek sütuna dönüşünün aynısı.
 
-BAĞLANMAYANLAR yer tutucu KALIR: `shareholder` (P9 `shareholder_units`),
-`unit_cost` ve `expected_profit` (kalıcı karar 3 → P10 `project_costs`).
+BAĞLANMAYANLAR yer tutucu KALIR: `unit_cost` ve `expected_profit` (kalıcı karar
+3 → P10 `project_costs`). `shareholder` yer tutucusu P9 T3'te KALKTI ve yerini
+gerçek `shareholder_id`/`shareholder_name` aldı.
 """
 
 import pytest
@@ -114,10 +115,13 @@ async def test_iptal_edilen_satis_unite_satirindan_dusulur(
     assert body["totals"]["sales_revenue"] == "0.00"
 
 
-async def test_maliyet_kar_ve_hissedar_YER_TUTUCU_KALIR(
-    client, admin_headers, proje, unite, musteri
-):
-    """Kalıcı karar 3: maliyet/kâr AÇILMAZ; P9 hissedarı da bu dilimde yok."""
+async def test_maliyet_kar_YER_TUTUCU_KALIR(client, admin_headers, proje, unite, musteri):
+    """Kalıcı karar 3: maliyet/kâr AÇILMAZ — bunlar yer tutucu KALIR.
+
+    Hissedar (KKP 91) artık burada DEĞİL: P9 T3'te yer tutucudan gerçek alana
+    döndü ve `shareholder` anahtarı yanıttan tamamen çıktı (bir sonraki ajan
+    bunu "eksik alan" sanıp geri koymamalıdır).
+    """
     await _satis(client, admin_headers, proje, unite, musteri)
 
     satir = _unite_satiri(await _uniteler(client, admin_headers, proje), str(unite.id))
@@ -128,7 +132,9 @@ async def test_maliyet_kar_ve_hissedar_YER_TUTUCU_KALIR(
         "pending_module": "project_costs",
     }
     assert satir["expected_profit"]["pending_module"] == "project_costs"
-    assert satir["shareholder"]["pending_module"] == "shareholder_units"
+    assert "shareholder" not in satir
+    assert satir["shareholder_id"] is None
+    assert satir["shareholder_name"] is None
 
 
 async def test_tekil_unite_yaniti_da_satis_bilgisini_tasir(

@@ -354,7 +354,9 @@ async def test_placeholders_carry_correct_pending_module(seeded_db, user_factory
     # P8 T5: satis fiyati/alicisi YER TUTUCU DEGIL — satis kaydi yoksa `None`.
     assert unit.sale_price is None
     assert unit.buyer_name is None
-    assert unit.shareholder.pending_module == "shareholder_units"
+    # P9 T3: hissedar da YER TUTUCU DEGIL — atama yoksa iki alan da `None`.
+    assert unit.shareholder_id is None
+    assert unit.shareholder_name is None
     assert unit.unit_cost.pending_module == "project_costs"
     # UE 97-99: maliyet yoksa kâr da yok (karar 3).
     assert unit.expected_profit.pending_module == "project_costs"
@@ -367,7 +369,6 @@ async def test_placeholders_carry_correct_pending_module(seeded_db, user_factory
     assert all(
         placeholder.available is False
         for placeholder in (
-            unit.shareholder,
             unit.unit_cost,
             unit.expected_profit,
         )

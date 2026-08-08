@@ -195,8 +195,12 @@ class BlockResponse(BaseModel):
 
 
 class UnitResponse(BaseModel):
-    """KY 271-274 ve KKP 86-90 sutunlari. Satis alanlari (KY 275-277, KKP 91-92)
-    P8'in isidir ve yer tutucu doner — `units`'te saklanmaz (spec §4.6)."""
+    """KY 271-274 ve KKP 86-92 sutunlari.
+
+    Satis alanlari (KY 275-277, KKP 92) P8 T5'te, hissedar (KKP 91) P9 T3'te
+    GERCEK degere baglandi; ikisi de artik yer tutucu DEGILDIR. Geriye kalan iki
+    yer tutucu (`unit_cost`, `expected_profit`) kalici karar 3 geregidir.
+    """
 
     id: uuid.UUID
     block_id: uuid.UUID
@@ -225,8 +229,13 @@ class UnitResponse(BaseModel):
     # (`unit_sales`). Satisi olmayan unitede `None`dir; uydurma deger uretilmez.
     sale_price: Decimal | None  # P8 (KY 275)
     buyer_name: str | None  # P8 (KY 277)
+    # KKP 91 "Hissedar / Alici" — hissedar YARISI P9 T3'te YER TUTUCU DEGIL:
+    # `units.shareholder_id` gercek kolondur, ad tek JOIN/sorgudan gelir
+    # (`sale_price`/`buyer_name`in P8 T5'teki donusumunun aynisi). Atanmamis
+    # ARSA unitesinde ikisi de `None`dir (KKP 119 "—"); uydurma deger uretilmez.
+    shareholder_id: uuid.UUID | None  # P9 (KKP 91)
+    shareholder_name: str | None  # P9 (KKP 91)
     # --- ileri dilim yer tutuculari ---
-    shareholder: MetricPlaceholder  # P9 (KKP 91)
     # KARAR 3: maliyet ELLE GIRILMEZ, kolon ACILMAZ (spec §4.5) — ileride Is
     # Kalemleri/satinalmadan hesaplanacak. Maliyet yoksa kâr da yoktur.
     unit_cost: MetricPlaceholder  # UE 91 / FDS 62
@@ -431,10 +440,19 @@ class UnitUpdate(_UnitFormFields):
 
 
 class UnitAllocationItem(BaseModel):
-    """KKP 25 "Paylasimi Kaydet". `owner_side=None` atamayi kaldirir (spec §5.3)."""
+    """KKP 25 "Paylasimi Kaydet". `owner_side=None` atamayi kaldirir (spec §5.3).
+
+    P9 spec §4.2/§5: `shareholder_id` YALNIZ `owner_side=landowner` iken
+    anlamlidir (PG 221: select yalniz ARSA satirinda; PG 190: BIZ satiri
+    "Yuklenici payi" basar) — aksi hâlde 422. Alan GONDERILMEZSE `None`
+    sayilir: uc atomik DEGISTIRME sozlesmesini korur, kismi guncellemeye
+    yumusamaz. Bu yuzden ARSA'dan cikan unitenin hissedari AYNI istekte
+    temizlenir; ayri bir istek beklenmez.
+    """
 
     unit_id: uuid.UUID
     owner_side: UnitOwnerSide | None
+    shareholder_id: uuid.UUID | None = None
 
 
 class UnitAllocationRequest(BaseModel):
