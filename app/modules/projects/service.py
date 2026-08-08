@@ -327,7 +327,13 @@ async def _merge_shareholders(
     hatasidir. Bu yuzden fonksiyon ya tamamen uygular ya hic dokunmaz.
     """
     existing = {row.id: row for row in project.shareholders}
-    kept_ids = {item.id for item in inputs if item.id is not None}
+    sent_ids = [item.id for item in inputs if item.id is not None]
+    kept_ids = set(sent_ids)
+    # T5 bulgusu: ayni id iki kez gonderilirse birlestirme SESSIZCE tek satira
+    # cokerdi (ikinci girdinin adi kazanir, ilkinin orani kaybolur, yanit 200).
+    # `units.batch.update_allocation`in DUPLICATE_IN_PAYLOAD kapisinin esi.
+    if len(sent_ids) != len(kept_ids):
+        raise ProjectValidationError(messages.SHAREHOLDER_DUPLICATE_IN_PAYLOAD)
     unknown = kept_ids - set(existing)
     if unknown:
         # Baska projenin hissedari da buraya duser: proje disi id, bu projede YOKTUR.

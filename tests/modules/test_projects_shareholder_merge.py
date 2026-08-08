@@ -18,7 +18,11 @@ import pytest
 from sqlalchemy import select
 
 from app.core.errors import ConflictError, ProjectValidationError
-from app.modules.projects.messages import SHAREHOLDER_UNKNOWN, shareholder_has_units
+from app.modules.projects.messages import (
+    SHAREHOLDER_DUPLICATE_IN_PAYLOAD,
+    SHAREHOLDER_UNKNOWN,
+    shareholder_has_units,
+)
 from app.modules.projects.models import LandShareShareholder
 from app.modules.projects.schemas import (
     ProjectCreate,
@@ -348,3 +352,37 @@ async def test_api_patch_returns_409_with_turkish_reason(client, seeded_db, user
     assert resp.status_code == 409
     assert resp.json()["detail"] == shareholder_has_units(["Atanmış"])
     assert [s.name for s in await _rows(seeded_db, project.id)] == ["Atanmış"]
+
+
+async def test_duplicate_shareholder_id_returns_422(seeded_db, user_factory):
+    """T5 FINAL REVIEW bulgusu: ayni id iki kez -> SESSIZ COKME degil, 422.
+
+    Bulgudan once bu govde 200 doner ve iki girdi tek satira cokerdi: ikinci
+    girdinin adi kazanir, ilkinin orani gerekcesiz kaybolurdu. Kullanicinin
+    istedigi iki hissedardan biri sessizce yok olmus olurdu — dilimin varlik
+    sebebiyle (spec §4.1 "sessiz supurme YOK") ayni siniftan bir hata.
+    Allocation ucunun `DUPLICATE_IN_PAYLOAD` kapisinin esi.
+    """
+    actor = await _writer(seeded_db, user_factory, "p9dup@t.co")
+    project = await _kat_karsiligi(seeded_db, "P9-DUP", [{"name": "A", "share_pct": "100.00"}])
+    existing_id = (await _rows(seeded_db, project.id))[0].id
+
+    with pytest.raises(ProjectValidationError) as excinfo:
+        await update_project(
+            seeded_db,
+            actor,
+            project.id,
+            ProjectUpdate(
+                land_share=_land_share(
+                    [
+                        {"id": existing_id, "name": "A", "share_pct": "25.00"},
+                        {"id": existing_id, "name": "A ikinci", "share_pct": "25.00"},
+                    ]
+                )
+            ),
+        )
+
+    assert str(excinfo.value) == SHAREHOLDER_DUPLICATE_IN_PAYLOAD
+    # Atomiklik: reddedilen istek HICBIR satiri degistirmemis olmali.
+    rows = await _rows(seeded_db, project.id)
+    assert [(s.name, s.share_pct) for s in rows] == [("A", Decimal("100.00"))]
