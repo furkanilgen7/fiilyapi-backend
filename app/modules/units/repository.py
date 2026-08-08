@@ -8,6 +8,7 @@ from app.modules.customers.models import Customer
 # YAPRAK modüller: `sales.models` yalnız `core.db`ye bağlıdır, `customers.models`
 # de öyle. Servis/guard katmanına bağlanılsaydı `sales.guards → units.repository`
 # ile döngü doğardı.
+from app.modules.projects.models import LandShareShareholder
 from app.modules.sales.models import UnitSale, UnitSaleStatus
 from app.modules.sites.models import Site
 from app.modules.units.models import Block, Unit
@@ -155,6 +156,21 @@ async def list_open_sales_for_project(
     """
     result = await session.execute(_open_sales_stmt().where(UnitSale.project_id == project_id))
     return [(sale, customer) for sale, customer in result.all()]
+
+
+async def get_shareholder_name(session: AsyncSession, shareholder_id: uuid.UUID) -> str | None:
+    """P9 spec §4.3: TEKIL unite yaniti icin tek hissedar adi.
+
+    LISTE ucu buraya UGRAMAZ: orada adlar `Project.shareholders`den okunur ve
+    o koleksiyon gorunurluk sorgusuyla (`visible_projects`) ZATEN yuklenmistir
+    (`lazy="selectin"`) — unite basina sorgu da, liste basina EK sorgu da
+    acilmaz. Tekil yanitta ise proje elde olmadigi icin projenin tamamini
+    cekmek yerine tek satir okunur (`get_open_sale_for_unit` ile ayni desen).
+    """
+    result = await session.execute(
+        select(LandShareShareholder.name).where(LandShareShareholder.id == shareholder_id)
+    )
+    return result.scalar_one_or_none()
 
 
 async def get_open_sale_for_unit(

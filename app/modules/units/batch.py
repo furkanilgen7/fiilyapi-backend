@@ -31,7 +31,7 @@ from app.modules.units.importer import (
     normalize_header,
     parse_units_file,
 )
-from app.modules.units.models import Block, Unit
+from app.modules.units.models import Block, Unit, UnitOwnerSide
 from app.modules.units.schemas import (
     UnitAllocationRequest,
     UnitBulkCreate,
@@ -499,22 +499,63 @@ async def update_allocation(
     4. adimda "bulunamadi" ile "baska projenin" AYNI mesaji doner: aksi hâlde
     elinde UUID olan kullanici kaydin var oldugunu ve baskasina ait oldugunu
     ayirt edebilirdi (`guards.visible_unit` ile ayni gerekce).
+
+    P9 spec §4.2 — HISSEDAR (`shareholder_id`), iki ek dogrulama olarak ayni
+    siraya girer ve ikisi de YAZMADAN ONCE biter:
+
+    5. `owner_side` `contractor`/`None` iken hissedar gonderilmisse 422
+       (PG 221: select yalniz ARSA satirinda; PG 190: BIZ satiri "Yuklenici
+       payi" basar). `landowner + shareholder_id=None` GECERLIDIR — atama
+       zorunlu degildir (KKP 119 "—").
+    6. Hissedar bu projeye ait degilse (veya hic yoksa) 404, unitedekiyle AYNI
+       gorunmezlik gerekcesiyle; hicbir satir yazilmaz.
+
+    TARAF DEGISINCE HISSEDAR BIRLIKTE GIDER: `owner_side` `landowner`dan
+    cikinca (`contractor` ya da `None`) o unitenin `shareholder_id`si AYNI
+    istekte temizlenir. Ayri bir istek beklenmez — uc atomiktir ve "yuklenici
+    payinda hissedar" gibi yarim bir durum birakamaz. Ayni gerekceyle
+    `shareholder_id` alani GONDERILMEZSE `None` sayilir (sema varsayilani):
+    uc DEGISTIRME sozlesmesini korur, kismi guncellemeye yumusamaz.
     """
     project = await guards.visible_project(session, actor, project_id)
     if project.project_type is not ProjectType.kat_karsiligi:
         raise ProjectTypeMismatchError(guards.ALLOCATION_WRONG_TYPE)
 
-    wanted = {item.unit_id: item.owner_side for item in data.items}
+    wanted = {item.unit_id: item for item in data.items}
     if len(wanted) != len(data.items):
         raise UnitValidationError(guards.DUPLICATE_IN_PAYLOAD)
+
+    if any(
+        item.shareholder_id is not None and item.owner_side is not UnitOwnerSide.landowner
+        for item in data.items
+    ):
+        raise UnitValidationError(guards.SHAREHOLDER_WRONG_SIDE)
+
+    requested_shareholders = {
+        item.shareholder_id for item in data.items if item.shareholder_id is not None
+    }
+    # Projenin hissedarlari gorunurluk sorgusuyla ZATEN yuklendi
+    # (`Project.shareholders`, `lazy="selectin"`) — hissedar basina "var mi"
+    # sorgusu ACILMAZ ve okuma yuzeyiyle AYNI kaynak kullanilir. Kume
+    # karsilastirmasi TEK adimda hem "baska projenin" hem "hic yok" durumunu
+    # kapatir; ikisi de AYNI 404'u alir (IDOR-8).
+    if not requested_shareholders <= {row.id for row in project.shareholders}:
+        raise NotFoundError(guards.SHAREHOLDER_MISSING)
 
     units = await repository.get_units_by_ids(session, list(wanted))
     if len(units) != len(wanted) or any(unit.project_id != project.id for unit in units):
         raise NotFoundError(guards.UNIT_MISSING)
 
     for unit in units:
-        unit.owner_side = wanted[unit.id]
+        item = wanted[unit.id]
+        unit.owner_side = item.owner_side
+        unit.shareholder_id = (
+            item.shareholder_id if item.owner_side is UnitOwnerSide.landowner else None
+        )
     await session.flush()
-    # Spec §9: 42 unitelik bir kayit 42 satir yazsaydi gunlugu bogardi — TEK satir.
-    detail = messages.unit_allocation_updated(project.name, len(units))
+    # Spec §9: 42 unitelik bir kayit 42 satir yazsaydi gunlugu bogardi — TEK
+    # satir. P9: hissedar atamasi sayisi AYNI ozete girer, yeni `AuditAction`
+    # ACILMAZ (TB3 T3 emsali).
+    assigned = sum(1 for unit in units if unit.shareholder_id is not None)
+    detail = messages.unit_allocation_updated(project.name, len(units), assigned)
     return await service.list_units(session, actor, project_id), detail

@@ -21,6 +21,7 @@ from sqlalchemy import delete, select
 
 from app.modules.audit import messages
 from app.modules.audit.models import AuditAction, AuditLog
+from app.modules.projects.models import LandShareShareholder
 from app.modules.units.models import Unit, UnitKind, UnitOwnerSide
 from app.modules.units.schemas import UnitNumberingPattern
 from tests.modules.units.test_units_api import _block, _login, _site, _unit
@@ -274,6 +275,45 @@ async def test_allocation_writes_exactly_one_audit_row_for_42_units(
     assert rows[0].detail == "Ünite paylaşımı güncellendi: Yeşil Vadi · 42 ünite"
 
 
+async def test_allocation_audit_row_counts_shareholder_assignments(
+    client, db_session, user_factory, project_factory
+):
+    """P9 spec §5: hissedar atamasi MEVCUT dönem-özetine eklenir — istek yine
+    TEK satir yazar ve yeni bir `AuditAction` acilmaz."""
+    project = await project_factory("B11-9B", name="Yeşil Vadi", project_type="kat_karsiligi")
+    site = await _site(db_session, project)
+    block = await _block(db_session, project, site, name="A Blok")
+    units = [await _unit(db_session, project, block, str(no)) for no in (1, 2, 3)]
+    shareholder = LandShareShareholder(
+        project_id=project.id, name="A. Yılmaz", share_pct=Decimal("50.00")
+    )
+    db_session.add(shareholder)
+    await db_session.flush()
+    headers = await _admin(client, db_session, user_factory)
+
+    resp = await client.patch(
+        f"/projects/{project.id}/units/allocation",
+        json={
+            "items": [
+                {
+                    "unit_id": str(unit.id),
+                    "owner_side": UnitOwnerSide.landowner.value,
+                    "shareholder_id": str(shareholder.id) if index < 2 else None,
+                }
+                for index, unit in enumerate(units)
+            ]
+        },
+        headers=headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    rows = await _rows(db_session, AuditAction.update)
+    assert len(rows) == 1
+    assert rows[0].detail == (
+        "Ünite paylaşımı güncellendi: Yeşil Vadi · 3 ünite (2 hissedar ataması)"
+    )
+
+
 # --- Okuma uclari YAZMAZ + ortak alanlar + reddedilen istek ---
 
 
@@ -408,8 +448,18 @@ def test_unit_audit_message_texts_are_frozen():
     assert messages.units_bulk_created("Yeşil Vadi", "A Blok", 24) == (
         "Toplu ünite üretildi: Yeşil Vadi · A Blok · 24 ünite"
     )
-    assert messages.unit_allocation_updated("Yeşil Vadi", 42) == (
+    assert messages.unit_allocation_updated("Yeşil Vadi", 42, 0) == (
         "Ünite paylaşımı güncellendi: Yeşil Vadi · 42 ünite"
+    )
+
+
+def test_allocation_message_reports_shareholder_assignments():
+    """P9 spec §5: hissedar atamasi sayisi MEVCUT dönem-özeti satirina eklenir —
+    yeni `AuditAction` ACILMAZ (TB3 T3 emsali). Ek YALNIZ atama varken basilir;
+    "(0 hissedar ataması)" her paylasima gurultu eklerdi (`units_imported`
+    gerekcesinin aynisi)."""
+    assert messages.unit_allocation_updated("Yeşil Vadi", 42, 19) == (
+        "Ünite paylaşımı güncellendi: Yeşil Vadi · 42 ünite (19 hissedar ataması)"
     )
 
 

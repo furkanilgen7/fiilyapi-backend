@@ -203,7 +203,19 @@ def units_imported(project_name: str, created: int, skipped: int = 0) -> str:
     return f"Üniteler Excel'den içe aktarıldı: {project_name} · {created} ünite"
 
 
-def unit_allocation_updated(project_name: str, count: int) -> str:
+def unit_allocation_updated(project_name: str, count: int, shareholder_count: int) -> str:
+    """P9 spec §5: hissedar atamasi MEVCUT dönem-özetine eklenir.
+
+    Yeni bir `AuditAction` ACILMAZ (TB3 T3 emsali): paylasim tek bir eylemdir,
+    hissedar atamasi onun bir ayrintisidir. Ek YALNIZ atama varken basilir;
+    "(0 hissedar ataması)" her paylasim satirina gurultu eklerdi
+    (`units_imported`in `skipped` gerekcesinin aynisi).
+    """
+    if shareholder_count:
+        return (
+            f"Ünite paylaşımı güncellendi: {project_name} · "
+            f"{count} ünite ({shareholder_count} hissedar ataması)"
+        )
     return f"Ünite paylaşımı güncellendi: {project_name} · {count} ünite"
 
 

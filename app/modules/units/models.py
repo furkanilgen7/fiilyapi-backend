@@ -226,8 +226,11 @@ class Unit(Base):
     `site_id` YOKTUR: santiye blok uzerinden turetilir (spec §4.0). Iki farkli
     yoldan ayni gercege ulasmak senkron kaymasi demektir; tek otorite `blocks`.
 
-    Ileri bag ACILMAZ (spec §1.3): `sale_id`, `shareholder_id`, `contract_id`
-    sutunlari yoktur.
+    Ileri bag ACILMAZ (spec §1.3): `sale_id` ve `contract_id` sutunlari yoktur.
+    `shareholder_id` ise P9'da ACILDI (P9 spec §3): kat karsiligi projede
+    unitenin hangi arsa hissedarina dustugunu tasir. `relationship` KURULMAZ —
+    okuma yuzeyi hissedar adini ACIK JOIN/sorgu ile besler (BC blob izolasyon
+    emsali), boylece lazy-load surprizi olmaz.
 
     GELECEK IS — P8 (unite satisi) geldiginde:
     `sales_status` OTOMATIK yonetilmeye baslayacak (satis kaydi acildiginda
@@ -323,6 +326,17 @@ class Unit(Base):
     # Nullable kalir: paylasim noterden sonra girilir (KKP 78, spec §5.3).
     owner_side: Mapped[UnitOwnerSide | None] = mapped_column(
         Enum(UnitOwnerSide, name="unit_owner_side"), nullable=True
+    )
+    # P9: yalniz `owner_side=landowner` iken anlamlidir (spec §4.2); zorunlu
+    # DEGILDIR (paylasim kademeli girilir). ON DELETE SET NULL yalniz proje
+    # silme kaskadinin DB emniyetidir — atanmis hissedarin listeden cikarilmasi
+    # uygulama katmaninda 409'a duser (spec §4.1). `relationship` YOKTUR:
+    # bkz. sinif docstring'i.
+    shareholder_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("land_share_shareholder.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
     # KARAR 4: kat METINDIR, sayi degil. "Zemin" / "3. Kat" / "Cati Kati"
     # etiketlerini bir tam sayiya cevirmek KONVANSIYON ICAT ETMEK olurdu

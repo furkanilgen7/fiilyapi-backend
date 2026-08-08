@@ -52,7 +52,9 @@ def _unit(**overrides) -> UnitResponse:
         # P8 T5: yer tutucu DEGIL — acik satis kaydindan gelir, yoksa `None`.
         "sale_price": None,
         "buyer_name": None,
-        "shareholder": _metric("shareholder_units"),
+        # P9 T3: yer tutucu DEGIL — `units.shareholder_id` gercek kolondur.
+        "shareholder_id": None,
+        "shareholder_name": None,
         "unit_cost": _metric("project_costs"),
         "expected_profit": _metric("project_costs"),
     }
@@ -133,6 +135,13 @@ def test_allocation_request_min_and_max_items():
         UnitAllocationRequest(items=over_limit)
 
 
+def test_allocation_item_shareholder_defaults_to_none():
+    """P9 spec §5: alan GONDERILMEZSE `None`dir — mevcut atomik DEGISTIRME
+    sozlesmesi korunur, uc kismi guncellemeye yumusamaz."""
+    item = UnitAllocationItem(unit_id=uuid.uuid4(), owner_side=UnitOwnerSide.landowner)
+    assert item.shareholder_id is None
+
+
 def test_bulk_create_rejects_inverted_floor_range():
     with pytest.raises(ValidationError):
         UnitBulkCreate(
@@ -172,10 +181,10 @@ def test_metric_placeholder_imported_not_redefined():
     """Yer tutucu sozlesmesi TEK yerde tanimlidir (P1); kopyalanmaz."""
     assert schemas.MetricPlaceholder is MetricPlaceholder
     assert schemas.CountPlaceholder is CountPlaceholder
-    # `sales_status` P3.1'de, `sale_price`/`buyer_name` ise P8 T5'te gercek
-    # degere dondu; yer tutucu sozlesmesinin kanitini artik `shareholder` tasir
-    # (P9 `shareholder_units` hâlâ yazilmadi).
-    assert UnitResponse.model_fields["shareholder"].annotation is MetricPlaceholder
+    # `sales_status` P3.1'de, `sale_price`/`buyer_name` P8 T5'te, `shareholder`
+    # ise P9 T3'te gercek degere dondu; yer tutucu sozlesmesinin kanitini artik
+    # `unit_cost` tasir (kalici karar 3 → `project_costs` hâlâ yazilmadi).
+    assert UnitResponse.model_fields["unit_cost"].annotation is MetricPlaceholder
 
 
 # --- P3.1 T6: unite formunun yeni alanlari (spec §4.1-§4.4) ---

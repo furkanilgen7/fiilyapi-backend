@@ -208,6 +208,15 @@ class ProjectInvestmentInput(BaseModel):
 
 
 class ShareholderInput(BaseModel):
+    """P9 spec §4.1: `id` OPSIYONELDIR ve satirin KIMLIGINI korur.
+
+    id verilirse mevcut satir yerinde guncellenir (`units.shareholder_id` bagi
+    ayakta kalir); verilmezse yeni satirdir. id'siz eski govdeler geriye uyumlu
+    calisir. Bilinmeyen ya da baska projeye ait id sessizce yeni satira DONMEZ,
+    422 verir (bkz. `service._merge_shareholders`).
+    """
+
+    id: uuid.UUID | None = None
     name: str = Field(min_length=1, max_length=200)
     share_pct: Decimal = Field(gt=0, le=100)
 

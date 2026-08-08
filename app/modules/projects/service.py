@@ -5,13 +5,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel
 from app.core.errors import (
+    ConflictError,
     DuplicateError,
     NotFoundError,
     ProjectTypeMismatchError,
     ProjectValidationError,
 )
 from app.core.timezone import today
-from app.modules.projects import repository
+from app.modules.projects import messages, repository
 from app.modules.projects.models import (
     Employer,
     LandShareShareholder,
@@ -42,6 +43,7 @@ from app.modules.projects.schemas import (
     ProjectListResponse,
     ProjectSiteInput,
     ProjectUpdate,
+    ShareholderInput,
     ShareholderResponse,
 )
 from app.modules.roles.repository import get_permission
@@ -307,7 +309,62 @@ def _apply_investment(project: Project, data: ProjectInvestmentInput) -> None:
     project.investment.land_cost = data.land_cost
 
 
-def _apply_land_share(project: Project, data: ProjectLandShareInput) -> None:
+async def _merge_shareholders(
+    session: AsyncSession, project: Project, inputs: list[ShareholderInput]
+) -> None:
+    """Hissedar listesini KIMLIK KORUYARAK birlestirir (spec §4.1).
+
+    Eski davranis listeyi toptan silip yeniden aciyordu; `units.shareholder_id`
+    FK'si (P9 T1, ON DELETE SET NULL) acildiktan sonra bu, siradan bir proje
+    PATCH'inde TUM unite atamalarini SESSIZCE supururdu. Kurallar:
+
+    - id eslesen satir YERINDE guncellenir (ad/oran) — birincil anahtar yasar.
+    - id'siz girdi yeni satirdir (eski govdeler geriye uyumlu).
+    - listede olmayan mevcut satir silinir; ATANMIS unitesi varsa 409.
+
+    Dogrulamalarin TAMAMI hicbir sey yazilmadan ONCE kosar: yarim uygulanmis bir
+    liste (ilk satir yeniden adlandirildi, ikincisi 409'a takildi) sessiz veri
+    hatasidir. Bu yuzden fonksiyon ya tamamen uygular ya hic dokunmaz.
+    """
+    existing = {row.id: row for row in project.shareholders}
+    sent_ids = [item.id for item in inputs if item.id is not None]
+    kept_ids = set(sent_ids)
+    # T5 bulgusu: ayni id iki kez gonderilirse birlestirme SESSIZCE tek satira
+    # cokerdi (ikinci girdinin adi kazanir, ilkinin orani kaybolur, yanit 200).
+    # `units.batch.update_allocation`in DUPLICATE_IN_PAYLOAD kapisinin esi.
+    if len(sent_ids) != len(kept_ids):
+        raise ProjectValidationError(messages.SHAREHOLDER_DUPLICATE_IN_PAYLOAD)
+    unknown = kept_ids - set(existing)
+    if unknown:
+        # Baska projenin hissedari da buraya duser: proje disi id, bu projede YOKTUR.
+        raise ProjectValidationError(messages.SHAREHOLDER_UNKNOWN)
+
+    removed = [row for row in project.shareholders if row.id not in kept_ids]
+    if removed:
+        assigned = await repository.shareholder_ids_with_units(session, [r.id for r in removed])
+        blocked = [row.name for row in removed if row.id in assigned]
+        if blocked:
+            raise ConflictError(messages.shareholder_has_units(sorted(blocked)))
+
+    merged: list[LandShareShareholder] = []
+    for item in inputs:
+        if item.id is None:
+            merged.append(LandShareShareholder(name=item.name, share_pct=item.share_pct))
+            continue
+        row = existing[item.id]
+        row.name = item.name
+        row.share_pct = item.share_pct
+        merged.append(row)
+    # Listede kalanlar AYNI nesnelerdir: delete-orphan yalnizca dusenleri siler.
+    project.shareholders = merged
+
+
+async def _apply_land_share(
+    session: AsyncSession, project: Project, data: ProjectLandShareInput
+) -> None:
+    # Hissedar dogrulamasi (422/409) DIGER alanlara dokunmadan once: reddedilen
+    # istek arsa payi alanlarini da degistirmis birakmaz.
+    await _merge_shareholders(session, project, data.shareholders)
     if project.land_share is None:
         project.land_share = ProjectLandShare(project_id=project.id)
     land_share = project.land_share
@@ -321,10 +378,6 @@ def _apply_land_share(project: Project, data: ProjectLandShareInput) -> None:
     land_share.delivery_date = data.delivery_date
     land_share.daily_penalty = data.daily_penalty
     land_share.guarantee_amount = data.guarantee_amount
-    # Hissedar listesi BUTUNUYLE degistirilir (spec §5.5) — parca parca CRUD yok.
-    project.shareholders = [
-        LandShareShareholder(name=s.name, share_pct=s.share_pct) for s in data.shareholders
-    ]
 
 
 async def _next_project_code(session: AsyncSession, year: int) -> str:
@@ -489,7 +542,7 @@ async def create_project(session: AsyncSession, data: ProjectCreate) -> Project:
     if data.investment is not None:
         _apply_investment(project, data.investment)
     if data.land_share is not None:
-        _apply_land_share(project, data.land_share)
+        await _apply_land_share(session, project, data.land_share)
     await session.flush()
     # Satır içi şantiyeler tek transaction içinde; kod çakışması tüm oluşturmayı geri alır.
     await _write_inline_sites(session, project, data.sites)
@@ -508,7 +561,7 @@ async def update_project(
     if data.investment is not None:
         _apply_investment(project, data.investment)
     if data.land_share is not None:
-        _apply_land_share(project, data.land_share)
+        await _apply_land_share(session, project, data.land_share)
     await session.flush()
     await session.refresh(project)
     return project

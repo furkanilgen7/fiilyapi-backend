@@ -14,7 +14,8 @@ from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
-from app.modules.units import batch, guards, importer, service
+from app.modules.units import batch, export, guards, importer, service
+from app.modules.units.export import build_units_workbook
 from app.modules.units.models import UnitKind, UnitSalesStatus
 from app.modules.units.schemas import (
     BlockCreate,
@@ -438,4 +439,38 @@ async def units_import_template_endpoint(
         content=build_template_workbook().getvalue(),
         media_type=XLSX_MEDIA_TYPE,
         headers={"Content-Disposition": _content_disposition(f"unite-sablonu-{project.code}.xlsx")},
+    )
+
+
+@router.get(
+    "/projects/{project_id}/units/export.xlsx",
+    dependencies=[_VIEW],
+    response_class=Response,
+    responses={200: {"content": {XLSX_MEDIA_TYPE: {}}, "description": "Excel dosyasi"}},
+)
+async def units_export_endpoint(
+    project_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> Response:
+    """P9 T4 (KKP 24 "Excel"): paylasim tablosunun Excel ciktisi (spec §5).
+
+    Zarf `service.list_units` ile — LISTE UCUYLA AYNI cagridan — gelir: gorunurluk
+    kapisi (gorunmeyen proje 404), satir sirasi ve tum degerler ekranla birebir
+    ayni kaynaktan cikar. Ikinci bir hesap/sorgu yolu ACILMAZ (timesheet export
+    emsali: bir kere kur, iki kere bas).
+
+    SUZGEC ALMAZ (liste ucundaki `block_id`/`kind`/... parametreleri): KKP'nin
+    Excel dugmesi paylasim tablosunun TAMAMINI indirir; kismi dosya, tfoot
+    toplamlariyla (proje geneli) celisen bir belge uretirdi.
+
+    Okuma ucudur — `_audit` CAGIRMAZ ve `Request` parametresi bile ALMAZ
+    (P4 T7 kurali; sablon ucuyle ayni gerekce).
+    """
+    project = await guards.visible_project(session, user, project_id)
+    units = await service.units_for_project(session, project)
+    return Response(
+        content=build_units_workbook(units).getvalue(),
+        media_type=XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": _content_disposition(export.filename(project.code))},
     )
