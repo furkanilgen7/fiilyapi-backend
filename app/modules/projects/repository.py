@@ -4,6 +4,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.projects.models import Employer, Project
+
+# units.models yalniz app.core.db'yi import eder — cembersel import YOK.
+from app.modules.units.models import Unit
 from app.modules.users.models import UserProjectAccess
 
 
@@ -80,3 +83,19 @@ async def list_projects_for_user(session: AsyncSession, user_id: uuid.UUID) -> l
         select(Project).where(Project.id.in_(project_ids)).order_by(Project.code)
     )
     return list(result.scalars().all())
+
+
+async def shareholder_ids_with_units(
+    session: AsyncSession, shareholder_ids: list[uuid.UUID]
+) -> set[uuid.UUID]:
+    """Verilen hissedarlardan HANGILERINE unite atanmis oldugunu doner (P9 spec §4.1).
+
+    Tek sorgu (DISTINCT) — hissedar basina sorgu ACILMAZ. `units.shareholder_id`
+    icin `relationship` kurulmadigi (P9 spec §3) icin bag ACIK sorguyla okunur.
+    """
+    if not shareholder_ids:
+        return set()
+    result = await session.execute(
+        select(Unit.shareholder_id).where(Unit.shareholder_id.in_(shareholder_ids)).distinct()
+    )
+    return {row for row in result.scalars().all() if row is not None}
