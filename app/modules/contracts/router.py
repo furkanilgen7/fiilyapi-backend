@@ -258,11 +258,15 @@ async def update_employer_contract_item_endpoint(
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> EmployerContractItemResponse:
-    item, project = await service.update_employer_item(session, user, item_id, data)
+    item, project, refreshed_boq_count = await service.update_employer_item(
+        session, user, item_id, data
+    )
     await record_audit(
         session,
         action=AuditAction.update,
-        detail=messages.employer_contract_item_updated(project.name, item.code, item.description),
+        detail=messages.employer_contract_item_updated(
+            project.name, item.code, item.description, refreshed_boq_count
+        ),
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )

@@ -258,8 +258,19 @@ def employer_contract_item_created(project_name: str, code: str, description: st
     return f"Sözleşme poz kalemi oluşturuldu: {project_name} · {code} — {description}"
 
 
-def employer_contract_item_updated(project_name: str, code: str, description: str) -> str:
-    return f"Sözleşme poz kalemi güncellendi: {project_name} · {code} — {description}"
+def employer_contract_item_updated(
+    project_name: str, code: str, description: str, refreshed_boq_count: int = 0
+) -> str:
+    """TB4/B3: kalemin `code`/`unit_price` değişimi ayna BOQ satırlarını da
+
+    tazeler. Bu yan etki MEVCUT `update` olayının detayına eklenir — yeni bir
+    `AuditAction` üyesi açmak gerçek Postgres enum'una migration isterdi
+    (TB3-C emsali). Tazeleme olmadıysa metin BİREBİR eskisi gibi kalır.
+    """
+    detail = f"Sözleşme poz kalemi güncellendi: {project_name} · {code} — {description}"
+    if refreshed_boq_count > 0:
+        detail += f" · {refreshed_boq_count} BOQ satırı tazelendi"
+    return detail
 
 
 def employer_contract_item_deleted(project_name: str, code: str, description: str) -> str:

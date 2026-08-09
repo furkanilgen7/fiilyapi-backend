@@ -21,6 +21,7 @@ from app.core.timezone import today
 from app.modules.company.service import get_company
 from app.modules.contracts import distribution_quantity, repository
 from app.modules.contracts.guards import (
+    BOQ_CODE_TAKEN_IN_SITE,
     CONTRACT_MISSING,
     DUPLICATE_ITEM_CODE,
     GROUP_HAS_ITEMS,
@@ -51,7 +52,12 @@ from app.modules.contracts.schemas import (
 )
 from app.modules.projects.models import Project, ProjectContract
 from app.modules.projects.service import visible_projects
+from app.modules.sites import repository as sites_repository
 from app.modules.users.models import User
+
+# TB4/B3: ayna BOQ satırında sözleşme kaleminden TÜREYEN alanlar. Miktar bu
+# kümede DEĞİLDİR — o dağıtımın kendi kararıdır (spec §1 B3).
+MIRRORED_ITEM_FIELDS = ("code", "unit_price")
 
 _MONEY = Decimal("0.01")
 
@@ -452,16 +458,80 @@ async def create_employer_item(
     return item, project
 
 
+async def _refresh_mirror_boq_rows(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    item: EmployerContractItem,
+    mirrored_updates: dict[str, object],
+) -> int:
+    """TB4/B3: kalemin ayna BOQ satırlarını AYNI işlemde tazeler; adedini döner.
+
+    Ayna satırlar `distribution_quantity.index_allocations` TEK KAYNAĞINDAN
+    gelir (TB4/B2 otorite kümesi): dağıtım ekranının hücre saydığı küme neyse,
+    tazelenen küme de odur — ikinci bir "bağlı satırlar" sorgusu icat etmek iki
+    tanımı yeniden ayrıştırırdı. Kapsam dolayısıyla projenin ŞANTİYELERİDİR;
+    devredilmiş bir şantiyede kalmış kopya bu sözleşme tarafından yönetilmez.
+
+    MİKTARA DOKUNULMAZ (`MIRRORED_ITEM_FIELDS`): miktar dağıtımın kararıdır,
+    kalem PATCH'i onu yeniden yazarsa kullanıcının kotası sessizce kaybolurdu.
+
+    `code` tazelemesi `uq_boq_items_site_code`'a çarpabilir (hedef şantiyede o
+    numarayı tutan başka bir satır olabilir). `IntegrityError` ile 500'e düşmek
+    yerine dağıtım yazma yolunun kullandığı AYNI 409 (`BOQ_CODE_TAKEN_IN_SITE`)
+    verilir — kalem kodu ile şantiye BOQ'su gerçekten çelişiyordur.
+    """
+    if not mirrored_updates:
+        return 0
+
+    sites = await sites_repository.list_sites_for_project(session, project_id)
+    boq_rows = await repository.list_boq_items_for_sites(session, [site.id for site in sites])
+    allocations = distribution_quantity.index_allocations(boq_rows)
+    mirrors = [
+        row
+        for (contract_item_id, _site_id), row in allocations.items()
+        if contract_item_id == item.id
+    ]
+    if not mirrors:
+        return 0
+
+    new_code = mirrored_updates.get("code")
+    if new_code is not None:
+        mirror_ids = {row.id for row in mirrors}
+        taken = {
+            row.site_id for row in boq_rows if row.code == new_code and row.id not in mirror_ids
+        }
+        if any(row.site_id in taken for row in mirrors):
+            raise DuplicateError(BOQ_CODE_TAKEN_IN_SITE)
+
+    for row in mirrors:
+        for field, value in mirrored_updates.items():
+            setattr(row, field, value)
+    return len(mirrors)
+
+
 async def update_employer_item(
     session: AsyncSession, actor: User, item_id: uuid.UUID, data: EmployerContractItemUpdate
-) -> tuple[EmployerContractItem, Project]:
+) -> tuple[EmployerContractItem, Project, int]:
     """`group_id` verilirse spec §3.2 tutarlılığı tekrar kontrol edilir (başka
 
     sözleşmenin grubuna taşıma yasak); `code` değişirse tekillik tekrar kontrol
     edilir; `quantity` küçültülürse spec §3.3 kalan hesabı negatif OLAMAZ —
     dağıtılmış toplamın altına indirme 422 döner (task C6 kararı).
+
+    TB4/B3: `code`/`unit_price` gerçekten DEĞİŞTİYSE kalemin ayna BOQ satırları
+    aynı işlemde tazelenir (S2: senkron tazeleme, snapshot DEĞİL) ve tazelenen
+    satır adedi döner — router mevcut `update` denetim satırının detayına yazar,
+    yeni bir `AuditAction` açılmaz.
+
+    Kilit `repository.lock_employer_items` (TB1) — dağıtımın kullandığı desenin
+    aynısı, `ORDER BY id` ile: doğrulamayı ve tazelemeyi besleyen okumalardan
+    ÖNCE alınır, böylece eşzamanlı bir dağıtım kaydı ile kalem güncellemesi
+    birbirinin okuduğu "dağıtılmış"ı geçersizleştiremez. Aynı sıra iki yazma
+    yolunda da kullanıldığı için deadlock doğmaz.
     """
     item, project = await _visible_item(session, actor, item_id)
+    await repository.lock_employer_items(session, project.id)
+
     updates = data.model_dump(exclude_unset=True)
     if "group_id" in updates:
         await _ensure_group_in_project(session, updates["group_id"], project.id)
@@ -471,11 +541,21 @@ async def update_employer_item(
         distributed = await _distributed_quantity(session, project.id, item.id)
         if updates["quantity"] < distributed:
             raise SiteValidationError(ITEM_QUANTITY_BELOW_DISTRIBUTED)
+
+    # DEĞİŞMEYEN alan tazeleme saymaz: aynı değeri yeniden göndermek denetim
+    # satırına "N satır tazelendi" yazdırmamalı (olmayan bir etki bildirilmez).
+    mirrored_updates = {
+        field: updates[field]
+        for field in MIRRORED_ITEM_FIELDS
+        if field in updates and updates[field] != getattr(item, field)
+    }
+    refreshed = await _refresh_mirror_boq_rows(session, project.id, item, mirrored_updates)
+
     for field, value in updates.items():
         setattr(item, field, value)
     await session.flush()
     await session.refresh(item)
-    return item, project
+    return item, project, refreshed
 
 
 # --- Silme uçları (task C12, spec §7) ---
