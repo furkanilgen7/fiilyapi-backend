@@ -13,12 +13,13 @@ from app.core.ratelimit import client_ip
 from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
-from app.modules.projects import service
+from app.modules.projects import cost_summary, service
 from app.modules.projects.models import ProjectStatus, ProjectType
 from app.modules.projects.schemas import (
     EmployerCreate,
     EmployerListResponse,
     EmployerResponse,
+    ProjectCostsResponse,
     ProjectCreate,
     ProjectDetailResponse,
     ProjectListResponse,
@@ -97,6 +98,21 @@ async def get_project_endpoint(
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> ProjectDetailResponse:
     return await service.get_project_detail(session, user, project_id)
+
+
+@router.get(
+    "/{project_id}/costs",
+    response_model=ProjectCostsResponse,
+    # OKUMA ucu: `view` yeter (P10 spec §3). Audit YAZILMAZ — türev okuma hiçbir
+    # şey değiştirmez, denetim günlüğünü kart açılışlarıyla şişirmek anlamsızdır.
+    dependencies=[require_permission("projects", AccessLevel.view)],
+)
+async def get_project_costs_endpoint(
+    project_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> ProjectCostsResponse:
+    return await cost_summary.get_project_costs(session, user, project_id)
 
 
 @router.post(

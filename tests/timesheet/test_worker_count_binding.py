@@ -18,6 +18,7 @@ Sayılan şey **distinct personel**dir: aynı kişinin 20 günü 20 işçi DEĞ�
 """
 
 from datetime import date, timedelta
+from decimal import Decimal
 
 import pytest
 from httpx import AsyncClient
@@ -198,6 +199,10 @@ async def test_taahhut_kartinin_isci_sayisi_projenin_tum_santiyelerinden(
     liste = await _proje_listesi(client, admin_headers)
     kart = _proje_satiri(liste, proje.id)["contracting"]
     assert kart["worker_count"] == {"available": True, "count": 2, "pending_module": "timesheet"}
-    # Bağlanmayanlar yer tutucu KALIR — bu dilim yalnız puantajı bağlar.
+    # Bağlanmayanlar yer tutucu KALIR (taşeron sayacı hâlâ `subcontracts` bekler).
     assert kart["subcontractor_count"]["available"] is False
-    assert kart["spent"]["available"] is False
+    # `spent` P10 T4'te BAĞLANDI (taşeron hakedişi): hakedişi olmayan projede
+    # `0.00` gerçek cevaptır, artık boş zarf DEĞİL.
+    assert kart["spent"]["available"] is True
+    assert Decimal(kart["spent"]["value"]) == Decimal("0.00")
+    assert kart["spent"]["pending_module"] is None

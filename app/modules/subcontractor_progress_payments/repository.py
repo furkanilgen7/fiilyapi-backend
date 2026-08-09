@@ -201,6 +201,35 @@ async def list_completed_payments_by_contracts(
     return grouped
 
 
+async def list_cost_payments_by_projects(
+    session: AsyncSession, project_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[SubcontractorProgressPayment]]:
+    """P10 maliyet çekirdeğinin toplu okuması: birden çok PROJENİN maliyete giren
+    (`approved|paid`) hakedişleri TEK sorguda (`lines` `selectin` ile yüklenir).
+
+    `…_by_contracts`in kardeşi, kapsamı SÖZLEŞME değil PROJEdir: E4 kart listesi
+    proje başına toplam ister ve proje başına sorgu koşmak yasaktır (spec §4).
+    Süzgeç SQL'dedir — istenmeyen projenin satırı hiç ÇEKİLMEZ.
+    """
+    if not project_ids:
+        return {}
+    stmt = (
+        select(SubcontractorProgressPayment)
+        .where(
+            SubcontractorProgressPayment.project_id.in_(project_ids),
+            SubcontractorProgressPayment.status.in_(COMPLETED_STATUSES),
+        )
+        .order_by(
+            SubcontractorProgressPayment.project_id,
+            SubcontractorProgressPayment.sequence_no,
+        )
+    )
+    grouped: dict[uuid.UUID, list[SubcontractorProgressPayment]] = {}
+    for payment in (await session.execute(stmt)).scalars().all():
+        grouped.setdefault(payment.project_id, []).append(payment)
+    return grouped
+
+
 def _list_stmt(
     visible_project_ids: list[uuid.UUID],
     *,

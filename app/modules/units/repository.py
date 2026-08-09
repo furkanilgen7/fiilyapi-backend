@@ -130,6 +130,32 @@ async def list_units_for_project(session: AsyncSession, project_id: uuid.UUID) -
     return list(result.scalars().all())
 
 
+async def list_units_for_projects(
+    session: AsyncSession, project_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[Unit]]:
+    """P10 T3: BİRÇOK projenin ünitesi TEK sorguda (`project_id` → üniteler).
+
+    Proje kartlarının maliyet/kâr türevleri projenin TÜM ünitelerine (m² paydası,
+    liste fiyatı toplamı, pay değeri) dayanır; proje başına
+    `list_units_for_project` çağırmak 8 projeli portföyde 8 gidiş-dönüş demekti
+    (spec §4 "N+1 yasak"). Sırası tekil ikiziyle AYNI tutulur — iki uç aynı
+    üniteyi farklı sırada göstermez.
+
+    Ünitesi olmayan proje sözlükte HİÇ YER ALMAZ: çağıran `get(id, [])` ile okur
+    (`subcontractor_totals_by_projects` gibi tam anahtar garantisi vermeyiz,
+    çünkü boş liste ile eksik anahtar burada aynı anlama gelir).
+    """
+    if not project_ids:
+        return {}
+    result = await session.execute(
+        select(Unit).where(Unit.project_id.in_(project_ids)).order_by(Unit.sort_order, Unit.unit_no)
+    )
+    grouped: dict[uuid.UUID, list[Unit]] = {}
+    for unit in result.scalars().all():
+        grouped.setdefault(unit.project_id, []).append(unit)
+    return grouped
+
+
 def _open_sales_stmt():
     """AÇIK satış kayıtları (`cancelled` HARİÇ) + alıcı adı.
 
