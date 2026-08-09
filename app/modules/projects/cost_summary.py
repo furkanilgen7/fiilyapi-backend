@@ -57,6 +57,8 @@ from app.modules.projects.schemas import (
     SubcontractorCostRow,
     SubcontractorCostSummary,
 )
+from app.modules.sales import repository as sales_repository
+from app.modules.sales.models import UnitSale
 from app.modules.subcontractor_progress_payments import repository as payments_repository
 from app.modules.subcontractor_progress_payments.models import SubcontractorProgressPayment
 from app.modules.units import repository as units_repository
@@ -154,7 +156,8 @@ def _breakdown(project: Project, construction_spent: Decimal) -> ProjectCostBrea
         marketing=_pending(_ACCOUNTING),
         # Girilmemiş arsa (None) toplama 0 katkı yapar; "girilmedi" bilgisi
         # `land_cost` alanında yaşamaya devam eder (`costs.total_budget_cost` kuralı).
-        total_spent=costs.money_total((land, construction_spent)),
+        # Hesap `costs.total_spent`tedir: E4 kartı da AYNI fonksiyondan besleniyor.
+        total_spent=costs.total_spent(project, construction_spent),
     )
 
 
@@ -162,6 +165,41 @@ async def _project_units(session: AsyncSession, project: Project) -> list[Unit]:
     if project.project_type not in _UNIT_REVENUE_TYPES:
         return []
     return await units_repository.list_units_for_project(session, project.id)
+
+
+async def _project_sales(session: AsyncSession, project: Project) -> list[UnitSale]:
+    """Gerçekleşen satış tabanı — TEK sorgu (`list_sale_rows`), satış sayısı sorgu
+    sayısını BÜYÜTMEZ (spec §4).
+
+    `exclude_cancelled=True`: iptal edilmiş satış ne cirodur ne alacaktır
+    (repository notu); "gerçekleşmiş" süzgeci ayrıca `costs.realized_sales_total`
+    içindedir. Ünite kavramı olmayan tipte (taahhüt) satış tablosuna HİÇ
+    dokunulmaz — `_project_units` süzgecinin aynısı.
+    """
+    if project.project_type not in _UNIT_REVENUE_TYPES:
+        return []
+    rows = await sales_repository.list_sale_rows(session, project.id, exclude_cancelled=True)
+    return [row[0] for row in rows]
+
+
+def _profit(
+    project: Project,
+    units: list[Unit],
+    sales: list[UnitSale],
+    construction_spent: Decimal,
+) -> ProjectProfitProjection:
+    """KY 168-194 bloğu. İki satış satırı (173-180) YALNIZ gelir tarafı üniteden
+    türeyen tiplerde doludur; taahhütte `None` (ünite/satış kavramı yok)."""
+    projection = costs.profit_projection(project, units, construction_spent)
+    unit_revenue = project.project_type in _UNIT_REVENUE_TYPES
+    return ProjectProfitProjection(
+        revenue=projection.revenue,
+        cost=projection.cost,
+        profit=projection.profit,
+        margin_pct=projection.margin_pct,
+        realized_sales=costs.realized_sales_total(sales) if unit_revenue else None,
+        remaining_stock_value=costs.remaining_stock_value(units) if unit_revenue else None,
+    )
 
 
 async def build_project_costs(session: AsyncSession, project: Project) -> ProjectCostsResponse:
@@ -191,17 +229,12 @@ async def build_project_costs(session: AsyncSession, project: Project) -> Projec
     # tablo aynı sayıyı iki farklı yoldan hesaplarsa zamanla ayrışır.
     construction_spent = costs.money_total((total.paid, total.pending))
     units = await _project_units(session, project)
-    projection = costs.profit_projection(project, units, construction_spent)
+    sales = await _project_sales(session, project)
     return ProjectCostsResponse(
         project_id=project.id,
         project_type=project.project_type,
         breakdown=_breakdown(project, construction_spent),
-        profit=ProjectProfitProjection(
-            revenue=projection.revenue,
-            cost=projection.cost,
-            profit=projection.profit,
-            margin_pct=projection.margin_pct,
-        ),
+        profit=_profit(project, units, sales, construction_spent),
         subcontractors=rows,
         subcontractor_total=total,
     )

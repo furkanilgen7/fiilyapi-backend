@@ -203,7 +203,15 @@ def test_metric_fabrikasi_degeri_olani_doldurur_olmayani_bos_birakir() -> None:
 async def test_kendi_yatirim_karti_maliyet_kar_marj_gercek_doner(
     client, db_session, user_factory, project_factory
 ):
-    """KY 182/187-188: toplam maliyet 29,8M · kâr 18,4M · marj %38,2."""
+    """E4 122 "Toplam Maliyet" = HARCANAN (kullanıcı kararı 2026-08-09): arsa 8,4M
+    + inşaat harcanan 10,24M = 18,64M. KY hero ikilisi ("₺20,3M / ₺29,8M bütçe")
+    iki sayının FARKLI şeyler olduğunun kanıtıdır.
+
+    Kâr/marj DEĞİŞMEZ: 48,2M − 29,8M bütçe = 18,4M / %38,2 (KY 182/187-188).
+    """
+    kurucu = await user_factory(
+        email="kyharcanan@p10t3.co", password="parola1234", role_key="patron"
+    )
     project = await project_factory(code="T3-KY", project_type="kendi_yatirim")
     _set_budget_lines(
         project, material="8000000", labor="5000000", sub="7000000", overhead="1400000"
@@ -218,13 +226,15 @@ async def test_kendi_yatirim_karti_maliyet_kar_marj_gercek_doner(
             {"list_price": Decimal("24100000.00")},
         ],
     )
+    contract = await _contract(db_session, project, kurucu, name="Akın İnşaat")
+    await _payment(db_session, contract, kurucu, SubcontractorPaymentStatus.paid, quantity="10240")
     token = await _login(client, user_factory)
 
     body = (await client.get("/projects", headers=_auth(token))).json()
 
     card = _card(body, project.id, "investment")
     assert card["total_cost"]["available"] is True
-    assert Decimal(card["total_cost"]["value"]) == Decimal("29800000.00")
+    assert Decimal(card["total_cost"]["value"]) == Decimal("18640000.00")
     assert card["total_cost"]["pending_module"] is None
     assert Decimal(card["estimated_profit"]["value"]) == Decimal("18400000.00")
     assert Decimal(card["margin"]["value"]).quantize(_TENTH) == Decimal("38.2")
@@ -272,6 +282,48 @@ async def test_kat_karsiligi_karti_pay_degeri_insaat_maliyeti_ve_marj_verir(
     assert Decimal(card["estimated_profit"]["value"]) == Decimal("12800000.00")
     assert Decimal(card["margin"]["value"]).quantize(_TENTH) == Decimal("42.1")
     assert card["construction_progress"]["available"] is False
+
+
+async def test_kendi_yatirim_toplam_maliyeti_ile_kat_karsiligi_insaat_maliyeti_AYRISIR(
+    client, db_session, user_factory, project_factory
+):
+    """Kullanıcı kararı 2026-08-09: iki alan artık BAŞKA şeyler ölçer ve bağları
+    KOPARILDI — `total_cost` HARCANAN (E4 122), `construction_cost` BÜTÇE (KK 135).
+
+    Aynı bütçe + aynı hakediş verisiyle iki tipin kartı FARKLI rakam basmalıdır;
+    eskiden `construction_cost` bir property olarak `total_cost`u döndürüyordu.
+    """
+    kurucu = await user_factory(email="ayrisma@p10t3.co", password="parola1234", role_key="patron")
+    yatirim = await project_factory(code="T3-AY1", project_type="kendi_yatirim")
+    _set_budget_lines(yatirim, material="17600000")
+    kat = await project_factory(code="T3-AY2", project_type="kat_karsiligi")
+    _set_budget_lines(kat, material="17600000")
+    db_session.add(
+        ProjectLandShare(
+            project_id=kat.id,
+            landowner_name="Yılmaz Ailesi",
+            our_share_pct=Decimal("55.00"),
+            owner_share_pct=Decimal("45.00"),
+        )
+    )
+    await db_session.flush()
+    for proje in (yatirim, kat):
+        sozlesme = await _contract(db_session, proje, kurucu, name="Akın İnşaat")
+        await _payment(
+            db_session, sozlesme, kurucu, SubcontractorPaymentStatus.paid, quantity="4000"
+        )
+    token = await _login(client, user_factory)
+
+    body = (await client.get("/projects", headers=_auth(token))).json()
+
+    # Kendi yatırım: arsa girilmemiş → yalnız inşaat HARCANANI.
+    assert Decimal(_card(body, yatirim.id, "investment")["total_cost"]["value"]) == Decimal(
+        "4000000.00"
+    )
+    # Kat karşılığı: KK 135 BÜTÇEDİR ve kâr projeksiyonunun tabanıdır — harcanana DÖNMEZ.
+    assert Decimal(_card(body, kat.id, "land_share")["construction_cost"]["value"]) == Decimal(
+        "17600000.00"
+    )
 
 
 async def test_taahhut_kartinin_harcanani_taseron_hakedislerinden_doner(
@@ -360,7 +412,13 @@ async def test_taahhut_kartinda_kar_marj_alani_YOKTUR(
 async def test_butcesiz_projede_maliyet_zarfi_BOS_KALIR(
     client, db_session, user_factory, project_factory
 ):
-    """Bütçe girilmemiş projede toplam 0 çıkar; bu "maliyet ₺0" DEĞİL "bilinmiyor"dur."""
+    """Bütçe girilmemiş projede KÂR/MARJ bilinmez: toplam 0 çıkar ama bu "maliyet
+    ₺0" DEĞİL "bilinmiyor"dur.
+
+    `total_cost` bu kuralın DIŞINDADIR (kullanıcı kararı 2026-08-09): o artık
+    HARCANANDIR ve kaynağı (arsa + taşeron hakedişi) canlı olduğu için değer
+    daima bilinir — hakedişsiz projede `0.00` gerçek cevaptır.
+    """
     project = await project_factory(code="T3-B0", project_type="kendi_yatirim")
     await _units(db_session, project, [{"list_price": Decimal("1000000.00")}])
     token = await _login(client, user_factory)
@@ -368,10 +426,12 @@ async def test_butcesiz_projede_maliyet_zarfi_BOS_KALIR(
     body = (await client.get("/projects", headers=_auth(token))).json()
 
     card = _card(body, project.id, "investment")
-    for key in ("total_cost", "estimated_profit", "margin"):
+    for key in ("estimated_profit", "margin"):
         assert card[key]["available"] is False, key
         assert card[key]["value"] is None, key
         assert card[key]["pending_module"] == "project_costs", key
+    assert card["total_cost"]["available"] is True
+    assert Decimal(card["total_cost"]["value"]) == Decimal("0.00")
 
 
 async def test_liste_yanitindaki_HER_dolu_zarf_pending_module_tasimaz(
@@ -514,17 +574,64 @@ async def test_taahhut_kartlarinda_sorgu_sayisi_proje_ve_hakedis_sayisindan_bagi
     assert all(sayi == 1 for sayi in cok_sayim.values()), cok_sayim
 
 
-async def test_taahhut_projesi_yoksa_taseron_okumasi_HIC_kosmaz(
+async def test_kendi_yatirim_kartlarinda_harcanan_okumasi_da_TEK_sorgudur(
     db_session, user_factory, project_factory, _sorgu_sayaci: list[str]
 ):
-    """Ünite okumasının tip süzgecinin aynısı: taahhüt projesi yoksa hakediş
-    tablosuna hiç DOKUNULMAZ."""
+    """Kullanıcı kararı 2026-08-09 harcanan okumasını kendi yatırım projelerine de
+    açtı; süzgeç genişledi ama toplu okuma TEK sorgu KALDI (spec §4)."""
+    from app.modules.projects.service import list_projects_overview
+    from app.modules.users.models import UserProjectAccess
+
+    user = await user_factory(email="kyolcum@p10t3.co", password="parola1234", role_key="patron")
+    db_session.add(UserProjectAccess(user_id=user.id, project_id=None, all_projects=True))
+    tek = await project_factory(code="T3-KN1", project_type="kendi_yatirim")
+    sozlesme = await _contract(db_session, tek, user, name="Tek Taşeron")
+    await _payment(db_session, sozlesme, user, SubcontractorPaymentStatus.paid, quantity="10")
+    await db_session.flush()
+
+    _sorgu_sayaci.clear()
+    await list_projects_overview(db_session, user, None, None)
+    tek_sayim = {tablo: _tablo_sayimi(_sorgu_sayaci, tablo) for tablo in _TAAHHUT_TABLOLARI}
+
+    for sira in range(3):
+        proje = await project_factory(code=f"T3-KN{sira + 2}", project_type="kendi_yatirim")
+        for index in range(2):
+            ek = await _contract(db_session, proje, user, name=f"Taşeron {index}")
+            for no in (1, 2):
+                await _payment(
+                    db_session,
+                    ek,
+                    user,
+                    SubcontractorPaymentStatus.paid,
+                    quantity="10",
+                    sequence_no=no,
+                )
+    await db_session.flush()
+
+    _sorgu_sayaci.clear()
+    yanit = await list_projects_overview(db_session, user, None, None)
+    cok_sayim = {tablo: _tablo_sayimi(_sorgu_sayaci, tablo) for tablo in _TAAHHUT_TABLOLARI}
+
+    assert len(yanit.items) == 4
+    assert tek_sayim == cok_sayim, (tek_sayim, cok_sayim)
+    assert all(sayi == 1 for sayi in cok_sayim.values()), cok_sayim
+
+
+async def test_harcanan_alani_olmayan_tipte_taseron_okumasi_HIC_kosmaz(
+    db_session, user_factory, project_factory, _sorgu_sayaci: list[str]
+):
+    """Ünite okumasının tip süzgecinin aynısı: harcanan alanı olmayan tip
+    (kat karşılığı — KK kartı yalnız BÜTÇE basar) hakediş tablosuna DOKUNMAZ.
+
+    Kendi yatırım artık bu süzgecin İÇİNDEDİR (kullanıcı kararı 2026-08-09:
+    E4 122 "Toplam Maliyet" = harcanan), taahhütle birlikte okunur.
+    """
     from app.modules.projects.service import list_projects_overview
     from app.modules.users.models import UserProjectAccess
 
     user = await user_factory(email="tipsuzgec@p10t3.co", password="parola1234", role_key="patron")
     db_session.add(UserProjectAccess(user_id=user.id, project_id=None, all_projects=True))
-    proje = await project_factory(code="T3-TS0", project_type="kendi_yatirim")
+    proje = await project_factory(code="T3-TS0", project_type="kat_karsiligi")
     _set_budget_lines(proje, material="1000")
     await db_session.flush()
 

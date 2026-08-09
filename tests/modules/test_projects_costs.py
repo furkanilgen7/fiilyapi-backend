@@ -29,12 +29,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.contracts.models import SubcontractorContract
 from app.modules.projects import costs
 from app.modules.projects.models import Project, ProjectInvestment, ProjectType
+from app.modules.sales.models import UnitSale, UnitSaleStatus
 from app.modules.subcontractor_progress_payments.models import (
     SubcontractorPaymentStatus,
     SubcontractorProgressPayment,
     SubcontractorProgressPaymentLine,
 )
-from app.modules.units.models import Unit, UnitOwnerSide
+from app.modules.units.models import Unit, UnitOwnerSide, UnitSalesStatus
 from app.modules.users.models import User
 from tests.conftest import test_engine
 
@@ -83,6 +84,7 @@ def _unit(
     appraisal_value: str | None = None,
     gross_area_m2: str | None = None,
     owner_side: UnitOwnerSide | None = None,
+    sales_status: UnitSalesStatus | None = None,
 ) -> Unit:
     return Unit(
         unit_no="1",
@@ -90,7 +92,13 @@ def _unit(
         appraisal_value=None if appraisal_value is None else Decimal(appraisal_value),
         gross_area_m2=None if gross_area_m2 is None else Decimal(gross_area_m2),
         owner_side=owner_side,
+        sales_status=sales_status,
     )
+
+
+def _sale(price: str, status: UnitSaleStatus) -> UnitSale:
+    """Satış kaydı — DB'ye YAZILMAZ, saf hesap için bellekte kurulur."""
+    return UnitSale(sale_price=Decimal(price), status=status)
 
 
 def _ky_project() -> Project:
@@ -300,6 +308,89 @@ def test_unite_maliyeti_proje_toplam_m2si_sifirken_nonedir() -> None:
 def test_proje_brut_alan_toplami_bos_alanlari_atlar() -> None:
     units = [_unit(gross_area_m2="120.50"), _unit(gross_area_m2=None), _unit(gross_area_m2="79.50")]
     assert costs.gross_area_total(units) == Decimal("200.00")
+
+
+# --- Gerçekleşen satış / kalan stok (kullanıcı kararı 2026-08-09; KY 173-180) ---
+
+
+def test_gerceklesen_satis_yalniz_gerceklesmis_satislari_toplar() -> None:
+    """KY 173-176 "Gerçekleşen Satış": ölçüt `sales.summary._SOLD_STATUSES`
+    (`active` + `deed_transferred`) — rezervasyon ciro DEĞİLDİR."""
+    satislar = [
+        _sale("20000000", UnitSaleStatus.active),
+        _sale("11420000", UnitSaleStatus.deed_transferred),
+        _sale("9000000", UnitSaleStatus.reservation),
+    ]
+
+    assert costs.realized_sales_total(satislar) == Decimal("31420000.00")
+
+
+def test_iptal_edilmis_satis_gerceklesen_satisa_GIRMEZ() -> None:
+    """İptal edilmiş satış ne cirodur ne alacaktır (`repository.list_sale_rows`
+    `exclude_cancelled` gerekçesi)."""
+    satislar = [
+        _sale("31420000", UnitSaleStatus.active),
+        _sale("5000000", UnitSaleStatus.cancelled),
+    ]
+
+    assert costs.realized_sales_total(satislar) == Decimal("31420000.00")
+
+
+def test_kalan_stok_degeri_yalniz_satilmamis_uniteleri_toplar() -> None:
+    """KY 177-180 "Kalan Stok Değeri": ölçüt `units.summary` `available_units`ün
+    aynısı (`sales_status is listed`, S57 "Boş Ünite") ve değer LİSTE fiyatıdır."""
+    uniteler = [
+        _unit(list_price="9000000", sales_status=UnitSalesStatus.listed),
+        _unit(list_price="7780000", sales_status=UnitSalesStatus.listed),
+        _unit(list_price="20000000", sales_status=UnitSalesStatus.sold),
+        _unit(list_price="4000000", sales_status=UnitSalesStatus.reserved),
+        _unit(list_price="3000000", sales_status=UnitSalesStatus.closed),
+        _unit(list_price="1000000", sales_status=None),
+    ]
+
+    assert costs.remaining_stock_value(uniteler) == Decimal("16780000.00")
+
+
+def test_kalan_stok_degeri_fiyatsiz_uniteyi_atlar() -> None:
+    uniteler = [
+        _unit(list_price="16780000", sales_status=UnitSalesStatus.listed),
+        _unit(list_price=None, sales_status=UnitSalesStatus.listed),
+    ]
+
+    assert costs.remaining_stock_value(uniteler) == Decimal("16780000.00")
+
+
+def test_gerceklesen_satis_arti_kalan_stok_gelire_esit_OLMAK_ZORUNDA_DEGILDIR() -> None:
+    """İki alan FARKLI tabandan gelir: gerçekleşen satış BEDELDEN, kalan stok
+    LİSTE fiyatından. İskontolu satışta toplam gelirin altında kalır ve bu bir
+    hata DEĞİLDİR (şema notu)."""
+    uniteler = [
+        _unit(list_price="10000000", sales_status=UnitSalesStatus.sold),
+        _unit(list_price="5000000", sales_status=UnitSalesStatus.listed),
+    ]
+    satislar = [_sale("9000000", UnitSaleStatus.active)]
+
+    gelir = costs.unit_list_price_total(uniteler)
+    toplam = costs.realized_sales_total(satislar) + costs.remaining_stock_value(uniteler)
+
+    assert gelir == Decimal("15000000.00")
+    assert toplam == Decimal("14000000.00")
+
+
+# --- Toplam harcanan (E4 122 = KY hero "Toplam Maliyet ₺20,3M") ---
+
+
+def test_toplam_harcanan_arsa_arti_insaat_harcanandir() -> None:
+    """Kullanıcı kararı 2026-08-09: E4 kendi yatırım kartının "Toplam Maliyet"i
+    HARCANANDIR; tanım `/costs` yanıtındaki `breakdown.total_spent` ile AYNIDIR."""
+    assert costs.total_spent(_ky_project(), Decimal("10240000")) == Decimal("18640000.00")
+
+
+def test_toplam_harcanan_arsasiz_projede_yalniz_insaati_sayar() -> None:
+    """Taahhütte arsa KAVRAMI yok (`land_cost` None) — None toplama 0 katkı yapar."""
+    project = Project(code="TA-9", name="Taahhüt", project_type=ProjectType.taahhut)
+
+    assert costs.total_spent(project, Decimal("4000000")) == Decimal("4000000.00")
 
 
 # --- Satıştan kâr (DS 90-91) ---

@@ -28,6 +28,16 @@ Kuruş yuvarlaması `progress_payments.calculations.quantize2`, hakediş brütü
 * **S3** ünite maliyeti = toplam bütçe maliyeti × ünite brüt m² / proje brüt m².
 * **S4** kendi yatırım gelirinde `sales_target` kolonu KULLANILMAZ; gelir ünite
   liste fiyatları toplamıdır.
+
+## Kullanıcı kararları 2026-08-09 (T5)
+
+* KY 173-180'in iki satırı uca EKLENDİ: `realized_sales_total` (satış bedelleri,
+  ölçüt `sales.summary._SOLD_STATUSES`) · `remaining_stock_value` (satılmamış
+  ünitelerin liste fiyatları, ölçüt `units.summary` `available_units`). İkisinin
+  toplamı gelire eşit OLMAK ZORUNDA DEĞİLDİR.
+* E4 122 "Toplam Maliyet" = **HARCANAN** (`total_spent`), bütçe değil; kâr/marj
+  ise BÜTÇE tabanlı KALIR. Kalemleri henüz kaynağı olmayan (ruhsat/finansman/
+  pazarlama) harcamaların toplamda eksik kalması bilinçli sınırdır.
 """
 
 import uuid
@@ -39,12 +49,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.progress_payments.calculations import gross_total, quantize2
 from app.modules.projects.models import Project, ProjectType
+from app.modules.sales.models import UnitSale
+from app.modules.sales.summary import _SOLD_STATUSES as REALIZED_SALE_STATUSES
 from app.modules.subcontractor_progress_payments import repository as subcontractor_repository
 from app.modules.subcontractor_progress_payments.models import (
     SubcontractorPaymentStatus,
     SubcontractorProgressPayment,
 )
-from app.modules.units.models import Unit, UnitOwnerSide
+from app.modules.units.models import Unit, UnitOwnerSide, UnitSalesStatus
 from app.modules.units.summary import VALUE_BASIS_BY_TYPE, basis_value
 
 _ZERO = Decimal("0.00")
@@ -204,6 +216,22 @@ def total_budget_cost(project: Project) -> Decimal:
     return money_total((budget_lines_total(project), land_cost(project)))
 
 
+def total_spent(project: Project, construction_spent: Decimal) -> Decimal:
+    """Toplam HARCANAN = arsa maliyeti + inşaat harcanan (S1/S2 BRÜT).
+
+    Kullanıcı kararı 2026-08-09: E4 122 "Toplam Maliyet ₺20,3M" BÜTÇE DEĞİL
+    HARCANANDIR — KY hero ikilisi ("Toplam Maliyet ₺20,3M / ₺29,8M bütçe") iki
+    sayının farklı şeyler olduğunun kanıtıdır. Kalemleri henüz kaynağı olmayan
+    (ruhsat/finansman/pazarlama) harcamaların toplamda eksik kalması BİLİNÇLİ
+    SINIR olarak kabul edildi.
+
+    `/costs` yanıtındaki `breakdown.total_spent` ile AYNI fonksiyondur: kart ile
+    kırılım kartı aynı sayıyı iki yoldan hesaplarsa zamanla ayrışır. Girilmemiş
+    arsa (`None`) toplama 0 katkı yapar (`total_budget_cost` kuralı).
+    """
+    return money_total((land_cost(project), construction_spent))
+
+
 # --- Ünite değer toplamları ---
 
 
@@ -222,6 +250,39 @@ def our_share_value(units: Sequence[Unit], project_type: ProjectType) -> Decimal
     basis = VALUE_BASIS_BY_TYPE[project_type]
     return money_total(
         basis_value(unit, basis) for unit in units if unit.owner_side is UnitOwnerSide.contractor
+    )
+
+
+def realized_sales_total(sales: Sequence[UnitSale]) -> Decimal:
+    """KY 173-176 "Gerçekleşen Satış" = GERÇEKLEŞMİŞ satışların BEDEL toplamı.
+
+    Ölçüt İCAT EDİLMEDİ: `sales.summary._SOLD_STATUSES` (`active` +
+    `deed_transferred`) buraya `REALIZED_SALE_STATUSES` adıyla alınır —
+    `units.summary.UnitSaleInfo.is_realized` de aynı kümeyi kullanır ve "satılan"
+    tanımının üçüncü bir kopyası açılmaz. Rezervasyon ciro DEĞİLDİR; iptal
+    edilmiş satış da kümede olmadığı için toplama giremez (çağıran ayrıca
+    `exclude_cancelled=True` ile okur).
+
+    Kullanıcı kararı 2026-08-09: bu satır uca EKLENDİ (spec §7 altındaki karar).
+    """
+    return money_total(sale.sale_price for sale in sales if sale.status in REALIZED_SALE_STATUSES)
+
+
+def remaining_stock_value(units: Sequence[Unit]) -> Decimal:
+    """KY 177-180 "Kalan Stok Değeri" = SATILMAMIŞ ünitelerin LİSTE fiyatı toplamı.
+
+    "Satılmamış" ölçütü mevcut tek-kaynaktır: `units.summary`nin
+    `available_units` sayacı (ve satış özetinin S57 "Boş Ünite" KPI'ı)
+    `sales_status is listed` diyor — rezerve/satılmış/satışa kapalı ünite stok
+    DEĞİLDİR. `sales_status` NULL olan (göç öncesi) satır hiçbir sayaca girmediği
+    gibi buraya da girmez (`_by_sales_status` kuralı): uydurma durum atanmaz.
+
+    Değer LİSTE fiyatındandır (satış bedeli henüz yoktur), bu yüzden
+    `realized_sales_total` ile toplamı `unit_list_price_total`a eşit OLMAK ZORUNDA
+    DEĞİLDİR — iskontolu satış ikisini ayırır (şema notu).
+    """
+    return money_total(
+        unit.list_price for unit in units if unit.sales_status is UnitSalesStatus.listed
     )
 
 

@@ -150,6 +150,13 @@ class ContractingCard(BaseModel):
 
 
 class InvestmentCard(BaseModel):
+    """Kendi yatirim karti.
+
+    `total_cost` (E4 122) KULLANICI KARARI 2026-08-09 ile **HARCANAN**dir
+    (`costs.total_spent` = arsa + taşeron `approved`+`paid` BRÜT), butce DEGIL;
+    `estimated_profit`/`margin` ise BUTCE tabanlidir. Ayrinti: `_investment_card`.
+    """
+
     sales_target: Decimal | None
     land_cost: Decimal | None
     sold_amount: MetricPlaceholder
@@ -232,12 +239,27 @@ class ProjectProfitProjection(BaseModel):
     Taahhütte `profit` KARTTA BASILMAZ (E4 180-181 yalnız bedel/harcanan
     gösterir) ama iç türev olarak döner — ekran neyi basacağına kendi karar
     verir, backend bilgi saklamaz.
+
+    **`realized_sales` / `remaining_stock_value` (KULLANICI KARARI 2026-08-09):**
+    KY 173-180'in iki satırı uca EKLENDİ. Tanımları mevcut tek-kaynaklardan gelir:
+    `realized_sales` = satış BEDELLERİ toplamı, ölçüt `sales.summary._SOLD_STATUSES`
+    (`active`+`deed_transferred`; iptal edilmiş satış hiç okunmaz) ·
+    `remaining_stock_value` = satılmamış ünitelerin LİSTE fiyatları toplamı, ölçüt
+    `units.summary` `available_units` (`sales_status is listed`).
+
+    İkisinin toplamı `revenue`a (ünite liste fiyatları toplamı) eşit OLMAK ZORUNDA
+    DEĞİLDİR: biri satış bedelinden, diğeri liste fiyatından gelir ve iskontolu
+    satış aralarında fark doğurur. Zarf KULLANILMAZ — bu blok `Decimal | None`
+    alanlar taşır (`revenue`/`cost`/`profit` deseninin aynısı); taahhütte iki alan
+    `None`dır, çünkü ünite/satış kavramı yoktur.
     """
 
     revenue: Decimal | None
     cost: Decimal | None
     profit: Decimal | None
     margin_pct: Decimal | None
+    realized_sales: Decimal | None
+    remaining_stock_value: Decimal | None
 
 
 class SubcontractorCostRow(BaseModel):
@@ -249,9 +271,13 @@ class SubcontractorCostRow(BaseModel):
     düzeyi bir kavramdır. Taşeron başına gruplarsak aynı taşeronun iki iş kapsamı
     tek satıra ezilir ve sözleşme kimliği geri getirilemez şekilde kaybolur.
 
-    **"İş Kalemi" sütununun kaynağı YOKTUR:** `SubcontractorContract`ta iş tanımı
-    kolonu yoktur (en yakını `work_category` = rozet). O metin ÜRETİLMEZ; satır
-    `contract_id`/`contract_no` taşır ki ekran sözleşmeye gidebilsin.
+    **"İş Kalemi" sütunu `work_category` ile beslenir (KULLANICI KARARI
+    2026-08-09):** bu sütun için YENİ KOLON AÇILMAZ — `subcontractor_contracts.
+    work_category` zaten vardır ve satır birimi sözleşme olduğu için kategori
+    doğrudan sözleşmeden okunur. Değer NULL olabilir ve bu MEŞRUDUR (taslak
+    sözleşmede kategori girilmemiş olabilir): satır yine açılır, sütun ekranda BOŞ
+    basılır — uydurma metin ÜRETİLMEZ. Satır ayrıca `contract_id`/`contract_no`
+    taşır ki ekran sözleşmeye gidebilsin.
 
     `subcontractor_id` boş olabilir (sözleşmede kartoteks bağı zorunlu değildir);
     ad anlık görüntüsü `subcontractor_name`de kalır. `work_category` doğrudan

@@ -28,15 +28,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel
 from app.modules.contracts.models import SubcontractorContract, SubcontractorContractItem
+from app.modules.customers.models import Customer, CustomerType
 from app.modules.projects.models import Project, ProjectInvestment
 from app.modules.roles.models import Module, Role, RolePermission
+from app.modules.sales.models import SaleType, UnitSale, UnitSaleStatus
 from app.modules.sites.models import Site
 from app.modules.subcontractor_progress_payments.models import (
     SubcontractorPaymentStatus,
     SubcontractorProgressPayment,
     SubcontractorProgressPaymentLine,
 )
-from app.modules.units.models import Block, Unit, UnitKind, UnitOwnerSide
+from app.modules.units.models import Block, Unit, UnitKind, UnitOwnerSide, UnitSalesStatus
 from app.modules.users.models import User, UserProjectAccess
 from tests.conftest import test_engine
 
@@ -118,6 +120,45 @@ async def _units(session: AsyncSession, project: Project, specs: list[dict]) -> 
         created.append(unit)
     await session.flush()
     return created
+
+
+async def _customer(session: AsyncSession, name: str = "Mehmet Aydın") -> Customer:
+    customer = Customer(customer_type=CustomerType.person, name=name)
+    session.add(customer)
+    await session.flush()
+    return customer
+
+
+async def _sale(
+    session: AsyncSession,
+    unit: Unit,
+    customer: Customer,
+    creator: User,
+    status: UnitSaleStatus,
+    *,
+    price: str,
+) -> UnitSale:
+    """Satış kaydı + ünitenin satış durumu.
+
+    `sales_status` gerçek yolda servis senkronize eder (P8 T3); burada ORM ile
+    yazıldığı için elle kurulur — "kalan stok" ölçütü bu kolondan okur.
+    """
+    sale = UnitSale(
+        unit_id=unit.id,
+        project_id=unit.project_id,
+        customer_id=customer.id,
+        sale_type=SaleType.sale,
+        status=status,
+        sale_price=Decimal(price),
+        created_by=creator.id,
+    )
+    session.add(sale)
+    if status in (UnitSaleStatus.active, UnitSaleStatus.deed_transferred):
+        unit.sales_status = UnitSalesStatus.sold
+    elif status is UnitSaleStatus.reservation:
+        unit.sales_status = UnitSalesStatus.reserved
+    await session.flush()
+    return sale
 
 
 async def _contract(
@@ -250,6 +291,100 @@ async def test_ky_maliyet_kirilimi_ve_kar_projeksiyonu_mockupi_birebir_verir(
     assert Decimal(profit["cost"]) == Decimal("29800000.00")
     assert Decimal(profit["profit"]) == Decimal("18400000.00")
     assert Decimal(profit["margin_pct"]).quantize(_TENTH) == Decimal("38.2")
+
+
+async def test_gerceklesen_satis_ve_kalan_stok_KY_iki_satirini_verir(
+    client, db_session, user_factory, project_factory
+):
+    """KY 173-180 (kullanıcı kararı 2026-08-09): "Gerçekleşen Satış" satış
+    BEDELLERİNİN, "Kalan Stok Değeri" satılmamış ünitelerin LİSTE fiyatlarının
+    toplamıdır."""
+    kurucu = await user_factory(email="stok@p10.co", password="parola1234", role_key="patron")
+    project = await project_factory(code="ST-1", project_type="kendi_yatirim")
+    uniteler = await _units(
+        db_session,
+        project,
+        [
+            {"list_price": Decimal("20000000.00")},
+            {"list_price": Decimal("11420000.00")},
+            {"list_price": Decimal("9000000.00")},
+            {"list_price": Decimal("7780000.00")},
+        ],
+    )
+    musteri = await _customer(db_session)
+    await _sale(
+        db_session, uniteler[0], musteri, kurucu, UnitSaleStatus.active, price="20000000.00"
+    )
+    await _sale(
+        db_session,
+        uniteler[1],
+        musteri,
+        kurucu,
+        UnitSaleStatus.deed_transferred,
+        price="11420000.00",
+    )
+    token = await _login(client, user_factory, "system_admin")
+
+    body = (await client.get(f"/projects/{project.id}/costs", headers=_auth(token))).json()
+
+    profit = body["profit"]
+    assert Decimal(profit["realized_sales"]) == Decimal("31420000.00")
+    assert Decimal(profit["remaining_stock_value"]) == Decimal("16780000.00")
+    # Gelir (KY 169) LİSTE fiyatları toplamıdır ve iki yeni satırdan BAĞIMSIZDIR.
+    assert Decimal(profit["revenue"]) == Decimal("48200000.00")
+
+
+async def test_iptal_ve_rezerve_satis_gerceklesen_satisa_girmez(
+    client, db_session, user_factory, project_factory
+):
+    """Ölçüt `sales.summary._SOLD_STATUSES`: rezervasyon ciro DEĞİLDİR, iptal
+    edilmiş satış ise hiç sayılmaz."""
+    kurucu = await user_factory(email="iptal@p10.co", password="parola1234", role_key="patron")
+    project = await project_factory(code="ST-2", project_type="kendi_yatirim")
+    uniteler = await _units(
+        db_session,
+        project,
+        [
+            {"list_price": Decimal("5000000.00")},
+            {"list_price": Decimal("4000000.00")},
+            {"list_price": Decimal("3000000.00")},
+        ],
+    )
+    musteri = await _customer(db_session)
+    await _sale(db_session, uniteler[0], musteri, kurucu, UnitSaleStatus.active, price="5000000.00")
+    await _sale(
+        db_session, uniteler[1], musteri, kurucu, UnitSaleStatus.reservation, price="4000000.00"
+    )
+    await _sale(
+        db_session, uniteler[2], musteri, kurucu, UnitSaleStatus.cancelled, price="3000000.00"
+    )
+    token = await _login(client, user_factory, "system_admin")
+
+    profit = (await client.get(f"/projects/{project.id}/costs", headers=_auth(token))).json()[
+        "profit"
+    ]
+
+    assert Decimal(profit["realized_sales"]) == Decimal("5000000.00")
+    # Rezerve ünite "boş" DEĞİLDİR; iptal edilen satışın ünitesi stokta KALIR.
+    assert Decimal(profit["remaining_stock_value"]) == Decimal("3000000.00")
+
+
+async def test_taahhutte_gerceklesen_satis_ve_kalan_stok_YOKTUR(
+    client, db_session, user_factory, project_factory
+):
+    """Taahhütte ünite/satış KAVRAMI yok (`_UNIT_REVENUE_TYPES` süzgeci) — iki
+    alan `None` döner, 0 basmak "hiç satılmadı" yalanı olurdu."""
+    project = await project_factory(
+        code="ST-3", project_type="taahhut", contract_amount="10000000.00"
+    )
+    token = await _login(client, user_factory, "system_admin")
+
+    profit = (await client.get(f"/projects/{project.id}/costs", headers=_auth(token))).json()[
+        "profit"
+    ]
+
+    assert profit["realized_sales"] is None
+    assert profit["remaining_stock_value"] is None
 
 
 async def test_bekleyen_uc_kalem_zarf_icinde_doner_uydurma_sifir_basmaz(
@@ -493,6 +628,40 @@ async def test_ayni_taseronun_iki_sozlesmesi_AYRI_satir_acar(
     assert Decimal(body["breakdown"]["construction_spent"]) == Decimal("300000.00")
 
 
+async def test_kategorisiz_sozlesmenin_is_kalemi_sutunu_BOS_doner(
+    client, db_session, user_factory, project_factory
+):
+    """Kullanıcı kararı 2026-08-09: mockup'ın "İş Kalemi" sütunu `work_category`
+    ile beslenir; YENİ KOLON AÇILMAZ. Taslak sözleşmede kategori NULL olabilir ve
+    bu MEŞRUDUR — satır yine açılır, sütun boş basılır (uydurma metin YOK).
+    """
+    kurucu = await user_factory(
+        email="kategorisiz@p10.co", password="parola1234", role_key="patron"
+    )
+    project = await project_factory(code="TS-4", project_type="taahhut")
+    taslak = await _contract(
+        db_session, project, kurucu, name="Akın İnşaat", item_quantity="100", item_price="1000"
+    )
+    await _contract(
+        db_session,
+        project,
+        kurucu,
+        name="Yılmaz Elektrik",
+        work_category="Elektrik",
+        item_quantity="50",
+        item_price="1000",
+    )
+    token = await _login(client, user_factory, "system_admin")
+
+    body = (await client.get(f"/projects/{project.id}/costs", headers=_auth(token))).json()
+
+    rows = {row["subcontractor_name"]: row for row in body["subcontractors"]}
+    assert rows["Akın İnşaat"]["work_category"] is None
+    assert rows["Akın İnşaat"]["contract_id"] == str(taslak.id)
+    assert Decimal(rows["Akın İnşaat"]["contract_amount"]) == Decimal("100000.00")
+    assert rows["Yılmaz Elektrik"]["work_category"] == "Elektrik"
+
+
 async def test_sozlesme_nosuz_satirlar_da_deterministik_siralanir(
     client, db_session, user_factory, project_factory
 ):
@@ -595,6 +764,9 @@ _OLCULEN_TABLOLAR = (
     "subcontractor_progress_payments",
     "subcontractor_progress_payment_lines",
     "units",
+    # Kullanıcı kararı 2026-08-09: "Gerçekleşen Satış" satış kayıtlarından gelir —
+    # satış SAYISI sorgu sayısını BÜYÜTMEMELİDİR.
+    "unit_sales",
 )
 
 
@@ -607,11 +779,15 @@ async def test_sorgu_sayisi_taseron_ve_hakedis_sayisindan_bagimsizdir(
     kurucu = await user_factory(email="olcum@p10.co", password="parola1234", role_key="patron")
     kucuk = await project_factory(code="NP-1", project_type="kendi_yatirim")
     buyuk = await project_factory(code="NP-2", project_type="kendi_yatirim")
+    musteri = await _customer(db_session, name="Ölçüm Müşterisi")
     tek = await _contract(
         db_session, kucuk, kurucu, name="Tek Taşeron", item_quantity="10", item_price="1000"
     )
     await _payment(db_session, tek, kurucu, SubcontractorPaymentStatus.paid, quantity="5")
-    await _units(db_session, kucuk, [{"list_price": Decimal("1000.00")}])
+    kucuk_uniteler = await _units(db_session, kucuk, [{"list_price": Decimal("1000.00")}])
+    await _sale(
+        db_session, kucuk_uniteler[0], musteri, kurucu, UnitSaleStatus.active, price="1000.00"
+    )
     for index in range(4):
         contract = await _contract(
             db_session,
@@ -630,7 +806,12 @@ async def test_sorgu_sayisi_taseron_ve_hakedis_sayisindan_bagimsizdir(
                 quantity="5",
                 sequence_no=sira,
             )
-    await _units(db_session, buyuk, [{"list_price": Decimal("1000.00")} for _ in range(6)])
+    buyuk_uniteler = await _units(
+        db_session, buyuk, [{"list_price": Decimal("1000.00")} for _ in range(6)]
+    )
+    # Küçük projede 1, büyükte 5 satış: satış sayısı sorgu sayısını BÜYÜTMEMELİ.
+    for unite in buyuk_uniteler[:5]:
+        await _sale(db_session, unite, musteri, kurucu, UnitSaleStatus.active, price="1000.00")
     # `investment` `lazy="selectin"`tir: gerçek yolda sorgu ile YÜKLENMİŞ gelir
     # (uç `visible_projects`ten okur). Testte elle açılan nesnede yükleme
     # tetiklenmediği için tazelenir — ölçüm öncesi, sayaç dışında.
@@ -648,6 +829,25 @@ async def test_sorgu_sayisi_taseron_ve_hakedis_sayisindan_bagimsizdir(
     assert len(buyuk_yanit.subcontractors) == 4
     assert kucuk_sayim == buyuk_sayim, (kucuk_sayim, buyuk_sayim)
     assert all(sayi == 1 for sayi in buyuk_sayim.values()), buyuk_sayim
+
+
+async def test_taahhutte_unite_ve_satis_tablolarina_HIC_dokunulmaz(
+    db_session, user_factory, project_factory, _sorgu_sayaci: list[str]
+):
+    """Tip süzgeci (`_UNIT_REVENUE_TYPES`): taahhütte gelir sözleşme bedelidir —
+    ne ünite ne satış tablosu OKUNUR."""
+    from app.modules.projects import cost_summary
+
+    project = await project_factory(
+        code="NP-3", project_type="taahhut", contract_amount="1000000.00"
+    )
+    await db_session.flush()
+
+    _sorgu_sayaci.clear()
+    await cost_summary.build_project_costs(db_session, project)
+
+    assert _tablo_sayimi(_sorgu_sayaci, "units") == 0
+    assert _tablo_sayimi(_sorgu_sayaci, "unit_sales") == 0
 
 
 # --- Mutasyon denetimi ---

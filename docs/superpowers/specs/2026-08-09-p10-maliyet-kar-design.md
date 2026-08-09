@@ -4,6 +4,8 @@ Tarih: 2026-08-09 · Durum: **ONAYLANDI (2026-08-09)** — §7'nin BEŞ sorusu d
 S1 harcanan = approved+paid (ödenen/bekleyen ayrı) · S2 BRÜT (`gross_total`) · S3 bütçe bazlı m²
 dağıtımı, m²'sizde `None` · S4 gelir = ünite liste fiyatları toplamı (`sales_target` çeliştirilmez) ·
 S5 E1 "Ortalama Marj" dokunulmaz, pending.
+**T5 (2026-08-09): üç EK kullanıcı kararı → §8** (iş kalemi = `work_category` · KY 173-180 iki satırı
+uca eklendi · E4 122 "Toplam Maliyet" = harcanan).
 Mockup: `Proje - Kendi Yatırım.dc.html` (**KY**) · `Proje - Kat Karşılığı.dc.html` (**KK**) ·
 `Ekran 4 - Projeler.dc.html` (**E4**) · `Form - Daire Satisi.dc.html` (**DS**) · `Form - Unite Ekle.dc.html` (**UE** 98).
 
@@ -87,3 +89,34 @@ tip-bazlı alan setleri · taşeron durum süzgeci (draft/submitted/rejected mal
   devam eder, hesapla ÇELİŞTİRİLMEZ.
 - **S5 — E1 "Ortalama Marj":** tanımsız (dipnot yok). Öneri: BU dilimde dokunulmaz, pending kalır;
   tanım netleşince dashboard mini işi. Alternatif: proje marjlarının basit ortalaması (icat).
+
+## 8. EK KULLANICI KARARLARI (2026-08-09, T5) — §1-§7 geçerliliğini korur
+
+Aşağıdaki üç karar T4 sonrası kullanıcı tarafından verildi ve uygulandı; yukarıdaki bölümler
+SİLİNMEDİ, bu bölüm onların üzerine EKLENİR.
+
+- **K1 — Taşeron tablosunun "İş Kalemi" sütunu (§2, KY 205-249):** sütun `subcontractor_contracts.
+  work_category` ile beslenir; **yeni kolon AÇILMAZ**. NULL değer taslak sözleşmede MEŞRUDUR ve
+  ekranda BOŞ basılır (uydurma metin üretilmez). §3'teki "kaynağı yoktur" ifadesinin yerini bu karar
+  alır.
+- **K2 — KY 173-180'in iki satırı `/costs` ucuna EKLENDİ** (`ProjectProfitProjection`):
+  - `realized_sales` = "Gerçekleşen Satış" = satış kayıtlarının **BEDEL** toplamı; "gerçekleşmiş"
+    ölçütü mevcut tek-kaynaktır (`sales.summary._SOLD_STATUSES` = `active` + `deed_transferred`,
+    `units.summary.UnitSaleInfo.is_realized` ile aynı küme). **İptal edilmiş satış GİRMEZ**
+    (`repository.list_sale_rows(exclude_cancelled=True)`).
+  - `remaining_stock_value` = "Kalan Stok Değeri" = satılmamış ünitelerin **LİSTE fiyatı** toplamı;
+    "satılmamış" ölçütü `units.summary` `available_units` / satış özeti S57 "Boş Ünite"
+    (`sales_status is listed`). NULL durumlu satır hiçbir sayaca girmediği gibi buraya da girmez.
+  - İki alanın toplamı `revenue`a (ünite liste fiyatları toplamı) **eşit olmak zorunda değildir** —
+    biri bedelden, diğeri liste fiyatından gelir; eşitlik iddia eden test YAZILMAZ.
+  - Gelir tarafı üniteden türeyen tiplerde dolu, **taahhütte `None`** (`_UNIT_REVENUE_TYPES`). Satış
+    okuması TEK sorgudur (spec §4), satış sayısı sorgu sayısını büyütmez.
+- **K3 — E4 122 "Toplam Maliyet ₺20,3M" BÜTÇE DEĞİL HARCANANDIR:** kanıt KY hero ikilisi ("Toplam
+  Maliyet ₺20,3M / ₺29,8M bütçe"). `InvestmentCard.total_cost` artık `costs.total_spent` (arsa +
+  taşeron `approved`+`paid` BRÜT) = `/costs` yanıtındaki `breakdown.total_spent` ile AYNI fonksiyon.
+  Kalemleri henüz kaynağı olmayan harcamaların (ruhsat/finansman/pazarlama) toplamda eksik kalması
+  **bilinçli sınır** olarak kabul edildi. **Kâr/marj bütçe tabanlı KALIR** (`entered_budget_cost`;
+  bütçesiz projede zarf BOŞ kuralı aynen) ve KK 135 "İnşaat Maliyeti" **BÜTÇEDİR** — bu yüzden
+  `ProjectCardCosts.construction_cost` ile `total_cost` arasındaki property bağı KOPARILDI, ikisi
+  ayrı alan oldu. `/costs` yanıtı iki tabanı da taşır (`construction_spent`/`total_spent` ile
+  `construction_budget`/`profit.cost`).

@@ -137,6 +137,12 @@ def _contracting_card(worker_count: int, card_costs: ProjectCardCosts) -> Contra
 def _investment_card(project: Project, card_costs: ProjectCardCosts) -> InvestmentCard:
     """KY 182/187-188 üç alanı P10 T3'te ZARFIN İÇİNDE gerçeğe baglandi.
 
+    `total_cost` E4 122'dir ve KULLANICI KARARI 2026-08-09 ile **HARCANAN**dir
+    (arsa + taşeron hakedişi; `costs.total_spent`) — kanıt KY hero ikilisi
+    ("₺20,3M / ₺29,8M bütçe"). `estimated_profit`/`margin` ise BÜTÇE tabanlı
+    KALIR (`costs.card_projection`): kartın bu karışımı mockup'ın kendi
+    okumasidir, backend iki tabani da tasir.
+
     Bagli olmayan alanlar (satis/ünite tarafi) yer tutucu KALIR: bu dilim yalniz
     maliyet/kâr türevlerini baglar (`_worker_count`un P-T4'teki kismi baglama
     deseninin aynisi).
@@ -177,6 +183,9 @@ def _land_share_card(project: Project, card_costs: ProjectCardCosts) -> LandShar
         # KK 121 "BİZİM PAY": kaynak modül (`units`) CANLI olduğu için değer
         # daima bilinir — ünitesi olmayan projede 0,00 gerçek cevaptır.
         our_share_value=metric(card_costs.our_share_value, _UNITS),
+        # KK 135 BÜTÇEDIR (kâr projeksiyonunun tabani, spec §2) — kendi yatirim
+        # kartinin HARCANAN `total_cost`u ile ayni sayi DEGILDIR (kullanici karari
+        # 2026-08-09); iki alanin bagi `ProjectCardCosts`ta KOPARILDI.
         construction_cost=metric(card_costs.construction_cost, _PROJECT_COSTS),
         estimated_profit=metric(card_costs.profit, _PROJECT_COSTS),
         margin=metric(card_costs.margin_pct, _PROJECT_COSTS),
