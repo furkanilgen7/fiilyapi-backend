@@ -494,6 +494,14 @@ async def _refresh_mirror_boq_rows(
     tanımı yeniden ayrıştırırdı. Kapsam dolayısıyla projenin ŞANTİYELERİDİR;
     devredilmiş bir şantiyede kalmış kopya bu sözleşme tarafından yönetilmez.
 
+    Otorite kümenin İKİNCİ (belgelenmemişken T5'te yazıya geçen) sınırı: aynı
+    hücreye (kalem, şantiye) düşen birden çok BOQ satırından yalnız İLKİ küme
+    içindedir (`index_allocations`ın `setdefault`i, `id` sırasıyla determinist).
+    İkinci satır — BOQ ekranından `code` düzenlenerek doğabilir — tazelenmez ve
+    BAYAT fiyat/açıklama ile BOQ ekranında kalır. Bu bilinçli sınırdır: hücre
+    tekilliği kotanın tanımıdır, tazelemeyi kotanın görmediği bir satıra
+    genişletmek iki kümeyi yeniden ayrıştırırdı.
+
     MİKTARA DOKUNULMAZ (`MIRRORED_ITEM_FIELDS`): miktar dağıtımın kararıdır,
     kalem PATCH'i onu yeniden yazarsa kullanıcının kotası sessizce kaybolurdu.
 

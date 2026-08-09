@@ -261,7 +261,9 @@ def employer_contract_item_created(project_name: str, code: str, description: st
 def employer_contract_item_updated(
     project_name: str, code: str, description: str, refreshed_boq_count: int = 0
 ) -> str:
-    """TB4/B3: kalemin `code`/`unit_price` değişimi ayna BOQ satırlarını da
+    """TB4/B3+S7: kalemin AYNA ALAN KÜMESİ (`code`/`description`/`unit`/
+    `unit_price` — `contracts.service.MIRRORED_ITEM_FIELDS`) değişimi ayna BOQ
+    satırlarını da
 
     tazeler. Bu yan etki MEVCUT `update` olayının detayına eklenir — yeni bir
     `AuditAction` üyesi açmak gerçek Postgres enum'una migration isterdi

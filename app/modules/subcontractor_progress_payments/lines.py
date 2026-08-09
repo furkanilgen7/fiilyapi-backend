@@ -111,6 +111,52 @@ def check_quota(
         )
 
 
+def _stamp(
+    diary_totals: dict[uuid.UUID, Decimal], item_id: uuid.UUID, quantity: Decimal
+) -> QuantitySource:
+    """Damgaya ÇEVİRME kuralının TEK kopyası (işveren `lines._stamp` ikizi).
+
+    İki çağıranı vardır — satır yazma yolu (`_resolve`) ve dönem değişince
+    yeniden damgalama (`restamp_for_period`); ikinci bir kopya, bir yolda
+    `diary`, diğerinde `manual` üreten sessiz bir ayrışma demek olurdu.
+    """
+    return (
+        QuantitySource.diary
+        if bridge.is_diary_quantity(diary_totals.get(item_id), quantity)
+        else QuantitySource.manual
+    )
+
+
+async def restamp_for_period(
+    session: AsyncSession,
+    contract: SubcontractorContract,
+    payment: SubcontractorProgressPayment,
+) -> None:
+    """Hakedişin DÖNEMİ değiştiğinde (`PATCH …/{id}`) MEVCUT satırların damgasını
+    yeniden türetir — T5 bulgusu; işveren `lines.restamp_for_period` ikizi.
+
+    Satırlara hiç dokunmayan bir `PATCH` dönemi taşıdığında eski dönemin
+    günlüğüyle eşleştiği için `diary` damgalanmış satır, yeni dönemle hiç
+    ilgisi olmadan rozetli kalırdı. Miktarlar DEĞİŞMEZ; yalnız iddia yeniden
+    sınanır ve kural `_resolve` ile aynı tek kaynaktan (`site_diary.bridge` +
+    `_stamp`) okunur.
+    """
+    diary_totals = await bridge.subcontractor_period_totals(
+        session,
+        contract.id,
+        contract.site_id,
+        year=payment.period_year,
+        month=payment.period_month,
+    )
+    for line in payment.lines:
+        if line.contract_item_id is None:
+            # Bağı kopmuş satır hangi kaleme ait olduğunu KAYBETMİŞTİR: günlük
+            # toplamıyla kıyaslanamaz → iddia düşer.
+            line.quantity_source = QuantitySource.manual
+            continue
+        line.quantity_source = _stamp(diary_totals, line.contract_item_id, line.quantity)
+
+
 async def _resolve(
     session: AsyncSession,
     contract: SubcontractorContract,
@@ -179,11 +225,7 @@ async def _resolve(
 
         # SD-2 (kullanıcı kararı S1): damga HER PUT'ta yeniden türetilir —
         # miktar günlük toplamından ayrıldığı anda kaynak iddiası düşer.
-        quantity_source = (
-            QuantitySource.diary
-            if bridge.is_diary_quantity(diary_totals.get(item.id), entry.quantity)
-            else QuantitySource.manual
-        )
+        quantity_source = _stamp(diary_totals, item.id, entry.quantity)
 
         resolved.append(
             _ResolvedLine(

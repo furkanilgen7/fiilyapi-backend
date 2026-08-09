@@ -382,6 +382,134 @@ async def test_govdedeki_quantity_source_ETKISIZDIR(
     assert await _damgalar(seeded_db, hakedis["id"]) == {sozlesme.id: QuantitySource.manual}
 
 
+# --- 7) PATCH ile DÖNEM değişince damga BAYAT KALMAZ (T5 bulgusu) ---
+
+
+async def _donem_yamasi(client: AsyncClient, headers: dict[str, str], payment_id, **govde):
+    return await client.patch(f"/progress-payments/{payment_id}", json=govde, headers=headers)
+
+
+async def test_PATCH_ile_donem_degisince_diary_damgasi_DUSER(
+    client: AsyncClient,
+    seeded_db: AsyncSession,
+    admin_headers,
+    santiye,
+    sozlesme_kalemi_fabrikasi,
+    gunluk_api,
+) -> None:
+    """Damganın süzgeci hakedişin DÖNEMİDİR: dönem taşınınca satır artık başka
+    bir ayın günlüğüyle kıyaslanır. Eski damga korunsaydı, Temmuz'a taşınmış bir
+    satır Haziran günlüğünün otoritesiyle `diary` rozetli kalırdı."""
+    site, project, items = santiye
+    kalem = sorted(items, key=lambda i: i.code)[0]
+    sozlesme = await sozlesme_kalemi_fabrikasi(kalem, project)
+    await gunluk_api(
+        admin_headers,
+        site.id,
+        date(2026, 6, 10),
+        [{"boq_item_id": str(kalem.id), "quantity": "15"}],
+    )
+
+    hakedis = await _hakedis(client, admin_headers, project.id, period_year=2026, period_month=6)
+    assert (
+        await _kaydet(
+            client,
+            admin_headers,
+            hakedis["id"],
+            [{"contract_item_id": str(sozlesme.id), "site_id": str(site.id), "quantity": "15"}],
+        )
+    ).status_code == 200
+    assert await _damgalar(seeded_db, hakedis["id"]) == {sozlesme.id: QuantitySource.diary}
+
+    yanit = await _donem_yamasi(client, admin_headers, hakedis["id"], period_month=7)
+    assert yanit.status_code == 200, yanit.text
+    assert await _damgalar(seeded_db, hakedis["id"]) == {sozlesme.id: QuantitySource.manual}
+
+
+async def test_PATCH_ile_donem_gunluge_TASININCA_damga_basilir(
+    client: AsyncClient,
+    seeded_db: AsyncSession,
+    admin_headers,
+    santiye,
+    sozlesme_kalemi_fabrikasi,
+    gunluk_api,
+) -> None:
+    """Ters yön de aynı tek kaynaktan türer: dönem günlüğün ayına taşınırsa
+    `manual` satır `diary` olur."""
+    site, project, items = santiye
+    kalem = sorted(items, key=lambda i: i.code)[0]
+    sozlesme = await sozlesme_kalemi_fabrikasi(kalem, project)
+    await gunluk_api(
+        admin_headers,
+        site.id,
+        date(2026, 7, 10),
+        [{"boq_item_id": str(kalem.id), "quantity": "15"}],
+    )
+
+    hakedis = await _hakedis(client, admin_headers, project.id, period_year=2026, period_month=6)
+    assert (
+        await _kaydet(
+            client,
+            admin_headers,
+            hakedis["id"],
+            [{"contract_item_id": str(sozlesme.id), "site_id": str(site.id), "quantity": "15"}],
+        )
+    ).status_code == 200
+    assert await _damgalar(seeded_db, hakedis["id"]) == {sozlesme.id: QuantitySource.manual}
+
+    yanit = await _donem_yamasi(client, admin_headers, hakedis["id"], period_month=7)
+    assert yanit.status_code == 200, yanit.text
+    assert await _damgalar(seeded_db, hakedis["id"]) == {sozlesme.id: QuantitySource.diary}
+
+
+async def test_DONEM_DISI_alan_yamasi_gunluk_sorgusu_KOSTURMAZ(
+    client: AsyncClient,
+    seeded_db: AsyncSession,
+    admin_headers,
+    santiye,
+    sozlesme_kalemi_fabrikasi,
+    gunluk_api,
+    monkeypatch,
+) -> None:
+    """Yalnız `description` değişen PATCH damgaya dokunmaz VE günlük sorgusunu
+    hiç koşturmaz — dönem aynıyken yeniden türetme gereksiz iştir."""
+    site, project, items = santiye
+    kalem = sorted(items, key=lambda i: i.code)[0]
+    sozlesme = await sozlesme_kalemi_fabrikasi(kalem, project)
+    await gunluk_api(
+        admin_headers,
+        site.id,
+        date(2026, 7, 10),
+        [{"boq_item_id": str(kalem.id), "quantity": "15"}],
+    )
+
+    hakedis = await _hakedis(client, admin_headers, project.id, **DONEM)
+    assert (
+        await _kaydet(
+            client,
+            admin_headers,
+            hakedis["id"],
+            [{"contract_item_id": str(sozlesme.id), "site_id": str(site.id), "quantity": "15"}],
+        )
+    ).status_code == 200
+
+    from app.modules.site_diary import bridge
+
+    cagrilar: list[int] = []
+    gercek = bridge.employer_period_totals
+
+    async def _sayan(*args, **kwargs):
+        cagrilar.append(1)
+        return await gercek(*args, **kwargs)
+
+    monkeypatch.setattr(bridge, "employer_period_totals", _sayan)
+
+    yanit = await _donem_yamasi(client, admin_headers, hakedis["id"], description="yalnız açıklama")
+    assert yanit.status_code == 200, yanit.text
+    assert cagrilar == []
+    assert await _damgalar(seeded_db, hakedis["id"]) == {sozlesme.id: QuantitySource.diary}
+
+
 # --- POST'un iç içe `lines[]` yolu da AYNI damgayı basar (arka kapı yok) ---
 
 

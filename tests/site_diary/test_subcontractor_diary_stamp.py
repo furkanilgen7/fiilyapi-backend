@@ -349,3 +349,99 @@ async def test_govdedeki_quantity_source_ETKISIZDIR(
     )
     assert yanit.status_code == 200, yanit.text
     assert _damgalar(yanit.json()) == {str(tk1): "manual"}
+
+
+# --- 7) PATCH ile DÖNEM değişince damga BAYAT KALMAZ (T5 bulgusu) ---
+
+
+async def _donem_yamasi(client: AsyncClient, headers: dict[str, str], payment_id, **govde):
+    return await client.patch(
+        f"/subcontractor-progress-payments/{payment_id}", json=govde, headers=headers
+    )
+
+
+async def test_PATCH_ile_donem_degisince_diary_damgasi_DUSER(
+    client: AsyncClient, seeded_db: AsyncSession, admin_headers, kurulum, gunluk_api
+) -> None:
+    """İşveren ikizindeki bulgunun taşeron karşılığı: dönem taşınınca satır artık
+    başka bir ayın günlüğüyle kıyaslanır, eski `diary` iddiası düşer."""
+    site, _, (kalem_a, _), contract = kurulum
+    await gunluk_api(
+        admin_headers,
+        site.id,
+        date(2026, 6, 10),
+        [{"boq_item_id": str(kalem_a.id), "quantity": "12"}],
+    )
+    tk1 = await _kalem_id(seeded_db, contract.id, "TK-1")
+
+    hakedis = await _hakedis(client, admin_headers, contract.id, period_year=2026, period_month=6)
+    yanit = await _kaydet(
+        client, admin_headers, hakedis["id"], [{"contract_item_id": str(tk1), "quantity": "12"}]
+    )
+    assert yanit.status_code == 200, yanit.text
+    assert _damgalar(yanit.json()) == {str(tk1): "diary"}
+
+    yanit = await _donem_yamasi(client, admin_headers, hakedis["id"], period_month=7)
+    assert yanit.status_code == 200, yanit.text
+    assert _damgalar(yanit.json()) == {str(tk1): "manual"}
+
+
+async def test_PATCH_ile_donem_gunluge_TASININCA_damga_basilir(
+    client: AsyncClient, seeded_db: AsyncSession, admin_headers, kurulum, gunluk_api
+) -> None:
+    site, _, (kalem_a, _), contract = kurulum
+    await gunluk_api(
+        admin_headers,
+        site.id,
+        date(2026, 7, 10),
+        [{"boq_item_id": str(kalem_a.id), "quantity": "12"}],
+    )
+    tk1 = await _kalem_id(seeded_db, contract.id, "TK-1")
+
+    hakedis = await _hakedis(client, admin_headers, contract.id, period_year=2026, period_month=6)
+    yanit = await _kaydet(
+        client, admin_headers, hakedis["id"], [{"contract_item_id": str(tk1), "quantity": "12"}]
+    )
+    assert yanit.status_code == 200, yanit.text
+    assert _damgalar(yanit.json()) == {str(tk1): "manual"}
+
+    yanit = await _donem_yamasi(client, admin_headers, hakedis["id"], period_month=7)
+    assert yanit.status_code == 200, yanit.text
+    assert _damgalar(yanit.json()) == {str(tk1): "diary"}
+
+
+async def test_DONEM_DISI_alan_yamasi_gunluk_sorgusu_KOSTURMAZ(
+    client: AsyncClient, seeded_db: AsyncSession, admin_headers, kurulum, gunluk_api, monkeypatch
+) -> None:
+    """Yalnız `description` değişen PATCH damgaya dokunmaz ve günlük sorgusunu
+    hiç koşturmaz."""
+    site, _, (kalem_a, _), contract = kurulum
+    await gunluk_api(
+        admin_headers,
+        site.id,
+        date(2026, 7, 10),
+        [{"boq_item_id": str(kalem_a.id), "quantity": "12"}],
+    )
+    tk1 = await _kalem_id(seeded_db, contract.id, "TK-1")
+
+    hakedis = await _hakedis(client, admin_headers, contract.id, **DONEM)
+    yanit = await _kaydet(
+        client, admin_headers, hakedis["id"], [{"contract_item_id": str(tk1), "quantity": "12"}]
+    )
+    assert yanit.status_code == 200, yanit.text
+
+    from app.modules.site_diary import bridge
+
+    cagrilar: list[int] = []
+    gercek = bridge.subcontractor_period_totals
+
+    async def _sayan(*args, **kwargs):
+        cagrilar.append(1)
+        return await gercek(*args, **kwargs)
+
+    monkeypatch.setattr(bridge, "subcontractor_period_totals", _sayan)
+
+    yanit = await _donem_yamasi(client, admin_headers, hakedis["id"], description="yalnız açıklama")
+    assert yanit.status_code == 200, yanit.text
+    assert cagrilar == []
+    assert _damgalar(yanit.json()) == {str(tk1): "diary"}

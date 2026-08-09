@@ -129,6 +129,52 @@ def totals_from_payments(
     return totals
 
 
+def _stamp(
+    diary_totals: dict[bridge.EmployerCellKey, Decimal], key: LineKey, quantity: Decimal
+) -> QuantitySource:
+    """Damgaya ÇEVİRME kuralının TEK kopyası (`bridge.is_diary_quantity` →
+    enum). İki çağıranı vardır — satır yazma yolu (`_resolve`) ve dönem
+    değişince yeniden damgalama (`restamp_for_period`) — ve ikisi de buradan
+    okur: ikinci bir kopya, bir yolda `diary`, diğerinde `manual` üreten sessiz
+    bir ayrışma demek olurdu.
+    """
+    return (
+        QuantitySource.diary
+        if bridge.is_diary_quantity(diary_totals.get(key), quantity)
+        else QuantitySource.manual
+    )
+
+
+async def restamp_for_period(
+    session: AsyncSession, payment: ProgressPayment, project_id: uuid.UUID
+) -> None:
+    """Hakedişin DÖNEMİ değiştiğinde (`PATCH …/{id}`) MEVCUT satırların damgasını
+    yeniden türetir — T5 bulgusu.
+
+    Damganın süzgeci hakedişin kendi dönemidir: satırlara hiç dokunmayan bir
+    `PATCH` dönemi Haziran'dan Temmuz'a taşıdığında, Haziran günlüğüyle birebir
+    eşleştiği için `diary` damgalanmış satır Temmuz günlüğüyle hiç ilgisi
+    olmadan rozetli kalırdı — yani "günlükten geldi" iddiası gövdeden tek bir
+    alan sızdırmadan SAHTELEŞİRDİ.
+
+    Miktarlar DEĞİŞMEZ; yalnız iddia yeniden sınanır. Kural `_resolve` ile aynı
+    tek kaynaktan (`site_diary.bridge` + `_stamp`) okunur, ikinci bir toplama
+    ya da eşleşme mantığı açılmaz.
+    """
+    diary_totals = await bridge.employer_period_totals(
+        session, project_id, year=payment.period_year, month=payment.period_month
+    )
+    for line in payment.lines:
+        if line.contract_item_id is None:
+            # Bağı kopmuş satırın hücre kimliği (kalem, şantiye) YOKTUR: hangi
+            # günlük toplamıyla kıyaslanacağı bilinemez → iddia düşer.
+            line.quantity_source = QuantitySource.manual
+            continue
+        line.quantity_source = _stamp(
+            diary_totals, (line.contract_item_id, line.site_id), line.quantity
+        )
+
+
 async def _resolve(
     session: AsyncSession,
     project: Project,
@@ -232,11 +278,7 @@ async def _resolve(
         # SD-2 (kullanıcı kararı S1): damga HER seferinde yeniden türetilir —
         # satırın eski damgası KORUNMAZ, çünkü miktar değiştiyse "günlükten
         # geldi" iddiası da düşer.
-        quantity_source = (
-            QuantitySource.diary
-            if bridge.is_diary_quantity(diary_totals.get(key), entry.quantity)
-            else QuantitySource.manual
-        )
+        quantity_source = _stamp(diary_totals, key, entry.quantity)
 
         resolved.append(
             _ResolvedLine(
