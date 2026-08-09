@@ -21,7 +21,6 @@ from app.core.timezone import today
 from app.modules.company.service import get_company
 from app.modules.contracts import distribution_quantity, repository
 from app.modules.contracts.guards import (
-    BOQ_CODE_TAKEN_IN_SITE,
     CONTRACT_MISSING,
     DUPLICATE_ITEM_CODE,
     GROUP_HAS_ITEMS,
@@ -29,6 +28,7 @@ from app.modules.contracts.guards import (
     GROUP_PROJECT_MISMATCH,
     ITEM_MISSING,
     ITEM_QUANTITY_BELOW_DISTRIBUTED,
+    boq_code_taken_in_site,
 )
 from app.modules.contracts.models import (
     ContractStatus,
@@ -55,9 +55,31 @@ from app.modules.projects.service import visible_projects
 from app.modules.sites import repository as sites_repository
 from app.modules.users.models import User
 
-# TB4/B3: ayna BOQ satırında sözleşme kaleminden TÜREYEN alanlar. Miktar bu
+# TB4/B3+S7: ayna BOQ satırında sözleşme kaleminden TÜREYEN alanlar. Miktar bu
 # kümede DEĞİLDİR — o dağıtımın kendi kararıdır (spec §1 B3).
-MIRRORED_ITEM_FIELDS = ("code", "unit_price")
+#
+# Küme DÖRTTÜR (S7, kullanıcı onayı): `unit_price` + `code` + `description` +
+# `unit`. Dağıtımın relink yolu (`distribution._apply_allocations`) bu dört alanı
+# ZATEN sözleşmeden kopyalıyordu; senkron tazelemede ikisini dışarıda bırakmak
+# aynı bayatlığın yarısını açık bırakırdı.
+#
+# Bu sabit TEK KAYNAKTIR: hem senkron tazeleme (`_refresh_mirror_boq_rows`) hem
+# relink yolu buradan beslenir — relink `apply_mirrored_fields` ile ÇAĞIRIR,
+# kendi listesini TUTMAZ. İki yol ayrışırsa
+# `tests/contracts/test_employer_item_boq_sync.py`nin enjeksiyon testleri kırmızı olur.
+MIRRORED_ITEM_FIELDS = ("code", "description", "unit", "unit_price")
+
+
+def apply_mirrored_fields(target: object, item: EmployerContractItem) -> None:
+    """Ayna alan kümesini kalemden hedef BOQ satırına kopyalar (S7 tek kaynak).
+
+    Alan listesi ÇAĞRI ANINDA modül global'inden okunur — dağıtımın relink yolu
+    ile senkron tazelemenin aynı kümeyi görmesinin tek yolu budur. `quantity`
+    BURADA YOK: hedef satırın miktarını çağıran belirler.
+    """
+    for field in MIRRORED_ITEM_FIELDS:
+        setattr(target, field, getattr(item, field))
+
 
 _MONEY = Decimal("0.01")
 
@@ -478,7 +500,14 @@ async def _refresh_mirror_boq_rows(
     `code` tazelemesi `uq_boq_items_site_code`'a çarpabilir (hedef şantiyede o
     numarayı tutan başka bir satır olabilir). `IntegrityError` ile 500'e düşmek
     yerine dağıtım yazma yolunun kullandığı AYNI 409 (`BOQ_CODE_TAKEN_IN_SITE`)
-    verilir — kalem kodu ile şantiye BOQ'su gerçekten çelişiyordur.
+    verilir — kalem kodu ile şantiye BOQ'su gerçekten çelişiyordur. PATCH
+    TAMAMEN reddedilir, kısmi senkron bırakılmaz (S8).
+
+    Gövde ÇARPILAN şantiyenin adını ve kodu taşır (S8,
+    `guards.boq_code_taken_in_site`): bu ekran BOQ'yu göstermez ve kalem birden
+    çok şantiyeye dağıtılmış olabilir. Bildirilen şantiye ilk çakışan ayna
+    satırın şantiyesidir — okuma `ORDER BY id` ile determinist geldiği için
+    (`repository.list_boq_items_for_sites`) aynı veri aynı şantiyeyi bildirir.
     """
     if not mirrored_updates:
         return 0
@@ -500,8 +529,10 @@ async def _refresh_mirror_boq_rows(
         taken = {
             row.site_id for row in boq_rows if row.code == new_code and row.id not in mirror_ids
         }
-        if any(row.site_id in taken for row in mirrors):
-            raise DuplicateError(BOQ_CODE_TAKEN_IN_SITE)
+        clash = next((row for row in mirrors if row.site_id in taken), None)
+        if clash is not None:
+            site_names = {site.id: site.name for site in sites}
+            raise DuplicateError(boq_code_taken_in_site(site_names[clash.site_id], str(new_code)))
 
     for row in mirrors:
         for field, value in mirrored_updates.items():
@@ -518,7 +549,8 @@ async def update_employer_item(
     edilir; `quantity` küçültülürse spec §3.3 kalan hesabı negatif OLAMAZ —
     dağıtılmış toplamın altına indirme 422 döner (task C6 kararı).
 
-    TB4/B3: `code`/`unit_price` gerçekten DEĞİŞTİYSE kalemin ayna BOQ satırları
+    TB4/B3+S7: `MIRRORED_ITEM_FIELDS` (`code`/`description`/`unit`/`unit_price`)
+    kümesinden biri gerçekten DEĞİŞTİYSE kalemin ayna BOQ satırları
     aynı işlemde tazelenir (S2: senkron tazeleme, snapshot DEĞİL) ve tazelenen
     satır adedi döner — router mevcut `update` denetim satırının detayına yazar,
     yeni bir `AuditAction` açılmaz.

@@ -15,6 +15,14 @@ Sınırlar burada testle çivilenir:
 
 Doğrulama BOQ okuma ucundan (`GET /sites/{id}/boq`) yapılır: bayatlığın
 görüldüğü yüzey odur, ORM kimlik haritası değil.
+
+T3b (S7/S8, kullanıcı onayı 2026-08-09) iki şeyi daha çiviler:
+
+* ayna küme DÖRTTÜR (`code`/`description`/`unit`/`unit_price`) ve `MIRRORED_ITEM_FIELDS`
+  TEK KAYNAKTIR — kümeye bir alan ENJEKTE edilir ve hem senkron tazelemenin hem
+  dağıtımın relink yolunun onu yansıtması beklenir. Yollardan biri kendi elle
+  yazılmış listesine dönerse enjeksiyon o yolda etkisiz kalır ve test kırmızı olur;
+* kod çakışmasının 409 gövdesi ÇARPILAN şantiyenin adını ve kodu taşır.
 """
 
 import uuid
@@ -25,12 +33,15 @@ from sqlalchemy import select
 
 from app.modules.audit.models import AuditLog
 from app.modules.boq.models import BoqGroup, BoqItem
+from app.modules.contracts import service
 from app.modules.contracts.guards import BOQ_CODE_TAKEN_IN_SITE
 from app.modules.contracts.models import EmployerContractGroup, EmployerContractItem
 from app.modules.projects.models import ProjectContract
 from app.modules.sites.models import Site
 
 GRUP_ADI = "A — Betonarme İşleri"
+SANTIYE_ADI = "Şantiye A"
+IKINCI_SANTIYE = "Şantiye B"
 
 ESKI_FIYAT = Decimal("21500.00")
 YENI_FIYAT = Decimal("24750.00")
@@ -43,6 +54,14 @@ IKINCI_KOD = "05.001"
 IKINCI_FIYAT = Decimal("3300.00")
 UCUNCU_KOD = "06.001"
 UCUNCU_FIYAT = Decimal("990.00")
+UCUNCU_SIRA = 2
+
+YENI_ACIKLAMA = "Nervürlü demir donatı (B500C)"
+YENI_BIRIM = "Kg"
+
+# S7 tek-kaynak kilidinin ENJEKTE ettiği alan: gerçek kümede YOKTUR ama iki
+# modelde de bulunur — sabit fiilen okunuyorsa iki yolda da yansır.
+ENJEKTE_SIRA = 7
 
 
 async def _boq_satiri(
@@ -108,7 +127,7 @@ async def ayna_kurulum(seeded_db, project_factory) -> dict[str, uuid.UUID]:
             advance_pct=Decimal("20"),
         )
     )
-    site = Site(project_id=project.id, code="SNT-B3A", name="Şantiye A")
+    site = Site(project_id=project.id, code="SNT-B3A", name=SANTIYE_ADI)
     seeded_db.add(site)
 
     yabanci_proje = await project_factory(code="CL-B3-99", name="Devredilmiş Proje")
@@ -122,7 +141,7 @@ async def ayna_kurulum(seeded_db, project_factory) -> dict[str, uuid.UUID]:
     item = _kalem(project.id, group.id, code=ESKI_KOD, unit_price=ESKI_FIYAT, sort_order=0)
     ikinci = _kalem(project.id, group.id, code=IKINCI_KOD, unit_price=IKINCI_FIYAT, sort_order=1)
     dagitimsiz = _kalem(
-        project.id, group.id, code=UCUNCU_KOD, unit_price=UCUNCU_FIYAT, sort_order=2
+        project.id, group.id, code=UCUNCU_KOD, unit_price=UCUNCU_FIYAT, sort_order=UCUNCU_SIRA
     )
     seeded_db.add_all([item, ikinci, dagitimsiz])
     await seeded_db.flush()
@@ -312,4 +331,164 @@ async def test_ayna_kodu_santiyede_dolu_ise_alan_ozel_409(
 
     yanit = await _patch_kalem(client, admin_headers, ayna_kurulum["item_id"], {"code": YENI_KOD})
     assert yanit.status_code == 409, yanit.text
-    assert yanit.json()["detail"] == BOQ_CODE_TAKEN_IN_SITE
+    assert yanit.json()["detail"].startswith(BOQ_CODE_TAKEN_IN_SITE)
+
+
+# --- S8: 409 gövdesi ÇARPILAN ŞANTİYE + KODU taşır (kullanıcı onayı 2026-08-09) ---
+
+
+@pytest.mark.asyncio
+async def test_kod_cakismasi_409_santiye_adini_ve_kodu_bildirir(
+    client, admin_headers, seeded_db, ayna_kurulum
+):
+    """Genel bütünlük metni YETMEZ: kalem birden çok şantiyeye dağıtılmış olabilir
+
+    ve PATCH ekranı BOQ'yu göstermez — kullanıcı hangi şantiyedeki hangi
+    numaranın engellediğini gövdeden okumalıdır (S8). `quantity_exceeds_quota`
+    (taşeron hakedişi) ile aynı üslup: sabit metin + " · " ile ayrılmış bağlam.
+    """
+    await _boq_satiri(
+        seeded_db,
+        ayna_kurulum["site_id"],
+        None,
+        code=YENI_KOD,
+        quantity=Decimal("5.000"),
+        unit_price=Decimal("100.00"),
+    )
+
+    yanit = await _patch_kalem(client, admin_headers, ayna_kurulum["item_id"], {"code": YENI_KOD})
+    assert yanit.status_code == 409, yanit.text
+    detay = yanit.json()["detail"]
+    assert SANTIYE_ADI in detay, detay
+    assert YENI_KOD in detay, detay
+
+
+@pytest.mark.asyncio
+async def test_kod_cakismasi_409_baska_santiyenin_adini_vermez(
+    client, admin_headers, seeded_db, ayna_kurulum
+):
+    """Bildirilen şantiye ÇARPILAN şantiyedir — "projenin ilk şantiyesi" değil.
+
+    Çakışma B şantiyesindeyken A'nın adını basmak, kullanıcıyı temiz bir
+    şantiyede numara aramaya gönderirdi.
+    """
+    ikinci_site = Site(project_id=ayna_kurulum["project_id"], code="SNT-B3B", name=IKINCI_SANTIYE)
+    seeded_db.add(ikinci_site)
+    await seeded_db.flush()
+    await _boq_satiri(
+        seeded_db,
+        ikinci_site.id,
+        ayna_kurulum["item_id"],
+        code=ESKI_KOD,
+        quantity=Decimal("40.000"),
+        unit_price=ESKI_FIYAT,
+    )
+    await _boq_satiri(
+        seeded_db,
+        ikinci_site.id,
+        None,
+        code=YENI_KOD,
+        quantity=Decimal("5.000"),
+        unit_price=Decimal("100.00"),
+    )
+
+    yanit = await _patch_kalem(client, admin_headers, ayna_kurulum["item_id"], {"code": YENI_KOD})
+    assert yanit.status_code == 409, yanit.text
+    detay = yanit.json()["detail"]
+    assert IKINCI_SANTIYE in detay, detay
+    assert SANTIYE_ADI not in detay, detay
+
+
+# --- S7: ayna alan kümesi DÖRTTÜR ve TEK KAYNAKTIR ---
+
+
+@pytest.mark.asyncio
+async def test_aciklama_ve_birim_degisimi_ayna_boq_satirina_yansir(
+    client, admin_headers, ayna_kurulum
+):
+    """S7: `description`/`unit` de aynadır — dağıtımın relink yolu bu iki alanı
+
+    zaten sözleşmeden kopyalıyordu; senkron tazelemede dışarıda bırakmak aynı
+    bayatlığın yarısını açık bırakırdı.
+    """
+    yanit = await _patch_kalem(
+        client,
+        admin_headers,
+        ayna_kurulum["item_id"],
+        {"description": YENI_ACIKLAMA, "unit": YENI_BIRIM},
+    )
+    assert yanit.status_code == 200, yanit.text
+
+    ayna = (await _boq_satirlari(client, admin_headers, ayna_kurulum["site_id"]))[
+        str(ayna_kurulum["ayna_boq_id"])
+    ]
+    assert ayna["description"] == YENI_ACIKLAMA
+    assert ayna["unit"] == YENI_BIRIM
+    assert Decimal(ayna["quantity"]) == AYNA_MIKTAR  # miktara YİNE dokunulmaz
+
+
+@pytest.mark.asyncio
+async def test_ayna_alan_kumesi_senkron_yolunu_fiilen_yonetir(
+    client, admin_headers, ayna_kurulum, monkeypatch
+):
+    """TEK KAYNAK kilidi (1/2): kümeye `sort_order` ENJEKTE edilir ve senkron
+
+    tazeleme yolunun onu da yansıtması beklenir. Alan listesi bu yolda elle
+    yazılmış olsaydı enjeksiyonun hiçbir etkisi olmaz, test kırmızı olurdu —
+    "dört alan yansıyor" demek bunu kanıtlamazdı.
+    """
+    monkeypatch.setattr(
+        service, "MIRRORED_ITEM_FIELDS", (*service.MIRRORED_ITEM_FIELDS, "sort_order")
+    )
+
+    yanit = await _patch_kalem(
+        client, admin_headers, ayna_kurulum["item_id"], {"sort_order": ENJEKTE_SIRA}
+    )
+    assert yanit.status_code == 200, yanit.text
+
+    ayna = (await _boq_satirlari(client, admin_headers, ayna_kurulum["site_id"]))[
+        str(ayna_kurulum["ayna_boq_id"])
+    ]
+    assert ayna["sort_order"] == ENJEKTE_SIRA
+
+
+@pytest.mark.asyncio
+async def test_ayna_alan_kumesi_dagitim_relink_yolunu_fiilen_yonetir(
+    client, admin_headers, seeded_db, ayna_kurulum, monkeypatch
+):
+    """TEK KAYNAK kilidi (2/2): AYNI enjeksiyon dağıtımın relink yolunda da
+
+    görünmelidir. İki yol ayrı listelerden beslenirse (biri sabite uymayı
+    bırakırsa) bu test kırmızı olur — S7'nin "tek kaynak" şartı budur.
+    """
+    monkeypatch.setattr(
+        service, "MIRRORED_ITEM_FIELDS", (*service.MIRRORED_ITEM_FIELDS, "sort_order")
+    )
+
+    bagsiz = await _boq_satiri(
+        seeded_db,
+        ayna_kurulum["site_id"],
+        None,
+        code=UCUNCU_KOD,
+        quantity=Decimal("5.000"),
+        unit_price=Decimal("1.00"),
+    )
+    assert bagsiz.sort_order != UCUNCU_SIRA
+
+    yanit = await client.put(
+        f"/projects/{ayna_kurulum['project_id']}/contract/distribution",
+        json={
+            "allocations": [
+                {
+                    "contract_item_id": str(ayna_kurulum["dagitimsiz_item_id"]),
+                    "site_id": str(ayna_kurulum["site_id"]),
+                    "quantity": 12,
+                }
+            ]
+        },
+        headers=admin_headers,
+    )
+    assert yanit.status_code == 200, yanit.text
+
+    satir = (await _boq_satirlari(client, admin_headers, ayna_kurulum["site_id"]))[str(bagsiz.id)]
+    assert satir["sort_order"] == UCUNCU_SIRA

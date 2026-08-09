@@ -53,7 +53,7 @@ from app.modules.contracts.schemas import (
     ContractDistributionSiteItem,
     ContractDistributionSiteSummary,
 )
-from app.modules.contracts.service import _visible_project
+from app.modules.contracts.service import _visible_project, apply_mirrored_fields
 from app.modules.sites import repository as sites_repository
 from app.modules.sites.models import Site
 from app.modules.users.models import User
@@ -357,28 +357,31 @@ def _apply_allocations(
             # bağlanır. Grup DEĞİŞTİRİLMEZ (satır şantiyenin BOQ'sunda yerini
             # korur); tanımlayıcı alanlar sözleşmeden TAZELENİR, çünkü artık
             # otorite sözleşme kalemidir.
+            #
+            # Alan listesi BURADA TUTULMAZ (TB4/S7): kalem PATCH'inin senkron
+            # tazelemesiyle AYNI `MIRRORED_ITEM_FIELDS` kümesinden beslenir —
+            # iki kopya zamanla ayrışır ve ayrışan taraf bayat ayna üretirdi.
+            # (`code` zaten eşit: relink adayı koda göre seçildi.)
             relink_target.contract_item_id = item.id
-            relink_target.description = item.description
-            relink_target.unit = item.unit
-            relink_target.unit_price = item.unit_price
+            apply_mirrored_fields(relink_target, item)
             relink_target.quantity = alloc.quantity
             continue
 
-        # Madde 2: yeni satır — tanımlayıcı alanlar sözleşme kaleminden kopyalanır.
+        # Madde 2: yeni satır — tanımlayıcı alanlar sözleşme kaleminden AYNI
+        # `MIRRORED_ITEM_FIELDS` kümesiyle kopyalanır (TB4/S7): üçüncü bir alan
+        # listesi kopyası bırakılmaz. Kümede OLMAYAN iki alan burada AÇIKÇA
+        # verilir — `quantity` dağıtımın kararıdır, `sort_order` ise yalnız
+        # satır DOĞARKEN kalemden alınır (sonradan şantiyenin kendi sıralaması).
         group = _resolve_boq_group(session, group_cache, alloc.site_id, group_by_item[item.id])
-        session.add(
-            BoqItem(
-                site_id=alloc.site_id,
-                group_id=group.id,
-                contract_item_id=item.id,
-                code=item.code,
-                description=item.description,
-                unit=item.unit,
-                quantity=alloc.quantity,
-                unit_price=item.unit_price,
-                sort_order=item.sort_order,
-            )
+        row = BoqItem(
+            site_id=alloc.site_id,
+            group_id=group.id,
+            contract_item_id=item.id,
+            quantity=alloc.quantity,
+            sort_order=item.sort_order,
         )
+        apply_mirrored_fields(row, item)
+        session.add(row)
 
 
 async def save_distribution(

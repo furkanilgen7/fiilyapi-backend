@@ -67,6 +67,18 @@ kısıtları — devir sonraki frontend diliminin T1'inde (P10 borcuyla birlikte
   BASILMAZ (`manual`) — öneri ucunun S5 kapsam kuralının (`SUGGESTION_CONTRACT_WITHOUT_SITE`)
   yazma-yolu karşılığıdır: hangi şantiyenin günlüğüne bakılacağı belirsizdir.
 
+- **S7 — ayna alan kümesi DÖRTTÜR (T3 sonrası, onay 2026-08-09):** `unit_price` + `code` +
+  `description` + `unit`. Gerekçe: B3'ün kusuru "ayna bayat kalıyor"dur ve dağıtımın relink
+  yolu (`distribution._apply_allocations`) bu dört alanı da sözleşmeden kopyalar; ikisini
+  dışarıda bırakmak aynı hatanın yarısını açık bırakırdı. `MIRRORED_ITEM_FIELDS` **tek
+  kaynaktır**: relink yolu ile senkron tazeleme AYNI sabitten beslenir ve bu, bir testle
+  kilitlenir (ayrışırlarsa test kırmızı olur).
+- **S8 — kod tazelemesinde çakışma = TAM RET (onay 2026-08-09):** kalem `code` tazelemesi
+  hedef şantiyede aynı numarayı tutan başka BOQ satırına çarparsa PATCH **409** ile tamamen
+  reddedilir (kısmi senkron bırakılmaz; dağıtım yazma yolunun 409'uyla hizalıdır). Yanıt
+  gövdesi **çarpılan şantiye + kod** bilgisini Türkçe taşır — genel bütünlük mesajı YETMEZ,
+  kullanıcı hangi şantiyedeki hangi numaranın engellediğini görmelidir. Mesaj içeriği testlidir.
+
 ## 5. AÇIK SORULAR (kullanıcı cevabı ŞART)
 - **S1 — SD-2 eşleşme kuralı:** öneri: dönem+poz bazında **birebir eşitlik** → `diary`; kısmi/
   yaklaşık eşleşme `manual` kalır (yarı-günlük miktara damga basmak yanıltıcı). Dönem = hakedişin
