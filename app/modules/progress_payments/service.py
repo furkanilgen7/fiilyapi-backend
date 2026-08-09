@@ -449,6 +449,7 @@ def _line_detail(
         quantity=line.quantity,
         group_name=line.group_name,
         sort_order=line.sort_order,
+        quantity_source=line.quantity_source,
         adjusted_unit_price=calculations.adjusted_unit_price(
             line.contract_unit_price, line.coefficient
         ),

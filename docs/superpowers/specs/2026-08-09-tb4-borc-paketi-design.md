@@ -54,6 +54,19 @@ B1 additive (yanıt alanı zaten var, değeri anlamlanıyor) · B2/B4 davranış
 yanıtlarında değer düzeltmesi (şema değişmez). openapi'de şema farkı yalnız B4 `maxLength`
 kısıtları — devir sonraki frontend diliminin T1'inde (P10 borcuyla birlikte).
 
+## 4b. T1'de alınan EK kararlar (kullanıcı onayı 2026-08-09 — yeniden tartışılmaz)
+- **S4 — işveren yanıt simetrisi:** `quantity_source`, işveren `ProgressPaymentLineDetail`
+  yanıtına da EKLENİR; iki ailenin satır şeması bu alanda simetriktir. Aksi hâlde damga
+  sunucuda doğru basılır ama hiçbir istemci göremezdi (borç fiilen kapanmazdı). Additive,
+  kırıcı değil; openapi farkı zaten B4 ile birlikte devrolur. Alanın yanıtta göründüğü
+  İKİ ailede de testlidir.
+- **S5 — dönemsiz hakediş:** `period_year` NULL olan hakediş DAMGALANMAZ (`manual`).
+  Dönemi olmayan bir evrakı "tüm zamanların" günlük toplamıyla kıyaslamak uydurma bir
+  kaynak iddiası üretirdi.
+- **S6 — şantiyesiz sözleşme:** `site_id` NULL (proje-geneli) taşeron sözleşmesinde damga
+  BASILMAZ (`manual`) — öneri ucunun S5 kapsam kuralının (`SUGGESTION_CONTRACT_WITHOUT_SITE`)
+  yazma-yolu karşılığıdır: hangi şantiyenin günlüğüne bakılacağı belirsizdir.
+
 ## 5. AÇIK SORULAR (kullanıcı cevabı ŞART)
 - **S1 — SD-2 eşleşme kuralı:** öneri: dönem+poz bazında **birebir eşitlik** → `diary`; kısmi/
   yaklaşık eşleşme `manual` kalır (yarı-günlük miktara damga basmak yanıltıcı). Dönem = hakedişin

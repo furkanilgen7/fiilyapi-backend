@@ -22,6 +22,10 @@ from pydantic import BaseModel, Field
 
 from app.modules.progress_payments.models import ProgressPaymentStatus
 
+# Enum PAYLAŞILIR (models.py'deki aynı gerekçe): iki hakediş ailesi AYNI rozeti
+# aynı tiple yayımlar — S4 simetrisi tip düzeyinde de geçerlidir.
+from app.modules.subcontractor_progress_payments.models import QuantitySource
+
 __all__ = [
     "PaymentCalculationBlock",
     "ProgressBlock",
@@ -162,6 +166,10 @@ class ProgressPaymentLineDetail(BaseModel):
     quantity: Decimal
     group_name: str | None = Field(max_length=200)
     sort_order: int
+    quantity_source: QuantitySource
+    """E15 "Günlük kayıttan" rozetinin kaynağı — SUNUCU damgası, istekten ASLA
+    alınmaz (TB4 T1). Taşeron ikizi `SubcontractorProgressPaymentLineRead` ile
+    aynı tip ve aynı zorunluluk düzeyindedir (S4 simetrisi)."""
     adjusted_unit_price: Decimal
     line_total: Decimal
     previous_quantity: Decimal

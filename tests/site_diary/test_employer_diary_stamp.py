@@ -6,9 +6,9 @@ kalıcılaşan her satırın miktarı, hakedişin KENDİ DÖNEMİNE ait **yalnı
 `quantity_source=diary`, aksi HER durumda `manual`. Damga her PUT'ta YENİDEN
 türetilir ve gövdeden ASLA alınmaz.
 
-Damga yanıt şemasında (işveren `ProgressPaymentLineDetail`) YOKTUR — bu dilim
-şema açmaz (spec §4: openapi farkı yalnız B4). Bu yüzden doğrulama DB'den
-okunur; kaynak-of-truth zaten satırın kolonudur.
+Doğrulama DB'den okunur: kaynak-of-truth satırın kolonudur ve bu dosya damganın
+TÜRETİLMESİNİ sınar. Damganın yanıta çıkması ayrı bir iddiadır (T1b/S4) ve
+`test_line_quantity_source_response.py`de iki aile için birden sınanır.
 """
 
 import uuid
