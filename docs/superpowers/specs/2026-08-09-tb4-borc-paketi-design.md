@@ -79,6 +79,18 @@ kısıtları — devir sonraki frontend diliminin T1'inde (P10 borcuyla birlikte
   gövdesi **çarpılan şantiye + kod** bilgisini Türkçe taşır — genel bütünlük mesajı YETMEZ,
   kullanıcı hangi şantiyedeki hangi numaranın engellediğini görmelidir. Mesaj içeriği testlidir.
 
+- **S9 — damga bayatlığının İKİ kapısı da kapanır (final review bulguları, onay 2026-08-09):**
+  Damga yalnız `PUT …/lines` anında türetilirse, dönemi ya da köprüyü SONRADAN değiştiren
+  yollar rozeti yalancı bırakır. İki yüzey de kapatılır:
+  1. **Hakediş PATCH'i dönemi değiştirdiğinde** (`period_year`/`period_month`) o hakedişin
+     satır damgaları yeniden türetilir. (T5'te doğrulandı ve kapatıldı.)
+  2. **Taşeron sözleşmesinin `site_id`'si değiştiğinde** (`null`a düşürme DAHİL) o sözleşmenin
+     **yalnız DRAFT** hakedişlerinin satır damgaları yeniden türetilir. Onaylı/ödenmiş evraka
+     DOKUNULMAZ — **donmuş evrak prensibi**. İmport çemberi kurulmaz. İki senaryo da
+     (A→B taşıma · `null`a düşürme) testlidir.
+  Her iki tazeleme de `site_diary.bridge` TEK KAYNAĞINI kullanır; ikinci bir eşleşme
+  mantığı yazılmaz.
+
 ## 5. AÇIK SORULAR (kullanıcı cevabı ŞART)
 - **S1 — SD-2 eşleşme kuralı:** öneri: dönem+poz bazında **birebir eşitlik** → `diary`; kısmi/
   yaklaşık eşleşme `manual` kalır (yarı-günlük miktara damga basmak yanıltıcı). Dönem = hakedişin
