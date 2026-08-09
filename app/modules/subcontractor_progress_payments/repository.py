@@ -173,6 +173,27 @@ async def list_completed_payments(
     return list(result.scalars().all())
 
 
+async def list_draft_payments(
+    session: AsyncSession, contract_id: uuid.UUID
+) -> list[SubcontractorProgressPayment]:
+    """Sözleşmenin YALNIZ `draft` hakedişleri (TB4 T6, karar S9/2).
+
+    `OPEN_STATUSES` bilerek KULLANILMAZ: `pending_approval` kullanıcının
+    imzaya gönderdiği evraktır, taslak değildir. Damga tazelemesinin kapsamı
+    "üzerinde hâlâ serbestçe çalışılan" evrakla sınırlıdır — onaya sunulmuş,
+    onaylanmış ve ödenmiş hakedişlerin satırları DONMUŞTUR.
+    """
+    stmt = (
+        select(SubcontractorProgressPayment)
+        .where(
+            SubcontractorProgressPayment.contract_id == contract_id,
+            SubcontractorProgressPayment.status == SubcontractorPaymentStatus.draft,
+        )
+        .order_by(SubcontractorProgressPayment.sequence_no)
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
 async def list_completed_payments_by_contracts(
     session: AsyncSession, contract_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, list[SubcontractorProgressPayment]]:

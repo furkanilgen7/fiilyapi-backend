@@ -445,3 +445,186 @@ async def test_DONEM_DISI_alan_yamasi_gunluk_sorgusu_KOSTURMAZ(
     assert yanit.status_code == 200, yanit.text
     assert cagrilar == []
     assert _damgalar(yanit.json()) == {str(tk1): "diary"}
+
+
+# --- 8) Sözleşmenin ŞANTİYESİ değişince damga BAYAT KALMAZ (T6, karar S9/2) ---
+#
+# Damganın İKİNCİ bayatlama kapısı: köprü `contract.site_id`'ye bağlıdır, ama
+# sözleşme PATCH ile başka şantiyeye taşınabilir (ya da proje geneline
+# düşürülebilir). Tazeleme YALNIZ `draft` hakedişlere iner — onaylı/ödenmiş
+# evrak DONMUŞTUR.
+
+
+async def _sozlesme_yamasi(client: AsyncClient, headers: dict[str, str], contract_id, **govde):
+    return await client.patch(
+        f"/subcontractor-contracts/{contract_id}", json=govde, headers=headers
+    )
+
+
+async def _hakedis_oku(client: AsyncClient, headers: dict[str, str], payment_id) -> dict:
+    yanit = await client.get(f"/subcontractor-progress-payments/{payment_id}", headers=headers)
+    assert yanit.status_code == 200, yanit.text
+    return yanit.json()
+
+
+@pytest.fixture
+async def tasima_kurulumu(
+    seeded_db: AsyncSession,
+    proje,
+    santiye_fabrikasi,
+    sozlesme_kalemi_fabrikasi,
+    taseron_sozlesmesi_fabrikasi,
+):
+    """Aynı projede İKİ şantiye; ikisinin pozu da AYNI işveren kalemine köprülü.
+
+    Sözleşme A'ya bağlı kurulur. Köprünün iki adımlı olması (poz → işveren
+    kalemi → taşeron kalemi) taşımanın gerçek etkisini gösterir: taşeron kalemi
+    DEĞİŞMEZ, değişen tek şey hangi şantiyenin günlüğüne bakıldığıdır.
+    """
+    site_a, project, pozlar_a = await santiye_fabrikasi("SD-TA", project=proje)
+    poz_a = sorted(pozlar_a, key=lambda item: item.code)[0]
+    sozlesme_kalemi = await sozlesme_kalemi_fabrikasi(poz_a, project)
+
+    site_b, _, pozlar_b = await santiye_fabrikasi("SD-TB", project=project)
+    poz_b = sorted(pozlar_b, key=lambda item: item.code)[0]
+    poz_b.contract_item_id = sozlesme_kalemi.id
+    await seeded_db.flush()
+
+    contract = await taseron_sozlesmesi_fabrikasi(
+        project, site=site_a, kalemler=[("TK-1", sozlesme_kalemi)], code="TS-TASIMA"
+    )
+    return (site_a, poz_a), (site_b, poz_b), contract
+
+
+async def _damgali_hakedis(
+    client: AsyncClient, seeded_db: AsyncSession, headers: dict[str, str], contract, beklenen: str
+) -> tuple[str, str]:
+    """Tek satırlı (`TK-1`, 12) taslak hakediş açar ve damgasını doğrular."""
+    tk1 = await _kalem_id(seeded_db, contract.id, "TK-1")
+    hakedis = await _hakedis(client, headers, contract.id, **DONEM)
+    yanit = await _kaydet(
+        client, headers, hakedis["id"], [{"contract_item_id": str(tk1), "quantity": "12"}]
+    )
+    assert yanit.status_code == 200, yanit.text
+    assert _damgalar(yanit.json()) == {str(tk1): beklenen}
+    return hakedis["id"], str(tk1)
+
+
+async def test_sozlesme_BASKA_santiyeye_TASININCA_diary_damgasi_DUSER(
+    client: AsyncClient, seeded_db: AsyncSession, admin_headers, tasima_kurulumu, gunluk_api
+) -> None:
+    """A'nın günlüğüyle damgalanan satır, sözleşme B'ye taşınınca B'nin günlüğüyle
+    hiç ilgisi olmadan rozetli KALAMAZ."""
+    (site_a, poz_a), (site_b, _), contract = tasima_kurulumu
+    await gunluk_api(
+        admin_headers,
+        site_a.id,
+        date(2026, 7, 10),
+        [{"boq_item_id": str(poz_a.id), "quantity": "12"}],
+    )
+    payment_id, tk1 = await _damgali_hakedis(client, seeded_db, admin_headers, contract, "diary")
+
+    yama = await _sozlesme_yamasi(client, admin_headers, contract.id, site_id=str(site_b.id))
+    assert yama.status_code == 200, yama.text
+    assert _damgalar(await _hakedis_oku(client, admin_headers, payment_id)) == {tk1: "manual"}
+
+
+async def test_sozlesme_PROJE_GENELINE_dusunce_diary_damgasi_DUSER(
+    client: AsyncClient, seeded_db: AsyncSession, admin_headers, tasima_kurulumu, gunluk_api
+) -> None:
+    """`site_id: null` = köprü TÜMDEN düşer (spec §7 S5) — damga da düşmelidir."""
+    (site_a, poz_a), _, contract = tasima_kurulumu
+    await gunluk_api(
+        admin_headers,
+        site_a.id,
+        date(2026, 7, 10),
+        [{"boq_item_id": str(poz_a.id), "quantity": "12"}],
+    )
+    payment_id, tk1 = await _damgali_hakedis(client, seeded_db, admin_headers, contract, "diary")
+
+    yama = await _sozlesme_yamasi(client, admin_headers, contract.id, site_id=None)
+    assert yama.status_code == 200, yama.text
+    assert _damgalar(await _hakedis_oku(client, admin_headers, payment_id)) == {tk1: "manual"}
+
+
+async def test_sozlesme_GUNLUGU_OLAN_santiyeye_tasininca_damga_BASILIR(
+    client: AsyncClient, seeded_db: AsyncSession, admin_headers, tasima_kurulumu, gunluk_api
+) -> None:
+    """Ters yön: tazeleme tek yönlü bir SİLME değil, iddianın yeniden sınanmasıdır."""
+    _, (site_b, poz_b), contract = tasima_kurulumu
+    await gunluk_api(
+        admin_headers,
+        site_b.id,
+        date(2026, 7, 10),
+        [{"boq_item_id": str(poz_b.id), "quantity": "12"}],
+    )
+    payment_id, tk1 = await _damgali_hakedis(client, seeded_db, admin_headers, contract, "manual")
+
+    yama = await _sozlesme_yamasi(client, admin_headers, contract.id, site_id=str(site_b.id))
+    assert yama.status_code == 200, yama.text
+    assert _damgalar(await _hakedis_oku(client, admin_headers, payment_id)) == {tk1: "diary"}
+
+
+async def test_ONAYLI_hakedisin_damgasi_santiye_degisse_bile_DONMUSTUR(
+    client: AsyncClient, seeded_db: AsyncSession, admin_headers, tasima_kurulumu, gunluk_api
+) -> None:
+    """Donmuş evrak prensibi (S9/2): aynı sözleşmenin onaylı hakedişi tazelemeden
+    ETKİLENMEZ, yanındaki taslak ETKİLENİR."""
+    (site_a, poz_a), (site_b, _), contract = tasima_kurulumu
+    await gunluk_api(
+        admin_headers,
+        site_a.id,
+        date(2026, 7, 10),
+        [{"boq_item_id": str(poz_a.id), "quantity": "12"}],
+    )
+    onayli_id, tk1 = await _damgali_hakedis(client, seeded_db, admin_headers, contract, "diary")
+    for gecis in ("submit", "approve"):
+        yanit = await client.post(
+            f"/subcontractor-progress-payments/{onayli_id}/{gecis}", headers=admin_headers
+        )
+        assert yanit.status_code == 200, yanit.text
+    taslak_id, _ = await _damgali_hakedis(client, seeded_db, admin_headers, contract, "diary")
+
+    yama = await _sozlesme_yamasi(client, admin_headers, contract.id, site_id=str(site_b.id))
+    assert yama.status_code == 200, yama.text
+    assert _damgalar(await _hakedis_oku(client, admin_headers, onayli_id)) == {tk1: "diary"}
+    assert _damgalar(await _hakedis_oku(client, admin_headers, taslak_id)) == {tk1: "manual"}
+
+
+async def test_SANTIYE_DISI_sozlesme_yamasi_gunluk_sorgusu_KOSTURMAZ(
+    client: AsyncClient,
+    seeded_db: AsyncSession,
+    admin_headers,
+    tasima_kurulumu,
+    gunluk_api,
+    monkeypatch,
+) -> None:
+    """Şantiyeye dokunmayan PATCH gereksiz iş yapmaz — `site_id` gövdede olsa
+    bile DEĞER aynıysa köprü hiç sorgulanmaz."""
+    (site_a, poz_a), _, contract = tasima_kurulumu
+    await gunluk_api(
+        admin_headers,
+        site_a.id,
+        date(2026, 7, 10),
+        [{"boq_item_id": str(poz_a.id), "quantity": "12"}],
+    )
+    payment_id, tk1 = await _damgali_hakedis(client, seeded_db, admin_headers, contract, "diary")
+
+    from app.modules.site_diary import bridge
+
+    cagrilar: list[int] = []
+    gercek = bridge.subcontractor_period_totals
+
+    async def _sayan(*args, **kwargs):
+        cagrilar.append(1)
+        return await gercek(*args, **kwargs)
+
+    monkeypatch.setattr(bridge, "subcontractor_period_totals", _sayan)
+
+    yama = await _sozlesme_yamasi(client, admin_headers, contract.id, work_category="Kaba yapı")
+    assert yama.status_code == 200, yama.text
+    yama = await _sozlesme_yamasi(client, admin_headers, contract.id, site_id=str(site_a.id))
+    assert yama.status_code == 200, yama.text
+
+    assert cagrilar == []
+    assert _damgalar(await _hakedis_oku(client, admin_headers, payment_id)) == {tk1: "diary"}

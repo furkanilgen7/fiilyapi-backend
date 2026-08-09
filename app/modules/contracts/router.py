@@ -48,6 +48,7 @@ from app.modules.contracts.schemas import (
     SubcontractorResponse,
     SubcontractorUpdate,
 )
+from app.modules.subcontractor_progress_payments import lines as subcontractor_payment_lines
 from app.modules.users.models import User
 
 router = APIRouter(tags=["contracts"], responses=COMMON_ERROR_RESPONSES)
@@ -499,9 +500,20 @@ async def update_subcontractor_contract_endpoint(
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> SubcontractorContractDetail:
-    contract, project, is_publishing = await subcontracts.update_subcontractor_contract(
-        session, user, contract_id, data
-    )
+    (
+        contract,
+        project,
+        is_publishing,
+        site_changed,
+    ) = await subcontracts.update_subcontractor_contract(session, user, contract_id, data)
+    # TB4 T6 (karar S9/2): şantiye değişti = günlük köprüsü değişti. TASLAK
+    # hakedişlerin `diary` damgası yeni şantiyenin günlüğüyle yeniden sınanır;
+    # onaylı/ödenmiş evrak DONMUŞTUR. Tetikleme burada durur, `subcontracts`
+    # servisinde DEĞİL: hakediş paketi `contracts`a bağlıdır, tersi olsaydı
+    # paketler arası import çemberi doğardı. Router hiçbir modül tarafından
+    # import EDİLMEZ — kompozisyon katmanı olarak ikisini de tanıyabilir.
+    if site_changed:
+        await subcontractor_payment_lines.restamp_draft_payments(session, contract)
     label = messages.subcontract_label(contract.contract_no, contract.subcontractor_name)
     detail = (
         messages.subcontract_published(project.name, label)

@@ -157,6 +157,31 @@ async def restamp_for_period(
         line.quantity_source = _stamp(diary_totals, line.contract_item_id, line.quantity)
 
 
+async def restamp_draft_payments(
+    session: AsyncSession, contract: SubcontractorContract
+) -> list[SubcontractorProgressPayment]:
+    """Sözleşmenin ŞANTİYESİ değiştiğinde (`null`a düşme DAHİL) TASLAK
+    hakedişlerin satır damgalarını yeniden türetir — T6 bulgusu, karar S9/2.
+
+    Damganın ikinci bayatlama kapısı: köprü `contract.site_id`'ye bağlıdır, ama
+    sözleşme başka şantiyeye taşınabilir. A'nın günlüğüyle `diary` damgalanmış
+    satır, sözleşme B'ye taşındıktan sonra B'nin günlüğüyle hiç ilgisi olmadan
+    rozetli kalırdı (`null`da köprü tümden düşer, damga yine kalırdı).
+
+    **Kapsam yalnız `draft`** — donmuş evrak prensibi: onaya sunulmuş, onaylanmış
+    ya da ödenmiş hakedişin satırı sonradan değiştirilmez.
+
+    Eşleşme/toplama mantığı YOKTUR: dönem tazelemesinin (`restamp_for_period`)
+    aynı gövdesi hakediş başına çağrılır, kural tek kaynakta (`site_diary.bridge`
+    + `_stamp`) kalır.
+    """
+    payments = await repository.list_draft_payments(session, contract.id)
+    for payment in payments:
+        await restamp_for_period(session, contract, payment)
+    await session.flush()
+    return payments
+
+
 async def _resolve(
     session: AsyncSession,
     contract: SubcontractorContract,
