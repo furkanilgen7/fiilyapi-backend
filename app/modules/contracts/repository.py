@@ -7,7 +7,6 @@ kalemleri TEK ek sorguda (IN listesi) toplu gelir.
 """
 
 import uuid
-from decimal import Decimal
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -268,23 +267,6 @@ async def get_employer_item_by_code(
     return result.scalar_one_or_none()
 
 
-async def list_distributed_boq_items(
-    session: AsyncSession, item_ids: list[uuid.UUID]
-) -> list[BoqItem]:
-    """Spec §6.3 (`POZ` ekranı): verilen sözleşme kalemlerine bağlı TÜM BOQ
-
-    satırları TEK sorguda (`IN` listesi) — `distribution.build_distribution`
-    kalem başına ayrı sorgu ATMAZ. `contract_item_id IS NULL` satırlar zaten
-    `item_ids` filtresiyle elenir (spec §3.3: bu satırlar dağıtım ekranında
-    görünmez).
-    """
-    if not item_ids:
-        return []
-    stmt = select(BoqItem).where(BoqItem.contract_item_id.in_(item_ids))
-    result = await session.execute(stmt)
-    return list(result.scalars().all())
-
-
 async def list_boq_items_for_sites(
     session: AsyncSession, site_ids: list[uuid.UUID]
 ) -> list[BoqItem]:
@@ -293,10 +275,15 @@ async def list_boq_items_for_sites(
     `contract_item_id IS NULL` satırlar da gelir — dağıtım yazarken
     `uq_boq_items_site_code` çakışması bu satırlardan da doğabilir
     (şantiyenin kendi başına girdiği poz aynı numarayı tutuyor olabilir).
+
+    Dağıtımın "kalan" hesabının TEK kaynağı da bu sorgudur
+    (`contracts.distribution_quantity`); sıralama `id`'ye göre DETERMİNİSTİK
+    olmak zorundadır — aynı (kalem, şantiye) hücresine düşen birden çok satır
+    varsa hangisinin hücreyi temsil ettiği sıralamaya bağlıdır.
     """
     if not site_ids:
         return []
-    stmt = select(BoqItem).where(BoqItem.site_id.in_(site_ids))
+    stmt = select(BoqItem).where(BoqItem.site_id.in_(site_ids)).order_by(BoqItem.id)
     result = await session.execute(stmt)
     return list(result.scalars().all())
 
@@ -319,25 +306,6 @@ async def list_boq_groups_for_sites(
     )
     result = await session.execute(stmt)
     return list(result.scalars().all())
-
-
-async def sum_distributed_quantities(
-    session: AsyncSession, item_ids: list[uuid.UUID]
-) -> dict[uuid.UUID, Decimal]:
-    """Spec §3.3: `distributed_quantity` bağlı `boq_items.quantity` toplamı.
-
-    Kalem başına ayrı sorgu ATILMAZ — `GROUP BY` ile TEK sorguda toplanır
-    (`GET .../contract/items` N kalemli listede N+1 üretmez).
-    """
-    if not item_ids:
-        return {}
-    stmt = (
-        select(BoqItem.contract_item_id, func.sum(BoqItem.quantity))
-        .where(BoqItem.contract_item_id.in_(item_ids))
-        .group_by(BoqItem.contract_item_id)
-    )
-    result = await session.execute(stmt)
-    return {row[0]: row[1] for row in result.all()}
 
 
 # --- Taşeron kartoteksi (task C9, spec §3.4/§6.4) ---

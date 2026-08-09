@@ -16,8 +16,9 @@ Sorgu sayısı (N+1 YOK, task brief kısıtı):
 3. `list_employer_groups` — gruplar
 4. gruplar `.items` erişilince `lazy="selectin"` tetiklenir — TÜM grupların
    kalemleri TEK ek sorguda (C1'in tanımı)
-5. `list_distributed_boq_items` — TÜM kalemlere bağlı BOQ satırları TEK `IN`
-   sorgusunda
+5. `list_boq_items_for_sites` — şantiyelerin BOQ satırları TEK `IN` sorgusunda
+   (dağıtım hücreleri `distribution_quantity.index_allocations` ile süzülür —
+   TB4/B2: "kalan" ile aşım kontrolü AYNI kümeden beslenir)
 
 Toplam: kalem/şantiye sayısından BAĞIMSIZ, sabit sayıda sorgu.
 """
@@ -30,7 +31,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import DuplicateError, NotFoundError, SiteValidationError
 from app.modules.boq.models import BoqGroup, BoqItem
-from app.modules.contracts import repository
+from app.modules.contracts import distribution_quantity, repository
+from app.modules.contracts.distribution_quantity import AllocationKey
 from app.modules.contracts.guards import (
     BOQ_CODE_TAKEN_IN_SITE,
     CONTRACT_MISSING,
@@ -63,21 +65,19 @@ def _quantize_money(value: Decimal) -> Decimal:
     return value.quantize(_MONEY, rounding=ROUND_HALF_UP)
 
 
-def _allocations_by_item(boq_items: list[BoqItem]) -> dict[uuid.UUID, list[BoqItem]]:
+def _allocations_by_item(
+    allocations: dict[AllocationKey, BoqItem],
+) -> dict[uuid.UUID, list[BoqItem]]:
+    """Otorite hücre kümesini (TB4/B2) kalem başına listeye çevirir."""
     grouped: dict[uuid.UUID, list[BoqItem]] = defaultdict(list)
-    for boq_item in boq_items:
-        # `contract_item_id IS NULL` satırlar zaten `list_distributed_boq_items`
-        # filtresiyle elenmiştir (spec §3.3) — burada yine de güvence için atlanır.
-        if boq_item.contract_item_id is None:
-            continue
-        grouped[boq_item.contract_item_id].append(boq_item)
+    for (contract_item_id, _site_id), row in allocations.items():
+        grouped[contract_item_id].append(row)
     return grouped
 
 
 def _to_distribution_item(
-    item: EmployerContractItem, allocations: list[BoqItem]
+    item: EmployerContractItem, allocations: list[BoqItem], distributed_total: Decimal
 ) -> ContractDistributionItem:
-    distributed_total = sum((row.quantity for row in allocations), Decimal("0"))
     return ContractDistributionItem(
         id=item.id,
         code=item.code,
@@ -147,10 +147,11 @@ async def build_distribution(
     sites = await sites_repository.list_sites_for_project(session, project_id)
     groups = await repository.list_employer_groups(session, project_id)
     all_items = [item for group in groups for item in group.items]
-    item_ids = [item.id for item in all_items]
 
-    boq_rows = await repository.list_distributed_boq_items(session, item_ids)
-    allocations_by_item = _allocations_by_item(boq_rows)
+    boq_rows = await repository.list_boq_items_for_sites(session, [site.id for site in sites])
+    allocations = distribution_quantity.index_allocations(boq_rows)
+    allocations_by_item = _allocations_by_item(allocations)
+    distributed = distribution_quantity.distributed_totals(allocations)
 
     undistributed_items = [item for item in all_items if not allocations_by_item.get(item.id)]
 
@@ -162,7 +163,11 @@ async def build_distribution(
                 name=group.name,
                 sort_order=group.sort_order,
                 items=[
-                    _to_distribution_item(item, allocations_by_item.get(item.id, []))
+                    _to_distribution_item(
+                        item,
+                        allocations_by_item.get(item.id, []),
+                        distributed.get(item.id, Decimal("0")),
+                    )
                     for item in group.items
                 ],
             )
@@ -187,7 +192,7 @@ async def build_distribution(
 # miktarı = tüm şantiye kotaları toplamı" — kısmi yazılmış bir dağılım ekranı
 # bu eşitliği sessizce bozar.
 
-_AllocKey = tuple[uuid.UUID, uuid.UUID]  # (contract_item_id, site_id)
+_AllocKey = AllocationKey  # (contract_item_id, site_id) — TB4/B2 tek kaynak tipi
 
 
 def _validate_targets(
@@ -223,12 +228,13 @@ def _assert_within_contract_quantity(
     kotalar da eklenir: gövde ekranın tamamıdır ama bir kalem hiç gönderilmemiş
     olabilir, o kalemin mevcut hücreleri korunur. Yalnız gövdedeki satırlara
     bakmak, dokunulmamış bir şantiyenin kotasını yok sayıp aşımı kaçırırdı.
+
+    Mevcut kotaların toplamı `distribution_quantity` TEK KAYNAĞINDAN gelir
+    (TB4/B2): ekranın gösterdiği "kalan" ile bu kapının saydığı "dağıtılmış"
+    aynı kümedir, biri diğerinden sapamaz.
     """
     totals: dict[uuid.UUID, Decimal] = defaultdict(Decimal)
-    for key, row in existing_by_key.items():
-        if key in body_keys:
-            continue  # bu hücreyi gövde yeniden tanımlıyor
-        totals[key[0]] += row.quantity
+    totals.update(distribution_quantity.distributed_totals(existing_by_key, exclude=body_keys))
     for alloc in allocations:
         if alloc.quantity is not None:
             totals[alloc.contract_item_id] += alloc.quantity
@@ -421,11 +427,7 @@ async def save_distribution(
     body_keys = _validate_targets(data.allocations, items_by_id, site_ids)
 
     site_boq_items = await repository.list_boq_items_for_sites(session, [s.id for s in sites])
-    existing_by_key: dict[_AllocKey, BoqItem] = {
-        (row.contract_item_id, row.site_id): row
-        for row in site_boq_items
-        if row.contract_item_id is not None
-    }
+    existing_by_key = distribution_quantity.index_allocations(site_boq_items)
     _assert_within_contract_quantity(data.allocations, items_by_id, existing_by_key, body_keys)
     relink_plan = _plan_new_rows(data.allocations, items_by_id, existing_by_key, site_boq_items)
 

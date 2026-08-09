@@ -19,7 +19,7 @@ from app.core.errors import (
 )
 from app.core.timezone import today
 from app.modules.company.service import get_company
-from app.modules.contracts import repository
+from app.modules.contracts import distribution_quantity, repository
 from app.modules.contracts.guards import (
     CONTRACT_MISSING,
     DUPLICATE_ITEM_CODE,
@@ -280,9 +280,14 @@ async def _ensure_code_unique(
         raise DuplicateError(DUPLICATE_ITEM_CODE)
 
 
-async def _distributed_quantity(session: AsyncSession, item_id: uuid.UUID) -> Decimal:
-    sums = await repository.sum_distributed_quantities(session, [item_id])
-    return sums.get(item_id, Decimal("0"))
+async def _distributed_quantity(
+    session: AsyncSession, project_id: uuid.UUID, item_id: uuid.UUID
+) -> Decimal:
+    """TB4/B2: "dağıtılmış" TEK KAYNAKTAN — dağıtım ekranının kalanıyla ve aşım
+    kontrolüyle aynı küme (`distribution_quantity`).
+    """
+    totals = await distribution_quantity.load_distributed_totals(session, project_id)
+    return totals.get(item_id, Decimal("0"))
 
 
 def to_item_response(
@@ -303,9 +308,9 @@ def to_item_response(
 
 
 async def to_item_response_single(
-    session: AsyncSession, item: EmployerContractItem
+    session: AsyncSession, project_id: uuid.UUID, item: EmployerContractItem
 ) -> EmployerContractItemResponse:
-    return to_item_response(item, await _distributed_quantity(session, item.id))
+    return to_item_response(item, await _distributed_quantity(session, project_id, item.id))
 
 
 async def get_employer_contract_detail(
@@ -365,16 +370,15 @@ async def get_employer_contract_items(
 ) -> EmployerContractItemsResponse:
     """Spec §6.2: gruplar + kalemler, her kalemde `distributed_quantity`/
 
-    `remaining_quantity`. Tek toplu sorgu (`sum_distributed_quantities`) —
-    N kalemli listede N+1 üretmez.
+    `remaining_quantity`. Toplamlar TEK KAYNAKTAN gelir (TB4/B2,
+    `distribution_quantity`) ve sabit sayıda sorgu ile — N+1 üretmez.
     """
     project = await _visible_project(session, actor, project_id)
     if project.contract is None:
         raise NotFoundError(CONTRACT_MISSING)
 
     groups = await repository.list_employer_groups(session, project_id)
-    item_ids = [item.id for group in groups for item in group.items]
-    distributed = await repository.sum_distributed_quantities(session, item_ids)
+    distributed = await distribution_quantity.load_distributed_totals(session, project_id)
 
     return EmployerContractItemsResponse(
         groups=[
@@ -464,7 +468,7 @@ async def update_employer_item(
     if "code" in updates and updates["code"] != item.code:
         await _ensure_code_unique(session, project.id, updates["code"], exclude_item_id=item.id)
     if "quantity" in updates:
-        distributed = await _distributed_quantity(session, item.id)
+        distributed = await _distributed_quantity(session, project.id, item.id)
         if updates["quantity"] < distributed:
             raise SiteValidationError(ITEM_QUANTITY_BELOW_DISTRIBUTED)
     for field, value in updates.items():

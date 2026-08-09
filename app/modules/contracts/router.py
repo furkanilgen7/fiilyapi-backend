@@ -266,7 +266,7 @@ async def update_employer_contract_item_endpoint(
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
-    return await service.to_item_response_single(session, item)
+    return await service.to_item_response_single(session, project.id, item)
 
 
 @router.delete(
