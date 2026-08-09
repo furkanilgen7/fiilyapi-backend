@@ -288,6 +288,40 @@ def gunluk_fabrikasi(seeded_db: AsyncSession):
 
 
 @pytest.fixture
+def gunluk_api(client: AsyncClient):
+    """UÇLAR üzerinden bir günlük günü kurar (iskelet + miktarlar + gönderim).
+
+    `gunluk_fabrikasi`den FARKI: satırlar `boq_item_id` ile BOQ pozuna bağlıdır —
+    hakediş köprüsü (poz → sözleşme kalemi) ancak bu bağ varken kurulabilir.
+    """
+
+    async def _gun(
+        headers: dict[str, str],
+        site_id: uuid.UUID,
+        tarih: date,
+        satirlar: list[dict],
+        *,
+        gonder: bool = True,
+    ) -> dict:
+        kayit = await client.post(
+            f"/sites/{site_id}/diary", json={"entry_date": tarih.isoformat()}, headers=headers
+        )
+        assert kayit.status_code == 201, kayit.text
+        entry_id = kayit.json()["id"]
+        yanit = await client.put(
+            f"/diary/{entry_id}/lines", json={"lines": satirlar}, headers=headers
+        )
+        assert yanit.status_code == 200, yanit.text
+        if not gonder:
+            return yanit.json()
+        gonderim = await client.post(f"/diary/{entry_id}/submit", headers=headers)
+        assert gonderim.status_code == 200, gonderim.text
+        return gonderim.json()
+
+    return _gun
+
+
+@pytest.fixture
 def sozlesme_kalemi_fabrikasi(seeded_db: AsyncSession):
     """İşveren sözleşmesi kalemi kurar ve BOQ pozuna KÖPRÜLER.
 

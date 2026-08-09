@@ -37,6 +37,8 @@ from app.modules.progress_payments import calculations, guards, repository
 from app.modules.progress_payments.models import ProgressPayment, ProgressPaymentLine
 from app.modules.progress_payments.schemas import ProgressPaymentLineInput
 from app.modules.projects.models import Project, ProjectContract
+from app.modules.site_diary import bridge
+from app.modules.subcontractor_progress_payments.models import QuantitySource
 
 _ZERO = Decimal("0")
 
@@ -54,6 +56,8 @@ class _ResolvedLine:
     group_name: str | None
     quantity: Decimal
     coefficient: Decimal
+    # SD-2 damgası (TB4 B1): SUNUCUDA türetilir, gövdeden ALINMAZ.
+    quantity_source: QuantitySource
 
 
 async def completed_totals(
@@ -134,6 +138,7 @@ async def _resolve(
     default_coefficient: Decimal,
     exclude_payment_id: uuid.UUID | None,
     existing: dict[LineKey, ProgressPaymentLine],
+    period: tuple[int | None, int | None],
 ) -> list[_ResolvedLine]:
     """Spec §6.5'in DÖRT kuralı + FF kilidi (§10/5). **Hiçbir yazma YAPMAZ.**
 
@@ -150,6 +155,11 @@ async def _resolve(
     denetimi K1): yazma anında da sıra tabanlı okunsaydı, büyük sıralı bir
     hakediş onaylıyken küçük sıralı taslak onu görmez ve tavanı aşan miktar
     SESSİZCE yazılabilirdi (zincirin sızdıran adımı buydu).
+
+    `period` = hakedişin KENDİ dönemi (`period_year`, `period_month`) — SD-2
+    damgasının (TB4 B1) süzgeci. Damga burada türetilir çünkü `_apply` hiçbir şey
+    SORGULAMAZ; günlük toplamı satır başına değil, gövdenin tamamı için TEK kez
+    okunur (N+1 yok).
     """
     item_ids = [entry.contract_item_id for entry in inputs]
     site_ids = [entry.site_id for entry in inputs]
@@ -158,6 +168,10 @@ async def _resolve(
     quotas = await repository.get_distributed_quotas(session, item_ids, site_ids)
     prior_totals = await completed_totals(
         session, project.id, exclude_payment_id=exclude_payment_id
+    )
+    period_year, period_month = period
+    diary_totals = await bridge.employer_period_totals(
+        session, project.id, year=period_year, month=period_month
     )
 
     seen: set[LineKey] = set()
@@ -215,6 +229,15 @@ async def _resolve(
                 default_coefficient if existing_line is None else existing_line.coefficient
             )
 
+        # SD-2 (kullanıcı kararı S1): damga HER seferinde yeniden türetilir —
+        # satırın eski damgası KORUNMAZ, çünkü miktar değiştiyse "günlükten
+        # geldi" iddiası da düşer.
+        quantity_source = (
+            QuantitySource.diary
+            if bridge.is_diary_quantity(diary_totals.get(key), entry.quantity)
+            else QuantitySource.manual
+        )
+
         resolved.append(
             _ResolvedLine(
                 key=key,
@@ -222,6 +245,7 @@ async def _resolve(
                 group_name=group_name,
                 quantity=entry.quantity,
                 coefficient=coefficient,
+                quantity_source=quantity_source,
             )
         )
     return resolved
@@ -241,6 +265,7 @@ def _new_line(plan: _ResolvedLine) -> ProgressPaymentLine:
         coefficient=plan.coefficient,
         quantity=plan.quantity,
         group_name=plan.group_name,
+        quantity_source=plan.quantity_source,
     )
 
 
@@ -251,10 +276,15 @@ async def build_lines(
     inputs: list[ProgressPaymentLineInput],
     *,
     default_coefficient: Decimal,
+    period: tuple[int | None, int | None],
 ) -> list[ProgressPaymentLine]:
     """Oluşturma yolunun (`POST …/progress-payments` iç içe `lines[]`) satırları.
 
-    `PUT …/lines` ile AYNI `_resolve` korkuluklarından geçer — tek yol.
+    `PUT …/lines` ile AYNI `_resolve` korkuluklarından geçer — tek yol. SD-2
+    damgası da bu yüzden burada da iner: damgayı yalnız `PUT`a koymak, aynı
+    satırı `POST` üzerinden damgasız yazan bir arka kapı bırakırdı.
+
+    `period` hakediş HENÜZ YAZILMADIĞI için çağırandan (gövdeden) gelir.
 
     `exclude_payment_id` YOK: hakediş henüz YAZILMADI, kimliği de yoktur; zaten
     `draft` doğduğu için kota kümesinin (`approved|paid`) içinde olamaz.
@@ -267,6 +297,7 @@ async def build_lines(
         default_coefficient=default_coefficient,
         exclude_payment_id=None,
         existing={},
+        period=period,
     )
     lines = []
     for sort_order, plan in enumerate(resolved):
@@ -310,6 +341,7 @@ async def apply_lines(
         default_coefficient=payment.default_coefficient,
         exclude_payment_id=payment.id,
         existing=existing,
+        period=(payment.period_year, payment.period_month),
     )
 
     # --- Buradan itibaren yazma; doğrulama YOK (yukarıdaki sıra kısıtı). ---
@@ -321,6 +353,9 @@ async def apply_lines(
         else:
             line.quantity = plan.quantity
             line.coefficient = plan.coefficient
+            # Damga TAZELENİR (SD-2): var olan satırın eski `diary` iddiası,
+            # miktar günlükten ayrıldığı anda düşmelidir.
+            line.quantity_source = plan.quantity_source
         line.sort_order = sort_order
         lines.append(line)
     payment.lines = lines

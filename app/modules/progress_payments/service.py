@@ -247,6 +247,7 @@ async def create(
             contract,
             data.lines,
             default_coefficient=default_coefficient,
+            period=(data.period_year, data.period_month),
         )
 
     session.add(payment)
