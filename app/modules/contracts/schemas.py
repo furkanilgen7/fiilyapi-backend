@@ -18,6 +18,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
+# Serbest metin tavanı (TB4 S3) `boq` ailesiyle PAYLAŞILIR — tek kaynak.
+from app.core.text import FREE_TEXT_MAX_LENGTH
 from app.modules.contracts.models import ContractStatus, PaymentPeriod
 
 # İşveren hakediş özeti P7'de GERÇEK veriye bağlandı (spec §9.6): E14 127-147
@@ -136,14 +138,14 @@ class ContractListResponse(BaseModel):
 
 
 class EmployerContractGroupCreate(BaseModel):
-    name: str = Field(min_length=1)
+    name: str = Field(min_length=1, max_length=FREE_TEXT_MAX_LENGTH)
     sort_order: int = Field(default=0, ge=0)
 
 
 class EmployerContractGroupUpdate(BaseModel):
     """`project_id` YOK — grup başka projeye taşınamaz (`BoqGroupUpdate` deseni)."""
 
-    name: str | None = Field(default=None, min_length=1)
+    name: str | None = Field(default=None, min_length=1, max_length=FREE_TEXT_MAX_LENGTH)
     sort_order: int | None = Field(default=None, ge=0)
 
 
@@ -156,7 +158,7 @@ class EmployerContractGroupResponse(BaseModel):
 class EmployerContractItemCreate(BaseModel):
     group_id: uuid.UUID
     code: str = Field(min_length=1, max_length=50)
-    description: str = Field(min_length=1)
+    description: str = Field(min_length=1, max_length=FREE_TEXT_MAX_LENGTH)
     unit: str = Field(min_length=1, max_length=50)
     quantity: Decimal = Field(gt=0)
     unit_price: Decimal = Field(ge=0)
@@ -169,7 +171,7 @@ class EmployerContractItemUpdate(BaseModel):
 
     group_id: uuid.UUID | None = None
     code: str | None = Field(default=None, min_length=1, max_length=50)
-    description: str | None = Field(default=None, min_length=1)
+    description: str | None = Field(default=None, min_length=1, max_length=FREE_TEXT_MAX_LENGTH)
     unit: str | None = Field(default=None, min_length=1, max_length=50)
     quantity: Decimal | None = Field(default=None, gt=0)
     unit_price: Decimal | None = Field(default=None, ge=0)
@@ -378,7 +380,7 @@ class SubcontractorListResponse(BaseModel):
 
 class SubcontractorContractItemCreate(BaseModel):
     code: str = Field(min_length=1, max_length=50)
-    description: str = Field(min_length=1)
+    description: str = Field(min_length=1, max_length=FREE_TEXT_MAX_LENGTH)
     unit: str = Field(min_length=1, max_length=50)
     quantity: Decimal = Field(gt=0)
     # NULL bilinçli (spec §3.6): işverenden yüklenen kalem fiyatsız gelir;
@@ -393,7 +395,7 @@ class SubcontractorContractItemCreate(BaseModel):
 
 class SubcontractorContractItemUpdate(BaseModel):
     code: str | None = Field(default=None, min_length=1, max_length=50)
-    description: str | None = Field(default=None, min_length=1)
+    description: str | None = Field(default=None, min_length=1, max_length=FREE_TEXT_MAX_LENGTH)
     unit: str | None = Field(default=None, min_length=1, max_length=50)
     quantity: Decimal | None = Field(default=None, gt=0)
     unit_price: Decimal | None = Field(default=None, ge=0)

@@ -3,6 +3,9 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from pydantic import BaseModel, Field, computed_field
 
+# Serbest metin tavani (TB4 S3) `contracts` ailesiyle PAYLASILIR — tek kaynak.
+from app.core.text import FREE_TEXT_MAX_LENGTH
+
 # Yer tutucu sozlesmesi TEK yerde tanimlidir (B6/P1, spec §3/§5.1): kopyalanmaz,
 # projects modulunden import edilir (plan T2 notu).
 from app.modules.projects.schemas import MetricPlaceholder
@@ -84,21 +87,21 @@ class BoqListResponse(BaseModel):
 
 
 class BoqGroupCreate(BaseModel):
-    name: str = Field(min_length=1)
+    name: str = Field(min_length=1, max_length=FREE_TEXT_MAX_LENGTH)
     sort_order: int = Field(default=0, ge=0)
 
 
 class BoqGroupUpdate(BaseModel):
     """`site_id` YOK — grup baska santiyeye tasinamaz (spec §3.3 invariant 4)."""
 
-    name: str | None = Field(default=None, min_length=1)
+    name: str | None = Field(default=None, min_length=1, max_length=FREE_TEXT_MAX_LENGTH)
     sort_order: int | None = Field(default=None, ge=0)
 
 
 class BoqItemCreate(BaseModel):
     group_id: uuid.UUID
     code: str = Field(min_length=1, max_length=50)
-    description: str = Field(min_length=1)
+    description: str = Field(min_length=1, max_length=FREE_TEXT_MAX_LENGTH)
     unit: str = Field(min_length=1, max_length=50)
     quantity: Decimal = Field(gt=0)
     unit_price: Decimal = Field(ge=0)
@@ -111,7 +114,7 @@ class BoqItemUpdate(BaseModel):
 
     group_id: uuid.UUID | None = None
     code: str | None = Field(default=None, min_length=1, max_length=50)
-    description: str | None = Field(default=None, min_length=1)
+    description: str | None = Field(default=None, min_length=1, max_length=FREE_TEXT_MAX_LENGTH)
     unit: str | None = Field(default=None, min_length=1, max_length=50)
     quantity: Decimal | None = Field(default=None, gt=0)
     unit_price: Decimal | None = Field(default=None, ge=0)
