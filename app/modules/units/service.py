@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import RelatedRecordsExistError
 from app.modules.audit import messages
+from app.modules.projects import costs
+from app.modules.projects import repository as projects_repository
 from app.modules.projects.models import Project
 from app.modules.sites import repository as sites_repository
 
@@ -35,6 +37,7 @@ from app.modules.units.schemas import (
 )
 from app.modules.units.summary import (
     VALUE_BASIS_BY_TYPE,
+    UnitCostInfo,
     UnitSaleInfo,
     to_block,
     to_unit,
@@ -183,6 +186,10 @@ async def units_for_project(
     # unite basina `session.get(LandShareShareholder, ...)` 24 daireli blokta 24
     # gidis-donus demekti (spec §4.3 "N+1 yok").
     shareholder_names = _shareholder_names(project)
+    # P10 T3 (UE 91/97-99): maliyet dagitiminin paydasi projenin TUM uniteleridir
+    # (`units` degiskeni) — suzgecten ETKILENMEZ, aksi hâlde "3. kat" suzgeci
+    # ayni dairenin maliyetini degistirirdi (`totals` kuralinin aynisi).
+    allocation = costs.allocation(project, units)
 
     selected = [
         (block, site_name)
@@ -199,6 +206,7 @@ async def units_for_project(
                     block.name,
                     sales_by_unit.get(unit.id),
                     _shareholder_name(shareholder_names, unit),
+                    _cost_info(allocation, unit),
                 )
                 for unit in by_block[block.id]
                 if _matches(unit, kind, owner_side, floor, sales_status)
@@ -247,6 +255,20 @@ async def _open_sales_by_unit(
     }
 
 
+def _cost_info(allocation: costs.UnitCostAllocation, unit: Unit) -> UnitCostInfo:
+    """UE 91/97-99 — unitenin maliyet/kâr ikilisi, EK SORGU ACMADAN.
+
+    Dagitim baglami (proje bütce maliyeti + toplam brüt m²) istek basina BIR KEZ
+    kurulur ve her unite icin yeniden hesaplanmaz (`_open_sales_by_unit` ile ayni
+    N+1 gerekcesi). Hesabin kendisi `projects.costs`tadir; burada ikinci bir
+    dagitim formulu YAZILMAZ.
+    """
+    return UnitCostInfo(
+        cost=allocation.for_unit(unit.gross_area_m2),
+        expected_profit=allocation.expected_profit(unit.gross_area_m2, unit.list_price),
+    )
+
+
 def _shareholder_names(project: Project) -> dict[uuid.UUID, str]:
     """`shareholder_id` → ad sozlugu, ZATEN yuklu koleksiyondan (spec §4.3)."""
     return {row.id: row.name for row in project.shareholders}
@@ -273,7 +295,29 @@ async def unit_response(session: AsyncSession, unit: Unit) -> UnitResponse:
         if unit.shareholder_id is None
         else await repository.get_shareholder_name(session, unit.shareholder_id)
     )
-    return to_unit(unit, await _block_name(session, unit.block_id), sale, shareholder_name)
+    return to_unit(
+        unit,
+        await _block_name(session, unit.block_id),
+        sale,
+        shareholder_name,
+        await _cost_allocation_info(session, unit),
+    )
+
+
+async def _cost_allocation_info(session: AsyncSession, unit: Unit) -> UnitCostInfo:
+    """TEKIL yanitin maliyet ikilisi (P10 T3).
+
+    Burada IKI ek sorgu kacinilmazdir: dagitimin paydasi projenin TUM unitelerinin
+    brüt m² toplamidir (S3) ve tekil yanitta ne proje ne o liste elimizde olur.
+    Bedeli bilincli kabul edilir — alternatifi, POST/PATCH sonrasi ekranin
+    listedekinden FARKLI (bos) bir maliyet gormesiydi. Bu bir SATIR yanitidir,
+    liste degil; sorgular unite sayisiyla BUYUMEZ.
+    """
+    project = await projects_repository.get_project(session, unit.project_id)
+    if project is None:  # pragma: no cover - FK garantisi
+        return UnitCostInfo(cost=None, expected_profit=None)
+    units = await repository.list_units_for_project(session, unit.project_id)
+    return _cost_info(costs.allocation(project, units), unit)
 
 
 # --- Blok yazma uclari (spec §7.2, §7.3) ---

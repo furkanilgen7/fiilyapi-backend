@@ -8,7 +8,7 @@ from pydantic import AfterValidator, BaseModel, Field, computed_field, model_val
 
 # Yer tutucu sozlesmesi TEK yerde tanimlidir (B6/P1, spec §6): kopyalanmaz,
 # projects modulunden import edilir (BOQ `schemas.py:8` deseninin aynisi).
-from app.modules.projects.schemas import CountPlaceholder, MetricPlaceholder
+from app.modules.projects.schemas import CountPlaceholder, MetricPlaceholder, metric
 from app.modules.units.guards import (
     INVALID_VAT_RATE,
     SLOT_COUNT_MISMATCH,
@@ -65,6 +65,7 @@ __all__ = [
     "UnitTotals",
     "UnitUpdate",
     "UnitValueBasis",
+    "metric",
 ]
 
 # Modul duzeyi sabitler — sihirli sayi birakilmaz (spec §6.2, §7.8).

@@ -76,15 +76,60 @@ class ProjectBudgetLines(BaseModel):
 
 
 class MetricPlaceholder(BaseModel):
-    """Veri kaynagi henuz yazilmamis tek degerli alan. Sahte rakam yerine durust bos durum."""
+    """Tek degerli alanin zarfi: ya GERCEK deger ya durust bos durum tasir.
+
+    P10 T3: zarf sozlesmesi artik pydantic duzeyinde BAGLIDIR ve iki yonlu
+    calisir (ROADMAP §3 "celiskili sozlesme" borcu):
+
+    * `available=True` ⇒ `pending_module is None` — dolu bir alanin "hangi modul
+      gelince dolacak" bilgisi TASIMASI anlamsizdir; eski hâlinde `pending_module`
+      zorunlu oldugu icin dolu zarf bile bir modul adi tasimak zorundaydi ve
+      ekran o alani "hâlâ eksik" sanabiliyordu.
+    * `available=False` ⇒ `pending_module` ZORUNLU — bos zarf kaynagini bildirmek
+      zorundadir, aksi hâlde ekran "—" basip nedenini soyleyemez.
+
+    Alan TIPI DEGISMEDI (`MetricPlaceholder` kalir): bu zarflari tuketen UI
+    CANLIDA (E4 proje kartlari) ve kirici bir sema degisikligi yapilmaz.
+
+    `CountPlaceholder`a bu kural UYGULANMAZ — orada dolu zarfin `pending_module`
+    tasimasi BILINCLI bir emsaldir (bkz. o sinifin notu).
+    """
 
     available: bool = False
     value: Decimal | None = None
-    pending_module: str
+    pending_module: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_envelope(self) -> Self:
+        if self.available and self.pending_module is not None:
+            raise ValueError("Dolu zarf pending_module taşımaz (available=True ⇒ None).")
+        if not self.available and self.pending_module is None:
+            raise ValueError("Boş zarf pending_module bildirmek zorundadır.")
+        return self
+
+
+def metric(value: Decimal | None, pending_module: str) -> MetricPlaceholder:
+    """Zarfi TEK noktadan kurar: deger varsa dolu, yoksa bos (P10 T3).
+
+    Cagiranlar `available`/`pending_module` uclusunu elle KURMAZ — ucluyu her
+    modulde yeniden yazmak, zarf sozlesmesini her modulde yeniden yorumlamak
+    demekti. "Kaynak yok" kararinin kendisi cagiranda kalir (ornegin girilmemis
+    butce `None` gecer), zarfin bicimi burada.
+    """
+    if value is None:
+        return MetricPlaceholder(pending_module=pending_module)
+    return MetricPlaceholder(available=True, value=value)
 
 
 class CountPlaceholder(BaseModel):
-    """Veri kaynagi henuz yazilmamis sayac alani ("48 isci", "3 hissedar" gibi)."""
+    """Veri kaynagi henuz yazilmamis sayac alani ("48 isci", "3 hissedar" gibi).
+
+    `MetricPlaceholder`in P10 T3'te kazandigi "dolu zarf `pending_module`
+    TASIMAZ" kurali BURAYA UYGULANMAZ: puantaj sayaci (`_worker_count`)
+    `available=True` + `pending_module="timesheet"` doner ve bu BILINCLI bir
+    emsaldir — ayni serit uzerindeki diger sayaclar hâlâ yer tutucudur, ekran
+    seridin kaynagini oradan okur. Kirmak, canli taahhut kartini bozardi.
+    """
 
     available: bool = False
     count: int | None = None

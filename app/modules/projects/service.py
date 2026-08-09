@@ -12,7 +12,8 @@ from app.core.errors import (
     ProjectValidationError,
 )
 from app.core.timezone import today
-from app.modules.projects import messages, repository
+from app.modules.projects import cost_cards, messages, repository
+from app.modules.projects.cost_cards import ProjectCardCosts
 from app.modules.projects.models import (
     Employer,
     LandShareShareholder,
@@ -45,6 +46,7 @@ from app.modules.projects.schemas import (
     ProjectUpdate,
     ShareholderInput,
     ShareholderResponse,
+    metric,
 )
 from app.modules.roles.repository import get_permission
 
@@ -124,7 +126,13 @@ def _contracting_card(worker_count: int) -> ContractingCard:
     )
 
 
-def _investment_card(project: Project) -> InvestmentCard:
+def _investment_card(project: Project, card_costs: ProjectCardCosts) -> InvestmentCard:
+    """KY 182/187-188 üç alanı P10 T3'te ZARFIN İÇİNDE gerçeğe baglandi.
+
+    Bagli olmayan alanlar (satis/ünite tarafi) yer tutucu KALIR: bu dilim yalniz
+    maliyet/kâr türevlerini baglar (`_worker_count`un P-T4'teki kismi baglama
+    deseninin aynisi).
+    """
     investment = project.investment
     return InvestmentCard(
         sales_target=investment.sales_target if investment else None,
@@ -132,13 +140,13 @@ def _investment_card(project: Project) -> InvestmentCard:
         sold_amount=_metric(_UNITS),
         sales_ratio=_metric(_UNITS),
         unit_summary=_count(_UNITS),
-        total_cost=_metric(_PROJECT_COSTS),
-        estimated_profit=_metric(_PROJECT_COSTS),
-        margin=_metric(_PROJECT_COSTS),
+        total_cost=metric(card_costs.total_cost, _PROJECT_COSTS),
+        estimated_profit=metric(card_costs.profit, _PROJECT_COSTS),
+        margin=metric(card_costs.margin_pct, _PROJECT_COSTS),
     )
 
 
-def _land_share_card(project: Project) -> LandShareCard | None:
+def _land_share_card(project: Project, card_costs: ProjectCardCosts) -> LandShareCard | None:
     land_share = project.land_share
     if land_share is None:
         return None
@@ -158,15 +166,19 @@ def _land_share_card(project: Project) -> LandShareCard | None:
         shareholders=[ShareholderResponse.model_validate(s) for s in project.shareholders],
         our_unit_count=_count(_UNITS),
         owner_unit_count=_count(_UNITS),
-        our_share_value=_metric(_UNITS),
-        construction_cost=_metric(_PROJECT_COSTS),
-        estimated_profit=_metric(_PROJECT_COSTS),
-        margin=_metric(_PROJECT_COSTS),
+        # KK 121 "BİZİM PAY": kaynak modül (`units`) CANLI olduğu için değer
+        # daima bilinir — ünitesi olmayan projede 0,00 gerçek cevaptır.
+        our_share_value=metric(card_costs.our_share_value, _UNITS),
+        construction_cost=metric(card_costs.construction_cost, _PROJECT_COSTS),
+        estimated_profit=metric(card_costs.profit, _PROJECT_COSTS),
+        margin=metric(card_costs.margin_pct, _PROJECT_COSTS),
         construction_progress=_metric(_PROGRESS_PAYMENTS),
     )
 
 
-def _to_item(project: Project, worker_count: int) -> ProjectListItem:
+def _to_item(
+    project: Project, worker_count: int, card_costs: ProjectCardCosts = cost_cards.EMPTY
+) -> ProjectListItem:
     """ProjectListItem.model_validate(project) calisamaz: ORM nesnesinde
     contracting/investment/land_share alanlari (bunlar turetilmis karttir, DB
     sutunu degil) yok — bu yuzden ortak alanlar elle cikarilir."""
@@ -200,14 +212,18 @@ def _to_item(project: Project, worker_count: int) -> ProjectListItem:
         budget=project.budget,
         progress_pct=project.progress_pct,
         contracting=_contracting_card(worker_count) if is_contracting else None,
-        investment=_investment_card(project) if is_investment else None,
-        land_share=_land_share_card(project) if is_land_share else None,
+        investment=_investment_card(project, card_costs) if is_investment else None,
+        land_share=_land_share_card(project, card_costs) if is_land_share else None,
     )
 
 
-def to_detail(project: Project, worker_count: int) -> ProjectDetailResponse:
+def to_detail(
+    project: Project, worker_count: int, card_costs: ProjectCardCosts = cost_cards.EMPTY
+) -> ProjectDetailResponse:
+    """Saf donusturucu — DB'ye DOKUNMAZ. Maliyet turevleri de `worker_count` gibi
+    PARAMETREDIR (P10 T3): toplu okuma cagirandadir, verilmezse zarflar bos kalir."""
     return ProjectDetailResponse(
-        **_to_item(project, worker_count).model_dump(), site_count=len(project.sites)
+        **_to_item(project, worker_count, card_costs).model_dump(), site_count=len(project.sites)
     )
 
 
@@ -215,7 +231,10 @@ async def build_project_detail(session: AsyncSession, project: Project) -> Proje
     """Proje detay zarfi + isci sayaci. YAZMA uclarinin yaniti da buradan gecer:
     okuma ve yazma ayni zarfi tasimazsa ekran kaydettikten sonra sayaci kaybeder."""
     worker_counts = await timesheet_counts.by_project(session, [project.id])
-    return to_detail(project, worker_counts.get(project.id, 0))
+    card_costs = await cost_cards.by_projects(session, [project])
+    return to_detail(
+        project, worker_counts.get(project.id, 0), card_costs.get(project.id, cost_cards.EMPTY)
+    )
 
 
 async def visible_projects(session: AsyncSession, actor: User) -> list[Project]:
@@ -260,9 +279,15 @@ async def list_projects_overview(
         wanted_status = ProjectStatus(status_filter)
         selected = [p for p in selected if p.status is wanted_status]
     worker_counts = await timesheet_counts.by_project(session, [p.id for p in selected])
+    # P10 T3: kart maliyet/kâr türevleri TEK toplu okumadan gelir — proje başına
+    # sorgu YASAK (spec §4, `timesheet_counts.by_project` ile aynı desen).
+    card_costs = await cost_cards.by_projects(session, selected)
     return ProjectListResponse(
         counts=_counts(visible),
-        items=[_to_item(p, worker_counts.get(p.id, 0)) for p in selected],
+        items=[
+            _to_item(p, worker_counts.get(p.id, 0), card_costs.get(p.id, cost_cards.EMPTY))
+            for p in selected
+        ],
     )
 
 

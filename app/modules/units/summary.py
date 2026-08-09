@@ -15,12 +15,12 @@ from app.modules.sales.models import UnitSaleStatus
 from app.modules.units.models import Block, Unit, UnitKind, UnitOwnerSide, UnitSalesStatus
 from app.modules.units.schemas import (
     BlockResponse,
-    MetricPlaceholder,
     UnitKindBreakdown,
     UnitResponse,
     UnitSideSummary,
     UnitTotals,
     UnitValueBasis,
+    metric,
 )
 
 # Spec §6.1: bu dilimde YAZILMAYAN turev alanlarin bagli oldugu modul anahtarlari.
@@ -34,8 +34,13 @@ from app.modules.units.schemas import (
 #
 # `_SHAREHOLDER_UNITS` KALDIRILDI (P9 T3): KKP 91'in hissedar yarisinin veri
 # kaynagi artik VAR — `units.shareholder_id` T1'de acildi. `_UNIT_SALES`in P8
-# T5'teki kalkisinin aynisi. Geriye TEK anahtar kalir ve o hâlâ verisi
-# YAZILMAMIS bir modulu gosterir.
+# T5'teki kalkisinin aynisi.
+#
+# P10 T3: KALAN anahtar (`project_costs`) da ARTIK yalnizca "kaynak yok" hâlinde
+# kullanilir — `unit_cost`/`expected_profit` hesabi VAR (bütce bazli m² dagitimi)
+# ve deger geldiginde zarf dolar, anahtar dusürülür. Anahtar SILINMEDI: m²'si
+# girilmemis unite ya da bütcesi girilmemis projede zarf hâlâ bos doner ve
+# ekranin "hangi bilgi eksik" diyebilmesi icin kaynagi bildirmesi gerekir.
 _PROJECT_COSTS = "project_costs"
 
 
@@ -64,6 +69,22 @@ class UnitSaleInfo:
         return self.status in (UnitSaleStatus.active, UnitSaleStatus.deed_transferred)
 
 
+@dataclass(frozen=True)
+class UnitCostInfo:
+    """Bir unitenin TUREV maliyet/kâr ikilisi (P10 T3; UE 91 ve 97-99).
+
+    `UnitSaleInfo` ile ayni gerekce: bu modul saf sunum cekirdegidir ve hesabi
+    kendisi YAPMAZ — `projects.costs.UnitCostAllocation` uretir, buraya sade bir
+    demet olarak gelir. Boylece `units.summary` → `projects.costs` bagi (ve onun
+    getirecegi import cemberi) hic dogmaz.
+
+    Iki alan da `None` olabilir ve bu "bilinmiyor"dur: zarf o zaman BOS kalir.
+    """
+
+    cost: Decimal | None
+    expected_profit: Decimal | None
+
+
 _MONEY = Decimal("0.01")
 _HUNDRED = Decimal("100")
 
@@ -85,10 +106,6 @@ VALUE_BASIS_BY_TYPE = {
 
 def _quantize_money(value: Decimal) -> Decimal:
     return value.quantize(_MONEY, rounding=ROUND_HALF_UP)
-
-
-def _metric(pending_module: str) -> MetricPlaceholder:
-    return MetricPlaceholder(pending_module=pending_module)
 
 
 def _sum(values: list[Decimal | None]) -> Decimal:
@@ -164,6 +181,7 @@ def to_unit(
     block_name: str,
     sale: UnitSaleInfo | None = None,
     shareholder_name: str | None = None,
+    cost: UnitCostInfo | None = None,
 ) -> UnitResponse:
     """Satis FIYATI/ALICISI (KY 275/277) P8 T5'te GERCEK degere baglandi; satis
     yoksa `None` doner — uydurma deger uretilmez. Satis DURUMU (UE 94) P3.1'de
@@ -200,9 +218,13 @@ def to_unit(
         # DEGILDIR (KKP 119 "—") ve uydurma ad uretilmez.
         shareholder_id=unit.shareholder_id,
         shareholder_name=shareholder_name,
-        # Maliyet kolonu ACILMAZ (karar 3): maliyet yoksa kâr da yoktur.
-        unit_cost=_metric(_PROJECT_COSTS),
-        expected_profit=_metric(_PROJECT_COSTS),
+        # UE 91 / UE 97-99 — P10 T3'te ZARFIN ICINDE gercege baglandi. Maliyet
+        # KOLONU hâlâ ACILMADI (karar 3 yasiyor): deger TUREVDIR (bütce bazli m²
+        # dagitimi, S3) ve hesabi CAGIRANDAN gelir — bu modul DB'ye dokunmaz
+        # (dosya basligi) ve proje bütcesini/toplam m²'sini kendisi okuyamaz.
+        # Kaynak yoksa (m²'siz unite, bütcesi girilmemis proje) zarf BOS KALIR.
+        unit_cost=metric(None if cost is None else cost.cost, _PROJECT_COSTS),
+        expected_profit=metric(None if cost is None else cost.expected_profit, _PROJECT_COSTS),
     )
 
 

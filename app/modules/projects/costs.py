@@ -292,6 +292,77 @@ def unit_cost(
     return quantize2(project_budget_cost * unit_gross_area_m2 / project_gross_area_m2)
 
 
+def entered_budget_cost(project: Project) -> Decimal | None:
+    """`total_budget_cost` ama GİRİLMEMİŞ bütçe `None` döner (P10 T3).
+
+    Dört bütçe kalemi de arsa da NOT NULL/`0` varsayılanlıdır: bütçesi hiç
+    girilmemiş projede toplam `0.00` çıkar. O sıfır "bu projenin maliyeti ₺0"
+    DEĞİL "maliyet bilinmiyor"dur ve kart zarfına dolu değer olarak basılırsa
+    ekranda beklenen kâr satış bedelinin TAMAMI görünür — `_margin_pct`in
+    sıfıra bölmeyi `None`a çevirmesiyle aynı gerekçe (uydurma değer yasağı).
+
+    T2 ucu (`cost_summary`) bu süzgeci KULLANMAZ: orada `construction_budget`
+    ayrı bir satırdır ve "₺0 bütçe girilmiş" bilgisi ekranda kırılım kartında
+    zaten görünür.
+    """
+    total = total_budget_cost(project)
+    return total if total > 0 else None
+
+
+@dataclass(frozen=True)
+class UnitCostAllocation:
+    """Ünite maliyeti m² dağıtımının proje düzeyi bağlamı (S3).
+
+    Bağlam BİR KEZ kurulur ve ünite başına yeniden hesaplanmaz: liste uçlarında
+    (ünite listesi, satış listesi) payda tüm ünitelerin brüt m² toplamıdır ve
+    onu her satır için yeniden toplamak N² iş demekti.
+    """
+
+    budget_cost: Decimal | None
+    total_gross_area_m2: Decimal
+
+    def for_unit(self, unit_gross_area_m2: Decimal | None) -> Decimal | None:
+        """Tek ünitenin maliyeti; bilinmeyen girdide `None` (bkz. `unit_cost`)."""
+        if self.budget_cost is None:
+            return None
+        return unit_cost(self.budget_cost, unit_gross_area_m2, self.total_gross_area_m2)
+
+    def expected_profit(
+        self, unit_gross_area_m2: Decimal | None, price: Decimal | None
+    ) -> Decimal | None:
+        """UE 98 "Beklenen Kâr" = liste fiyatı − ünite maliyeti.
+
+        İki bilinmeyenden BİRİ eksikse kâr da bilinmez: fiyatsız ünitede
+        "kâr = −maliyet" basmak, henüz fiyatlanmamış daireyi zararda göstermek
+        olurdu.
+        """
+        cost = self.for_unit(unit_gross_area_m2)
+        return None if cost is None or price is None else quantize2(price - cost)
+
+
+def allocation(project: Project, units: Sequence[Unit]) -> UnitCostAllocation:
+    """Projenin dağıtım bağlamı. `units` projenin TAMAMI olmalıdır (payda)."""
+    return UnitCostAllocation(
+        budget_cost=entered_budget_cost(project), total_gross_area_m2=gross_area_total(units)
+    )
+
+
+def card_projection(project: Project, units: Sequence[Unit]) -> ProfitProjection:
+    """E4 kartlarının kâr/marj türevi (E4 75/82/89) — `profit_projection`tan İKİ farkla:
+
+    1. maliyet `entered_budget_cost`tur: bütçesi girilmemiş projede kâr/marj
+       zarfı BOŞ kalır, sahte "maliyet 0 → kâr = tüm satış" basılmaz.
+    2. taahhüt dalı YOKTUR: E4 180-181 taahhüt kartında tahmini kâr/marj alanı
+       hiç BASILMAZ (spec §2) — olmayan alan için hesap da yapılmaz.
+    """
+    revenue = (
+        unit_list_price_total(units)
+        if project.project_type is ProjectType.kendi_yatirim
+        else our_share_value(units, project.project_type)
+    )
+    return _projection(revenue, entered_budget_cost(project))
+
+
 def sale_profit(sale_price: Decimal, unit_cost_value: Decimal | None) -> ProfitProjection:
     """DS 90-91 "Bu Satıştan Kâr": satış bedeli − ünite maliyeti; marj = kâr / bedel.
 

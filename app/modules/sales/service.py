@@ -26,11 +26,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.access import AccessLevel, can_delete
 from app.core.errors import DeleteNotAllowedError, DuplicateError, SiteValidationError
 from app.modules.audit import messages
+from app.modules.projects import costs
+from app.modules.projects import repository as projects_repository
+from app.modules.projects.schemas import MetricPlaceholder, metric
 from app.modules.roles.repository import get_permission
 from app.modules.sales import guards, repository, summary
 from app.modules.sales.models import SaleType, UnitSale, UnitSaleStatus
 from app.modules.sales.repository import InstallmentStats
 from app.modules.sales.schemas import (
+    COST_MODULE,
     SALE_FORM_FIELDS,
     SalesSummaryResponse,
     UnitSaleCreate,
@@ -116,7 +120,32 @@ async def sync_unit_sales_status(
 # --- Yanıt zarfı ---
 
 
-def _to_response(row: Row, stats: InstallmentStats) -> UnitSaleResponse:
+def _cost_metrics(
+    unit: Unit, sale_price: Decimal, allocation: costs.UnitCostAllocation | None
+) -> dict[str, MetricPlaceholder]:
+    """DS 62/90 — "Maliyet" ve "Bu Satıştan Kâr" zarfları (P10 T3).
+
+    Kolon AÇILMADI (kalıcı karar 3 yaşıyor): maliyet ünitenin brüt m²'sinden
+    TÜREVDİR (S3) ve kâr `costs.sale_profit`tan gelir — bu dosya ikinci bir
+    "satıştan kâr" formülü yazmaz.
+
+    DS 91'in %31,9 MARJI için alan AÇILMAZ: `UnitSaleResponse`ta marj kolonu
+    yoktur ve kâr/bedel oranı ekranda tek satırda türetilir (spec §5 "başabaş
+    noktası türev metin, backend alan açmaz" kuralının aynısı).
+
+    Kaynak yoksa (m²'siz ünite, bütçesi girilmemiş proje) iki zarf da BOŞ kalır.
+    """
+    unit_cost = None if allocation is None else allocation.for_unit(unit.gross_area_m2)
+    profit = costs.sale_profit(sale_price, unit_cost).profit
+    return {
+        "unit_cost": metric(unit_cost, COST_MODULE),
+        "sale_profit": metric(profit, COST_MODULE),
+    }
+
+
+def _to_response(
+    row: Row, stats: InstallmentStats, allocation: costs.UnitCostAllocation | None = None
+) -> UnitSaleResponse:
     sale, unit, block, customer = row
     return UnitSaleResponse(
         **{
@@ -124,6 +153,7 @@ def _to_response(row: Row, stats: InstallmentStats) -> UnitSaleResponse:
             for field in UnitSaleResponse.model_fields
             if hasattr(sale, field)
         },
+        **_cost_metrics(unit, sale.sale_price, allocation),
         block_name=block.name,
         unit_no=unit.unit_no,
         unit_label=unit_label(block.name, unit.unit_no),
@@ -151,9 +181,26 @@ async def _sale_row(session: AsyncSession, sale_id: uuid.UUID) -> Row:
     return row
 
 
+async def _cost_allocation(
+    session: AsyncSession, project_id: uuid.UUID
+) -> costs.UnitCostAllocation | None:
+    """Ünite maliyeti dağıtımının proje bağlamı (P10 T3, S3).
+
+    Payda projenin TÜM ünitelerinin brüt m² toplamıdır, bu yüzden satış yanıtı
+    ünite tablosuna bir kez uğramak zorundadır. Sorgular satış sayısıyla
+    BÜYÜMEZ: bağlam istek başına bir kez kurulur (spec §4).
+    """
+    project = await projects_repository.get_project(session, project_id)
+    if project is None:  # pragma: no cover - FK garantisi
+        return None
+    return costs.allocation(project, await list_units_for_project(session, project_id))
+
+
 async def response_for(session: AsyncSession, sale_id: uuid.UUID) -> UnitSaleResponse:
     stats = await repository.installment_stats(session, [sale_id], date.today())
-    return _to_response(await _sale_row(session, sale_id), stats.get(sale_id, InstallmentStats()))
+    row = await _sale_row(session, sale_id)
+    allocation = await _cost_allocation(session, row[0].project_id)
+    return _to_response(row, stats.get(sale_id, InstallmentStats()), allocation)
 
 
 # --- Okuma uçları ---
@@ -162,11 +209,18 @@ async def response_for(session: AsyncSession, sale_id: uuid.UUID) -> UnitSaleRes
 async def list_sales(
     session: AsyncSession, actor: User, project_id: uuid.UUID
 ) -> UnitSaleListResponse:
-    """S150-212. Tahsilat türevleri TEK toplama sorgusundan gelir (N+1 yok)."""
-    await guards.visible_project(session, actor, project_id)
+    """S150-212. Tahsilat türevleri TEK toplama sorgusundan gelir (N+1 yok).
+
+    Maliyet/kâr (DS 62/90) de TEK dağıtım bağlamından gelir — satış başına ünite
+    sorgusu AÇILMAZ (P10 T3, spec §4).
+    """
+    project = await guards.visible_project(session, actor, project_id)
     rows = await repository.list_sale_rows(session, project_id)
     stats = await repository.installment_stats(session, [row[0].id for row in rows], date.today())
-    items = [_to_response(row, stats.get(row[0].id, InstallmentStats())) for row in rows]
+    allocation = costs.allocation(project, await list_units_for_project(session, project_id))
+    items = [
+        _to_response(row, stats.get(row[0].id, InstallmentStats()), allocation) for row in rows
+    ]
     return UnitSaleListResponse(
         totals=UnitSaleTotals(
             count=len(items),
