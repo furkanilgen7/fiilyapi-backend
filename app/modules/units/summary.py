@@ -123,7 +123,11 @@ def _by_sales_status(units: list[Unit]) -> dict[UnitSalesStatus, int]:
     return counts
 
 
-def _basis_value(unit: Unit, basis: UnitValueBasis) -> Decimal | None:
+def basis_value(unit: Unit, basis: UnitValueBasis) -> Decimal | None:
+    """Bir unitenin DEGER sutunu (spec §4.4). Modul disina ACIKTIR: P10 maliyet
+    cekirdegi (`projects/costs.py`) kat karsiligi pay degerini buradan okur —
+    ikinci bir "hangi sutun deger sayilir" tanimi acilmasin.
+    """
     if basis is UnitValueBasis.appraisal_value:
         return unit.appraisal_value
     return unit.list_price
@@ -218,7 +222,7 @@ def _side_summary(
     tutmak ZORUNDA DEGILDIR ve sapma DOGRULANMAZ, yalnizca raporlanir.
     """
     selected = [u for u in units if u.owner_side is side]
-    total_value = _sum([_basis_value(u, basis) for u in selected])
+    total_value = _sum([basis_value(u, basis) for u in selected])
     share_pct = (
         _quantize_money(Decimal(len(selected)) * _HUNDRED / Decimal(project_total))
         if project_total
@@ -251,7 +255,7 @@ def totals(
 
     `sales_by_unit` verilen UNITELERE gore suzulur: sozluk projenin tamamini
     tasiyabilir, ciro yalnizca elde tutulan unitelerden toplanir."""
-    total_value = _sum([_basis_value(u, basis) for u in units])
+    total_value = _sum([basis_value(u, basis) for u in units])
     by_status = _by_sales_status(units)
     satislar = sales_by_unit or {}
     gerceklesen = [
