@@ -87,8 +87,12 @@ class ProfitProjection:
     margin_pct: Decimal | None
 
 
-def _sum_money(values: Iterable[Decimal | None]) -> Decimal:
-    """NULL para 0 SAYILIR (`units.summary._sum` kuralı), toplama `Decimal` ile."""
+def money_total(values: Iterable[Decimal | None]) -> Decimal:
+    """NULL para 0 SAYILIR (`units.summary._sum` kuralı), toplama `Decimal` ile.
+
+    PUBLIC (T2): uç gövdesi (`cost_summary`) de para toplarken bu tek kuralı
+    kullanır — ikinci bir "None nasıl toplanır" tanımı doğmasın.
+    """
     return quantize2(sum((value for value in values if value is not None), Decimal("0")))
 
 
@@ -123,12 +127,12 @@ def subcontractor_totals(
     düzeyindedir (`progress_payments/summary.py:98-114` gerekçesi), SQL `SUM`
     para matematiğinin ikinci bir kopyasını doğururdu.
     """
-    paid = _sum_money(
+    paid = money_total(
         gross_total(payment.lines)
         for payment in payments
         if payment.status is SubcontractorPaymentStatus.paid
     )
-    pending = _sum_money(
+    pending = money_total(
         gross_total(payment.lines)
         for payment in payments
         if payment.status is SubcontractorPaymentStatus.approved
@@ -179,7 +183,7 @@ def budget_lines_total(project: Project) -> Decimal:
     `projects.budget` kolonu OKUNMAZ: göç öncesi satırlarda o alan dört kalemin
     toplamı DEĞİLDİR (`models.Project.budget` notu) — tek doğruluk kalemlerdedir.
     """
-    return _sum_money(
+    return money_total(
         (
             project.budget_material,
             project.budget_labor,
@@ -197,7 +201,7 @@ def total_budget_cost(project: Project) -> Decimal:
     basabilir. Kat karşılığında arsa 0 olduğu için bu değer aynı zamanda İNŞAAT
     bütçesidir (KK 135 ₺17,6M).
     """
-    return _sum_money((budget_lines_total(project), land_cost(project)))
+    return money_total((budget_lines_total(project), land_cost(project)))
 
 
 # --- Ünite değer toplamları ---
@@ -205,7 +209,7 @@ def total_budget_cost(project: Project) -> Decimal:
 
 def unit_list_price_total(units: Sequence[Unit]) -> Decimal:
     """S4: kendi yatırım gelirinin tabanı — `sales_target` kolonu DEĞİL (KY 169)."""
-    return _sum_money(unit.list_price for unit in units)
+    return money_total(unit.list_price for unit in units)
 
 
 def our_share_value(units: Sequence[Unit], project_type: ProjectType) -> Decimal:
@@ -216,14 +220,14 @@ def our_share_value(units: Sequence[Unit], project_type: ProjectType) -> Decimal
     aksi hâlde aynı proje iki ekranda iki farklı "pay değeri" gösterirdi.
     """
     basis = VALUE_BASIS_BY_TYPE[project_type]
-    return _sum_money(
+    return money_total(
         basis_value(unit, basis) for unit in units if unit.owner_side is UnitOwnerSide.contractor
     )
 
 
 def gross_area_total(units: Sequence[Unit]) -> Decimal:
     """Ünite maliyeti dağıtımının paydası (S3). m²'si girilmemiş ünite 0 katkı yapar."""
-    return _sum_money(unit.gross_area_m2 for unit in units)
+    return money_total(unit.gross_area_m2 for unit in units)
 
 
 # --- Kâr/marj türevleri (spec §2 formülleri) ---

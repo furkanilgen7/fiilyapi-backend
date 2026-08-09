@@ -146,6 +146,105 @@ class LandShareCard(BaseModel):
     construction_progress: MetricPlaceholder
 
 
+# --- Maliyet/kâr yanıtı (P10 spec §3; `GET /projects/{id}/costs`) ---
+
+
+class ProjectCostBreakdown(BaseModel):
+    """KY 113-161 "Maliyet Kırılımı" kartının satırları.
+
+    `land_cost` üç ayrı şey söyler ve bu yüzden `Decimal | None`dır (P10 spec §2,
+    `costs.land_cost`): kendi yatırımda girilen bedel, kat karşılığında tanım
+    gereği `0`, taahhütte `None` = kavram yok. Zarf KULLANILMAZ çünkü değer
+    yer tutucu değildir, kaynağı VARDIR.
+
+    Üç kalem (`permits` KY 134-140 · `financing` 141-147 · `marketing` 148-154)
+    ise zarflıdır: kaynak modül henüz veri YAZMIYOR ve mockup'ta rakam
+    göründüğü için 0 basmak sahte bilgi üretmek olurdu (spec §2).
+    """
+
+    land_cost: Decimal | None
+    # KY 127-132 "İnşaat Maliyeti ₺10.240.000 / %68 harcandı · Bütçe: ₺15,1M".
+    # `spent` taşeron hakedişlerinden (approved+paid BRÜT, S1/S2), `budget` dört
+    # bütçe kaleminden gelir — arsa bütçeye DAHİL DEĞİLDİR, ayrı satırdır.
+    construction_spent: Decimal
+    construction_budget: Decimal
+    permits: MetricPlaceholder
+    financing: MetricPlaceholder
+    marketing: MetricPlaceholder
+    # KY 156-159 "Toplam Harcanan": yalnız KAYNAĞI OLAN kalemlerin toplamı
+    # (arsa + inşaat). Yer tutucu üç kalem toplama GİRMEZ — bilinmeyeni 0
+    # sayıp toplama katmak, ekranda eksik olduğu belli olmayan bir sayı üretir.
+    total_spent: Decimal
+
+
+class ProjectProfitProjection(BaseModel):
+    """KY 168-194 / KK 121-141 kâr projeksiyonu bloğu (`costs.profit_projection`).
+
+    Alanlar proje tipine göre BAŞKA şeyleri ölçer (spec §2): kendi yatırımda
+    gelir = ünite liste fiyatları toplamı, kat karşılığında bizim pay değeri,
+    taahhütte sözleşme bedeli. Tipi `project_type` alanından okunur.
+
+    Taahhütte `profit` KARTTA BASILMAZ (E4 180-181 yalnız bedel/harcanan
+    gösterir) ama iç türev olarak döner — ekran neyi basacağına kendi karar
+    verir, backend bilgi saklamaz.
+    """
+
+    revenue: Decimal | None
+    cost: Decimal | None
+    profit: Decimal | None
+    margin_pct: Decimal | None
+
+
+class SubcontractorCostRow(BaseModel):
+    """KY 212-243 taşeron maliyet tablosunun bir satırı — TAŞERON başına.
+
+    Satır sözleşme başına DEĞİL taşeron başınadır: aynı taşeronun aynı projede
+    iki sözleşmesi varsa ekranda tek satırda toplanır. `subcontractor_id`
+    boş olabilir (sözleşmede kartoteks bağı zorunlu değildir); o durumda
+    gruplama `subcontractor_name` anlık görüntüsüne düşer.
+
+    `work_category` KY 219'un ad altındaki alt satırıdır ("Betonarme"). Aynı
+    taşeronun sözleşmeleri farklı kategoriler taşıyorsa `None` döner —
+    birini seçmek keyfî olurdu.
+    """
+
+    subcontractor_id: uuid.UUID | None
+    subcontractor_name: str | None
+    work_category: str | None
+    # Sözleşme bedeli TÜREVDİR: `subcontractor_contracts`ta `amount` kolonu
+    # yoktur, bedel `Σ kalem quantity × unit_price`tır (contracts K3 ilkesi).
+    contract_amount: Decimal
+    paid: Decimal
+    pending: Decimal
+
+
+class SubcontractorCostSummary(BaseModel):
+    """KY 244-248 tfoot "TOPLAM TAŞERON MALİYETİ" üçlüsü.
+
+    Satırların toplamıdır ve AYNI kaynaktan hesaplanır: iki ayrı toplama yolu
+    açılsaydı tablo ile alt toplam zamanla ayrışırdı (`_list_stmt` dersi).
+    """
+
+    contract_amount: Decimal
+    paid: Decimal
+    pending: Decimal
+
+
+class ProjectCostsResponse(BaseModel):
+    """`GET /projects/{id}/costs` (P10 spec §3) — SALT OKUMA türev yanıtı.
+
+    Hiçbir maliyet saklanmaz, hepsi mevcut veriden türer; bu yüzden uç audit
+    de YAZMAZ (okuma ucu).
+    """
+
+    project_id: uuid.UUID
+    project_type: ProjectType
+    breakdown: ProjectCostBreakdown
+    profit: ProjectProfitProjection
+    subcontractors: list[SubcontractorCostRow]
+    subcontractor_total: SubcontractorCostSummary
+
+
 # --- Liste/detay yanitlari ---
 
 

@@ -1,0 +1,228 @@
+"""`GET /projects/{id}/costs` gövdesi (P10 T2, spec §3) — türev OKUMA ucu.
+
+## Neden `costs.py`dan ayrı
+
+`costs.py` SAF hesap çekirdeğidir (oturumsuz, yetkisiz test edilebilir);
+burası ise oturuma, görünürlük süzgecine ve şemalara dokunan ORKESTRASYON
+katmanıdır. Aynı ayrım `progress_payments/summary.py` ile `calculations.py`
+arasında da vardır ve orada da uç gövdesi ayrı dosyadadır. Hesap formülleri
+BURADA YENİDEN YAZILMAZ: her rakam `costs`tan çağrılır.
+
+## Görünürlük
+
+Kapsam kapısı `service._visible_project`tir — TEK kimlik-ile-erişim kapısı
+(P1 spec §5.6). Görünmeyen proje ile var olmayan proje AYIRT EDİLEMEZ 404
+verir. `progress_payments/summary.get_summary` aynı özel adı aynı gerekçeyle
+çağırır; ikinci bir görünürlük mantığı kopyalanmaz.
+
+## N+1 (spec §4)
+
+Yanıt SABİT sayıda sorgu koşar; taşeron/hakediş/ünite sayısı sorgu sayısını
+BÜYÜTMEZ:
+
+1. sözleşmeler (`contracts.repository.list_subcontractor_contracts`) — kalemler
+   `lazy="selectin"` ile TEK ek sorguda gelir
+2. maliyete giren hakedişler (+ `lines` `selectin` ile ikinci sorgu)
+3. üniteler — yalnız gelir tarafı üniteden türeyen tiplerde (taahhütte HİÇ
+   çekilmez, çünkü gelir sözleşme bedelidir)
+
+## Sözleşme bedeli hangi kopyadan okunur
+
+`contracts.service._subcontractor_amount` — kalem başına ÖNCE kuruşa yuvarlar
+sonra toplar ve zaten yüklü `items`ten okur (ek sorgu YOK). Alternatifi
+(`subcontractor_progress_payments.repository.get_contract_amounts`) SQL `SUM`
+ile ham çarpımları toplar; `Numeric(14,3) × Numeric(18,2)` beş ondalık
+üretebildiği için bu, SZL sözleşme listesinin bastığı bedelden kuruş sapabilir.
+Aynı sözleşmenin bedeli iki ekranda farklı görünmemelidir, bu yüzden satır
+düzeyi yuvarlama yapan tek kopya kullanılır (özel ada erişim `contracts.
+subcontracts` ve `contracts.distribution`daki emsalin aynısı).
+"""
+
+import uuid
+from collections import defaultdict
+from decimal import Decimal
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.modules.contracts import repository as contracts_repository
+from app.modules.contracts.models import SubcontractorContract
+from app.modules.contracts.service import _subcontractor_amount
+from app.modules.projects import costs, service
+from app.modules.projects.models import Project, ProjectType
+from app.modules.projects.schemas import (
+    MetricPlaceholder,
+    ProjectCostBreakdown,
+    ProjectCostsResponse,
+    ProjectProfitProjection,
+    SubcontractorCostRow,
+    SubcontractorCostSummary,
+)
+from app.modules.subcontractor_progress_payments import repository as payments_repository
+from app.modules.subcontractor_progress_payments.models import SubcontractorProgressPayment
+from app.modules.units import repository as units_repository
+from app.modules.units.models import Unit
+from app.modules.users.models import User
+
+# Yer tutucu kalemlerin kaynak modülleri (KY 134-154, spec §2). Anahtar
+# kullanıcıya gösterilecek metin DEĞİL, izin modülü anahtarıdır (B6 zarf
+# sözleşmesi): ekran "Muhasebe modülü gelince dolacak" bilgisini buradan alır.
+#
+# * Ruhsat & Harçlar + Pazarlama & Satış → `accounting`: ikisi de gider fişidir,
+#   proje maliyetine muhasebe kaydından girer. Bu modül henüz hiçbir satır
+#   yazmıyor, bu yüzden 0 değil "kaynak yok" döner.
+# * Finansman (Kredi Faizi) → `treasury`: kredi ve faiz Hazine modülünün
+#   konusudur (KY 145 "₺6M kredi · Kalan faiz: ₺890K").
+_ACCOUNTING = "accounting"
+_TREASURY = "treasury"
+
+# Gelir tarafı ÜNİTEDEN türeyen tipler (spec §2): kendi yatırımda liste
+# fiyatları toplamı, kat karşılığında bizim pay değeri. Taahhütte gelir
+# sözleşme bedelidir ve ünite tablosuna hiç DOKUNULMAZ.
+_UNIT_REVENUE_TYPES = (ProjectType.kendi_yatirim, ProjectType.kat_karsiligi)
+
+
+# Kartoteks bağı olmayan sözleşmelerin gruplama anahtarı: kimlik yerine ad
+# anlık görüntüsü. `uuid.UUID | str` birlikte kullanıldığı için anahtar tipi
+# ayrı tutulur — iki farklı taşeronun aynı ada sahip olması hâlinde de
+# kimlikliler kimlikle ayrışmaya devam eder.
+_SubcontractorKey = tuple[str, str]
+
+
+def _pending(module_key: str) -> MetricPlaceholder:
+    """Kaynağı olmayan kalem: `available=False` + `value=None` (uydurma 0 YOK)."""
+    return MetricPlaceholder(pending_module=module_key)
+
+
+def _group_key(contract: SubcontractorContract) -> _SubcontractorKey:
+    if contract.subcontractor_id is not None:
+        return ("id", str(contract.subcontractor_id))
+    return ("name", contract.subcontractor_name or "")
+
+
+def _work_category(contracts: list[SubcontractorContract]) -> str | None:
+    """Tek anlaşan kategori; sözleşmeler ayrışıyorsa `None` (bkz. şema notu)."""
+    categories = {contract.work_category for contract in contracts}
+    return categories.pop() if len(categories) == 1 else None
+
+
+def _row(
+    contracts: list[SubcontractorContract],
+    payments_by_contract: dict[uuid.UUID, list[SubcontractorProgressPayment]],
+) -> SubcontractorCostRow:
+    """Bir taşeronun satırı: bedeli sözleşmelerden, ödenen/bekleyeni hakedişten.
+
+    Ödenen/bekleyen `costs.subcontractor_totals` ile hesaplanır — brüt ve durum
+    süzgeci tek kopyadır, bu dosya ikinci bir "harcanan" tanımı yazmaz.
+    """
+    payments = [
+        payment for contract in contracts for payment in payments_by_contract.get(contract.id, [])
+    ]
+    totals = costs.subcontractor_totals(payments)
+    first = contracts[0]
+    return SubcontractorCostRow(
+        subcontractor_id=first.subcontractor_id,
+        subcontractor_name=first.subcontractor_name,
+        work_category=_work_category(contracts),
+        contract_amount=costs.money_total(_subcontractor_amount(c) for c in contracts),
+        paid=totals.paid,
+        pending=totals.pending,
+    )
+
+
+def _rows(
+    contracts: list[SubcontractorContract],
+    payments_by_contract: dict[uuid.UUID, list[SubcontractorProgressPayment]],
+) -> list[SubcontractorCostRow]:
+    """KY 212-243 satırları, taşeron adına göre SIRALI (deterministik çıktı).
+
+    Hakedişi olmayan sözleşme de satır açar (KY 236-243 "Demirci Alüminyum
+    ₺1,8M / ₺0 / ₺0"): tablo SÖZLEŞMELERDEN doğar, hakedişlerden değil — aksi
+    hâlde henüz hakediş kesilmemiş taşeron ekranda hiç görünmezdi.
+    """
+    grouped: dict[_SubcontractorKey, list[SubcontractorContract]] = defaultdict(list)
+    for contract in contracts:
+        grouped[_group_key(contract)].append(contract)
+    rows = [_row(group, payments_by_contract) for group in grouped.values()]
+    return sorted(rows, key=lambda row: ((row.subcontractor_name or ""), str(row.subcontractor_id)))
+
+
+def _total(rows: list[SubcontractorCostRow]) -> SubcontractorCostSummary:
+    """tfoot = satırların toplamı (KY 244-248), ikinci bir sorgu KOŞMADAN."""
+    return SubcontractorCostSummary(
+        contract_amount=costs.money_total(row.contract_amount for row in rows),
+        paid=costs.money_total(row.paid for row in rows),
+        pending=costs.money_total(row.pending for row in rows),
+    )
+
+
+def _breakdown(project: Project, construction_spent: Decimal) -> ProjectCostBreakdown:
+    land = costs.land_cost(project)
+    construction_budget = costs.budget_lines_total(project)
+    return ProjectCostBreakdown(
+        land_cost=land,
+        construction_spent=construction_spent,
+        construction_budget=construction_budget,
+        permits=_pending(_ACCOUNTING),
+        financing=_pending(_TREASURY),
+        marketing=_pending(_ACCOUNTING),
+        # Girilmemiş arsa (None) toplama 0 katkı yapar; "girilmedi" bilgisi
+        # `land_cost` alanında yaşamaya devam eder (`costs.total_budget_cost` kuralı).
+        total_spent=costs.money_total((land, construction_spent)),
+    )
+
+
+async def _project_units(session: AsyncSession, project: Project) -> list[Unit]:
+    if project.project_type not in _UNIT_REVENUE_TYPES:
+        return []
+    return await units_repository.list_units_for_project(session, project.id)
+
+
+async def build_project_costs(session: AsyncSession, project: Project) -> ProjectCostsResponse:
+    """Yanıtın GÖVDESİ — görünürlük kontrolü YAPMAZ (çağıran çoktan yapmıştır).
+
+    `progress_payments.summary.build_summary` ile aynı ayrım: gövdeyi ayrı
+    tutmak, ileride başka bir ekranın (E4 kartı, şantiye sekmesi) kendi kapsam
+    süzgecinden sonra aynı hesabı yeniden kullanabilmesini sağlar.
+
+    MUTASYON YOK: ne proje ne ünite ne sözleşme nesnesi değiştirilir, her rakam
+    yeni bir şema nesnesine yazılır.
+    """
+    contracts = await contracts_repository.list_subcontractor_contracts(
+        session, [project.id], project_id=None, status_filter=None, q=None
+    )
+    grouped_payments = await payments_repository.list_cost_payments_by_projects(
+        session, [project.id]
+    )
+    payments = grouped_payments.get(project.id, [])
+    payments_by_contract: dict[uuid.UUID, list[SubcontractorProgressPayment]] = defaultdict(list)
+    for payment in payments:
+        payments_by_contract[payment.contract_id].append(payment)
+
+    rows = _rows(contracts, payments_by_contract)
+    total = _total(rows)
+    # Harcanan (S1) tablonun ödenen+bekleyeni ile AYNI kaynaktan gelir: kart ile
+    # tablo aynı sayıyı iki farklı yoldan hesaplarsa zamanla ayrışır.
+    construction_spent = costs.money_total((total.paid, total.pending))
+    units = await _project_units(session, project)
+    projection = costs.profit_projection(project, units, construction_spent)
+    return ProjectCostsResponse(
+        project_id=project.id,
+        project_type=project.project_type,
+        breakdown=_breakdown(project, construction_spent),
+        profit=ProjectProfitProjection(
+            revenue=projection.revenue,
+            cost=projection.cost,
+            profit=projection.profit,
+            margin_pct=projection.margin_pct,
+        ),
+        subcontractors=rows,
+        subcontractor_total=total,
+    )
+
+
+async def get_project_costs(
+    session: AsyncSession, actor: User, project_id: uuid.UUID
+) -> ProjectCostsResponse:
+    """Uç gövdesi. Kapsam: görünmeyen proje = var olmayan proje = 404 (modül notu)."""
+    project = await service._visible_project(session, actor, project_id)
+    return await build_project_costs(session, project)
