@@ -110,8 +110,12 @@ async def test_taahhut_item_has_contracting_placeholders(seeded_db, user_factory
     assert item.investment is None
     assert item.land_share is None
     assert item.contract_amount == Decimal("11200000.00")
-    assert item.contracting.spent.available is False
-    assert item.contracting.spent.pending_module == "progress_payments"
+    # P10 T4: `spent` BAGLANDI (taseron hakedisi approved+paid brut). Hakedisi
+    # olmayan projede `0.00` GERCEK cevaptir; eski `progress_payments` etiketi
+    # ISVEREN hakedisini gosteriyordu ve yanlisti (o taahhutte GELIRDIR).
+    assert item.contracting.spent.available is True
+    assert item.contracting.spent.value == Decimal("0.00")
+    assert item.contracting.spent.pending_module is None
     # T4 (puantaj §4): `worker_count` YER TUTUCU DEGIL — kaydi olmayan projede
     # bile `available` true, sayi UYDURULMAZ (0). Davranisin tamami
     # `tests/timesheet/test_worker_count_binding.py`de.

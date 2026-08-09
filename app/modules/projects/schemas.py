@@ -241,18 +241,26 @@ class ProjectProfitProjection(BaseModel):
 
 
 class SubcontractorCostRow(BaseModel):
-    """KY 212-243 taşeron maliyet tablosunun bir satırı — TAŞERON başına.
+    """KY 205-249 taşeron maliyet tablosunun bir satırı — SÖZLEŞME başına.
 
-    Satır sözleşme başına DEĞİL taşeron başınadır: aynı taşeronun aynı projede
-    iki sözleşmesi varsa ekranda tek satırda toplanır. `subcontractor_id`
-    boş olabilir (sözleşmede kartoteks bağı zorunlu değildir); o durumda
-    gruplama `subcontractor_name` anlık görüntüsüne düşer.
+    Satır birimi mockup'ta iş kapsamıdır: her satırda taşeron adı + kategori
+    rozeti + ayrı bir "İş Kalemi" metni vardır ("Kaba İnşaat + Kalıp" · "Elektrik
+    Tesisatı (52 ünite)" · "PVC Pencere + Cephe", KY 219/227/235) ve bu SÖZLEŞME
+    düzeyi bir kavramdır. Taşeron başına gruplarsak aynı taşeronun iki iş kapsamı
+    tek satıra ezilir ve sözleşme kimliği geri getirilemez şekilde kaybolur.
 
-    `work_category` KY 219'un ad altındaki alt satırıdır ("Betonarme"). Aynı
-    taşeronun sözleşmeleri farklı kategoriler taşıyorsa `None` döner —
-    birini seçmek keyfî olurdu.
+    **"İş Kalemi" sütununun kaynağı YOKTUR:** `SubcontractorContract`ta iş tanımı
+    kolonu yoktur (en yakını `work_category` = rozet). O metin ÜRETİLMEZ; satır
+    `contract_id`/`contract_no` taşır ki ekran sözleşmeye gidebilsin.
+
+    `subcontractor_id` boş olabilir (sözleşmede kartoteks bağı zorunlu değildir);
+    ad anlık görüntüsü `subcontractor_name`de kalır. `work_category` doğrudan
+    sözleşmedendir (KY 219'un ad altındaki alt satırı) — satır artık tek bir
+    sözleşme olduğu için "kategoriler ayrışırsa None" kuralı GEREKMEZ.
     """
 
+    contract_id: uuid.UUID
+    contract_no: str | None
     subcontractor_id: uuid.UUID | None
     subcontractor_name: str | None
     work_category: str | None

@@ -116,9 +116,17 @@ def _worker_count(value: int) -> CountPlaceholder:
     return CountPlaceholder(available=True, count=value, pending_module=_TIMESHEET)
 
 
-def _contracting_card(worker_count: int) -> ContractingCard:
+def _contracting_card(worker_count: int, card_costs: ProjectCardCosts) -> ContractingCard:
+    """E4 181/206/231/256 "Harcanan" P10 T4'te ZARFIN ICINDE gercege baglandi.
+
+    Kaynak TASERON hakedisidir (spec §2), isveren hakedisi DEGIL: taahhut
+    projesinde isveren hakedisi GELIRDIR — alanin eski `_PROGRESS_PAYMENTS`
+    etiketi P1'den kalan yanlis etiketti ve etiket de `_PROJECT_COSTS`a dondu.
+    Serit uzerindeki diger iki alan (fiziksel ilerleme / son hakedis) HALA
+    isveren hakedisi dilimini bekler, o yuzden `_PROGRESS_PAYMENTS` KALIR.
+    """
     return ContractingCard(
-        spent=_metric(_PROGRESS_PAYMENTS),
+        spent=metric(card_costs.spent, _PROJECT_COSTS),
         physical_progress=_metric(_PROGRESS_PAYMENTS),
         final_progress_payment=_metric(_PROGRESS_PAYMENTS),
         worker_count=_worker_count(worker_count),
@@ -211,7 +219,7 @@ def _to_item(
         is_draft=project.is_draft,
         budget=project.budget,
         progress_pct=project.progress_pct,
-        contracting=_contracting_card(worker_count) if is_contracting else None,
+        contracting=_contracting_card(worker_count, card_costs) if is_contracting else None,
         investment=_investment_card(project, card_costs) if is_investment else None,
         land_share=_land_share_card(project, card_costs) if is_land_share else None,
     )

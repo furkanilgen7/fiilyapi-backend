@@ -16,20 +16,18 @@ yapılmaz. Zarfı `projects.schemas.metric` kurar.
 
 ## Kapsam dışı bırakılanlar (icat yasağı)
 
-* **Taahhüt kartının `spent` alanı** BAĞLANMADI. E4 180-181 "Harcanan" basar ve
-  spec §2 taahhüt harcananını taşeron hakedişlerinden tanımlar, ancak alanın
-  `pending_module`ı `progress_payments`tır (İŞVEREN hakedişi) ve görev emrinin
-  bağlanacak alan listesinde `spent` YOKTUR. İki okuma arasında karar kullanıcıya
-  aittir — yanlış kaynağa bağlamak kartta sessizce yanlış rakam basmak olurdu.
-* `physical_progress` · `final_progress_payment` · `construction_progress` ·
-  `sold_amount` · `sales_ratio` · sayaçlar: P10 kapsamı dışı, yer tutucu KALIR.
+`physical_progress` · `final_progress_payment` · `construction_progress` ·
+`sold_amount` · `sales_ratio` · sayaçlar: P10 kapsamı dışı, yer tutucu KALIR.
 
 ## N+1 (spec §4)
 
-Kart türevleri proje başına sorgu AÇMAZ: ünite tarafı TEK `IN` sorgusudur
-(`units.repository.list_units_for_projects`) ve yalnız ünite gelirli tiplerde
-(kendi yatırım / kat karşılığı) hiç proje varsa koşar. Taşeron hakedişlerine
-liste yolunda DOKUNULMAZ, çünkü bağlanan hiçbir kart alanı ona dayanmıyor.
+Kart türevleri proje başına sorgu AÇMAZ; her iki toplu okuma da TEK `IN`
+sorgusudur ve yalnız ilgili tipte hiç proje varsa koşar:
+
+1. üniteler (`units.repository.list_units_for_projects`) — yalnız ünite gelirli
+   tiplerde (kendi yatırım / kat karşılığı),
+2. taşeron hakediş toplamları (`costs.subcontractor_totals_by_projects`) —
+   yalnız taahhüt projesi varsa (E4 181/206/231/256 "Harcanan").
 """
 
 # Neden `costs`/`units` importları FONKSİYON İÇİNDE
@@ -53,6 +51,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.projects.models import Project, ProjectType
 
 if TYPE_CHECKING:  # yalnız tip anotasyonu için — çalışma zamanında import YOK
+    from app.modules.projects.costs import SubcontractorCostTotals
     from app.modules.units.models import Unit
 
 # Gelir tarafı ÜNİTEDEN türeyen tipler (spec §2) — `cost_summary._UNIT_REVENUE_TYPES`
@@ -70,12 +69,17 @@ class ProjectCardCosts:
       de `entered_budget_cost`tur: kat karşılığında arsa tanım gereği 0 olduğu
       için toplam bütçe maliyeti ZATEN inşaat bütçesidir (`costs.total_budget_cost`).
     * `our_share_value` → KK 121 "BİZİM PAY" ünite değer toplamı.
+    * `spent` → E4 181/206/231/256 "Harcanan" (taahhüt kartı): taşeron
+      hakedişlerinin `approved`+`paid` BRÜT toplamı (spec §2, S1/S2). Kaynak modül
+      CANLI olduğu için hakedişi olmayan taahhüt projesinde `0.00` GERÇEK cevaptır
+      — bu alan taahhüt projelerinde asla `None` dönmez (`our_share_value` gerekçesi).
     """
 
     total_cost: Decimal | None = None
     our_share_value: Decimal | None = None
     profit: Decimal | None = None
     margin_pct: Decimal | None = None
+    spent: Decimal | None = None
 
     @property
     def construction_cost(self) -> Decimal | None:
@@ -102,14 +106,24 @@ def _for_project(project: Project, units: "Sequence[Unit]") -> ProjectCardCosts:
     )
 
 
+def _for_contracting(totals: "SubcontractorCostTotals | None") -> ProjectCardCosts:
+    """Taahhüt kartı: YALNIZ `spent` (E4 181/206/231/256) — kâr/marj alanı yoktur.
+
+    Toplu okumada bulunmayan proje `EMPTY` döner; toplu okuma her istenen kimliği
+    döndürdüğü için bu yalnız "hiç sorulmadı" hâlidir (savunma dalı).
+    """
+    return EMPTY if totals is None else ProjectCardCosts(spent=totals.spent)
+
+
 async def by_projects(
     session: AsyncSession, projects: Sequence[Project]
 ) -> dict[uuid.UUID, ProjectCardCosts]:
-    """Liste/detay uçlarının TEK toplu okuması (modül notundaki N+1 kuralı).
+    """Liste/detay uçlarının TOPLU okuması (modül notundaki N+1 kuralı).
 
-    İstenen HER proje kimliği yanıtta bulunur: kart alanı olmayan tip (taahhüt)
-    `EMPTY` ile döner, böylece çağıran eksik anahtar tuzağına düşmez.
+    İstenen HER proje kimliği yanıtta bulunur: kart alanı olmayan tip `EMPTY` ile
+    döner, böylece çağıran eksik anahtar tuzağına düşmez.
     """
+    from app.modules.projects import costs
     from app.modules.units import repository as units_repository
 
     unit_projects = [p for p in projects if p.project_type in _UNIT_REVENUE_TYPES]
@@ -118,9 +132,15 @@ async def by_projects(
         if unit_projects
         else {}
     )
+    contracting_ids = [p.id for p in projects if p.project_type is ProjectType.taahhut]
+    spent_by_project = (
+        await costs.subcontractor_totals_by_projects(session, contracting_ids)
+        if contracting_ids
+        else {}
+    )
     return {
         project.id: _for_project(project, units_by_project.get(project.id, []))
         if project.project_type in _UNIT_REVENUE_TYPES
-        else EMPTY
+        else _for_contracting(spent_by_project.get(project.id))
         for project in projects
     }

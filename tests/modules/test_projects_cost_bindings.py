@@ -14,7 +14,7 @@ Senaryo sayıları MOCKUP'TAN gelir:
 * **KK** = `projedesign/Proje - Kat Karşılığı.dc.html` 121-141 — bizim pay
   30,4M · inşaat 17,6M → 12,8M / %42,1.
 * **E4** = `projedesign/Ekran 4 - Projeler.dc.html` 75/82/89 (tip bazlı alan
-  setleri) · 180-181 (taahhüt kartı YALNIZ "Sözleşme Bedeli / Harcanan" basar;
+  setleri) · 181/206/231/256 (DÖRT taahhüt kartının HEPSİ "Harcanan" basar;
   tahmini kâr/marj alanı taahhütte YOKTUR).
 """
 
@@ -27,10 +27,17 @@ from pydantic import ValidationError
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.contracts.models import SubcontractorContract, SubcontractorContractItem
 from app.modules.projects.models import Project, ProjectInvestment, ProjectLandShare
 from app.modules.projects.schemas import CountPlaceholder, MetricPlaceholder, metric
 from app.modules.sites.models import Site
+from app.modules.subcontractor_progress_payments.models import (
+    SubcontractorPaymentStatus,
+    SubcontractorProgressPayment,
+    SubcontractorProgressPaymentLine,
+)
 from app.modules.units.models import Block, Unit, UnitKind, UnitOwnerSide
+from app.modules.users.models import User
 from tests.conftest import test_engine
 
 _TENTH = Decimal("0.1")
@@ -77,6 +84,64 @@ async def _units(session: AsyncSession, project: Project, specs: list[dict]) -> 
         created.append(unit)
     await session.flush()
     return created
+
+
+async def _contract(
+    session: AsyncSession, project: Project, creator: User, *, name: str
+) -> SubcontractorContract:
+    """Taşeron sözleşmesi + tek kalem (bedel türevdir, `amount` kolonu YOK)."""
+    contract = SubcontractorContract(
+        project_id=project.id, subcontractor_name=name, created_by=creator.id
+    )
+    session.add(contract)
+    await session.flush()
+    session.add(
+        SubcontractorContractItem(
+            contract_id=contract.id,
+            code="A.001",
+            description="Kalem",
+            unit="m2",
+            quantity=Decimal("1"),
+            unit_price=Decimal("0"),
+        )
+    )
+    await session.flush()
+    return contract
+
+
+async def _payment(
+    session: AsyncSession,
+    contract: SubcontractorContract,
+    creator: User,
+    status: SubcontractorPaymentStatus,
+    *,
+    quantity: str,
+    sequence_no: int = 1,
+) -> None:
+    """Brüt = miktar × 1000 (kesintiler S2 gereği harcanana DOKUNMAZ)."""
+    session.add(
+        SubcontractorProgressPayment(
+            contract_id=contract.id,
+            project_id=contract.project_id,
+            sequence_no=sequence_no,
+            status=status,
+            vat_pct=Decimal("20"),
+            advance_pct=Decimal("10"),
+            retainage_pct=Decimal("5"),
+            created_by=creator.id,
+            lines=[
+                SubcontractorProgressPaymentLine(
+                    code="A.001",
+                    description="Kalem",
+                    unit="m2",
+                    contract_unit_price=Decimal("1000"),
+                    coefficient=Decimal("1.000"),
+                    quantity=Decimal(quantity),
+                )
+            ],
+        )
+    )
+    await session.flush()
 
 
 def _card(body: dict, project_id, key: str) -> dict:
@@ -209,6 +274,66 @@ async def test_kat_karsiligi_karti_pay_degeri_insaat_maliyeti_ve_marj_verir(
     assert card["construction_progress"]["available"] is False
 
 
+async def test_taahhut_kartinin_harcanani_taseron_hakedislerinden_doner(
+    client, db_session, user_factory, project_factory
+):
+    """E4 181/206/231/256 "Harcanan": spec §2 → taşeron hakedişleri approved+paid BRÜT.
+
+    İşveren hakedişi (`progress_payments`) taahhütte GELİRDİR, harcama değil —
+    alanın eski `pending_module`ı bu yüzden yanlış etiketti.
+    """
+    kurucu = await user_factory(email="harcanan@p10t3.co", password="parola1234", role_key="patron")
+    project = await project_factory(
+        code="T3-HR", project_type="taahhut", contract_amount="11200000.00"
+    )
+    contract = await _contract(db_session, project, kurucu, name="Akın İnşaat")
+    await _payment(db_session, contract, kurucu, SubcontractorPaymentStatus.paid, quantity="5700")
+    await _payment(
+        db_session,
+        contract,
+        kurucu,
+        SubcontractorPaymentStatus.approved,
+        quantity="840",
+        sequence_no=2,
+    )
+    # Maliyete GİRMEYEN durum (S1): harcananı büyütmemeli.
+    await _payment(
+        db_session,
+        contract,
+        kurucu,
+        SubcontractorPaymentStatus.pending_approval,
+        quantity="9000",
+        sequence_no=3,
+    )
+    token = await _login(client, user_factory)
+
+    body = (await client.get("/projects", headers=_auth(token))).json()
+
+    spent = _card(body, project.id, "contracting")["spent"]
+    assert spent["available"] is True
+    assert Decimal(spent["value"]) == Decimal("6540000.00")
+    assert spent["pending_module"] is None
+
+
+async def test_hakedissiz_taahhut_projesinde_harcanan_SIFIR_gercek_cevaptir(
+    client, db_session, user_factory, project_factory
+):
+    """Kaynak modül CANLI: hakedişi olmayan taahhütte `0.00` "bilinmiyor" değil
+    "henüz harcanmadı"dır (`our_share_value`daki gerekçenin aynısı)."""
+    project = await project_factory(
+        code="T3-H0", project_type="taahhut", contract_amount="5100000.00"
+    )
+    await db_session.flush()
+    token = await _login(client, user_factory)
+
+    body = (await client.get("/projects", headers=_auth(token))).json()
+
+    spent = _card(body, project.id, "contracting")["spent"]
+    assert spent["available"] is True
+    assert Decimal(spent["value"]) == Decimal("0.00")
+    assert spent["pending_module"] is None
+
+
 async def test_taahhut_kartinda_kar_marj_alani_YOKTUR(
     client, db_session, user_factory, project_factory
 ):
@@ -339,6 +464,74 @@ async def test_proje_listesinde_sorgu_sayisi_proje_sayisindan_bagimsizdir(
     assert len(yanit.items) == 4
     assert tek_sayim == cok_sayim, (tek_sayim, cok_sayim)
     assert cok_sayim <= 1, cok_sayim
+
+
+_TAAHHUT_TABLOLARI = (
+    "subcontractor_progress_payments",
+    "subcontractor_progress_payment_lines",
+)
+
+
+async def test_taahhut_kartlarinda_sorgu_sayisi_proje_ve_hakedis_sayisindan_bagimsizdir(
+    db_session, user_factory, project_factory, _sorgu_sayaci: list[str]
+):
+    """Spec §4: "Harcanan" bağı proje başına sorgu AÇMAZ (1 proje vs 4 çok hakedişli)."""
+    from app.modules.projects.service import list_projects_overview
+    from app.modules.users.models import UserProjectAccess
+
+    user = await user_factory(email="taolcum@p10t3.co", password="parola1234", role_key="patron")
+    db_session.add(UserProjectAccess(user_id=user.id, project_id=None, all_projects=True))
+    tek = await project_factory(code="T3-TN1", project_type="taahhut")
+    sozlesme = await _contract(db_session, tek, user, name="Tek Taşeron")
+    await _payment(db_session, sozlesme, user, SubcontractorPaymentStatus.paid, quantity="10")
+    await db_session.flush()
+
+    _sorgu_sayaci.clear()
+    await list_projects_overview(db_session, user, None, None)
+    tek_sayim = {tablo: _tablo_sayimi(_sorgu_sayaci, tablo) for tablo in _TAAHHUT_TABLOLARI}
+
+    for sira in range(3):
+        proje = await project_factory(code=f"T3-TN{sira + 2}", project_type="taahhut")
+        for index in range(2):
+            ek = await _contract(db_session, proje, user, name=f"Taşeron {index}")
+            for no in (1, 2):
+                await _payment(
+                    db_session,
+                    ek,
+                    user,
+                    SubcontractorPaymentStatus.paid,
+                    quantity="10",
+                    sequence_no=no,
+                )
+    await db_session.flush()
+
+    _sorgu_sayaci.clear()
+    yanit = await list_projects_overview(db_session, user, None, None)
+    cok_sayim = {tablo: _tablo_sayimi(_sorgu_sayaci, tablo) for tablo in _TAAHHUT_TABLOLARI}
+
+    assert len(yanit.items) == 4
+    assert tek_sayim == cok_sayim, (tek_sayim, cok_sayim)
+    assert all(sayi == 1 for sayi in cok_sayim.values()), cok_sayim
+
+
+async def test_taahhut_projesi_yoksa_taseron_okumasi_HIC_kosmaz(
+    db_session, user_factory, project_factory, _sorgu_sayaci: list[str]
+):
+    """Ünite okumasının tip süzgecinin aynısı: taahhüt projesi yoksa hakediş
+    tablosuna hiç DOKUNULMAZ."""
+    from app.modules.projects.service import list_projects_overview
+    from app.modules.users.models import UserProjectAccess
+
+    user = await user_factory(email="tipsuzgec@p10t3.co", password="parola1234", role_key="patron")
+    db_session.add(UserProjectAccess(user_id=user.id, project_id=None, all_projects=True))
+    proje = await project_factory(code="T3-TS0", project_type="kendi_yatirim")
+    _set_budget_lines(proje, material="1000")
+    await db_session.flush()
+
+    _sorgu_sayaci.clear()
+    await list_projects_overview(db_session, user, None, None)
+
+    assert _tablo_sayimi(_sorgu_sayaci, "subcontractor_progress_payments") == 0
 
 
 # --- Mutasyon denetimi ---

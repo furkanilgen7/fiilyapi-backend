@@ -81,69 +81,56 @@ _TREASURY = "treasury"
 _UNIT_REVENUE_TYPES = (ProjectType.kendi_yatirim, ProjectType.kat_karsiligi)
 
 
-# Kartoteks bağı olmayan sözleşmelerin gruplama anahtarı: kimlik yerine ad
-# anlık görüntüsü. `uuid.UUID | str` birlikte kullanıldığı için anahtar tipi
-# ayrı tutulur — iki farklı taşeronun aynı ada sahip olması hâlinde de
-# kimlikliler kimlikle ayrışmaya devam eder.
-_SubcontractorKey = tuple[str, str]
-
-
 def _pending(module_key: str) -> MetricPlaceholder:
     """Kaynağı olmayan kalem: `available=False` + `value=None` (uydurma 0 YOK)."""
     return MetricPlaceholder(pending_module=module_key)
 
 
-def _group_key(contract: SubcontractorContract) -> _SubcontractorKey:
-    if contract.subcontractor_id is not None:
-        return ("id", str(contract.subcontractor_id))
-    return ("name", contract.subcontractor_name or "")
-
-
-def _work_category(contracts: list[SubcontractorContract]) -> str | None:
-    """Tek anlaşan kategori; sözleşmeler ayrışıyorsa `None` (bkz. şema notu)."""
-    categories = {contract.work_category for contract in contracts}
-    return categories.pop() if len(categories) == 1 else None
-
-
 def _row(
-    contracts: list[SubcontractorContract],
+    contract: SubcontractorContract,
     payments_by_contract: dict[uuid.UUID, list[SubcontractorProgressPayment]],
 ) -> SubcontractorCostRow:
-    """Bir taşeronun satırı: bedeli sözleşmelerden, ödenen/bekleyeni hakedişten.
+    """Bir SÖZLEŞMENİN satırı: bedeli sözleşmeden, ödenen/bekleyeni hakedişten.
+
+    Taşeron/kategori alanları doğrudan sözleşmeden okunur (şema notu): satır
+    birimi sözleşme olduğu için "kategoriler ayrışırsa None" kuralı gerekmez.
 
     Ödenen/bekleyen `costs.subcontractor_totals` ile hesaplanır — brüt ve durum
     süzgeci tek kopyadır, bu dosya ikinci bir "harcanan" tanımı yazmaz.
     """
-    payments = [
-        payment for contract in contracts for payment in payments_by_contract.get(contract.id, [])
-    ]
-    totals = costs.subcontractor_totals(payments)
-    first = contracts[0]
+    totals = costs.subcontractor_totals(payments_by_contract.get(contract.id, []))
     return SubcontractorCostRow(
-        subcontractor_id=first.subcontractor_id,
-        subcontractor_name=first.subcontractor_name,
-        work_category=_work_category(contracts),
-        contract_amount=costs.money_total(_subcontractor_amount(c) for c in contracts),
+        contract_id=contract.id,
+        contract_no=contract.contract_no,
+        subcontractor_id=contract.subcontractor_id,
+        subcontractor_name=contract.subcontractor_name,
+        work_category=contract.work_category,
+        contract_amount=_subcontractor_amount(contract),
         paid=totals.paid,
         pending=totals.pending,
     )
+
+
+def _sort_key(row: SubcontractorCostRow) -> tuple[str, str, str]:
+    """Deterministik sıra: taşeron adı → `contract_no` → `contract_id`.
+
+    `contract_no` taslakta NULL'dur (kolon kısmi tekil indeksli); boş dize ile
+    normalize edilir, yoksa aynı taşeronun satırları istekler arasında oynardı.
+    """
+    return ((row.subcontractor_name or ""), (row.contract_no or ""), str(row.contract_id))
 
 
 def _rows(
     contracts: list[SubcontractorContract],
     payments_by_contract: dict[uuid.UUID, list[SubcontractorProgressPayment]],
 ) -> list[SubcontractorCostRow]:
-    """KY 212-243 satırları, taşeron adına göre SIRALI (deterministik çıktı).
+    """KY 205-249 satırları — SÖZLEŞME başına, `_sort_key` ile SIRALI.
 
     Hakedişi olmayan sözleşme de satır açar (KY 236-243 "Demirci Alüminyum
     ₺1,8M / ₺0 / ₺0"): tablo SÖZLEŞMELERDEN doğar, hakedişlerden değil — aksi
     hâlde henüz hakediş kesilmemiş taşeron ekranda hiç görünmezdi.
     """
-    grouped: dict[_SubcontractorKey, list[SubcontractorContract]] = defaultdict(list)
-    for contract in contracts:
-        grouped[_group_key(contract)].append(contract)
-    rows = [_row(group, payments_by_contract) for group in grouped.values()]
-    return sorted(rows, key=lambda row: ((row.subcontractor_name or ""), str(row.subcontractor_id)))
+    return sorted((_row(contract, payments_by_contract) for contract in contracts), key=_sort_key)
 
 
 def _total(rows: list[SubcontractorCostRow]) -> SubcontractorCostSummary:
