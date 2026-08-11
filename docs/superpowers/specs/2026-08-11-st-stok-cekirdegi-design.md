@@ -58,6 +58,22 @@ açılır, frontend formları F-ST'de (gerekirse mockup istenir).
 `GET /stock/entries` (liste; tip/depo/tarih süzgeci — "Stok Hareketi" ekranının verisi) ·
 `GET /stock/summary` + `GET /sites/{id}/stock` (E3/ŞS listeleri + KPI). Audit: giriş başına TEK olay.
 
+## 4b. EK KARAR — durum kodu kuralı (T4-artçı, 2026-08-11, kullanıcı onaylı)
+
+**Gövde içi VARLIK referansı = 404 · biçim/kural ihlali = 422.**
+
+T4 review'ünde iki emsalin yan yana durduğu görüldü (`POST /stock/entries` `warehouse_id` → 404,
+`POST /warehouses` `site_id` → 422). Kullanıcı kuralı yukarıdaki tek cümleye bağladı ve **üç 422'nin
+de 404'e çekilmesine** karar verdi: `site_id` (POST /warehouses) · `item_id` (satır içi) ·
+`received_by_user_id`. Satır İÇİNDE durmak referansı "alan değeri" yapmaz — hâlâ bir varlığadır.
+
+422 artık YALNIZ biçim/kural ihlalindedir: miktar işareti/sıfır, `transfer`de kaynak eksikliği,
+kendine transfer, `purchase`/`adjustment`ta kaynak verilmesi, `limit` tavanı.
+Görünmeyen ile var olmayan kimlik AYNI gövdeyi alır (kimlik varlığı sızmaz) — bu kural değişmedi.
+Kuralın bekçisi `test_stock_entries_api.py::test_durum_kodu_kurali_govde_ici_varlik_referansi_404`
+(karşı örnekli); dördüncü referans `test_warehouses_api.py`de. Sonucu: `InventoryValidationError`
+sınıfı ve handler'ı ölü kaldığı için KALDIRILDI.
+
 ## 5. Kapsam dışı / pending (icat yasağı)
 
 Sipariş bağı (SG 85/95/113 "Sipariş" sütunu dahil) · tedarikçi kataloğu · "eksik teslimat" oto-bildirim

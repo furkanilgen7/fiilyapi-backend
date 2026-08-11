@@ -65,24 +65,33 @@ DUPLICATE_WAREHOUSE_NAME = "Bu kapsamda aynı adlı bir depo zaten var"
 # Metin ADET VERMEZ (`SITE_HAS_BLOCKS` dersi).
 WAREHOUSE_HAS_ENTRIES = "Bu depoda stok hareketi var, hareketi olan depo silinemez"
 
-# 422 — gövdedeki `site_id` görünmüyor ya da hiç yok. İki durum AYNI cümleyi
+# 404 — gövdedeki `site_id` görünmüyor ya da hiç yok. İki durum AYNI cümleyi
 # alır; ayrı cümleler kimliğin varlığını ele verirdi.
+#
+# ⚠️ T4-artçı (2026-08-11, kullanıcı kararı — spec'e EK): bu sabit önce 422
+# üretiyordu. Repo kuralı tek cümleye bağlandı:
+#     görünmez/yok VARLIK referansı = 404 · biçim/kural ihlali = 422.
+# Böylece `POST /warehouses`in `site_id`i ile `POST /stock/entries`in
+# `warehouse_id`i AYNI kodu döndürür (emsal ayrışması bırakılmadı).
 WAREHOUSE_SITE_INVALID = "Seçilen şantiye bulunamadı"
 
 
 # --- Hareket uçları (T3) ---
 
-# 422 — satırdaki `item_id` kataloğda YOK. Kart kataloğunda kapsam süzgeci
+# 404 — satırdaki `item_id` kataloğda YOK. Kart kataloğunda kapsam süzgeci
 # olmadığı için (spec §2) "görünmeyen kart" durumu yoktur: tek sebep kaydın
-# gerçekten olmamasıdır. 404 DEĞİLDİR çünkü istenen kaynak hareket
-# koleksiyonudur; hatalı olan gövdedeki düzeltilebilir bir SATIR ALANIDIR
-# (`WAREHOUSE_SITE_INVALID` ile aynı gerekçe).
+# gerçekten olmamasıdır.
+#
+# ⚠️ T4-artçı (2026-08-11, kullanıcı kararı — spec'e EK): önce 422'ydi.
+# `WAREHOUSE_SITE_INVALID` ile AYNI gerekçeyi paylaşmaya devam eder, ama artık
+# ortak kural şudur: **gövde içi VARLIK referansı = 404 · biçim/kural ihlali =
+# 422.** Satır içinde durması bunu değiştirmez — referans yine bir varlığadır.
 #
 # Metin KAÇ satırın ya da HANGİ kimliğin hatalı olduğunu SÖYLEMEZ: kimlik
 # sızdırmaz ve eyleme dönüktür (`SITE_HAS_BLOCKS` dersi).
 ENTRY_ITEM_INVALID = "Seçilen malzeme kartı bulunamadı"
 
-# 422 — SG 88 "Teslim Alan" kullanıcısı yok.
+# 404 — SG 88 "Teslim Alan" kullanıcısı yok (aynı kural, T4-artçı).
 ENTRY_RECEIVER_INVALID = "Seçilen teslim alan kullanıcı bulunamadı"
 
 # 404 — `GET /sites/{id}/stock`: görünmeyen şantiye ile var olmayan şantiye AYNI

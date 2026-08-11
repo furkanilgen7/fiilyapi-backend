@@ -53,24 +53,26 @@ async def test_santiyeli_depo_acilir(client, satinalma_headers, gorunen_santiye)
 
 
 @pytest.mark.asyncio
-async def test_gorunmeyen_santiyeye_depo_acilamaz_422(
+async def test_gorunmeyen_santiyeye_depo_acilamaz_404(
     client, satinalma_headers, gorunmeyen_santiye
 ):
-    """Kapsam dışı `site_id` gövdedeki düzeltilebilir bir ALAN DEĞERİDİR (422),
-    404 değil — ve mesajı VAR OLMAYAN kimliğinkiyle AYNIDIR, kimlik varlığı
-    sızdırılmaz (`documents.SITE_NOT_IN_PROJECT` gerekçesi)."""
+    """Kapsam dışı `site_id` bir VARLIK REFERANSIDIR → **404** (T4-artçı kuralı,
+    2026-08-11 kullanıcı kararı; önce 422'ydi). `POST /stock/entries`in
+    `warehouse_id`i ile aynı kod — emsal ayrışması bırakılmadı.
+
+    Mesajı VAR OLMAYAN kimliğinkiyle AYNIDIR, kimlik varlığı sızdırılmaz."""
     yanit = await client.post(
         "/warehouses",
         json={"name": "D-9 Ambar", "site_id": str(gorunmeyen_santiye.id)},
         headers=satinalma_headers,
     )
-    assert yanit.status_code == 422, yanit.text
+    assert yanit.status_code == 404, yanit.text
     olmayan = await client.post(
         "/warehouses",
         json={"name": "D-9 Ambar", "site_id": str(uuid.uuid4())},
         headers=satinalma_headers,
     )
-    assert olmayan.status_code == 422, olmayan.text
+    assert olmayan.status_code == 404, olmayan.text
     assert olmayan.json()["detail"] == yanit.json()["detail"]
 
 

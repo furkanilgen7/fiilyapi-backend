@@ -11,6 +11,12 @@ Bu dosyanın DONDURDUĞU kararlar:
 2. **Tip kuralları gövde düzeyindedir (422).** `purchase`/`transfer` miktarı
    pozitif; `transfer` `source_warehouse_id` ZORUNLU, kendine transfer yasak;
    `adjustment` NEGATİF olabilir ama SIFIR olamaz ve kaynak depo TAŞIMAZ.
+2b. **DURUM KODU KURALI (T4-artçı, 2026-08-11 kullanıcı kararı — spec'e EK):**
+   **gövde içi VARLIK referansı = 404 · biçim/kural ihlali = 422.** Yani
+   `warehouse_id`/`source_warehouse_id`/`item_id`/`received_by_user_id` (ve
+   `POST /warehouses`ta `site_id`) görünmez ya da yoksa **404**; miktar/tip
+   kuralları ihlal edilirse **422**. Kuralın kendisi
+   `test_durum_kodu_kurali_govde_ici_varlik_referansi_404` ile kilitlidir.
 3. **Eksi bakiye ENGELLENMEZ** (§7 S4): boş depodan çıkış 201 döner. Katı engel
    sayım düzeltmesini kilitlerdi; eksi bakiye yalnız RAPORLANIR.
 4. **ATOMİKLİK:** satırlardan biri geçersizse başlık da satır da yazılmaz.
@@ -314,6 +320,57 @@ async def test_bos_depodan_transfer_eksi_bakiyeye_izin_verir(
     assert yanit.status_code == 201, yanit.text
 
 
+# --- DURUM KODU KURALI (T4-artçı) ---
+
+
+@pytest.mark.asyncio
+async def test_durum_kodu_kurali_govde_ici_varlik_referansi_404(
+    client, satinalma_headers, gorunmeyen_santiye, depo_fabrikasi, kart_fabrikasi
+):
+    """Kuralın TEK bekçisi: **gövde içi VARLIK referansı = 404 · biçim/kural
+    ihlali = 422** (2026-08-11 kullanıcı kararı, spec'e EK karar).
+
+    Üç varlık referansı da AYNI kodu döndürür — biri 422'ye kayarsa bu test
+    kırılır. Dördüncü referans (`site_id`) `test_warehouses_api.py`dedir; onun
+    ucu farklı olduğu için oradan kilitlenir.
+
+    Son iddia KARŞI ÖRNEKTİR: biçim ihlali 422 olarak KALIR, yoksa kural
+    "her şey 404" diye yozlaşırdı.
+    """
+    depo = await depo_fabrikasi("Merkez Depo (Sincan)")
+    kaynak_gorunmez = await depo_fabrikasi("D-9 Ambar", site=gorunmeyen_santiye)
+    kart = await kart_fabrikasi("SNK-0421")
+
+    async def _kod(govde: dict) -> int:
+        return (
+            await client.post("/stock/entries", json=govde, headers=satinalma_headers)
+        ).status_code
+
+    # 1) hedef depo yok · 2) kaynak depo GÖRÜNMÜYOR · 3) kart yok · 4) teslim alan yok
+    assert await _kod(_govde(uuid.uuid4(), kart.id)) == 404
+    assert (
+        await _kod(
+            _govde(
+                depo.id,
+                kart.id,
+                entry_type="transfer",
+                source_warehouse_id=str(kaynak_gorunmez.id),
+            )
+        )
+        == 404
+    )
+    assert await _kod(_govde(depo.id, uuid.uuid4())) == 404
+    assert await _kod(_govde(depo.id, kart.id, received_by_user_id=str(uuid.uuid4()))) == 404
+
+    # KARŞI ÖRNEK: biçim/kural ihlali 422 KALIR (kendine transfer)
+    assert (
+        await _kod(
+            _govde(depo.id, kart.id, entry_type="transfer", source_warehouse_id=str(depo.id))
+        )
+        == 422
+    )
+
+
 # --- ATOMİKLİK ---
 
 
@@ -321,7 +378,12 @@ async def test_bos_depodan_transfer_eksi_bakiyeye_izin_verir(
 async def test_bozuk_satir_hicbir_sey_yazmaz(
     client, satinalma_headers, seeded_db, depo_fabrikasi, kart_fabrikasi
 ):
-    """İkinci satırın kartı YOK: başlık da ilk satır da YAZILMAZ."""
+    """İkinci satırın kartı YOK: başlık da ilk satır da YAZILMAZ.
+
+    Kod **404**'tür (T4-artçı kuralı, 2026-08-11: gövde içi VARLIK referansı =
+    404; önce 422'ydi). Satır İÇİNDE durması bunu değiştirmez — referans yine
+    bir varlığadır.
+    """
     depo = await depo_fabrikasi("Merkez Depo (Sincan)")
     kart = await kart_fabrikasi("SNK-0421")
     once = await _sayimlar(seeded_db)
@@ -339,7 +401,7 @@ async def test_bozuk_satir_hicbir_sey_yazmaz(
         headers=satinalma_headers,
     )
 
-    assert yanit.status_code == 422, yanit.text
+    assert yanit.status_code == 404, yanit.text
     assert await _sayimlar(seeded_db) == once == (0, 0)
     liste = await client.get("/stock/entries", headers=satinalma_headers)
     assert liste.json()["total"] == 0
@@ -368,6 +430,8 @@ async def test_gorunmeyen_kaynak_depo_hicbir_sey_yazmaz(
 async def test_bilinmeyen_teslim_alan_hicbir_sey_yazmaz(
     client, satinalma_headers, seeded_db, depo_fabrikasi, kart_fabrikasi
 ):
+    """SG 88 "Teslim Alan" kullanıcısı YOK → **404** (T4-artçı kuralı: gövde
+    içi VARLIK referansı; önce 422'ydi)."""
     depo = await depo_fabrikasi("Merkez Depo (Sincan)")
     kart = await kart_fabrikasi("SNK-0421")
     yanit = await client.post(
@@ -375,7 +439,7 @@ async def test_bilinmeyen_teslim_alan_hicbir_sey_yazmaz(
         json=_govde(depo.id, kart.id, received_by_user_id=str(uuid.uuid4())),
         headers=satinalma_headers,
     )
-    assert yanit.status_code == 422, yanit.text
+    assert yanit.status_code == 404, yanit.text
     assert await _sayimlar(seeded_db) == (0, 0)
 
 

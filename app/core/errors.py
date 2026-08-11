@@ -120,16 +120,3 @@ class ConflictError(DomainError):
     kaydın silinememesi (`PAYMENT_NOT_DELETABLE`) gibi. `RelatedRecordsExistError`
     (bağlı alt kayıt) semantiğine de UYMADIĞI için P7 ile birlikte açılır.
     """
-
-
-class InventoryValidationError(DomainError):
-    """422 — stok hareketi gövdesindeki bir ALAN DEĞERİ geçersiz (ST T3).
-
-    Var olmayan malzeme kartı ya da var olmayan "teslim alan" kullanıcı buraya
-    düşer: istenen kaynak HAREKET KOLEKSİYONUDUR, hatalı olan gövdedeki
-    düzeltilebilir bir alandır — bu yüzden 404 değil 422 (`SiteValidationError`
-    ile aynı gerekçe).
-
-    Depo görünürlüğü buraya DÜŞMEZ: o 404'tür (`guards.WAREHOUSE_MISSING`),
-    çünkü orada kimlik varlığının sızmaması gerekir.
-    """

@@ -28,10 +28,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import (
     DuplicateError,
-    InventoryValidationError,
     NotFoundError,
     RelatedRecordsExistError,
-    SiteValidationError,
 )
 from app.modules.audit import messages
 from app.modules.dashboard.schemas import ListPlaceholder
@@ -195,7 +193,13 @@ async def visible_warehouse(
 async def _assert_site_visible(
     session: AsyncSession, actor: User, site_id: uuid.UUID | None
 ) -> Site | None:
-    """Gövdedeki `site_id` görünür bir şantiye mi? Değilse **422** (404 DEĞİL).
+    """Gövdedeki `site_id` görünür bir şantiye mi? Değilse **404**.
+
+    ⚠️ **T4-artçı kararı (2026-08-11, kullanıcı — spec'e EK KARAR):** burası
+    önce 422 veriyordu. Kural TEK cümleye bağlandı: **görünmez/yok VARLIK
+    referansı = 404 · biçim/kural ihlali = 422.** `site_id` bir VARLIK
+    referansıdır, dolayısıyla `POST /stock/entries`in `warehouse_id`i ile AYNI
+    kodu döndürür — iki uç arasında emsal ayrışması bırakılmadı.
 
     Var OLMAYAN kimlik ile GÖRÜNMEYEN kimlik AYNI cümleyi alır (`guards`
     gerekçesi). `None` meşrudur ve MERKEZ depo demektir.
@@ -204,7 +208,7 @@ async def _assert_site_visible(
         return None
     site = await sites_repository.get_site(session, site_id)
     if site is None or site.project_id not in await _visible_project_ids(session, actor):
-        raise SiteValidationError(guards.WAREHOUSE_SITE_INVALID)
+        raise NotFoundError(guards.WAREHOUSE_SITE_INVALID)
     return site
 
 
@@ -242,11 +246,11 @@ async def list_warehouses(
 async def create_warehouse(
     session: AsyncSession, actor: User, data: WarehouseCreate
 ) -> tuple[Warehouse, str]:
-    """Sıra sabittir: kapsam doğrulaması (422) → ad tekilliği (409).
+    """Sıra sabittir: kapsam doğrulaması (**404**, T4-artçı) → ad tekilliği (409).
 
     Önce 409 bakılsaydı, yabancı bir `site_id` gönderen kullanıcı o şantiyede
     hangi depo adlarının KULLANILDIĞINI öğrenebilirdi (`documents.create_folder`
-    dersi).
+    dersi). Sıra kod DEĞİŞSE DE korunur: 404'ün 409'dan önce gelmesi şarttır.
     """
     site = await _assert_site_visible(session, actor, data.site_id)
     name = data.name.strip()
@@ -320,7 +324,7 @@ async def _assert_items_exist(session: AsyncSession, item_ids: list[uuid.UUID]) 
     """
     eksik = set(item_ids) - await repository.existing_item_ids(session, item_ids)
     if eksik:
-        raise InventoryValidationError(guards.ENTRY_ITEM_INVALID)
+        raise NotFoundError(guards.ENTRY_ITEM_INVALID)
 
 
 async def _assert_receiver_exists(session: AsyncSession, user_id: uuid.UUID | None) -> None:
@@ -328,7 +332,7 @@ async def _assert_receiver_exists(session: AsyncSession, user_id: uuid.UUID | No
     `IntegrityError`a düşerdi; oradaki gövde "Veri bütünlüğü hatası"dır ve
     kullanıcı hangi alanı düzelteceğini öğrenemezdi."""
     if user_id is not None and await session.get(User, user_id) is None:
-        raise InventoryValidationError(guards.ENTRY_RECEIVER_INVALID)
+        raise NotFoundError(guards.ENTRY_RECEIVER_INVALID)
 
 
 async def create_stock_entry(
@@ -337,10 +341,11 @@ async def create_stock_entry(
     """Başlık + satırlar ATOMİK yazılır: doğrulamaların HEPSİ yazımdan ÖNCEDİR.
 
     Sıra bilinçlidir:
-      1. tipe bağlı gövde kuralları — şemada çözülür, DB'ye hiç dokunulmaz;
-      2. IDOR: hedef VE kaynak depo görünür mü (404, `visible_warehouse`);
+      1. tipe bağlı gövde kuralları — şemada çözülür, DB'ye hiç dokunulmaz (**422**);
+      2. IDOR: hedef VE kaynak depo görünür mü (**404**, `visible_warehouse`);
       3. `FOR SHARE` kilidi (aşağıdaki not);
-      4. kart ve teslim-alan doğrulaması (422);
+      4. kart ve teslim-alan doğrulaması (**404** — T4-artçı kuralı: gövde içi
+         VARLIK referansı 404'tür, biçim/kural ihlali 422);
       5. ancak bundan sonra `session.add`.
 
     Böylece geçersiz bir satır yüzünden ne başlık ne satır yazılır — testte
