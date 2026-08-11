@@ -8,6 +8,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.modules.projects.models import PriceIndexType, ProjectStatus, ProjectType
 
+# sites.models, projects.models'i import eder; projects.models hicbir sey geri
+# import etmez — bu yon TEK YONLUDUR, cember YOKTUR (P10 cost_cards dersi).
+from app.modules.sites.models import SectionStatus
+
 # VKN/TCKN: 10 veya 11 haneli rakam (spec §3.2). Mesaj Turkce ve alana ozel.
 _TAX_NUMBER_PATTERN = re.compile(r"^\d{10,11}$")
 _TAX_NUMBER_MESSAGE = "VKN 10 veya 11 haneli rakam olmalıdır."
@@ -322,6 +326,78 @@ class ProjectCostsResponse(BaseModel):
     profit: ProjectProfitProjection
     subcontractors: list[SubcontractorCostRow]
     subcontractor_total: SubcontractorCostSummary
+
+
+# --- P11 · Portfoy Gantt (GET /projects/timeline) ---
+
+
+class TimelineMilestone(BaseModel):
+    """Kilometre tasi satiri (P11 spec §3): YALNIZ ad + tarih.
+
+    Durum alani YOKTUR (§6 S2): "Tamamlandi" gorunumu `milestone_date < today`
+    TUREVIDIR ve istemci `today` damgasiyla hesaplar.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    title: str
+    milestone_date: date
+
+
+class TimelineSection(BaseModel):
+    """Gantt'in ikinci seviyesi: bolum/faz satiri (PT mockup 165-215).
+
+    ILERLEME YUZDESI YOKTUR (§6 S1, kullanici karari): `progress_pct` alani ne
+    `None` ne de pending zarfiyla acilir — bar rengi YALNIZ `status`tan turer
+    (PT legend 49-51: completed/active/planned). Kaynagi olmayan bir sayiyi
+    bos zarfla dondurmek, ekranda doldurulmayi bekleyen sahte bir sozlesme
+    birakir.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    status: SectionStatus
+    start_date: date | None
+    end_date: date | None
+    sort_order: int
+    # Yalniz BILGIDIR (spec §3): Gantt'ta baglanti cizgisi cizmek icin. Tarih
+    # kisiti backend'de ZORLANMAZ.
+    depends_on_section_id: uuid.UUID | None
+    milestones: list[TimelineMilestone]
+
+
+class TimelineProject(BaseModel):
+    """Gantt'in ust seviyesi: proje satiri. Santiye seviyesi YOKTUR (spec §1) —
+    bolumler santiyeler uzerinden toplanip dogrudan projenin altina dizilir."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    code: str
+    name: str
+    status: ProjectStatus
+    start_date: date | None
+    end_date: date | None
+    contract_amount: Decimal | None
+    sections: list[TimelineSection]
+
+
+class ProjectTimelineResponse(BaseModel):
+    """HAM veri (spec §6 S4): ay izgarasi, zoom kipi ve bar genisligi ISTEMCI
+    isidir; uc hicbir sorgu parametresi almaz.
+
+    `today` SUNUCU damgasidir (`core.timezone`): istemcinin saatine birakilirsa
+    TR gecesi 00:00-03:00 arasinda "bugun" cizgisi bir gun kayar.
+
+    PT 300-303 portfoy ozeti (toplam sozlesme/hakedis) buraya KONMAZ — o
+    dashboard isidir (spec §4).
+    """
+
+    today: date
+    items: list[TimelineProject]
 
 
 # --- Liste/detay yanitlari ---

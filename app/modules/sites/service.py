@@ -24,13 +24,15 @@ from app.modules.projects.models import Project
 # sizintisi olur.
 from app.modules.projects.service import visible_projects
 from app.modules.sites import guards, repository
-from app.modules.sites.models import Section, SectionStatus, Site, SiteStatus
+from app.modules.sites.models import Section, SectionMilestone, SectionStatus, Site, SiteStatus
 from app.modules.sites.schemas import (
     CountPlaceholder,
     MetricPlaceholder,
     SectionCreate,
     SectionDetailResponse,
     SectionListResponse,
+    SectionMilestoneInput,
+    SectionMilestoneResponse,
     SectionResponse,
     SectionStatusCounts,
     SectionUpdate,
@@ -199,6 +201,15 @@ def _facilities(site: Site) -> SiteFacilities:
     )
 
 
+def _to_milestone(row: SectionMilestone) -> SectionMilestoneResponse:
+    return SectionMilestoneResponse(
+        id=row.id,
+        title=row.title,
+        milestone_date=row.milestone_date,
+        sort_order=row.sort_order,
+    )
+
+
 def to_section(section: Section, worker_count: int) -> SectionResponse:
     return SectionResponse(
         id=section.id,
@@ -214,6 +225,12 @@ def to_section(section: Section, worker_count: int) -> SectionResponse:
         boq_item_count=_count(_BOQ),
         budget=_metric(_BOQ),
         worker_count=_worker_count(worker_count),
+        # P11 (spec §3): iki alan da TEK donusturucuden gectigi icin bolum basan
+        # UC yuzeyde (detay, liste, santiye detayi) ayni anda dogar. Milestone
+        # sirasi DETERMINISTIKTIR — `Section.milestones` iliskisi
+        # `(sort_order, id)` ile siralidir, burada yeniden siralanmaz.
+        depends_on_section_id=section.depends_on_section_id,
+        milestones=[_to_milestone(row) for row in section.milestones],
     )
 
 
@@ -401,11 +418,15 @@ async def build_site_detail(
     kaybeder."""
     site_counts = await timesheet_counts.by_site(session, [site.id])
     section_counts = await timesheet_counts.by_section(session, [s.id for s in site.sections])
+    # Milestone koleksiyonu SENKRON donusturucuye girmeden ONCE yuklenir
+    # (gerekcesi `repository.ensure_milestones_loaded` docstring'inde).
+    await repository.ensure_milestones_loaded(session, site.sections)
     return to_detail(site, project, site_counts.get(site.id, 0), section_counts)
 
 
 async def build_section_detail(session: AsyncSession, section: Section) -> SectionDetailResponse:
     section_counts = await timesheet_counts.by_section(session, [section.id])
+    await repository.ensure_milestones_loaded(session, [section])
     return to_section_detail(section, section_counts.get(section.id, 0))
 
 
@@ -422,6 +443,7 @@ async def list_sections_for_site(
     site, _ = await _visible_site(session, actor, site_id)
     sections = await repository.list_sections(session, site.id)
     section_counts = await timesheet_counts.by_section(session, [s.id for s in sections])
+    await repository.ensure_milestones_loaded(session, sections)
     return SectionListResponse(
         counts=_section_counts(sections),
         items=[to_section(s, section_counts.get(s.id, 0)) for s in sections],
@@ -737,6 +759,96 @@ async def _resolved_manager_names(session: AsyncSession, values: dict) -> dict[s
     }
 
 
+async def _validate_dependency(
+    session: AsyncSession,
+    site_id: uuid.UUID,
+    candidate_id: uuid.UUID | None,
+    *,
+    section_id: uuid.UUID | None,
+) -> None:
+    """P11 §3 — oncul bolum korkulugu. TARIH KISITI YOKTUR (kullanici karari S3).
+
+    Uc kural, bu sirayla:
+
+    1. **Self** — bolum kendisine baglanamaz (`section_id` POST'ta `None`dir:
+       henuz var olmayan bir satirin kendisi de olamaz).
+    2. **Ayni SANTIYE** — oncul baska santiyedeyse ya da hic yoksa AYNI 422
+       (`guards.DEPENDS_NOT_IN_SITE` gerekcesi orada yazili).
+    3. **Dongu** — zincir YURUYEREK aranir: oncul -> onun onculu -> ... Bir
+       adimda guncellenen bolume geri donuluyorsa halka kapanir. `visited`
+       kumesi, VERIDE ONCEDEN var olan (bu istekle ilgisi olmayan) bir halkada
+       sonsuz donguye girmeyi engeller.
+
+    Bag YALNIZ BILGIDIR: "oncul bitmeden basladi" diye 422 URETILMEZ — mockup'ta
+    boyle bir kural yoktur ve icat edilmez.
+    """
+    if candidate_id is None:
+        return
+    if section_id is not None and candidate_id == section_id:
+        raise SiteValidationError(guards.DEPENDS_SELF)
+    predecessor = await repository.get_section_in_site(session, site_id, candidate_id)
+    if predecessor is None:
+        raise SiteValidationError(guards.DEPENDS_NOT_IN_SITE)
+    if section_id is None:
+        # Yeni bolumun kimligi henuz yok: hicbir mevcut satir ona bagli olamaz,
+        # dolayisiyla POST bir halka KAPATAMAZ.
+        return
+    visited: set[uuid.UUID] = set()
+    cursor: Section | None = predecessor
+    while cursor is not None:
+        if cursor.id == section_id:
+            raise SiteValidationError(guards.DEPENDS_CYCLE)
+        if cursor.id in visited:
+            return
+        visited.add(cursor.id)
+        next_id = cursor.depends_on_section_id
+        cursor = None if next_id is None else await repository.get_section(session, next_id)
+
+
+def _merge_milestones(section: Section, inputs: list[SectionMilestoneInput]) -> None:
+    """Kilometre taslarini KIMLIK KORUYARAK birlestirir (P9 `_merge_shareholders`
+    emsali, spec §3).
+
+    * id eslesen satir YERINDE guncellenir — birincil anahtar YASAR;
+    * id'siz girdi YENI satirdir;
+    * listede olmayan mevcut satir DUSER (`delete-orphan`);
+    * bilinmeyen ya da BASKA bolume ait id 422'dir — sessizce yeni satira DONMEZ;
+    * ayni id iki kez gelirse 422 (P9 T5 dersi: sessiz cokme).
+
+    `sort_order` GOVDEDEN GELMEZ, dizideki siradan atanir (`_write_sections`
+    deseni): tek bir sira kaynagi olur, iki kaynak celisemez.
+
+    Dogrulamalarin TAMAMI hicbir satir degistirilmeden ONCE kosar: yarim
+    uygulanmis bir liste sessiz veri hatasidir.
+    """
+    existing = {row.id: row for row in section.milestones}
+    sent_ids = [item.id for item in inputs if item.id is not None]
+    kept_ids = set(sent_ids)
+    if len(sent_ids) != len(kept_ids):
+        raise SiteValidationError(guards.MILESTONE_DUPLICATE_IN_PAYLOAD)
+    if kept_ids - set(existing):
+        # Baska bolumun (ve var olmayan) satiri da buraya duser: id bu bolumde
+        # YOKTUR, nerede oldugu bu ucun konusu degildir.
+        raise SiteValidationError(guards.MILESTONE_UNKNOWN)
+
+    merged: list[SectionMilestone] = []
+    for index, item in enumerate(inputs):
+        if item.id is None:
+            merged.append(
+                SectionMilestone(
+                    title=item.title, milestone_date=item.milestone_date, sort_order=index
+                )
+            )
+            continue
+        row = existing[item.id]
+        row.title = item.title
+        row.milestone_date = item.milestone_date
+        row.sort_order = index
+        merged.append(row)
+    # Listede kalanlar AYNI nesnelerdir: delete-orphan yalnizca dusenleri siler.
+    section.milestones = merged
+
+
 async def create_section(
     session: AsyncSession, actor: User, site_id: uuid.UUID, data: SectionCreate
 ) -> Section:
@@ -759,6 +871,9 @@ async def create_section(
     code = data.code or await _next_section_code(session, site.id)
     if await repository.get_section_by_code(session, site.id, code) is not None:
         raise DuplicateError(guards.DUPLICATE_SECTION_CODE)
+    # P11 — oncul korkulugu YAZMADAN ONCE (`section_id=None`: yeni satirin
+    # kimligi henuz yok, dolayisiyla self/dongu dallari POST'ta tanimsizdir).
+    await _validate_dependency(session, site.id, data.depends_on_section_id, section_id=None)
     section = Section(
         site_id=site.id,
         code=code,
@@ -775,8 +890,14 @@ async def create_section(
         planned_worker_count=data.planned_worker_count,
         budget_amount=data.budget_amount,
         is_draft=data.is_draft,
+        depends_on_section_id=data.depends_on_section_id,
         **names,
     )
+    # Milestone birlestirmesi transient nesne uzerinde kosar: POST'ta mevcut satir
+    # YOKTUR, dolayisiyla id TASIYAN her girdi `MILESTONE_UNKNOWN` alir —
+    # guncellenecek satir henuz var olmadigi icin bu dogru cevaptir. PATCH ile
+    # AYNI fonksiyon kullanilir, ikinci bir kopya kural yazilmaz.
+    _merge_milestones(section, data.milestones)
     session.add(section)
     await session.flush()
     await session.refresh(section)
@@ -817,7 +938,10 @@ async def update_section(
     güncellendi" ile "yayına alındı" satirlarini birbirine karistirirdi.
     """
     section, site = await _visible_section(session, actor, section_id)
-    changes = data.model_dump(exclude_unset=True)
+    # `milestones` DISARIDA BIRAKILIR (`update_site`in `facilities` dali ile ayni
+    # gerekce): liste ALT SATIRLARDIR, duz `setattr` ile iliskiye ham Pydantic
+    # nesnesi yazmak ORM'i patlatir. Asagida acikca birlestirilir.
+    changes = data.model_dump(exclude_unset=True, exclude={"milestones"})
     # `false -> false` bir gecis DEGILDIR ve zorunluluk kurallarini tetiklemez.
     is_publishing = section.is_draft and changes.get("is_draft") is False
     guards.validate_section(
@@ -843,6 +967,25 @@ async def update_section(
     # kullanici govdedeki HICBIR alani degistirmez. Esleme POST ile PAYLASILIR
     # (`_resolved_manager_names`), kopyalanmaz.
     changes.update(await _resolved_manager_names(session, changes))
+    # P11 — oncul korkulugu (self/ayni santiye/dongu) HICBIR ALAN yazilmadan
+    # once: reddedilen istek adi da degistirmis birakmaz. Kosul `in changes`tir,
+    # `is not None` DEGIL: acikca `null` gondermek BAGI KOPARIR ve o dal
+    # dogrulamadan erken doner.
+    if "depends_on_section_id" in changes:
+        await _validate_dependency(
+            session, section.site_id, changes["depends_on_section_id"], section_id=section.id
+        )
+    # Alan gonderilmediyse (`None`) satirlara DOKUNULMAZ; bos liste gonderilirse
+    # hepsi duser. Ayrim `SectionUpdate.milestones` docstring'inde gerekcelidir.
+    # Birlestirme 422 uretebildigi icin duz alanlar yazilmadan ONCE kosar
+    # (`_merge_shareholders` sirasinin birebiri): reddedilen istek adi da
+    # degistirmis birakmaz.
+    if data.milestones is not None:
+        # Birlestirme SENKRONDUR ve mevcut satirlari okur: koleksiyon yuklu
+        # degilse orada tembel yukleme -> `MissingGreenlet` olurdu (ayni gerekce
+        # `repository.ensure_milestones_loaded` docstring'inde).
+        await repository.ensure_milestones_loaded(session, [section])
+        _merge_milestones(section, data.milestones)
     for field, value in changes.items():
         setattr(section, field, value)
     await session.flush()

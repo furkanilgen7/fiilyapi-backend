@@ -620,4 +620,9 @@ def test_openapi_create_body_carries_every_new_field():
     assert "boq_item_ids" not in body
     assert "subcontractor_ids" not in body
     assert "machine_ids" not in body
-    assert "depends_on_section_id" not in body
+    # `depends_on_section_id` P6'da ACILMAMISTI (spec §6 "bu dilimde ara cozum
+    # yazilmaz"); P11 onu KENDI diliminde acti (P11 spec §3) — bu yuzden yasakli
+    # listeden CIKIP beklenen alanlara gecti; mockup'ta ZATEN cizili bir alandi
+    # (`Form - Bolum Ekle` 115-117). Ustteki uc yasak alan yerinde KALIR.
+    assert "depends_on_section_id" in body
+    assert "milestones" in body

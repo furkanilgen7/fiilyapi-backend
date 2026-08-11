@@ -1,7 +1,10 @@
 import uuid
+from collections import defaultdict
+from collections.abc import Sequence
 
-from sqlalchemy import or_, select
+from sqlalchemy import inspect, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 # Silme korkuluklari icin (asagida). TEPE SEVIYEDE import edilebilirler cunku
 # `boq/models` ve `units/models` yalniz `app.core.db.Base`e baglidir — sites'a
@@ -10,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.boq.models import BoqGroup, BoqItem
 from app.modules.contracts.models import SubcontractorContract
 from app.modules.progress_payments.models import ProgressPaymentLine
-from app.modules.sites.models import Section, Site
+from app.modules.sites.models import Section, SectionMilestone, Site
 from app.modules.units.models import Block
 from app.modules.users.models import User, UserStatus
 
@@ -54,6 +57,52 @@ async def list_sections(session: AsyncSession, site_id: uuid.UUID) -> list[Secti
 
 async def get_section(session: AsyncSession, section_id: uuid.UUID) -> Section | None:
     return await session.get(Section, section_id)
+
+
+async def ensure_milestones_loaded(session: AsyncSession, sections: Sequence[Section]) -> None:
+    """P11 — verilen bolumlerin `milestones` koleksiyonunu TEK sorguda doldurur.
+
+    NEDEN GEREKLI: yanit donusturucusu (`service.to_section`) SENKRONDUR ve
+    `section.milestones`e dokunur. Koleksiyon yuklu degilse SQLAlchemy orada
+    tembel yukleme dener ve asenkron oturumda bu `MissingGreenlet` ile 500
+    uretir. `lazy="selectin"` yalnizca bolumler SORGUYLA yuklendiginde kosar;
+    `session.refresh(site, attribute_names=["sections"])` (router `_detail_of`)
+    kimlik haritasindaki MEVCUT bolum nesnelerini oldugu gibi birakir ve onlarin
+    koleksiyonu yuklenmemis kalabilir. Yani bu, teoride degil POST/PATCH
+    `/sites` yolunda gerceklesen bir 500 riskidir.
+
+    Yukleme TEK `SELECT`tir (N+1 YOK, TB3 sayaci): yalnizca YUKLENMEMIS bolumler
+    sorulur, zaten yuklu olanlar (ve yeni eklenmis satirlar) dokunulmadan kalir.
+    Sira `Section.milestones` iliskisiyle AYNIDIR (`sort_order`, `id`), aksi
+    halde ayni veri iki yuzeyde farkli sirayla gorunurdu.
+    """
+    unloaded = [row for row in sections if "milestones" in inspect(row).unloaded]
+    if not unloaded:
+        return
+    stmt = (
+        select(SectionMilestone)
+        .where(SectionMilestone.section_id.in_([row.id for row in unloaded]))
+        .order_by(SectionMilestone.sort_order, SectionMilestone.id)
+    )
+    grouped: dict[uuid.UUID, list[SectionMilestone]] = defaultdict(list)
+    for milestone in (await session.execute(stmt)).scalars().all():
+        grouped[milestone.section_id].append(milestone)
+    for row in unloaded:
+        set_committed_value(row, "milestones", grouped[row.id])
+
+
+async def get_section_in_site(
+    session: AsyncSession, site_id: uuid.UUID, section_id: uuid.UUID
+) -> Section | None:
+    """Bolum, YALNIZ verilen santiyedeyse (P11 §3 oncul cozumu).
+
+    Iki soruyu (var mi + ayni santiyede mi) TEK sorguda birlestirir, cunku
+    cagiran taraf ikisini de AYNI cevaba (`DEPENDS_NOT_IN_SITE`) cevirir: ayri
+    ayri sorup ayri metin uretmek, var olmayan id ile baska santiyedeki id'yi
+    ayirt edilebilir kilardi.
+    """
+    stmt = select(Section).where(Section.id == section_id, Section.site_id == site_id)
+    return (await session.execute(stmt)).scalar_one_or_none()
 
 
 async def list_section_codes_with_prefix(
