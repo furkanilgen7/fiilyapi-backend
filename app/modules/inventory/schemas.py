@@ -1,0 +1,395 @@
+"""Malzeme kartı + depo şemaları (ST spec §2, §4) — T2.
+
+`personnel/schemas.py` üçlüsünün (Create/Update/Response) kardeşi.
+
+## Uzunluk tavanları kolon sınırlarıyla BİREBİRDİR
+
+`app.core.text.FREE_TEXT_MAX_LENGTH` BURADA KULLANILMAZ ve bu bir eksiklik
+değildir: o sabit yalnız kolonu `Text` (DB'de sınırsız) olan alanlar içindir
+(`tests/test_serbest_metin_tavani.py` "mevcut dar sınırlar gevşetilmedi"). T2'nin
+alanlarının hepsi `String(N)`dir, dolayısıyla tavanları N'dir — 2000'e çekilseydi
+kullanıcı 422 yerine anlaşılmaz bir DB hatası alırdı. Tek `Text` alan
+(`stock_entries.note`) T3'ündür ve O SABİTİ kullanmak ZORUNDADIR.
+
+## Kapsam dışı alanlar (spec §5, icat yasağı)
+
+Sipariş bağı · tedarikçi kataloğu · bakiye/durum alanı · "Aylık İhtiyaç" ·
+belge slotu bu şemalarda YOKTUR. Bakiye ve durum TÜREVDİR (spec §3) ve T3'ün
+özet uçlarından gelir; kart gövdesine kolon olarak sızmaz.
+"""
+
+import uuid
+from datetime import date, datetime
+from decimal import Decimal
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from app.core.text import FREE_TEXT_MAX_LENGTH
+from app.modules.dashboard.schemas import ListPlaceholder
+from app.modules.inventory.balance import StockStatus
+from app.modules.inventory.models import (
+    StockCategory,
+    StockEntryType,
+    StockQuality,
+)
+from app.modules.projects.schemas import MetricPlaceholder
+
+# Model `String(30)`/`String(200)`/`String(20)` — şema ile DB sınırı AYNI olmalı.
+_CODE = Field(min_length=1, max_length=30)
+_NAME = Field(min_length=1, max_length=200)
+_UNIT = Field(min_length=1, max_length=20)
+
+# Eşik NEGATİF OLAMAZ: durum formülü (spec §3, `%50×min` / `min` / `5×min`)
+# negatif bir eşikte anlamını yitirir ve her kalem "fazla" görünürdü. Ölçek
+# kolonla aynıdır (`Numeric(14, 3)`).
+_MIN_STOCK = Field(default=None, ge=0, max_digits=14, decimal_places=3)
+
+# Depo adı `String(100)`.
+_WAREHOUSE_NAME = Field(min_length=1, max_length=100)
+
+
+class StockItemCreate(BaseModel):
+    """`POST /stock/items` gövdesi.
+
+    `unit` SERBEST METİNDİR (spec §2): Ton/Torba/Metre/Adet/m³ kümesi açık
+    uçludur ve yeni bir birim migration gerektirmemelidir. `category` ise
+    KAPALI kümedir (E3 99 select'i), bu yüzden enum'dur.
+    """
+
+    code: str = _CODE
+    name: str = _NAME
+    category: StockCategory
+    unit: str = _UNIT
+    min_stock: Decimal | None = _MIN_STOCK
+    is_active: bool = True
+
+
+class StockItemUpdate(BaseModel):
+    """`PATCH /stock/items/{id}` — TÜM alanlar isteğe bağlı.
+
+    Alanın GÖNDERİLMEMESİ ile `null` GÖNDERİLMESİ farklıdır ve fark
+    `model_fields_set` ile korunur: `min_stock: null` eşiği SİLER (durum
+    `None` olur, spec §3), hiç göndermemek ona DOKUNMAZ.
+
+    Kullanımdan kaldırma YOLU budur (`is_active: false`) — DELETE ucu yoktur.
+    """
+
+    code: str | None = Field(default=None, min_length=1, max_length=30)
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    category: StockCategory | None = None
+    unit: str | None = Field(default=None, min_length=1, max_length=20)
+    min_stock: Decimal | None = _MIN_STOCK
+    is_active: bool | None = None
+
+
+class StockItemResponse(BaseModel):
+    """Kart künyesi. **Bakiye / durum ALANI YOKTUR** (spec §3): ikisi de
+    hareketlerden TÜREVDİR ve T3'ün özet uçlarından gelir. Buraya konsaydı
+    katalog listesi her çizilişte hareket tablosunu tarardı."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    code: str
+    name: str
+    category: StockCategory
+    unit: str
+    min_stock: Decimal | None
+    is_active: bool
+    created_at: datetime
+
+
+class StockItemListResponse(BaseModel):
+    """`personnel`/`audit`/`users` liste deseni: `total` + `limit`/`offset`."""
+
+    items: list[StockItemResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class WarehouseCreate(BaseModel):
+    """`POST /warehouses` gövdesi.
+
+    `site_id` NULL = **MERKEZ DEPO** (SG 84 "Merkez Depo (Sincan)"): hiçbir
+    şantiyeye bağlı değildir ve görünürlüğü proje kapsamına DEĞİL yalnız stok
+    iznine bağlıdır (spec §7 S2b).
+    """
+
+    name: str = _WAREHOUSE_NAME
+    site_id: uuid.UUID | None = None
+
+
+class WarehouseUpdate(BaseModel):
+    """`PATCH /warehouses/{id}` — YALNIZ ad.
+
+    `site_id` BİLİNÇLİ olarak YOKTUR (`DocumentFolderUpdate` deseni): kapsam
+    değiştirmek bir IDOR yüzeyidir — merkez depo şantiyeye çekilerek gizlenebilir
+    ya da tersi yapılabilirdi — ve hiçbir mockup depo taşımayı istemez. Alan
+    gövdede gönderilse bile Pydantic onu yok sayar, kapsam DEĞİŞMEZ.
+    """
+
+    name: str = _WAREHOUSE_NAME
+
+
+class WarehouseResponse(BaseModel):
+    """Depo künyesi. **Bakiye alanı YOKTUR** — kart gövdesiyle aynı gerekçe."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    site_id: uuid.UUID | None
+    created_at: datetime
+
+
+class WarehouseListResponse(BaseModel):
+    items: list[WarehouseResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+# --- Hareket (T3) — SG formunun birebiri, SİPARİŞ ALANLARI HARİÇ ---
+
+
+class StockEntryLineCreate(BaseModel):
+    """SG kalem tablosunun BİR satırı (SG 96-124).
+
+    **"Sipariş" sütunu (SG 95/113) YOKTUR** ve "Tutar" sütunu (SG 101) TÜREVDİR
+    (`quantity × unit_price`) — kolon da alan da açılmaz (spec §2, §5).
+
+    `quantity` işaret kısıtı TAŞIMAZ: `adjustment` satırları NEGATİF olabilir
+    (§7 S4 — sayım farkı/iade/SARF tek kapısı). Tipe bağlı kural başlıktadır
+    (`StockEntryCreate._tip_kurallari`) çünkü satır kendi başına hangi tipte
+    olduğunu bilmez.
+
+    `unit_price` NULL olabilir: transfer ve düzeltme satırlarında fiyat yoktur
+    ve fiyatsız kalem toplam stok değerine GİRMEZ (§7 S6).
+    """
+
+    item_id: uuid.UUID
+    quantity: Decimal = Field(max_digits=14, decimal_places=3)
+    unit_price: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=2)
+    quality: StockQuality = StockQuality.ok
+
+
+class StockEntryCreate(BaseModel):
+    """`POST /stock/entries` — başlık + satırlar TEK gövde, atomik yazılır.
+
+    ## SG'den GELEN alanlar
+    `entry_type` (53-76) · `entry_date` (84) · `warehouse_id` (84) ·
+    `source_warehouse_id` (transfer) · `supplier_name` (86, SERBEST METİN —
+    §7 S3) · `delivery_note_no` (87) · `received_by_user_id` (88) · `note` (169).
+
+    ## SG'de OLUP BURAYA ALINMAYANLAR (icat yasağı, spec §5)
+    "İlgili Sipariş" (85) · "Sipariş" sütunu (95/113) · "eksik teslimat"
+    rozeti (107) · otomatik tedarikçi bildirimi (176) → **SA dilimi**.
+    Belge slotları (149-166) → **BC form-slot**. Gövdede gönderilseler bile
+    Pydantic onları yok sayar; şema ASLA genişletilmez.
+
+    `note` tavanı `app.core.text.FREE_TEXT_MAX_LENGTH`tir: kolonu `Text`
+    (DB'de sınırsız) olan TEK alan budur ve TB4 standardı gereği tavanı
+    şemadadır (T1/T2'nin devrettiği borç).
+    """
+
+    entry_type: StockEntryType
+    entry_date: date
+    warehouse_id: uuid.UUID
+    source_warehouse_id: uuid.UUID | None = None
+    supplier_name: str | None = Field(default=None, max_length=200)
+    delivery_note_no: str | None = Field(default=None, max_length=50)
+    received_by_user_id: uuid.UUID | None = None
+    note: str | None = Field(default=None, max_length=FREE_TEXT_MAX_LENGTH)
+    # Satırsız hareket bakiyeye HİÇBİR ŞEY katmaz; kaydı boş başlıkla kirletir.
+    lines: list[StockEntryLineCreate] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _tip_kurallari(self) -> "StockEntryCreate":
+        """Tipe bağlı kurallar — hepsi GÖVDE düzeyinde, yani **422**.
+
+        Servise değil şemaya konmalarının sebebi: hiçbiri veritabanına bakmaz,
+        tamamı gövdenin kendi içinde çözülür ve böylece kural ihlali DB'ye hiç
+        DOKUNMADAN reddedilir (atomikliğin ilk katmanı).
+
+        * `transfer` → `source_warehouse_id` ZORUNLU: kaynağı olmayan transfer
+          çift bacağın kaynak ayağını üretemez ve YOKTAN STOK YARATIR.
+        * kendine transfer YASAK: iki bacak birbirini götürür, kayıt anlamsızdır.
+        * `purchase`/`adjustment` → `source_warehouse_id` YASAK: dolu bırakılsa
+          bakiye sorgusu o depodan sessizce düşerdi.
+        * miktar SIFIR olamaz (her tipte): stoğa hiçbir etkisi olmayan satır.
+        * `purchase`/`transfer` → miktar POZİTİF: eksi alım/eksi transfer
+          düzeltmenin işidir ve `adjustment` ile yapılır.
+        """
+        if self.entry_type is StockEntryType.transfer:
+            if self.source_warehouse_id is None:
+                raise ValueError("Transferde kaynak depo zorunludur.")
+            if self.source_warehouse_id == self.warehouse_id:
+                raise ValueError("Kaynak ve hedef depo aynı olamaz.")
+        elif self.source_warehouse_id is not None:
+            raise ValueError("Kaynak depo yalnızca transfer hareketinde verilir.")
+
+        for satir in self.lines:
+            if satir.quantity == 0:
+                raise ValueError("Satır miktarı sıfır olamaz.")
+            if self.entry_type is not StockEntryType.adjustment and satir.quantity < 0:
+                raise ValueError("Negatif miktar yalnızca manuel düzeltmede kullanılır.")
+        return self
+
+
+class StockEntryLineResponse(BaseModel):
+    """Satır künyesi. **Tutar alanı YOKTUR** — `quantity × unit_price` türevdir."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    item_id: uuid.UUID
+    quantity: Decimal
+    unit_price: Decimal | None
+    quality: StockQuality
+
+
+class StockEntryResponse(BaseModel):
+    """Hareket künyesi + satırları.
+
+    **Sipariş alanı YOKTUR** (spec §5). Bakiye de yoktur: hareket bakiyeyi
+    TAŞIMAZ, bakiye hareketlerden TÜREVDİR (spec §3).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    entry_type: StockEntryType
+    entry_date: date
+    warehouse_id: uuid.UUID
+    source_warehouse_id: uuid.UUID | None
+    supplier_name: str | None
+    delivery_note_no: str | None
+    received_by_user_id: uuid.UUID | None
+    note: str | None
+    created_at: datetime
+    lines: list[StockEntryLineResponse]
+
+
+class StockEntryListResponse(BaseModel):
+    items: list[StockEntryResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+# --- Türev özetler (E3 / ŞS) ---
+
+
+class StockWarehouseBalance(BaseModel):
+    """E3 "Depo" sütunu: kalemin TEK bir depodaki bakiyesi.
+
+    `site_id` NULL ise MERKEZ depodur — ekran şantiye adı basamadığında bunu
+    kimliğin yokluğundan değil bu alandan anlar.
+    """
+
+    warehouse_id: uuid.UUID
+    warehouse_name: str
+    site_id: uuid.UUID | None
+    balance: Decimal
+
+
+class StockSummaryRow(BaseModel):
+    """E3 tablosunun bir satırı: kart künyesi + TÜREVLER.
+
+    `balance` ve `status` KOLON DEĞİLDİR (spec §3): ikisi de hareketlerden
+    türetilir ve bu yüzden `StockItemResponse`da yoktur, YALNIZ burada durur.
+
+    `status` `min_stock` yoksa `None`dur — eşik olmadan durum uydurulmaz.
+
+    `last_unit_price` toplam değerin kaynağıdır (§7 S6: SON giriş fiyatı);
+    ekran "hangi fiyattan değerlendi" sorusunu bu alandan cevaplar.
+    """
+
+    id: uuid.UUID
+    code: str
+    name: str
+    category: StockCategory
+    unit: str
+    min_stock: Decimal | None
+    balance: Decimal
+    status: StockStatus | None
+    last_unit_price: Decimal | None
+    warehouses: list[StockWarehouseBalance]
+
+
+class StockSummaryKpis(BaseModel):
+    """E3 KPI şeridi (72-89) — SÜZÜLEN KÜMENİN özeti, sayfanın değil.
+
+    `total_value` = Σ (kalemin SON giriş fiyatı × bakiyesi) (§7 S6).
+    Ağırlıklı ortalama maliyet İCAT EDİLMEZ.
+
+    `items_without_price`: bakiyesi olup fiyatı olmayan kalem sayısı. Bu kalemler
+    değere GİRMEZ ve sessizce 0 SAYILMAZ — sayaç olmasaydı "değer neden düşük"
+    sorusu cevapsız kalırdı.
+
+    `pending_orders` ("Bekleyen Sipariş", E3 81): sipariş tablosu YOKTUR, değer
+    UYDURULMAZ — `MetricPlaceholder` zarfı SA dilimini bildirir.
+    """
+
+    total_value: Decimal
+    critical_count: int
+    low_count: int
+    total_items: int
+    items_without_price: int
+    pending_orders: MetricPlaceholder
+
+
+class StockSummaryResponse(BaseModel):
+    items: list[StockSummaryRow]
+    total: int
+    limit: int
+    offset: int
+    kpis: StockSummaryKpis
+
+
+class SiteStockRow(BaseModel):
+    """ŞS tablosunun bir satırı (Şantiye - Stok, 96-104).
+
+    `balance` YALNIZ o şantiyenin depolarını kapsar; merkez depo (`site_id IS
+    NULL`) hiçbir şantiyenin bakiyesine girmez (spec §3).
+
+    `monthly_need` ("Aylık İhtiyaç") ve `section` ("Bölüm") sütunlarının GİRİŞ
+    YÜZEYİ YOKTUR: ikisi de ileride planlama/BOQ türevi olacaktır. Değer
+    üretilmez, mevcut yer tutucu zarfları taşınır — `section` metin listesi
+    olduğu için `ListPlaceholder`, `monthly_need` tek sayı olduğu için
+    `MetricPlaceholder`.
+    """
+
+    id: uuid.UUID
+    code: str
+    name: str
+    category: StockCategory
+    unit: str
+    min_stock: Decimal | None
+    balance: Decimal
+    status: StockStatus | None
+    monthly_need: MetricPlaceholder
+    section: ListPlaceholder
+
+
+class SiteStockKpis(BaseModel):
+    """ŞS KPI şeridi (86-91): Toplam Malzeme · Kritik · Düşük · Stok Değeri.
+
+    E3'ün aksine **"Bekleyen Sipariş" YOKTUR** — ŞS mockup'ında o kart çizilmemiş
+    ve olmayan bir kart için zarf bile üretilmez.
+    """
+
+    total_value: Decimal
+    critical_count: int
+    low_count: int
+    total_items: int
+    items_without_price: int
+
+
+class SiteStockResponse(BaseModel):
+    items: list[SiteStockRow]
+    total: int
+    limit: int
+    offset: int
+    kpis: SiteStockKpis

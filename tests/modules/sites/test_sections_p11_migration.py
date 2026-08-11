@@ -223,8 +223,11 @@ def test_alembic_has_single_head():
     )
     assert result.returncode == 0, result.stderr
     heads = [line for line in result.stdout.splitlines() if line.strip()]
+    # Head'in KIMLIGI iddia EDILMEZ: her yeni dilim head'i ileri tasir ve bu
+    # testi ilgisiz yere kirardi (repo deseni — P6/status-enum testleri de
+    # yalniz SAYIYI olcer). P11'in kendi revizyonu asagidaki tur donusunde
+    # ACIKCA kullanilir; olculen sey burada yalniz "catallanma yok"tur.
     assert len(heads) == 1, f"tek head bekleniyordu, cikti:\n{result.stdout}"
-    assert heads[0].startswith(P11_REVISION), heads[0]
 
 
 async def test_upgrade_downgrade_upgrade_round_trip():
