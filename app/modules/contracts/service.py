@@ -19,7 +19,7 @@ from app.core.errors import (
 )
 from app.core.timezone import today
 from app.modules.company.service import get_company
-from app.modules.contracts import repository
+from app.modules.contracts import distribution_quantity, repository
 from app.modules.contracts.guards import (
     CONTRACT_MISSING,
     DUPLICATE_ITEM_CODE,
@@ -28,6 +28,7 @@ from app.modules.contracts.guards import (
     GROUP_PROJECT_MISMATCH,
     ITEM_MISSING,
     ITEM_QUANTITY_BELOW_DISTRIBUTED,
+    boq_code_taken_in_site,
 )
 from app.modules.contracts.models import (
     ContractStatus,
@@ -51,7 +52,34 @@ from app.modules.contracts.schemas import (
 )
 from app.modules.projects.models import Project, ProjectContract
 from app.modules.projects.service import visible_projects
+from app.modules.sites import repository as sites_repository
 from app.modules.users.models import User
+
+# TB4/B3+S7: ayna BOQ satırında sözleşme kaleminden TÜREYEN alanlar. Miktar bu
+# kümede DEĞİLDİR — o dağıtımın kendi kararıdır (spec §1 B3).
+#
+# Küme DÖRTTÜR (S7, kullanıcı onayı): `unit_price` + `code` + `description` +
+# `unit`. Dağıtımın relink yolu (`distribution._apply_allocations`) bu dört alanı
+# ZATEN sözleşmeden kopyalıyordu; senkron tazelemede ikisini dışarıda bırakmak
+# aynı bayatlığın yarısını açık bırakırdı.
+#
+# Bu sabit TEK KAYNAKTIR: hem senkron tazeleme (`_refresh_mirror_boq_rows`) hem
+# relink yolu buradan beslenir — relink `apply_mirrored_fields` ile ÇAĞIRIR,
+# kendi listesini TUTMAZ. İki yol ayrışırsa
+# `tests/contracts/test_employer_item_boq_sync.py`nin enjeksiyon testleri kırmızı olur.
+MIRRORED_ITEM_FIELDS = ("code", "description", "unit", "unit_price")
+
+
+def apply_mirrored_fields(target: object, item: EmployerContractItem) -> None:
+    """Ayna alan kümesini kalemden hedef BOQ satırına kopyalar (S7 tek kaynak).
+
+    Alan listesi ÇAĞRI ANINDA modül global'inden okunur — dağıtımın relink yolu
+    ile senkron tazelemenin aynı kümeyi görmesinin tek yolu budur. `quantity`
+    BURADA YOK: hedef satırın miktarını çağıran belirler.
+    """
+    for field in MIRRORED_ITEM_FIELDS:
+        setattr(target, field, getattr(item, field))
+
 
 _MONEY = Decimal("0.01")
 
@@ -280,9 +308,14 @@ async def _ensure_code_unique(
         raise DuplicateError(DUPLICATE_ITEM_CODE)
 
 
-async def _distributed_quantity(session: AsyncSession, item_id: uuid.UUID) -> Decimal:
-    sums = await repository.sum_distributed_quantities(session, [item_id])
-    return sums.get(item_id, Decimal("0"))
+async def _distributed_quantity(
+    session: AsyncSession, project_id: uuid.UUID, item_id: uuid.UUID
+) -> Decimal:
+    """TB4/B2: "dağıtılmış" TEK KAYNAKTAN — dağıtım ekranının kalanıyla ve aşım
+    kontrolüyle aynı küme (`distribution_quantity`).
+    """
+    totals = await distribution_quantity.load_distributed_totals(session, project_id)
+    return totals.get(item_id, Decimal("0"))
 
 
 def to_item_response(
@@ -303,9 +336,9 @@ def to_item_response(
 
 
 async def to_item_response_single(
-    session: AsyncSession, item: EmployerContractItem
+    session: AsyncSession, project_id: uuid.UUID, item: EmployerContractItem
 ) -> EmployerContractItemResponse:
-    return to_item_response(item, await _distributed_quantity(session, item.id))
+    return to_item_response(item, await _distributed_quantity(session, project_id, item.id))
 
 
 async def get_employer_contract_detail(
@@ -365,16 +398,15 @@ async def get_employer_contract_items(
 ) -> EmployerContractItemsResponse:
     """Spec §6.2: gruplar + kalemler, her kalemde `distributed_quantity`/
 
-    `remaining_quantity`. Tek toplu sorgu (`sum_distributed_quantities`) —
-    N kalemli listede N+1 üretmez.
+    `remaining_quantity`. Toplamlar TEK KAYNAKTAN gelir (TB4/B2,
+    `distribution_quantity`) ve sabit sayıda sorgu ile — N+1 üretmez.
     """
     project = await _visible_project(session, actor, project_id)
     if project.contract is None:
         raise NotFoundError(CONTRACT_MISSING)
 
     groups = await repository.list_employer_groups(session, project_id)
-    item_ids = [item.id for group in groups for item in group.items]
-    distributed = await repository.sum_distributed_quantities(session, item_ids)
+    distributed = await distribution_quantity.load_distributed_totals(session, project_id)
 
     return EmployerContractItemsResponse(
         groups=[
@@ -448,30 +480,122 @@ async def create_employer_item(
     return item, project
 
 
+async def _refresh_mirror_boq_rows(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    item: EmployerContractItem,
+    mirrored_updates: dict[str, object],
+) -> int:
+    """TB4/B3: kalemin ayna BOQ satırlarını AYNI işlemde tazeler; adedini döner.
+
+    Ayna satırlar `distribution_quantity.index_allocations` TEK KAYNAĞINDAN
+    gelir (TB4/B2 otorite kümesi): dağıtım ekranının hücre saydığı küme neyse,
+    tazelenen küme de odur — ikinci bir "bağlı satırlar" sorgusu icat etmek iki
+    tanımı yeniden ayrıştırırdı. Kapsam dolayısıyla projenin ŞANTİYELERİDİR;
+    devredilmiş bir şantiyede kalmış kopya bu sözleşme tarafından yönetilmez.
+
+    Otorite kümenin İKİNCİ (belgelenmemişken T5'te yazıya geçen) sınırı: aynı
+    hücreye (kalem, şantiye) düşen birden çok BOQ satırından yalnız İLKİ küme
+    içindedir (`index_allocations`ın `setdefault`i, `id` sırasıyla determinist).
+    İkinci satır — BOQ ekranından `code` düzenlenerek doğabilir — tazelenmez ve
+    BAYAT fiyat/açıklama ile BOQ ekranında kalır. Bu bilinçli sınırdır: hücre
+    tekilliği kotanın tanımıdır, tazelemeyi kotanın görmediği bir satıra
+    genişletmek iki kümeyi yeniden ayrıştırırdı.
+
+    MİKTARA DOKUNULMAZ (`MIRRORED_ITEM_FIELDS`): miktar dağıtımın kararıdır,
+    kalem PATCH'i onu yeniden yazarsa kullanıcının kotası sessizce kaybolurdu.
+
+    `code` tazelemesi `uq_boq_items_site_code`'a çarpabilir (hedef şantiyede o
+    numarayı tutan başka bir satır olabilir). `IntegrityError` ile 500'e düşmek
+    yerine dağıtım yazma yolunun kullandığı AYNI 409 (`BOQ_CODE_TAKEN_IN_SITE`)
+    verilir — kalem kodu ile şantiye BOQ'su gerçekten çelişiyordur. PATCH
+    TAMAMEN reddedilir, kısmi senkron bırakılmaz (S8).
+
+    Gövde ÇARPILAN şantiyenin adını ve kodu taşır (S8,
+    `guards.boq_code_taken_in_site`): bu ekran BOQ'yu göstermez ve kalem birden
+    çok şantiyeye dağıtılmış olabilir. Bildirilen şantiye ilk çakışan ayna
+    satırın şantiyesidir — okuma `ORDER BY id` ile determinist geldiği için
+    (`repository.list_boq_items_for_sites`) aynı veri aynı şantiyeyi bildirir.
+    """
+    if not mirrored_updates:
+        return 0
+
+    sites = await sites_repository.list_sites_for_project(session, project_id)
+    boq_rows = await repository.list_boq_items_for_sites(session, [site.id for site in sites])
+    allocations = distribution_quantity.index_allocations(boq_rows)
+    mirrors = [
+        row
+        for (contract_item_id, _site_id), row in allocations.items()
+        if contract_item_id == item.id
+    ]
+    if not mirrors:
+        return 0
+
+    new_code = mirrored_updates.get("code")
+    if new_code is not None:
+        mirror_ids = {row.id for row in mirrors}
+        taken = {
+            row.site_id for row in boq_rows if row.code == new_code and row.id not in mirror_ids
+        }
+        clash = next((row for row in mirrors if row.site_id in taken), None)
+        if clash is not None:
+            site_names = {site.id: site.name for site in sites}
+            raise DuplicateError(boq_code_taken_in_site(site_names[clash.site_id], str(new_code)))
+
+    for row in mirrors:
+        for field, value in mirrored_updates.items():
+            setattr(row, field, value)
+    return len(mirrors)
+
+
 async def update_employer_item(
     session: AsyncSession, actor: User, item_id: uuid.UUID, data: EmployerContractItemUpdate
-) -> tuple[EmployerContractItem, Project]:
+) -> tuple[EmployerContractItem, Project, int]:
     """`group_id` verilirse spec §3.2 tutarlılığı tekrar kontrol edilir (başka
 
     sözleşmenin grubuna taşıma yasak); `code` değişirse tekillik tekrar kontrol
     edilir; `quantity` küçültülürse spec §3.3 kalan hesabı negatif OLAMAZ —
     dağıtılmış toplamın altına indirme 422 döner (task C6 kararı).
+
+    TB4/B3+S7: `MIRRORED_ITEM_FIELDS` (`code`/`description`/`unit`/`unit_price`)
+    kümesinden biri gerçekten DEĞİŞTİYSE kalemin ayna BOQ satırları
+    aynı işlemde tazelenir (S2: senkron tazeleme, snapshot DEĞİL) ve tazelenen
+    satır adedi döner — router mevcut `update` denetim satırının detayına yazar,
+    yeni bir `AuditAction` açılmaz.
+
+    Kilit `repository.lock_employer_items` (TB1) — dağıtımın kullandığı desenin
+    aynısı, `ORDER BY id` ile: doğrulamayı ve tazelemeyi besleyen okumalardan
+    ÖNCE alınır, böylece eşzamanlı bir dağıtım kaydı ile kalem güncellemesi
+    birbirinin okuduğu "dağıtılmış"ı geçersizleştiremez. Aynı sıra iki yazma
+    yolunda da kullanıldığı için deadlock doğmaz.
     """
     item, project = await _visible_item(session, actor, item_id)
+    await repository.lock_employer_items(session, project.id)
+
     updates = data.model_dump(exclude_unset=True)
     if "group_id" in updates:
         await _ensure_group_in_project(session, updates["group_id"], project.id)
     if "code" in updates and updates["code"] != item.code:
         await _ensure_code_unique(session, project.id, updates["code"], exclude_item_id=item.id)
     if "quantity" in updates:
-        distributed = await _distributed_quantity(session, item.id)
+        distributed = await _distributed_quantity(session, project.id, item.id)
         if updates["quantity"] < distributed:
             raise SiteValidationError(ITEM_QUANTITY_BELOW_DISTRIBUTED)
+
+    # DEĞİŞMEYEN alan tazeleme saymaz: aynı değeri yeniden göndermek denetim
+    # satırına "N satır tazelendi" yazdırmamalı (olmayan bir etki bildirilmez).
+    mirrored_updates = {
+        field: updates[field]
+        for field in MIRRORED_ITEM_FIELDS
+        if field in updates and updates[field] != getattr(item, field)
+    }
+    refreshed = await _refresh_mirror_boq_rows(session, project.id, item, mirrored_updates)
+
     for field, value in updates.items():
         setattr(item, field, value)
     await session.flush()
     await session.refresh(item)
-    return item, project
+    return item, project, refreshed
 
 
 # --- Silme uçları (task C12, spec §7) ---

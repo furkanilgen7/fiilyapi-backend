@@ -31,8 +31,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import DuplicateError, SiteValidationError
 from app.modules.contracts import repository as contracts_repository
 from app.modules.contracts.models import SubcontractorContract, SubcontractorContractItem
+from app.modules.site_diary import bridge
 from app.modules.subcontractor_progress_payments import guards, repository
 from app.modules.subcontractor_progress_payments.models import (
+    QuantitySource,
     SubcontractorProgressPayment,
     SubcontractorProgressPaymentLine,
 )
@@ -52,6 +54,8 @@ class _ResolvedLine:
     quantity: Decimal
     coefficient: Decimal
     sort_order: int
+    # SD-2 damgası (TB4 B1): SUNUCUDA türetilir, gövdeden ALINMAZ.
+    quantity_source: QuantitySource
 
 
 def completed_quantities(
@@ -107,6 +111,77 @@ def check_quota(
         )
 
 
+def _stamp(
+    diary_totals: dict[uuid.UUID, Decimal], item_id: uuid.UUID, quantity: Decimal
+) -> QuantitySource:
+    """Damgaya ÇEVİRME kuralının TEK kopyası (işveren `lines._stamp` ikizi).
+
+    İki çağıranı vardır — satır yazma yolu (`_resolve`) ve dönem değişince
+    yeniden damgalama (`restamp_for_period`); ikinci bir kopya, bir yolda
+    `diary`, diğerinde `manual` üreten sessiz bir ayrışma demek olurdu.
+    """
+    return (
+        QuantitySource.diary
+        if bridge.is_diary_quantity(diary_totals.get(item_id), quantity)
+        else QuantitySource.manual
+    )
+
+
+async def restamp_for_period(
+    session: AsyncSession,
+    contract: SubcontractorContract,
+    payment: SubcontractorProgressPayment,
+) -> None:
+    """Hakedişin DÖNEMİ değiştiğinde (`PATCH …/{id}`) MEVCUT satırların damgasını
+    yeniden türetir — T5 bulgusu; işveren `lines.restamp_for_period` ikizi.
+
+    Satırlara hiç dokunmayan bir `PATCH` dönemi taşıdığında eski dönemin
+    günlüğüyle eşleştiği için `diary` damgalanmış satır, yeni dönemle hiç
+    ilgisi olmadan rozetli kalırdı. Miktarlar DEĞİŞMEZ; yalnız iddia yeniden
+    sınanır ve kural `_resolve` ile aynı tek kaynaktan (`site_diary.bridge` +
+    `_stamp`) okunur.
+    """
+    diary_totals = await bridge.subcontractor_period_totals(
+        session,
+        contract.id,
+        contract.site_id,
+        year=payment.period_year,
+        month=payment.period_month,
+    )
+    for line in payment.lines:
+        if line.contract_item_id is None:
+            # Bağı kopmuş satır hangi kaleme ait olduğunu KAYBETMİŞTİR: günlük
+            # toplamıyla kıyaslanamaz → iddia düşer.
+            line.quantity_source = QuantitySource.manual
+            continue
+        line.quantity_source = _stamp(diary_totals, line.contract_item_id, line.quantity)
+
+
+async def restamp_draft_payments(
+    session: AsyncSession, contract: SubcontractorContract
+) -> list[SubcontractorProgressPayment]:
+    """Sözleşmenin ŞANTİYESİ değiştiğinde (`null`a düşme DAHİL) TASLAK
+    hakedişlerin satır damgalarını yeniden türetir — T6 bulgusu, karar S9/2.
+
+    Damganın ikinci bayatlama kapısı: köprü `contract.site_id`'ye bağlıdır, ama
+    sözleşme başka şantiyeye taşınabilir. A'nın günlüğüyle `diary` damgalanmış
+    satır, sözleşme B'ye taşındıktan sonra B'nin günlüğüyle hiç ilgisi olmadan
+    rozetli kalırdı (`null`da köprü tümden düşer, damga yine kalırdı).
+
+    **Kapsam yalnız `draft`** — donmuş evrak prensibi: onaya sunulmuş, onaylanmış
+    ya da ödenmiş hakedişin satırı sonradan değiştirilmez.
+
+    Eşleşme/toplama mantığı YOKTUR: dönem tazelemesinin (`restamp_for_period`)
+    aynı gövdesi hakediş başına çağrılır, kural tek kaynakta (`site_diary.bridge`
+    + `_stamp`) kalır.
+    """
+    payments = await repository.list_draft_payments(session, contract.id)
+    for payment in payments:
+        await restamp_for_period(session, contract, payment)
+    await session.flush()
+    return payments
+
+
 async def _resolve(
     session: AsyncSession,
     contract: SubcontractorContract,
@@ -115,6 +190,7 @@ async def _resolve(
     default_coefficient: Decimal,
     exclude_payment_id: uuid.UUID | None,
     existing: dict[uuid.UUID, SubcontractorProgressPaymentLine],
+    period: tuple[int | None, int | None],
 ) -> list[_ResolvedLine]:
     """Gövde-içi çift → kalem-sözleşme sahipliği → fiyat guard'ı → kota tavanı.
 
@@ -123,6 +199,10 @@ async def _resolve(
 
     `existing` = bu hakedişte HÂLİHAZIRDA duran satırlar. İki kural buradan
     okur: katsayı öntanımı (yalnız YENİ satıra iner) ve kotanın ARTIŞ koşulu.
+
+    `period` = hakedişin KENDİ dönemi — SD-2 damgasının (TB4 B1) süzgeci. Günlük
+    toplamı gövdenin tamamı için TEK kez okunur; köprü işveren ailesiyle AYNI
+    kaynaktan (`site_diary.bridge`) gelir.
     """
     item_ids = [entry.contract_item_id for entry in inputs]
     items = await repository.get_contract_items_by_ids(session, item_ids)
@@ -130,6 +210,10 @@ async def _resolve(
         session, contract.id, exclude_payment_id=exclude_payment_id
     )
     item_groups = await group_names(session, list(items.values()))
+    period_year, period_month = period
+    diary_totals = await bridge.subcontractor_period_totals(
+        session, contract.id, contract.site_id, year=period_year, month=period_month
+    )
 
     seen: set[uuid.UUID] = set()
     resolved: list[_ResolvedLine] = []
@@ -164,12 +248,17 @@ async def _resolve(
                 default_coefficient if existing_line is None else existing_line.coefficient
             )
 
+        # SD-2 (kullanıcı kararı S1): damga HER PUT'ta yeniden türetilir —
+        # miktar günlük toplamından ayrıldığı anda kaynak iddiası düşer.
+        quantity_source = _stamp(diary_totals, item.id, entry.quantity)
+
         resolved.append(
             _ResolvedLine(
                 item=item,
                 group_name=item_groups.get(item.source_contract_item_id),
                 quantity=entry.quantity,
                 coefficient=coefficient,
+                quantity_source=quantity_source,
                 # `sort_order` gönderilmezse GÖVDE SIRASI otoritedir (işveren
                 # deseni): ekran satırları zaten görünen sırada gönderir.
                 sort_order=index if entry.sort_order is None else entry.sort_order,
@@ -196,8 +285,9 @@ def _new_line(plan: _ResolvedLine) -> SubcontractorProgressPaymentLine:
     """Snapshot beşlisi YALNIZ yeni satırda kalemden kopyalanır; mevcut satırın
     snapshot'ı DONMUŞTUR (tazeleme yalnız `refresh-prices` ucundadır).
 
-    `quantity_source` istekten ALINMAZ: bu dilimde HER satır `manual`dır
-    (modelin öntanımı, spec §2) — `diary` değeri site_diary dilimiyle dolar.
+    `quantity_source` istekten ALINMAZ (bilinçli kural SÜRER: istekten alınması
+    `diary` rozetini sahte doldurmanın yolu olurdu) — değeri TB4 B1 ile
+    SUNUCUDA türetilir (`_resolve` → `site_diary.bridge`).
     """
     return SubcontractorProgressPaymentLine(
         contract_item_id=plan.item.id,
@@ -208,6 +298,7 @@ def _new_line(plan: _ResolvedLine) -> SubcontractorProgressPaymentLine:
         coefficient=plan.coefficient,
         quantity=plan.quantity,
         group_name=plan.group_name,
+        quantity_source=plan.quantity_source,
     )
 
 
@@ -236,6 +327,7 @@ async def apply_lines(
         default_coefficient=payment.default_coefficient,
         exclude_payment_id=payment.id,
         existing=existing,
+        period=(payment.period_year, payment.period_month),
     )
 
     # --- Buradan itibaren yazma; doğrulama YOK (yukarıdaki sıra kısıtı). ---
@@ -247,6 +339,8 @@ async def apply_lines(
         else:
             line.quantity = plan.quantity
             line.coefficient = plan.coefficient
+            # Damga TAZELENİR (SD-2): eski `diary` iddiası miktarla birlikte düşer.
+            line.quantity_source = plan.quantity_source
         line.sort_order = plan.sort_order
         new_lines.append(line)
     payment.lines = new_lines

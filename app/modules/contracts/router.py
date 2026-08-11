@@ -48,6 +48,7 @@ from app.modules.contracts.schemas import (
     SubcontractorResponse,
     SubcontractorUpdate,
 )
+from app.modules.subcontractor_progress_payments import lines as subcontractor_payment_lines
 from app.modules.users.models import User
 
 router = APIRouter(tags=["contracts"], responses=COMMON_ERROR_RESPONSES)
@@ -258,15 +259,19 @@ async def update_employer_contract_item_endpoint(
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> EmployerContractItemResponse:
-    item, project = await service.update_employer_item(session, user, item_id, data)
+    item, project, refreshed_boq_count = await service.update_employer_item(
+        session, user, item_id, data
+    )
     await record_audit(
         session,
         action=AuditAction.update,
-        detail=messages.employer_contract_item_updated(project.name, item.code, item.description),
+        detail=messages.employer_contract_item_updated(
+            project.name, item.code, item.description, refreshed_boq_count
+        ),
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
-    return await service.to_item_response_single(session, item)
+    return await service.to_item_response_single(session, project.id, item)
 
 
 @router.delete(
@@ -495,9 +500,20 @@ async def update_subcontractor_contract_endpoint(
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> SubcontractorContractDetail:
-    contract, project, is_publishing = await subcontracts.update_subcontractor_contract(
-        session, user, contract_id, data
-    )
+    (
+        contract,
+        project,
+        is_publishing,
+        site_changed,
+    ) = await subcontracts.update_subcontractor_contract(session, user, contract_id, data)
+    # TB4 T6 (karar S9/2): şantiye değişti = günlük köprüsü değişti. TASLAK
+    # hakedişlerin `diary` damgası yeni şantiyenin günlüğüyle yeniden sınanır;
+    # onaylı/ödenmiş evrak DONMUŞTUR. Tetikleme burada durur, `subcontracts`
+    # servisinde DEĞİL: hakediş paketi `contracts`a bağlıdır, tersi olsaydı
+    # paketler arası import çemberi doğardı. Router hiçbir modül tarafından
+    # import EDİLMEZ — kompozisyon katmanı olarak ikisini de tanıyabilir.
+    if site_changed:
+        await subcontractor_payment_lines.restamp_draft_payments(session, contract)
     label = messages.subcontract_label(contract.contract_no, contract.subcontractor_name)
     detail = (
         messages.subcontract_published(project.name, label)

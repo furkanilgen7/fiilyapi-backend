@@ -468,7 +468,7 @@ def _merged_for_validation(contract: SubcontractorContract, changes: dict) -> Si
 
 async def update_subcontractor_contract(
     session: AsyncSession, actor: User, contract_id: uuid.UUID, data: SubcontractorContractUpdate
-) -> tuple[SubcontractorContract, Project, bool]:
+) -> tuple[SubcontractorContract, Project, bool, bool]:
     """PATCH GEVŞEK, YAYIN SIKI (`sites.update_site` deseninin aynısı, spec §4).
 
     Genel dalda zorunluluk kuralları KOŞMAZ — koşsaydı canlıdaki eksik kayıtlı
@@ -481,9 +481,17 @@ async def update_subcontractor_contract(
     yayına geçiş olup olmadığı yalnız BURADA bilinir — `is_draft`in ÖNCEKİ
     değeri router'da görünmez, dolayısıyla ayrımı dışarı taşımak denetim
     günlüğünde "güncellendi" ile "yayına alındı" satırlarını karıştırırdı.
+
+    `site_changed` de AYNI gerekçeyle döner (TB4 T6, karar S9/2): şantiyenin
+    ÖNCEKİ değeri yalnız burada bilinir. Bu modül hakediş paketini TANIMAZ —
+    tazelemeyi tetikleme işi kompozisyon katmanındaki router'ındır, bağımlılık
+    yönü tek yönlü (`subcontractor_progress_payments → contracts`) KALIR.
+    `site_id` gövdede olsa bile DEĞER aynıysa bayrak `False`tur: gereksiz
+    tazeleme köprüyü boşa sorgulardı.
     """
     contract, project = await _visible_contract(session, actor, contract_id)
     changes = data.model_dump(exclude_unset=True)
+    site_changed = "site_id" in changes and changes["site_id"] != contract.site_id
 
     # Tutarlılık: HER ZAMAN — değişen `site_id` (veya mevcut değeri) yeniden
     # kontrol edilir.
@@ -509,7 +517,7 @@ async def update_subcontractor_contract(
         setattr(contract, field, value)
     await session.flush()
     await session.refresh(contract)
-    return contract, project, is_publishing
+    return contract, project, is_publishing, site_changed
 
 
 async def _item_groups(

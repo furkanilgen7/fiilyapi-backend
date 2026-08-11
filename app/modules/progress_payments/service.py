@@ -247,6 +247,7 @@ async def create(
             contract,
             data.lines,
             default_coefficient=default_coefficient,
+            period=(data.period_year, data.period_month),
         )
 
     session.add(payment)
@@ -274,8 +275,16 @@ async def update(
             has_price_escalation=project.contract.has_price_escalation,
         )
 
+    period_before = (payment.period_year, payment.period_month)
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(payment, field, value)
+
+    # SD-2 damgası hakedişin DÖNEMİNE bağlıdır (TB4 T5 bulgusu): dönem
+    # değiştiğinde satırlar artık BAŞKA bir ayın günlüğüyle kıyaslanır, bu
+    # yüzden mevcut damgalar bayat kalamaz. Dönem aynıysa sorgu HİÇ koşmaz —
+    # yalnız `description` değiştiren PATCH gereksiz iş yapmaz.
+    if (payment.period_year, payment.period_month) != period_before:
+        await lines.restamp_for_period(session, payment, project.id)
 
     await session.flush()
     await session.refresh(payment)
@@ -448,6 +457,7 @@ def _line_detail(
         quantity=line.quantity,
         group_name=line.group_name,
         sort_order=line.sort_order,
+        quantity_source=line.quantity_source,
         adjusted_unit_price=calculations.adjusted_unit_price(
             line.contract_unit_price, line.coefficient
         ),

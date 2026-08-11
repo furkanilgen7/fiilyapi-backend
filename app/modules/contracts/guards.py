@@ -82,6 +82,21 @@ DUPLICATE_ALLOCATION = "Aynı kalem ve şantiye için tek kota gönderilebilir."
 # yazılamaz. Spec bu durumu adlandırmıyor — task C8 kararı, C13 gözden geçirir.
 BOQ_CODE_TAKEN_IN_SITE = "Bu poz numarası hedef şantiyede zaten kullanılıyor"
 
+
+def boq_code_taken_in_site(site_name: str, code: str) -> str:
+    """409 — kalem `code` tazelemesinin çarptığı ŞANTİYE ve KOD (TB4/S8).
+
+    Sabit metnin tek başına yetmediği tek yer burasıdır: kalem PATCH'i BOQ'yu
+    göstermeyen bir ekrandan gelir ve kalem birden çok şantiyeye dağıtılmış
+    olabilir — kullanıcı hangi şantiyedeki hangi numaranın engellediğini
+    gövdeden okuyamazsa çakışmayı arayarak bulmak zorunda kalır. Üslup
+    `subcontractor_progress_payments.guards.quantity_exceeds_quota` ile aynı:
+    sabit metin + `" · "` ile ayrılmış bağlam. Dağıtım yazma yolu bağlamı
+    ekranda zaten gösterdiği için SABİT metni kullanmaya devam eder.
+    """
+    return f"{BOQ_CODE_TAKEN_IN_SITE}: {site_name} · {code}"
+
+
 # 409 — silme korkulukları (spec §7). Yeni istisna sınıfı AÇILMAZ: mevcut
 # `RelatedRecordsExistError`. Metinlerde ADET VERİLMEZ, eyleme dönüktür
 # (`sites/guards.py`'deki `BLOCK_HAS_UNITS` dersi).

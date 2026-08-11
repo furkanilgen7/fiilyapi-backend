@@ -17,16 +17,16 @@ import uuid
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import delete, event, select, text
+from sqlalchemy import delete, event, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.access import AccessLevel, Scope
 from app.core.errors import ConflictError
 from app.core.security import hash_password
 from app.modules.progress_payments import schemas, service, transitions
 from app.modules.progress_payments.models import ProgressPayment, ProgressPaymentStatus
 from app.modules.projects.models import Project, ProjectContract
-from app.modules.roles.models import Role
-from app.modules.roles.seed_data import seed_reference_data
+from app.modules.roles.models import Module, ModuleGroup, Role, RolePermission
 from app.modules.users.models import User
 from tests.conftest import test_engine
 
@@ -97,16 +97,61 @@ async def _attempt_create_and_hold(
         return "created"
 
 
-async def _kurulum() -> tuple[uuid.UUID, uuid.UUID]:
-    """Reel commit'li kurulum: `seed_reference_data` idempotenttir (modülün
+#: Bu testin aktörünün geçmesi gereken İKİ kapı: proje görünürlüğü
+#: (`projects.visible_projects`) ve silme yetkisi (`core.access.can_delete`).
+#: Başka modüle gerek YOKTUR — matrisin tamamı kurulmaz.
+_REFERANS_MODUL_ANAHTARLARI = ("projects", "progress_payments")
 
-    kendi garantisi) — bu test hangi sırada koşarsa koşsun güvenlidir.
+#: Rol anahtarı bilinçli olarak TESTE ÖZELDİR: `seed_reference_data`'nın
+#: ürettiği `system_admin`/`patron` gibi üretim anahtarlarıyla çakışmaz.
+_REFERANS_ROL_ANAHTARI = "pp_conc_admin"
+
+
+async def _referans_kur(session: AsyncSession) -> Role:
+    """Bu testin İHTİYACI kadar referans satırı — `seed_reference_data` ÇAĞRILMAZ.
+
+    Eski hâl tüm rol/modül/izin matrisini kurup **COMMIT EDİYORDU** ve temizlik
+    bu satırları silmediği için hepsi paylaşılan test veritabanına KALICI
+    sızıyordu. Sızıntı bugün genelde görünmüyor çünkü `tests/progress_payments/`
+    alfabetik olarak `tests/modules/`ten SONRA koşuyor; sıra terse dönünce
+    `tests/modules/test_role_model.py::test_role_key_is_unique` sızan `patron`
+    rolüne çarpıp KIRILIYOR (TB1'de fiilen yaşandı).
+
+    Satırlar burada commit EDİLİR — bu testin varlık sebebi iki BAĞIMSIZ
+    bağlantının aynı veriyi görmesidir, dolayısıyla commit kaçınılmazdır. Sızıntıyı
+    kapatan şey commit'in kalkması değil, yaratılan satırların TAM OLARAK bilinmesi
+    ve `_referans_temizle` ile geri alınmasıdır.
     """
-    async with _SessionFactory() as session:
-        await seed_reference_data(session)
-        await session.commit()
+    role = Role(key=_REFERANS_ROL_ANAHTARI, name="Eşzamanlılık Test Rolü")
+    session.add(role)
+    await session.flush()
 
-        role = (await session.execute(select(Role).where(Role.key == "system_admin"))).scalar_one()
+    for sira, anahtar in enumerate(_REFERANS_MODUL_ANAHTARLARI, start=1):
+        module = Module(key=anahtar, name=anahtar, group=ModuleGroup.GENEL, sort_order=sira)
+        session.add(module)
+        await session.flush()
+        session.add(
+            RolePermission(
+                role_id=role.id,
+                module_id=module.id,
+                access_level=AccessLevel.admin,
+                scope=Scope.all,
+            )
+        )
+    await session.commit()
+    return role
+
+
+async def _referans_temizle(session: AsyncSession) -> None:
+    """`_referans_kur`'un yarattığı HER satırı geri alır (izinler CASCADE ile gider)."""
+    await session.execute(delete(Role).where(Role.key == _REFERANS_ROL_ANAHTARI))
+    await session.execute(delete(Module).where(Module.key.in_(_REFERANS_MODUL_ANAHTARLARI)))
+
+
+async def _kurulum() -> tuple[uuid.UUID, uuid.UUID]:
+    """Reel commit'li kurulum — referans verisi bu testin KENDİ satırlarıdır."""
+    async with _SessionFactory() as session:
+        role = await _referans_kur(session)
 
         project = Project(code="PP-CONC-001", name="Eşzamanlılık Projesi")
         session.add(project)
@@ -388,10 +433,7 @@ async def _onay_kurulumu() -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]:
     damgalandığı ancak böyle ayırt edilebilir.
     """
     async with _SessionFactory() as session:
-        await seed_reference_data(session)
-        await session.commit()
-
-        role = (await session.execute(select(Role).where(Role.key == "system_admin"))).scalar_one()
+        role = await _referans_kur(session)
         project = Project(code="PP-CONC-002", name="Onay Eşzamanlılık Projesi")
         session.add(project)
         await session.flush()
@@ -447,6 +489,7 @@ async def _onay_temizligi(
         )
         await session.execute(delete(Project).where(Project.id == project_id))
         await session.execute(delete(User).where(User.id.in_([user_id, ikinci_user_id])))
+        await _referans_temizle(session)
         await session.commit()
 
 
@@ -460,4 +503,5 @@ async def _temizle(project_id: uuid.UUID, user_id: uuid.UUID) -> None:
         )
         await session.execute(delete(Project).where(Project.id == project_id))
         await session.execute(delete(User).where(User.id == user_id))
+        await _referans_temizle(session)
         await session.commit()

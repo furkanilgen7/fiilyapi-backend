@@ -265,8 +265,16 @@ async def update(
     if "section_id" in changes:
         await _validate_section(session, changes["section_id"], context.contract)
 
+    period_before = (context.payment.period_year, context.payment.period_month)
     for field, value in changes.items():
         setattr(context.payment, field, value)
+
+    # SD-2 damgası hakedişin DÖNEMİNE bağlıdır (TB4 T5 bulgusu, işveren ikizi):
+    # dönem değiştiğinde satırlar başka bir ayın günlüğüyle kıyaslanır, eski
+    # damga bayat kalamaz. Dönem aynıysa günlük sorgusu HİÇ koşmaz.
+    if (context.payment.period_year, context.payment.period_month) != period_before:
+        await lines.restamp_for_period(session, context.contract, context.payment)
+
     await session.flush()
     await session.refresh(context.payment)
     return context
