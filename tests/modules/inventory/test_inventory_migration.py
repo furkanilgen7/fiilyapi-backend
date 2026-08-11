@@ -461,12 +461,21 @@ async def test_db_level_semantics():
             other_site_id = await _seed_site(conn, "P-ST2")
             await _seed_warehouse(conn, "D-1", other_site_id)
 
-            # 3) Hareketi olan kart/depo SILINEMEZ (RESTRICT). `RESTRICT` ihlali
-            #    Postgres'te `NO ACTION`dan AYRI bir hata sinifidir — bu yuzden
-            #    beklenen tip `RestrictViolationError`dir.
-            with pytest.raises(asyncpg.RestrictViolationError):
+            # 3) Hareketi olan kart/depo SILINEMEZ (RESTRICT).
+            #
+            # ⚠️ BEKLENEN TIP POSTGRES SURUMUNE GORE DEGISIR (PR #26 CI kirigi,
+            #    2026-08-11): `RESTRICT` ihlalinin SQLSTATE'i PG 18'de `23001`
+            #    (-> `RestrictViolationError`), PG 16'da `23503`
+            #    (-> `ForeignKeyViolationError`). Ikisi KARDES sinif (ortak ata
+            #    `IntegrityConstraintViolationError`), biri otekini KAPSAMAZ.
+            #    Yalniz `RestrictViolationError` yazilmisti: yerelde (PG 18.4)
+            #    YESIL, CI'da (postgres:16-alpine) KIRMIZI — surum farki disinda
+            #    hicbir sey degismeden. Tuple ikisini de kabul eder; ata sinifi
+            #    yazmak UniqueViolation'i da yutacagi icin TERCIH EDILMEDI.
+            _restrict = (asyncpg.RestrictViolationError, asyncpg.ForeignKeyViolationError)
+            with pytest.raises(_restrict):
                 await conn.execute("DELETE FROM stock_items WHERE id = $1", item_id)
-            with pytest.raises(asyncpg.RestrictViolationError):
+            with pytest.raises(_restrict):
                 await conn.execute("DELETE FROM warehouses WHERE id = $1", warehouse_id)
 
             # 4) Negatif miktar DB'de serbest (sayim farki/sarf — spec §7 S4).
