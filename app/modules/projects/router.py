@@ -13,7 +13,7 @@ from app.core.ratelimit import client_ip
 from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
-from app.modules.projects import cost_summary, service
+from app.modules.projects import cost_summary, service, timeline
 from app.modules.projects.models import ProjectStatus, ProjectType
 from app.modules.projects.schemas import (
     EmployerCreate,
@@ -23,6 +23,7 @@ from app.modules.projects.schemas import (
     ProjectCreate,
     ProjectDetailResponse,
     ProjectListResponse,
+    ProjectTimelineResponse,
     ProjectUpdate,
 )
 from app.modules.users.models import User
@@ -85,6 +86,24 @@ async def list_projects_endpoint(
     status_filter: Annotated[ProjectStatus | None, Query(alias="status")] = None,
 ) -> ProjectListResponse:
     return await service.list_projects_overview(session, user, type, status_filter)
+
+
+# DIKKAT — ROTA SIRASI: bu STATIK yol, `/{project_id}` parametreli yolundan
+# ONCE tanimlanmak ZORUNDA. Sonra tanimlanirsa FastAPI "timeline"i bir proje
+# kimligi sanar ve uc hic calismadan 422 (uuid_parsing) doner.
+@router.get(
+    "/timeline",
+    response_model=ProjectTimelineResponse,
+    # OKUMA ucu: `view` yeter (spec §3). Yeni izin modulu ACILMAZ. Audit
+    # YAZILMAZ — turev okuma hicbir sey degistirmez (costs ucuyla ayni karar).
+    dependencies=[require_permission("projects", AccessLevel.view)],
+)
+async def get_projects_timeline_endpoint(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> ProjectTimelineResponse:
+    """Portfoy Gantt'i (P11). HAM veri — ay/zoom parametresi YOKTUR (spec §6 S4)."""
+    return await timeline.get_timeline(session, user)
 
 
 @router.get(
