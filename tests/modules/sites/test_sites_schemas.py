@@ -104,6 +104,11 @@ def test_section_response_carries_four_placeholders():
         boq_item_count=CountPlaceholder(pending_module="boq"),
         budget=MetricPlaceholder(pending_module="boq"),
         worker_count=CountPlaceholder(pending_module="timesheet"),
+        # P11 additive alanlari (spec §3): VARSAYILANLARI YOKTUR — alani
+        # doldurmayi unutan bir donusturucu sessizce degil, ValidationError ile
+        # patlamalidir; bu yuzden dogrudan kurulan her govde de onlari verir.
+        depends_on_section_id=None,
+        milestones=[],
     )
 
     assert section.boq_item_count.pending_module == "boq"

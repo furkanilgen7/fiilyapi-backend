@@ -15,6 +15,8 @@ __all__ = [
     "SectionCreate",
     "SectionDetailResponse",
     "SectionListResponse",
+    "SectionMilestoneInput",
+    "SectionMilestoneResponse",
     "SectionResponse",
     "SectionStatusCounts",
     "SectionUpdate",
@@ -63,6 +65,20 @@ class SiteFacilities(SiteFacilitiesInput):
 # --- Bolum ---
 
 
+class SectionMilestoneResponse(BaseModel):
+    """P11 — kilometre tasi cikis satiri (`Form - Bolum Ekle` 120-125).
+
+    DURUM ALANI YOKTUR (spec §6 S2): "Tamamlandı" rozeti `milestone_date` ile
+    bugunun TUREVIDIR ve istemcide hesaplanir. `sort_order` yanitta BASILIR
+    cunku Gantt satirlarinin sirasi istemcide yeniden kurulabilmelidir.
+    """
+
+    id: uuid.UUID
+    title: str
+    milestone_date: date
+    sort_order: int
+
+
 class SectionResponse(BaseModel):
     """Spec §4.1. "gecikme riski" alani KASITLI olarak yok (spec §3.3): hesabin
     girdisi henuz uretilmedigi icin yer tutucu bile dondurulmez."""
@@ -82,6 +98,12 @@ class SectionResponse(BaseModel):
     boq_item_count: CountPlaceholder
     budget: MetricPlaceholder
     worker_count: CountPlaceholder
+    # --- P11 (spec §3): YALNIZ EKLEME. Bolum basan UC yuzey de (detay, liste,
+    # santiye detayi) tek donusturucuden (`service.to_section`) gectigi icin bu
+    # iki alan hepsinde ayni anda dogar. Varsayilan YOKTUR: alani doldurmayi
+    # unutan bir donusturucu sessizce degil, `ValidationError` ile patlamalidir.
+    depends_on_section_id: uuid.UUID | None
+    milestones: list[SectionMilestoneResponse]
 
 
 class SectionDetailResponse(SectionResponse):
@@ -317,6 +339,25 @@ class SiteUpdate(BaseModel):
     delivery_date: date | None = None
 
 
+class SectionMilestoneInput(BaseModel):
+    """P11 — kilometre tasi giris satiri. `id` OPSIYONELDIR ve satirin KIMLIGINI
+    korur (P9 `ShareholderInput` emsali, spec §3):
+
+    * id verilirse mevcut satir YERINDE guncellenir (birincil anahtar yasar);
+    * verilmezse YENI satirdir;
+    * bilinmeyen ya da BASKA bolume ait id sessizce yeni satira DONMEZ, 422 verir
+      (bkz. `service._merge_milestones`).
+
+    `sort_order` GOVDEDEN GELMEZ: sira dizideki sirasindan atanir (0,1,2...) —
+    `SiteSectionInput` deseninin birebiri. Iki kaynak (dizi sirasi + acik alan)
+    birbiriyle celisebilirdi ve mockup'ta sira girisi CIZILMEMISTIR.
+    """
+
+    id: uuid.UUID | None = None
+    title: str = Field(min_length=1, max_length=200)
+    milestone_date: date
+
+
 class SectionCreate(BaseModel):
     """`Form - Bolum Ekle`in tam govdesi (P6 §5, T3).
 
@@ -361,6 +402,12 @@ class SectionCreate(BaseModel):
     # zorunluluklar yalniz burada `False` iken kosar (kalici karar 4).
     is_draft: bool = False
 
+    # --- P11 genislemesi (spec §3). Form 115-117 TEK oncul select'i + 120-125
+    # milestone girisi. Coklu bagimlilik ve ayri milestone CRUD ucu ACILMAZ.
+    # Bag YALNIZ BILGIDIR: tarih kisiti ZORLANMAZ (S3).
+    depends_on_section_id: uuid.UUID | None = None
+    milestones: list[SectionMilestoneInput] = Field(default_factory=list)
+
 
 class SectionUpdate(BaseModel):
     """`site_id` YOK — bolum baska santiyeye tasinamaz."""
@@ -391,3 +438,15 @@ class SectionUpdate(BaseModel):
     planned_worker_count: int | None = Field(default=None, ge=0)
     budget_amount: Decimal | None = Field(default=None, ge=0)
     is_draft: bool | None = None
+
+    # --- P11 genislemesi (spec §3) ---
+    # `depends_on_section_id`: "gonderilmedi" ile "acikca null'landi" ayrimi
+    # `exclude_unset` ile korunur — null gondermek BAGI KOPARIR.
+    depends_on_section_id: uuid.UUID | None = None
+    # `milestones`: liste gonderilirse TUM liste birlestirilir (gonderilmeyen
+    # mevcut satir DUSER); alan hic gonderilmezse satirlara DOKUNULMAZ. Bos liste
+    # gondermek ile alani gondermemek AYNI SEY DEGILDIR — ilki hepsini siler.
+    # Acik `null` "dokunma" olarak okunur: liste alaninin null'u bir SILME emri
+    # sayilsaydi, kismi govde gonderen eski istemciler satirlari sessizce
+    # supururdu; silmek isteyen taraf `[]` gonderir ve niyetini acikca yazar.
+    milestones: list[SectionMilestoneInput] | None = None

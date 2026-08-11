@@ -75,6 +75,32 @@ SECTION_MANAGER_REQUIRED = "Bölüm sorumlusu seçiniz."
 SECTION_DATES_REQUIRED = "Başlangıç ve planlanan bitiş tarihi zorunludur."
 SECTION_BUDGET_REQUIRED = "Bölüm bedeli zorunludur."
 
+# 422 — P11 bolum bagimliligi (spec §3, S3). UCU DE 422'DIR, 404 DEGIL: istenen
+# kaynak GUNCELLENEN bolumdur, oncul burada bir ALAN DEGERIDIR.
+#
+# `DEPENDS_NOT_IN_SITE` tek metindir ve UC durumu birden karsilar: var olmayan id,
+# baska santiyedeki bolum, gorunmeyen projedeki bolum. Ayirt edilebilir metinler
+# yazmak, elinde UUID olan kullaniciya "bu kayit baska bir yerde VAR" bilgisini
+# sizdirirdi (`SITE_MISSING`/`SECTION_MISSING` ayirt edilemezlik kuralinin ayni
+# uygulamasi). Guncellenen bolumun santiyesi zaten aktore GORUNURDUR, dolayisiyla
+# bu metin hicbir gorunurluk disi bilgi tasimaz.
+DEPENDS_NOT_IN_SITE = "Öncül bölüm aynı şantiyede bulunamadı"
+DEPENDS_SELF = "Bölüm kendisine bağımlı olamaz"
+# Zincir YURUYEREK bulunur (spec §5): 2'li, 3'lu ve daha uzun halkalar ayni
+# metni alir — kullanici icin fark yoktur, tek eylem bagi degistirmektir.
+DEPENDS_CYCLE = "Bölüm bağımlılıkları döngü oluşturamaz"
+
+# 422 — P11 kilometre tasi birlestirmesi (P9 `SHAREHOLDER_*` metinlerinin
+# birebiri). Bilinmeyen id ile BASKA bolume ait id AYNI metni alir: satir bu
+# bolumde YOKTUR, nerede oldugu bu ucun konusu degildir.
+MILESTONE_UNKNOWN = (
+    "Gönderilen kilometre taşı bu bölümde bulunamadı. "
+    "Sayfayı yenileyip güncel listeyle tekrar deneyin."
+)
+# P9 T5 dersi: ayni id iki kez gonderilirse birlestirme SESSIZCE tek satira
+# cokerdi (200 doner, ikinci girdi kazanir, ilki gerekcesiz kaybolur).
+MILESTONE_DUPLICATE_IN_PAYLOAD = "Aynı kilometre taşı listede birden çok kez var"
+
 # 422 — tutarlilik kurallari (HER ZAMAN).
 END_BEFORE_START = "Planlanan bitiş tarihi başlangıçtan önce olamaz."
 SAFETY_OFFICER_CONFLICT = "İSG uzmanı ya sistem kullanıcısı ya dış kaynak (OSGB) olabilir."
