@@ -283,6 +283,21 @@ class Section(Base):
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
     # ----------------------------------------------------------------- #
+    # P11 — Gantt bagimliligi (spec §2, S3). TEK oncul: `Form - Bolum Ekle`
+    # 115-117 tek select cizer, coklu bagimlilik CIZILMEMISTIR (liste tablosu
+    # ACILMAZ). Bag YALNIZ BILGIDIR (BE 117 "Gantt'ta baglanti cizgisi"):
+    # tarih kisiti ZORLANMAZ, oncul bitmeden baslayan bolum 422 ALMAZ.
+    # `SET NULL`: oncul bolum silinince bagimli bolum SILINMEZ, bagi kopar —
+    # bilgi bagi bir varlik kosulu degildir.
+    # ----------------------------------------------------------------- #
+    depends_on_section_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sections.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    # ----------------------------------------------------------------- #
     # P6 — `Form - Bolum Ekle` alanlari (spec §3). `is_draft` DISINDA hepsi
     # nullable: taslak destegi, mockup'taki `*` yalniz UI ipucudur; zorunluluk
     # uygulama katmaninda ve YALNIZ taslak-disi POST'ta uygulanir.
@@ -316,3 +331,44 @@ class Section(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+    # lazy="selectin" ZORUNLU — async oturumda tembel yukleme MissingGreenlet atar.
+    # Siralama (sort_order, id): sort_order esitliginde de deterministik kalir,
+    # yoksa timeline yaniti ayni veri icin farkli sirayla donebilirdi.
+    milestones: Mapped[list["SectionMilestone"]] = relationship(
+        "SectionMilestone",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+        order_by="(SectionMilestone.sort_order, SectionMilestone.id)",
+        back_populates="section",
+    )
+
+
+class SectionMilestone(Base):
+    """Bolum kilometre tasi (P11 spec §2) — `Form - Bolum Ekle` 120-125 girisi:
+    yalnizca AD + TARIH. Ayri bir CRUD ucu YOKTUR; satirlar bolum govdesiyle
+    id-korunumlu birlestirilir (P9 `ShareholderInput.id` emsali).
+
+    DURUM KOLONU YOKTUR (spec §6 S2, kullanici karari): "Tamamlandi" gorunumu
+    `milestone_date` ile bugunun TUREVIDIR. Elle isaretlenen bir durum hicbir
+    mockup'ta cizilmemistir — icat edilmez.
+
+    `created_at`/`updated_at` YOKTUR: govde ile birlestirilen alt satir deseni
+    (`land_share_shareholder` emsali) zaman damgasi tasimaz — satirlar bagimsiz
+    bir yasam dongusune sahip degildir, denetim izi bolum mutasyonundadir.
+    """
+
+    __tablename__ = "section_milestones"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    section_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sections.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    milestone_date: Mapped[date] = mapped_column(Date, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+
+    section: Mapped[Section] = relationship("Section", back_populates="milestones")
