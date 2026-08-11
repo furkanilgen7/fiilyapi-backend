@@ -1,0 +1,67 @@
+"""Stok çekirdeği korkulukları ve Türkçe hata metinleri (spec §2, §4, §7 S2).
+
+`documents/guards.py` deseninin kardeşi: hata SINIFLARI `app/core/errors.py`de,
+METİNLER burada TEK kopya sabit olarak durur; router'a ya da servise gömülü
+string YAZILMAZ.
+
+## Hangi kural hangi koda düşer
+
+| Durum | Kod | Sınıf |
+|---|---|---|
+| Görünmeyen ya da var olmayan kart/depo | 404 | `NotFoundError` |
+| Kayıtlı malzeme kodu / aynı kapsamda aynı depo adı | 409 | `DuplicateError` |
+| Hareketi olan depoyu silme | 409 | `RelatedRecordsExistError` |
+| Gövdedeki `site_id` görünmüyor ya da yok | 422 | `SiteValidationError` |
+
+**Kapsam uyumsuzluğu 422'dir, 404 DEĞİL** (`documents.SITE_NOT_IN_PROJECT`
+gerekçesi): istenen kaynak DEPO KOLEKSİYONUDUR; `site_id` gövdedeki
+düzeltilebilir bir ALAN DEĞERİDİR. Var OLMAYAN kimlik ile GÖRÜNMEYEN kimlik AYNI
+cümleyi alır — kimlik varlığı sızdırılmaz.
+
+**Hareketi olan depo 409'dur, 403 DEĞİL** (`documents.FOLDER_HAS_DOCUMENTS`
+deseni): kullanıcının yetkisi VARDIR, engelleyen şey kaydın DURUMUDUR.
+"""
+
+__all__ = [
+    "DUPLICATE_STOCK_ITEM_CODE",
+    "DUPLICATE_WAREHOUSE_NAME",
+    "STOCK_ITEM_MISSING",
+    "WAREHOUSE_HAS_ENTRIES",
+    "WAREHOUSE_MISSING",
+    "WAREHOUSE_SITE_INVALID",
+]
+
+# 404 — var olmayan malzeme kartı. Katalogda kapsam süzgeci YOKTUR (spec §2:
+# tabloda `project_id` kolonu bile yok), bu yüzden "görünmeyen kart" diye bir
+# durum da yoktur; tek 404 sebebi kaydın gerçekten olmamasıdır.
+STOCK_ITEM_MISSING = "Malzeme kartı bulunamadı"
+
+# 409 — `stock_items.code` GLOBAL tekildir (spec §2). Kontrol UYGULAMA
+# katmanındadır: DB `UNIQUE`ına düşülseydi kullanıcı alanına özel bir mesaj
+# yerine "Veri bütünlüğü hatası" görürdü. DB kısıtı yarış durumu için İKİNCİ
+# katman olarak KALIR (`IntegrityError` → 409).
+DUPLICATE_STOCK_ITEM_CODE = "Bu malzeme kodu zaten kayıtlı"
+
+# 404 — görünmeyen depo ile var olmayan kimlik AYNI gövdeyi alır.
+WAREHOUSE_MISSING = "Depo bulunamadı"
+
+# 409 — aynı kapsamda (şantiye VEYA merkez) aynı ad.
+#
+# ⚠️ T1'den DEVREDİLEN SINIR: `uq_warehouses_site_name` Postgres'in varsayılan
+# `NULLS DISTINCT` semantiği yüzünden `site_id IS NULL` olduğunda (MERKEZ depo)
+# FİİLEN ÇALIŞMAZ — `document_folders` ile birebir aynı durum. Yani DB yalnız
+# ŞANTİYELİ depoları korur; merkez dalında tek savunma servis korkuluğudur
+# (`service._assert_warehouse_name_free`). Korunmayan dalda eşzamanlı iki istek
+# çift kayıt üretebilir — bilinen ve kabul edilen sınır; kapatmak kısmi tekil
+# indeks açan bir migration gerektirir (T1'de kapsam dışı bırakıldı).
+DUPLICATE_WAREHOUSE_NAME = "Bu kapsamda aynı adlı bir depo zaten var"
+
+# 409 — silme korkuluğu. Hedef bacak (`warehouse_id`) ve KAYNAK bacak
+# (`source_warehouse_id`) AYNI kuralı paylaşır: yalnız hedefe bakılsaydı bir
+# transferin çıktığı depo silinebilir ve hareketin nereden geldiği kaybolurdu.
+# Metin ADET VERMEZ (`SITE_HAS_BLOCKS` dersi).
+WAREHOUSE_HAS_ENTRIES = "Bu depoda stok hareketi var, hareketi olan depo silinemez"
+
+# 422 — gövdedeki `site_id` görünmüyor ya da hiç yok. İki durum AYNI cümleyi
+# alır; ayrı cümleler kimliğin varlığını ele verirdi.
+WAREHOUSE_SITE_INVALID = "Seçilen şantiye bulunamadı"

@@ -800,3 +800,45 @@ def document_updated(project_name: str, site_name: str | None, filename: str) ->
 def document_deleted(project_name: str, site_name: str | None, filename: str) -> str:
     """Metin `session.delete`ten ÖNCE kurulur (klasör silme dersiyle aynı)."""
     return f"Belge silindi: {_document_scope(project_name, site_name)} · {filename}"
+
+
+# --- Stok çekirdeği (ST T2 — malzeme kartı + depo) ---
+#
+# Kimlik UUID DEĞİL kullanıcının ekranda gördüğü değerdir: kartta KOD + AD
+# (E3 tablosu ikisini üst üste basar), depoda AD. Kategori/birim/eşik
+# YAZILMAZ — künye ekranda zaten görünür ve günlük satırını gürültüye boğardı.
+
+
+def _warehouse_scope(site_name: str | None) -> str:
+    """Merkez depo (`site_id IS NULL`) şantiyesizdir ve günlükte de öyle görünür.
+
+    Şantiye adı olmadan "D-1 Ambar silindi" satırı anlamsızdır: aynı ad her
+    şantiyede olabilir (`section_created` gerekçesi).
+    """
+    return "Merkez" if site_name is None else site_name
+
+
+def stock_item_created(code: str, name: str) -> str:
+    return f"Malzeme kartı oluşturuldu: {code} · {name}"
+
+
+def stock_item_updated(code: str, name: str) -> str:
+    """Pasifleştirme de BU satırı yazar (`is_active: false` bir PATCH'tir);
+    ayrı bir metin AÇILMAZ çünkü kart silinmez, yalnız kullanımdan kalkar."""
+    return f"Malzeme kartı güncellendi: {code} · {name}"
+
+
+def warehouse_created(site_name: str | None, name: str) -> str:
+    return f"Depo oluşturuldu: {_warehouse_scope(site_name)} · {name}"
+
+
+def warehouse_renamed(site_name: str | None, old_name: str, new_name: str) -> str:
+    """Eski ad çağrı noktasında değişiklikten ÖNCE okunmalı (`role_renamed`
+    dersi); sonra okunursa günlükte yeni ad iki kez çıkar."""
+    return f"Depo yeniden adlandırıldı: {_warehouse_scope(site_name)} · {old_name} → {new_name}"
+
+
+def warehouse_deleted(site_name: str | None, name: str) -> str:
+    """Metin `session.delete`ten ÖNCE kurulur — sonra kurulsaydı ad güvenilir
+    okunamaz ve silinenin NE OLDUĞU kaybolurdu (`site_deleted` dersi)."""
+    return f"Depo silindi: {_warehouse_scope(site_name)} · {name}"
