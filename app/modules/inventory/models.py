@@ -44,7 +44,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
 
@@ -215,6 +215,19 @@ class StockEntry(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    # T3: hareket LISTESI satirlariyla birlikte doner ve `selectinload` ile TEK
+    # ek sorguda gelir (N+1 yok). `lazy="raise"` BILINCLIDIR: async oturumda
+    # tembel yukleme `MissingGreenlet` ile 500 uretir (P11'in devrettigi tuzak),
+    # bu yuzden yukleme UNUTULURSA sessiz bir yavaslama degil GURULTULU bir
+    # hata olsun istenir. Yazma yolu (`POST /stock/entries`) bu koleksiyona hic
+    # DOKUNMAZ: yanit, olusturulan satir nesnelerinden dogrudan kurulur.
+    lines: Mapped[list["StockEntryLine"]] = relationship(
+        "StockEntryLine",
+        cascade="all, delete-orphan",
+        order_by="StockEntryLine.id",
+        lazy="raise",
     )
 
 

@@ -24,6 +24,9 @@ deseni): kullanıcının yetkisi VARDIR, engelleyen şey kaydın DURUMUDUR.
 
 __all__ = [
     "DUPLICATE_STOCK_ITEM_CODE",
+    "ENTRY_ITEM_INVALID",
+    "ENTRY_RECEIVER_INVALID",
+    "SITE_MISSING",
     "DUPLICATE_WAREHOUSE_NAME",
     "STOCK_ITEM_MISSING",
     "WAREHOUSE_HAS_ENTRIES",
@@ -65,3 +68,23 @@ WAREHOUSE_HAS_ENTRIES = "Bu depoda stok hareketi var, hareketi olan depo silinem
 # 422 — gövdedeki `site_id` görünmüyor ya da hiç yok. İki durum AYNI cümleyi
 # alır; ayrı cümleler kimliğin varlığını ele verirdi.
 WAREHOUSE_SITE_INVALID = "Seçilen şantiye bulunamadı"
+
+
+# --- Hareket uçları (T3) ---
+
+# 422 — satırdaki `item_id` kataloğda YOK. Kart kataloğunda kapsam süzgeci
+# olmadığı için (spec §2) "görünmeyen kart" durumu yoktur: tek sebep kaydın
+# gerçekten olmamasıdır. 404 DEĞİLDİR çünkü istenen kaynak hareket
+# koleksiyonudur; hatalı olan gövdedeki düzeltilebilir bir SATIR ALANIDIR
+# (`WAREHOUSE_SITE_INVALID` ile aynı gerekçe).
+#
+# Metin KAÇ satırın ya da HANGİ kimliğin hatalı olduğunu SÖYLEMEZ: kimlik
+# sızdırmaz ve eyleme dönüktür (`SITE_HAS_BLOCKS` dersi).
+ENTRY_ITEM_INVALID = "Seçilen malzeme kartı bulunamadı"
+
+# 422 — SG 88 "Teslim Alan" kullanıcısı yok.
+ENTRY_RECEIVER_INVALID = "Seçilen teslim alan kullanıcı bulunamadı"
+
+# 404 — `GET /sites/{id}/stock`: görünmeyen şantiye ile var olmayan şantiye AYNI
+# gövdeyi alır (`sites` modülünün tek cümlesiyle aynı metin).
+SITE_MISSING = "Şantiye bulunamadı"

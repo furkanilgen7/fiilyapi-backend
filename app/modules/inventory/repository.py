@@ -9,11 +9,33 @@ açılsaydı `total` ile gösterilen tablo zamanla ayrışırdı.
 """
 
 import uuid
+from datetime import date
+from decimal import Decimal
+from typing import NamedTuple
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import (
+    ColumnElement,
+    Row,
+    Select,
+    and_,
+    case,
+    func,
+    literal,
+    select,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+from sqlalchemy.sql import Subquery
 
-from app.modules.inventory.models import StockCategory, StockEntry, StockItem, Warehouse
+from app.modules.inventory import balance
+from app.modules.inventory.models import (
+    StockCategory,
+    StockEntry,
+    StockEntryLine,
+    StockEntryType,
+    StockItem,
+    Warehouse,
+)
 from app.modules.sites.models import Site
 
 
@@ -181,3 +203,346 @@ async def warehouse_has_entries(session: AsyncSession, warehouse_id: uuid.UUID) 
         )
     )
     return bool((await session.execute(stmt)).scalar_one())
+
+
+# --- Hareket (T3) ---
+
+
+async def lock_warehouses_for_share(session: AsyncSession, warehouse_ids: list[uuid.UUID]) -> None:
+    """Hareket yazmadan ÖNCE hedef ve kaynak depoyu `FOR SHARE` ile kilitler.
+
+    ⚠️ T2'nin DEVİR NOTU: silme yolu satırı `FOR UPDATE` ile kilitler ve
+    "hareketi var mı?" kontrolü ile `DELETE` arasını kapatır. Bu ayak
+    kilitlenmeseydi eşzamanlı `DELETE /warehouses/{id}` penceresinde INSERT,
+    DB'nin `RESTRICT` kısıtına düşer ve kullanıcıya **500** dönerdi.
+
+    `FOR SHARE` (paylaşımlı) yeterlidir: iki hareket birbirini beklemez, yalnız
+    silme ile hareket birbirini dışlar.
+
+    Kimlikler SIRALI kilitlenir: iki depo arasında karşılıklı transfer yazan iki
+    istek farklı sırada kilitleseydi kilitlenme (deadlock) doğardı.
+    """
+    if not warehouse_ids:
+        return
+    await session.execute(
+        select(Warehouse.id)
+        .where(Warehouse.id.in_(warehouse_ids))
+        .order_by(Warehouse.id)
+        .with_for_update(read=True)
+    )
+
+
+async def existing_item_ids(session: AsyncSession, item_ids: list[uuid.UUID]) -> set[uuid.UUID]:
+    """Satırlardaki kartların TAMAMI TEK sorguda doğrulanır.
+
+    Kart başına `session.get` koşulsaydı 40 kalemlik bir irsaliye 40 sorgu
+    açardı; üstelik atomiklik için hepsinin YAZIMDAN ÖNCE bilinmesi gerekir.
+    """
+    stmt = select(StockItem.id).where(StockItem.id.in_(item_ids))
+    return set((await session.execute(stmt)).scalars().all())
+
+
+def _entry_scope(stmt: Select, project_ids: list[uuid.UUID]) -> Select:
+    """Hareket görünürlüğü: HEDEF ya da KAYNAK bacağı görünen depoda olan kayıt.
+
+    `OR`dur, `AND` DEĞİL: kendi şantiyemden BAŞKA bir projenin deposuna çıkan
+    transfer benim stoğumu düşürür ve hareket listemde GÖRÜNMEK ZORUNDADIR.
+    Bilinçli sınır: böyle bir satırda karşı deponun UUID'si yanıta girer — adı
+    ya da şantiyesi girmez, yalnız kimliği.
+    """
+    gorunen = _warehouse_scope(select(Warehouse.id), project_ids)
+    return stmt.where(
+        StockEntry.warehouse_id.in_(gorunen) | StockEntry.source_warehouse_id.in_(gorunen)
+    )
+
+
+def _entry_filtered(
+    stmt: Select,
+    project_ids: list[uuid.UUID],
+    entry_type: StockEntryType | None,
+    warehouse_id: uuid.UUID | None,
+    date_from: date | None,
+    date_to: date | None,
+) -> Select:
+    """Liste ve sayım AYNI süzgeçten geçer (`_item_filtered` gerekçesi)."""
+    stmt = _entry_scope(stmt, project_ids)
+    if entry_type is not None:
+        stmt = stmt.where(StockEntry.entry_type == entry_type)
+    if warehouse_id is not None:
+        # Depo süzgeci İKİ BACAĞI da kapsar: kullanıcı "bu deponun hareketleri"
+        # derken oraya GİRENİ de oradan ÇIKANI da kasteder.
+        stmt = stmt.where(
+            (StockEntry.warehouse_id == warehouse_id)
+            | (StockEntry.source_warehouse_id == warehouse_id)
+        )
+    if date_from is not None:
+        stmt = stmt.where(StockEntry.entry_date >= date_from)
+    if date_to is not None:
+        stmt = stmt.where(StockEntry.entry_date <= date_to)
+    return stmt
+
+
+async def list_entries(
+    session: AsyncSession,
+    project_ids: list[uuid.UUID],
+    *,
+    entry_type: StockEntryType | None,
+    warehouse_id: uuid.UUID | None,
+    date_from: date | None,
+    date_to: date | None,
+    limit: int,
+    offset: int,
+) -> list[StockEntry]:
+    """Satırlar `selectinload` ile TEK ek sorguda gelir — hareket başına sorgu
+    (N+1) açılmaz. Sıralama en yeniden eskiye, ikinci ölçüt kimlik: aynı güne
+    düşen iki hareket sayfalar arasında kaybolup tekrarlanmasın."""
+    stmt = _entry_filtered(
+        select(StockEntry), project_ids, entry_type, warehouse_id, date_from, date_to
+    )
+    stmt = (
+        stmt.options(selectinload(StockEntry.lines))
+        .order_by(StockEntry.entry_date.desc(), StockEntry.created_at.desc(), StockEntry.id)
+        .limit(limit)
+        .offset(offset)
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def count_entries(
+    session: AsyncSession,
+    project_ids: list[uuid.UUID],
+    *,
+    entry_type: StockEntryType | None,
+    warehouse_id: uuid.UUID | None,
+    date_from: date | None,
+    date_to: date | None,
+) -> int:
+    stmt = _entry_filtered(
+        select(func.count()).select_from(StockEntry),
+        project_ids,
+        entry_type,
+        warehouse_id,
+        date_from,
+        date_to,
+    )
+    return (await session.execute(stmt)).scalar_one()
+
+
+# --- Türev okuma: bakiye / durum / KPI (spec §3) ---
+
+
+def visible_warehouse_ids(project_ids: list[uuid.UUID]) -> Select:
+    """Genel özetin kapsamı: merkez depoların HEPSİ + görünen şantiye depoları."""
+    return _warehouse_scope(select(Warehouse.id), project_ids)
+
+
+def site_warehouse_ids(site_id: uuid.UUID) -> Select:
+    """Şantiye özetinin kapsamı: YALNIZ o şantiyenin depoları.
+
+    Merkez depo (`site_id IS NULL`) BURAYA GİRMEZ — spec §3'ün kararı:
+    "şantiye bakiyesi = o şantiyenin depoları". Girseydi aynı merkez stok her
+    şantiyede tekrar sayılır ve şantiye toplamları şirket toplamını aşardı.
+    """
+    return select(Warehouse.id).where(Warehouse.site_id == site_id)
+
+
+class SummaryContext(NamedTuple):
+    """Özet uçlarının ORTAK iskeleti — üç sorgu da (sayfa, sayım, KPI) bunu
+    paylaşır ki bakiye/durum/fiyat formülü tek yerde kalsın."""
+
+    balance_subq: Subquery
+    price_subq: Subquery
+    balance: ColumnElement
+    status: ColumnElement
+    last_price: ColumnElement
+
+
+def summary_context(warehouse_ids: Select) -> SummaryContext:
+    bacaklar = balance.legs(warehouse_ids)
+    bakiye_kaynagi = (
+        select(
+            bacaklar.c.item_id.label("item_id"),
+            func.sum(bacaklar.c.quantity).label("balance"),
+        )
+        .group_by(bacaklar.c.item_id)
+        .subquery()
+    )
+    fiyat_kaynagi = (
+        select(
+            StockEntryLine.item_id.label("item_id"),
+            StockEntryLine.unit_price.label("unit_price"),
+        )
+        .join(StockEntry, StockEntry.id == StockEntryLine.entry_id)
+        .where(
+            StockEntryLine.unit_price.is_not(None),
+            StockEntry.warehouse_id.in_(warehouse_ids),
+        )
+        .distinct(StockEntryLine.item_id)
+        .order_by(
+            StockEntryLine.item_id,
+            StockEntry.entry_date.desc(),
+            StockEntry.created_at.desc(),
+            StockEntryLine.id,
+        )
+        .subquery()
+    )
+    bakiye = func.coalesce(bakiye_kaynagi.c.balance, literal(Decimal("0")))
+    return SummaryContext(
+        balance_subq=bakiye_kaynagi,
+        price_subq=fiyat_kaynagi,
+        balance=bakiye,
+        status=balance.status_case(bakiye, StockItem.min_stock),
+        last_price=fiyat_kaynagi.c.unit_price,
+    )
+
+
+def _summary_joined(base: Select, ctx: SummaryContext, *, only_moved: bool) -> Select:
+    """Kartı bakiye ve son fiyat kaynaklarına bağlar.
+
+    `only_moved=False` (genel özet, E3): `OUTER JOIN` — hiç hareket görmemiş
+    katalog kartı 0 bakiye ile listede KALIR, yoksa "min 10 olan kalem hiç
+    alınmamış" uyarısı hiç doğmazdı.
+
+    `only_moved=True` (şantiye özeti, ŞS): `INNER JOIN` — ŞS "o şantiyenin
+    malzemeleri" ekranıdır; şantiyeye hiç girmemiş kart listeyi doldurmaz.
+    """
+    stmt = base.join(
+        ctx.balance_subq,
+        ctx.balance_subq.c.item_id == StockItem.id,
+        isouter=not only_moved,
+    )
+    return stmt.outerjoin(ctx.price_subq, ctx.price_subq.c.item_id == StockItem.id)
+
+
+def _summary_filtered(
+    stmt: Select,
+    ctx: SummaryContext,
+    *,
+    status: str | None,
+    category: StockCategory | None,
+    q: str | None,
+) -> Select:
+    """E3 filtre çubuğu: durum sekmeleri · kategori select'i · arama kutusu.
+
+    **Durum süzgeci SQL'de uygulanır**, Python'da değil: türev bir alana göre
+    süzüp sonra sayfalasaydık `total` ile gösterilen satır sayısı ayrışırdı."""
+    stmt = _item_filtered(stmt, category, q, None)
+    if status is not None:
+        stmt = stmt.where(ctx.status == status)
+    return stmt
+
+
+async def list_summary_rows(
+    session: AsyncSession,
+    ctx: SummaryContext,
+    *,
+    only_moved: bool,
+    status: str | None,
+    category: StockCategory | None,
+    q: str | None,
+    limit: int,
+    offset: int,
+) -> list[Row]:
+    stmt = _summary_joined(
+        select(
+            StockItem,
+            ctx.balance.label("balance"),
+            ctx.status.label("status"),
+            ctx.last_price.label("last_price"),
+        ),
+        ctx,
+        only_moved=only_moved,
+    )
+    stmt = _summary_filtered(stmt, ctx, status=status, category=category, q=q)
+    stmt = stmt.order_by(StockItem.name, StockItem.id).limit(limit).offset(offset)
+    return list((await session.execute(stmt)).all())
+
+
+async def count_summary_rows(
+    session: AsyncSession,
+    ctx: SummaryContext,
+    *,
+    only_moved: bool,
+    status: str | None,
+    category: StockCategory | None,
+    q: str | None,
+) -> int:
+    stmt = _summary_joined(select(func.count()).select_from(StockItem), ctx, only_moved=only_moved)
+    stmt = _summary_filtered(stmt, ctx, status=status, category=category, q=q)
+    return (await session.execute(stmt)).scalar_one()
+
+
+async def summary_kpis(
+    session: AsyncSession,
+    ctx: SummaryContext,
+    *,
+    only_moved: bool,
+    status: str | None,
+    category: StockCategory | None,
+    q: str | None,
+) -> Row:
+    """KPI şeridi SAYFAYI değil SÜZÜLEN KÜMEYİ özetler (E3 72-89 / ŞS 86-91).
+
+    Sayfa üzerinden hesaplansaydı ikinci sayfaya geçen kullanıcı "toplam stok
+    değeri"nin değiştiğini görürdü.
+
+    **Toplam değer = kalemin SON giriş fiyatı × bakiye** (§7 S6). Ağırlıklı
+    ortalama İCAT EDİLMEZ. **Fiyatsız kalem toplama GİRMEZ** ve sessizce 0
+    sayılmaz: bakiyesi olup fiyatı olmayan kalemler `items_without_price` ile
+    AYRICA raporlanır, yoksa "değer neden düşük" sorusu cevapsız kalırdı.
+    """
+    stmt = _summary_joined(
+        select(
+            func.count().label("total_items"),
+            func.count()
+            .filter(ctx.status == balance.StockStatus.critical.value)
+            .label("critical_count"),
+            func.count().filter(ctx.status == balance.StockStatus.low.value).label("low_count"),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (ctx.last_price.is_not(None), ctx.last_price * ctx.balance),
+                        else_=literal(Decimal("0")),
+                    )
+                ),
+                literal(Decimal("0")),
+            ).label("total_value"),
+            func.count()
+            .filter(and_(ctx.last_price.is_(None), ctx.balance != literal(Decimal("0"))))
+            .label("items_without_price"),
+        ).select_from(StockItem),
+        ctx,
+        only_moved=only_moved,
+    )
+    stmt = _summary_filtered(stmt, ctx, status=status, category=category, q=q)
+    return (await session.execute(stmt)).one()
+
+
+async def warehouse_breakdown(
+    session: AsyncSession, warehouse_ids: Select, item_ids: list[uuid.UUID]
+) -> list[Row]:
+    """E3 "Depo" sütunu: sayfadaki kalemlerin depo bazında bakiyesi.
+
+    Kalem başına sorgu (N+1) AÇILMAZ — sayfanın TÜM kimlikleri tek `IN` ile
+    sorulur ve sorgu sayısı veri hacminden bağımsız kalır.
+
+    Bakiyesi SIFIRA düşmüş depo kırılımda KALIR: "bu depoda artık yok" bilgisi
+    "bu depoda hiç olmadı"dan farklıdır ve kullanıcı ikisini ayırt etmelidir.
+    """
+    if not item_ids:
+        return []
+    bacaklar = balance.legs(warehouse_ids)
+    stmt = (
+        select(
+            bacaklar.c.item_id,
+            Warehouse.id.label("warehouse_id"),
+            Warehouse.name.label("warehouse_name"),
+            Warehouse.site_id,
+            func.sum(bacaklar.c.quantity).label("balance"),
+        )
+        .join(Warehouse, Warehouse.id == bacaklar.c.warehouse_id)
+        .where(bacaklar.c.item_id.in_(item_ids))
+        .group_by(bacaklar.c.item_id, Warehouse.id, Warehouse.name, Warehouse.site_id)
+        .order_by(Warehouse.name, Warehouse.id)
+    )
+    return list((await session.execute(stmt)).all())

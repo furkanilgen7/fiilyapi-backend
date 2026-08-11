@@ -842,3 +842,39 @@ def warehouse_deleted(site_name: str | None, name: str) -> str:
     """Metin `session.delete`ten ÖNCE kurulur — sonra kurulsaydı ad güvenilir
     okunamaz ve silinenin NE OLDUĞU kaybolurdu (`site_deleted` dersi)."""
     return f"Depo silindi: {_warehouse_scope(site_name)} · {name}"
+
+
+# --- Stok hareketi (ST T3) ---
+#
+# GİRİŞ BAŞINA TEK SATIR yazılır, satır başına DEĞİL (spec §4): 40 kalemlik bir
+# irsaliye günlüğü boğardı ve kullanıcının aradığı olay "şu irsaliye girildi"dir.
+
+_ENTRY_TYPE_LABELS = {
+    "purchase": "Satınalma girişi",
+    "transfer": "Şantiye transferi",
+    "adjustment": "Manuel düzeltme",
+}
+"""SG 53-76'nın Türkçe etiketleri — günlükte ham enum değeri görünmez."""
+
+
+def stock_entry_created(
+    entry_type: str,
+    warehouse_name: str,
+    source_warehouse_name: str | None,
+    delivery_note_no: str | None,
+) -> str:
+    """Kimlik UUID DEĞİL kullanıcının gördüğü değerdir: tip · depo(lar) · irsaliye.
+
+    Transferde KAYNAK depo da yazılır — yalnız hedef yazılsaydı "stok nereden
+    çıktı" sorusu günlükten cevaplanamazdı (çift bacağın günlükteki karşılığı).
+
+    Kalem SAYISI verilmez (`SITE_HAS_BLOCKS` dersi): satır adedi künyeden okunur.
+    """
+    tip = _ENTRY_TYPE_LABELS.get(entry_type, entry_type)
+    depo = (
+        warehouse_name
+        if source_warehouse_name is None
+        else (f"{source_warehouse_name} → {warehouse_name}")
+    )
+    irsaliye = "" if not delivery_note_no else f" · {delivery_note_no}"
+    return f"Stok hareketi kaydedildi: {tip} · {depo}{irsaliye}"

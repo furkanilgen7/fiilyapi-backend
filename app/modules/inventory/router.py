@@ -38,6 +38,7 @@ Router prefix TAŞIMAZ: uçlar iki ayrı kök altına dağılır (`/stock/items`
 """
 
 import uuid
+from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, status
@@ -52,12 +53,18 @@ from app.core.ratelimit import client_ip
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
 from app.modules.inventory import service
-from app.modules.inventory.models import StockCategory
+from app.modules.inventory.balance import StockStatus
+from app.modules.inventory.models import StockCategory, StockEntryType
 from app.modules.inventory.schemas import (
+    SiteStockResponse,
+    StockEntryCreate,
+    StockEntryListResponse,
+    StockEntryResponse,
     StockItemCreate,
     StockItemListResponse,
     StockItemResponse,
     StockItemUpdate,
+    StockSummaryResponse,
     WarehouseCreate,
     WarehouseListResponse,
     WarehouseResponse,
@@ -262,3 +269,119 @@ async def delete_warehouse_endpoint(
     warehouse, site = await service.visible_warehouse(session, user, warehouse_id)
     detail = await service.delete_warehouse(session, warehouse, site)
     await _audit(request, session, user, AuditAction.delete, detail)
+
+
+# --- Hareketler (T3) ---
+
+
+@router.post(
+    "/stock/entries",
+    response_model=StockEntryResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        404: {"description": "Hedef ya da kaynak depo bulunamadı"},
+        422: {"description": "Tip kuralı ihlali ya da geçersiz kart/kullanıcı"},
+    },
+    dependencies=[_FULL],
+)
+async def create_stock_entry_endpoint(
+    request: Request,
+    data: StockEntryCreate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> StockEntryResponse:
+    """SG formunun kaydı: başlık + satırlar TEK gövde, ATOMİK.
+
+    * `purchase` → miktar pozitif, kaynak depo YASAK
+    * `transfer` → kaynak depo ZORUNLU (kendine transfer 422); miktar hedef
+      depoya artı, KAYNAK depodan eksi yansır (ÇİFT BACAK, §7 S4)
+    * `adjustment` → miktar NEGATİF olabilir (sayım farkı/iade/SARF tek kapısı)
+
+    **Eksi bakiye ENGELLENMEZ** (§7 S4): katı engel sayım düzeltmesini
+    kilitlerdi; eksi bakiye özet uçlarında raporlanır.
+
+    Bozuk bir satır varsa HİÇBİR ŞEY yazılmaz — ne başlık ne satır.
+    Denetime GİRİŞ BAŞINA TEK satır düşer (spec §4).
+    """
+    entry, lines, detail = await service.create_stock_entry(session, user, data)
+    await _audit(request, session, user, AuditAction.create, detail)
+    return service.to_entry_response(entry, lines)
+
+
+@router.get("/stock/entries", response_model=StockEntryListResponse, dependencies=[_VIEW])
+async def list_stock_entries_endpoint(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    entry_type: StockEntryType | None = None,
+    warehouse_id: uuid.UUID | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> StockEntryListResponse:
+    """ "Stok Hareketi" ekranının verisi. Süzgeçler AND'lidir.
+
+    `warehouse_id` İKİ BACAĞI da kapsar (hedef VEYA kaynak): kullanıcı "bu
+    deponun hareketleri" derken oraya gireni de oradan çıkanı da kasteder.
+
+    **DÜZELTME/SİLME UCU YOKTUR:** hareket geçmişi değiştirilmez, yanlış kayıt
+    ters işaretli bir `adjustment` ile düzeltilir — geçmişi yeniden yazmak
+    bakiye tarihini de yeniden yazardı.
+    """
+    items, total = await service.list_stock_entries(
+        session,
+        user,
+        entry_type=entry_type,
+        warehouse_id=warehouse_id,
+        date_from=date_from,
+        date_to=date_to,
+        limit=limit,
+        offset=offset,
+    )
+    return StockEntryListResponse(items=items, total=total, limit=limit, offset=offset)
+
+
+# --- Türev özetler ---
+
+
+@router.get("/stock/summary", response_model=StockSummaryResponse, dependencies=[_VIEW])
+async def stock_summary_endpoint(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    status_filter: Annotated[StockStatus | None, Query(alias="status")] = None,
+    category: StockCategory | None = None,
+    q: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> StockSummaryResponse:
+    """E3 tablosu + KPI şeridi. Kapsam: GÖRÜNEN tüm depolar, merkez DAHİL.
+
+    Bakiye ve durum TÜREVDİR (spec §3) — bakiye kolonu yoktur. Durum formülü
+    §7 S1'dir ve sabitleri `inventory/balance.py`de TEK yerde durur;
+    `min_stock` yoksa durum `None` döner.
+
+    KPI şeridi SAYFAYI değil SÜZÜLEN KÜMEYİ özetler.
+    """
+    return await service.build_stock_summary(
+        session, user, status=status_filter, category=category, q=q, limit=limit, offset=offset
+    )
+
+
+@router.get("/sites/{site_id}/stock", response_model=SiteStockResponse, dependencies=[_VIEW])
+async def site_stock_endpoint(
+    site_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> SiteStockResponse:
+    """ŞS tablosu + KPI şeridi (86-91).
+
+    **Merkez depo hiçbir şantiyenin bakiyesine GİRMEZ** (spec §3): şantiye
+    bakiyesi "o şantiyenin depoları"dır. Görünmeyen şantiye 404 döner ve gövde
+    var olmayan kimliğinkiyle aynıdır.
+
+    "Aylık İhtiyaç" ve "Bölüm" sütunları YER TUTUCUDUR: giriş yüzeyi yoktur,
+    değer uydurulmaz (spec §3, §5).
+    """
+    return await service.build_site_stock(session, user, site_id, limit=limit, offset=offset)
