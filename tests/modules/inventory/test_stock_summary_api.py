@@ -268,14 +268,21 @@ async def test_kpi_sayfalanan_degil_tum_kumeyi_kapsar(
 
 
 @pytest.mark.asyncio
-async def test_bekleyen_siparis_pending_zarfla_doner(client, admin_headers):
-    """E3 "Bekleyen Sipariş" (12 Sipariş): sipariş tablosu YOKTUR, değer
-    UYDURULMAZ — yer tutucu zarf SA dilimini bildirir."""
-    kpi = (await _ozet(client, admin_headers))["kpis"]
-    zarf = kpi["pending_orders"]
-    assert zarf["available"] is False
-    assert zarf["value"] is None
-    assert zarf["pending_module"] == "purchasing"
+async def test_bekleyen_siparis_zarfi_gercektir(client, admin_headers):
+    """E3 "Bekleyen Sipariş": SA T4'te GERÇEĞE döndü.
+
+    Sipariş tablosu artık VARDIR; zarf DOLUDUR (`available=true`) ve bu yüzden
+    `pending_module` **null**dur — dolu bir zarf "hangi modül gelince dolacak"
+    bilgisi taşımaz (`MetricPlaceholder` sözleşmesi, P10 T3).
+
+    Sipariş verisiyle kurulmuş uçtan uca hâli `tests/modules/procurement/
+    test_purchasing_summary_api.py`dedir (bu paketin fixture'ları satınalma
+    kayıtları üretmez).
+    """
+    zarf = (await _ozet(client, admin_headers))["kpis"]["pending_orders"]
+    assert zarf["available"] is True
+    assert zarf["value"] == "0"
+    assert zarf["pending_module"] is None
 
 
 # --- Depo kırılımı ---

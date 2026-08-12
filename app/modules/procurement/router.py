@@ -41,17 +41,15 @@ Router prefix TAŞIMAZ: uçlar iki ayrı kök altına dağılır (`/suppliers` v
   `PATCH {"is_active": false}` iledir; teklifi/siparişi olan tedarikçi FK
   RESTRICT'i yüzünden zaten düşürülemez. Yol tanımlı olmadığı için FastAPI
   **405** döner ve bu bir BEKÇİ TESTİYLE kilitlidir (`test_silme_ucu_yoktur_405`).
-* **`submit`/`approve`/`reject` · teklif alt-kaynağı · `select-and-order` ·
-  sipariş uçları · `purchasing/summary` · karşılaştırma Excel'i T3/T4'ündür**
-  ve bu dosyada HİÇBİRİ açılmaz. Onay zinciri MOTORU, tedarikçi puanı,
-  e-posta/bildirim, mal kabul ucu ve kısmi teslim alanı ise HİÇBİR dilimde
-  açılmaz (spec §5, kalıcı karar).
+* Onay zinciri MOTORU, tedarikçi puanı, e-posta/bildirim, **mal kabul ucu** ve
+  kısmi teslim alanı HİÇBİR dilimde açılmaz (spec §5, kalıcı karar). Teslim
+  damgasının tek yolu `purchase_order_id` taşıyan bir STOK GİRİŞİDİR (§7 S4).
 """
 
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel
@@ -62,7 +60,7 @@ from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
-from app.modules.procurement import service, transitions
+from app.modules.procurement import export, service, summary, transitions
 from app.modules.procurement.models import (
     PurchaseOrderStatus,
     PurchasePriority,
@@ -82,6 +80,7 @@ from app.modules.procurement.schemas import (
     PurchaseRequestRejection,
     PurchaseRequestResponse,
     PurchaseRequestUpdate,
+    PurchasingSummaryResponse,
     SupplierCard,
     SupplierCreate,
     SupplierListResponse,
@@ -101,6 +100,10 @@ _FULL = require_permission(service.PERMISSION_MODULE, AccessLevel.full)
 # KIRPILMAZ, 422 döner (ST T2 ile birebir).
 _LIMIT = Annotated[int, Query(ge=1, le=200)]
 _OFFSET = Annotated[int, Query(ge=0)]
+
+#: `audit`/`boq`/`units` ile AYNI sabit — dosya tipini uçlar arasında tek bir
+#: metin belirler.
+XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 async def _audit(
@@ -461,6 +464,40 @@ async def list_quotes_endpoint(
     return await service.list_quotes(session, purchase_request)
 
 
+@router.get(
+    "/purchase-requests/{request_id}/quotes/export.xlsx",
+    dependencies=[_VIEW],
+    response_class=Response,
+    responses={
+        200: {"content": {XLSX_MEDIA_TYPE: {}}, "description": "Excel dosyası"},
+        404: {"description": "Talep bulunamadı"},
+    },
+)
+async def export_quote_comparison_endpoint(
+    request_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> Response:
+    """TEK 38 "Excel" düğmesi — karşılaştırmanın dışa aktarımı (§7 S5).
+
+    Veri kaynağı EKRANLA AYNIDIR (`service.list_quotes`): "Toplam" sütunu
+    tekrar hesaplanmaz, kartın taşıdığı değer yazılır. Sayfalama yoktur —
+    teklifler bir talebin altındadır ve eksik bir küme karşılaştırma değildir.
+
+    Yol `/export.xlsx`tir (`audit-log/export.xlsx` emsali): uzantı yolda
+    durduğu için tarayıcı indirmesi ayrıca bir tahmine muhtaç kalmaz.
+    """
+    purchase_request = await service.visible_request(session, user, request_id)
+    kartlar = (await service.list_quotes(session, purchase_request)).items
+    buffer = export.build_quote_comparison_workbook(kartlar)
+    dosya_adi = f"{purchase_request.request_no}-{export.XLSX_FILENAME_SUFFIX}"
+    return Response(
+        content=buffer.getvalue(),
+        media_type=XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": f'attachment; filename="{dosya_adi}"'},
+    )
+
+
 @router.post(
     "/purchase-requests/{request_id}/quotes",
     response_model=PurchaseQuoteResponse,
@@ -665,3 +702,27 @@ async def update_order_endpoint(
     order_response, detail = await service.update_order(session, order, data)
     await _audit(request, session, user, AuditAction.update, detail)
     return order_response
+
+
+# --- KPI şeridi (T4) ---
+#
+# Kök `purchasing`tir (spec §4) ve bu ÜÇÜNCÜ bir kök demektir (`/suppliers`,
+# `/purchase-requests`, `/purchase-orders` yanında) — **BFF proxy izin
+# listesine `purchasing` eklenmezse modül canlıda 404 verir** (kayıtlı tuzak).
+
+
+@router.get("/purchasing/summary", response_model=PurchasingSummaryResponse, dependencies=[_VIEW])
+async def purchasing_summary_endpoint(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    project_id: uuid.UUID | None = None,
+) -> PurchasingSummaryResponse:
+    """SAT 69-86 + SIP 38-43 KPI'ları — alan gerekçeleri `summary.py`dedir.
+
+    İki ekranın para kartı ("Bu Ay Sipariş" / "Bu Ay Toplam") TEK alandır ve
+    "Aktif Siparişler" ST'nin "Bekleyen Sipariş" zarfıyla aynı kümeden gelir.
+
+    `project_id` süzgeci kapsamı GENİŞLETMEZ, daraltır: görünmeyen bir proje
+    kimliği verildiğinde sayaçlar sıfır kalır. Üç sorgu koşar (N+1 yok).
+    """
+    return await summary.build_summary(session, user, project_id=project_id)

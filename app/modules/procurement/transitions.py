@@ -20,9 +20,22 @@ Ortak olan ŞEY DESENDİR, veri değil.
 * Talep `delivered`e ELLE geçmez: o damgayı stok girişi atar (§7 S4, T4'ün ST
   zinciri). Bir uç açılsaydı hiç mal girmemiş bir talep teslim görünürdü.
 * Sipariş `in_transit → delivered` de AYNI sebeple tabloda yoktur.
-* `ordered`/`delivered`/`rejected` talep tarafında TERMİNALDİR: hiçbir çiftte
-  KAYNAK değillerdir. Reddedilen talep diriltilmez — ihtiyaç sürüyorsa YENİ
-  talep açılır, çünkü ret gerekçesi o kaydın kalıcı bir niteliğidir.
+* `delivered`/`rejected` talep tarafında TERMİNALDİR: hiçbir çiftte KAYNAK
+  değillerdir. Reddedilen talep diriltilmez — ihtiyaç sürüyorsa YENİ talep
+  açılır, çünkü ret gerekçesi o kaydın kalıcı bir niteliğidir.
+
+## TESLİM tabloları neden AYRIDIR (T4)
+
+`ORDER_DELIVERY_TRANSITIONS` ve `REQUEST_DELIVERY_TRANSITIONS`, yukarıdaki iki
+tablodan ayrı durur ve onlara BİRLEŞTİRİLMEZ. Sebep davranışsaldır:
+`ORDER_TRANSITIONS` PATCH ucunun tablosudur — oraya `delivered` eklenseydi
+kullanıcı hiç mal girmemiş bir siparişi elle teslim edilmiş yapabilirdi, yani
+§7 S4'ün tam olarak yasakladığı şey PATCH'te açılırdı. Teslim damgasının TEK
+çağıranı `stock_link`tir.
+
+İkinci fark: teslim tablosu dışındaki tek kaynak durum `delivered`in KENDİSİDİR
+ve o **409 değil SESSİZ GEÇİŞTİR** (`stock_link` gerekçesi) — stok hareketi bir
+olgudur, satınalma damgası yüzünden reddedilemez.
 
 ## ₺500K eşiği bir YETKİ kuralıdır, zorunluluk değil
 
@@ -58,7 +71,11 @@ from app.modules.users.models import User
 __all__ = [
     "APPROVAL_THRESHOLD_LEVEL",
     "APPROVAL_THRESHOLD_TRY",
+    "OPEN_REQUEST_STATUSES",
+    "ORDER_DELIVERY_TRANSITIONS",
     "ORDER_TRANSITIONS",
+    "PENDING_ORDER_STATUSES",
+    "REQUEST_DELIVERY_TRANSITIONS",
     "REQUEST_TRANSITIONS",
     "RequestAction",
     "apply_request_transition",
@@ -97,6 +114,41 @@ REQUEST_TRANSITIONS: dict[tuple[PurchaseRequestStatus, RequestAction], PurchaseR
 #: durumun kendisini yazar). `(in_transit, delivered)` KASITLI olarak yoktur.
 ORDER_TRANSITIONS: frozenset[tuple[PurchaseOrderStatus, PurchaseOrderStatus]] = frozenset(
     {(PurchaseOrderStatus.approved, PurchaseOrderStatus.in_transit)}
+)
+
+#: T4 — TESLİM tablosu (`stock_link`in TEK kaynağı, modül docstring'i).
+#: `delivered → delivered` KASITLI olarak yoktur: o çift bir geçiş değil,
+#: sessizce yutulan bir tekrardır (ikinci parti girişi).
+ORDER_DELIVERY_TRANSITIONS: frozenset[tuple[PurchaseOrderStatus, PurchaseOrderStatus]] = frozenset(
+    {
+        (PurchaseOrderStatus.approved, PurchaseOrderStatus.delivered),
+        (PurchaseOrderStatus.in_transit, PurchaseOrderStatus.delivered),
+    }
+)
+
+#: T4 — siparişin bağlı TALEBİ. Tek meşru kaynak `ordered`dır: talep o duruma
+#: yalnızca `select-and-order` ile gelir ve sipariş de yalnızca oradan doğar.
+REQUEST_DELIVERY_TRANSITIONS: frozenset[tuple[PurchaseRequestStatus, PurchaseRequestStatus]] = (
+    frozenset({(PurchaseRequestStatus.ordered, PurchaseRequestStatus.delivered)})
+)
+
+#: SIP 39 "Aktif Siparişler" + E3 81 "Bekleyen Sipariş" — TEK tanım.
+#: "Aktif" = teslim EDİLMEMİŞ. İki ekran aynı sayıyı göstersin diye küme
+#: burada durur; ST zarfı ve satınalma özeti onu ORTAK kullanır.
+PENDING_ORDER_STATUSES: frozenset[PurchaseOrderStatus] = frozenset(
+    {PurchaseOrderStatus.approved, PurchaseOrderStatus.in_transit}
+)
+
+#: SAT 71 "Açık Talepler" — TASLAK sayılmaz (kişisel yarım form, sahibinden
+#: başkası göremeyeceği bir iş yükü değildir), `delivered`/`rejected` de
+#: sayılmaz (kapanmış). Mockup'ın aritmetiği de bunu söyler: 8 = 2 (onay
+#: bekleyen) + 5 (teklif bekleyen) + 1 (sipariş verilmiş).
+OPEN_REQUEST_STATUSES: frozenset[PurchaseRequestStatus] = frozenset(
+    {
+        PurchaseRequestStatus.pending_approval,
+        PurchaseRequestStatus.quote_wait,
+        PurchaseRequestStatus.ordered,
+    }
 )
 
 #: FST 166 "₺500K+ → Patron". Sihirli sayı KODA GÖMÜLMEZ; eşik ve onu geçen

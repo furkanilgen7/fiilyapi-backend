@@ -566,6 +566,80 @@ async def get_order(session: AsyncSession, order_id: uuid.UUID) -> PurchaseOrder
     return await session.get(PurchaseOrder, order_id)
 
 
+# --- T4: ozet sayaclari (SAT 69-86 / SIP 38-43) ---
+#
+# UC sorgu kosar ve sayisi DURUM SAYISINDAN BAGIMSIZDIR: talep sayimlari ·
+# siparis sayimlari · bu ayin tutari. Durum basina ayri bir `count` sorgusu
+# acilsaydi tek bir KPI seridi yedi sorgu ederdi (N+1'in serit hâli).
+
+
+async def request_status_counts(
+    session: AsyncSession, project_ids: list[uuid.UUID], *, project_id: uuid.UUID | None
+) -> dict[PurchaseRequestStatus, int]:
+    """Talep sayilari — durum basina TEK GRUPLU sorgu.
+
+    Kapsam (`project_id IN gorunenler`) HER ZAMAN uygulanir; kullanicinin
+    verdigi `project_id` onun USTUNE gecer (liste uclarindaki kural).
+    """
+    stmt = select(PurchaseRequest.status, func.count()).where(
+        PurchaseRequest.project_id.in_(project_ids)
+    )
+    if project_id is not None:
+        stmt = stmt.where(PurchaseRequest.project_id == project_id)
+    rows = (await session.execute(stmt.group_by(PurchaseRequest.status))).all()
+    return {durum: sayi for durum, sayi in rows}
+
+
+async def order_status_counts(
+    session: AsyncSession, project_ids: list[uuid.UUID], *, project_id: uuid.UUID | None
+) -> dict[PurchaseOrderStatus, int]:
+    """Siparis sayilari — durum basina TEK GRUPLU sorgu.
+
+    ZAMAN SUZGECI YOKTUR ve bu bilinclidir: "Aktif Siparişler"/"Yolda"/"Teslim
+    Edildi" kartlari bir DURUM fotografidir; ay penceresi yalniz PARA kartina
+    (`orders_total_in_month`) uygulanir cunku mockup "Bu Ay"i yalniz orada yazar.
+    """
+    stmt = select(PurchaseOrder.status, func.count()).where(
+        PurchaseOrder.project_id.in_(project_ids)
+    )
+    if project_id is not None:
+        stmt = stmt.where(PurchaseOrder.project_id == project_id)
+    rows = (await session.execute(stmt.group_by(PurchaseOrder.status))).all()
+    return {durum: sayi for durum, sayi in rows}
+
+
+async def orders_total_in_month(
+    session: AsyncSession,
+    project_ids: list[uuid.UUID],
+    *,
+    project_id: uuid.UUID | None,
+    year: int,
+    month: int,
+) -> Decimal:
+    """SAT 79 "Bu Ay Sipariş" = SIP 40 "Bu Ay Toplam" — TEK turetme.
+
+    Yil olcutu `supplier_order_totals` ile AYNI kolondur (`created_at`):
+    `purchase_orders`ta ayri bir siparis TARIHI kolonu yoktur (spec §2) ve
+    uydurulmaz. Sinirlar yari aciktir (`>= ay basi`, `< sonraki ay basi`) —
+    `EXTRACT(month …)` yazilsaydi kolondaki indeks kullanilamazdi.
+    """
+    baslangic = datetime(year, month, 1, tzinfo=UTC)
+    bitis = (
+        datetime(year + 1, 1, 1, tzinfo=UTC)
+        if month == 12
+        else datetime(year, month + 1, 1, tzinfo=UTC)
+    )
+    stmt = select(func.sum(PurchaseOrder.total_amount)).where(
+        PurchaseOrder.project_id.in_(project_ids),
+        PurchaseOrder.created_at >= baslangic,
+        PurchaseOrder.created_at < bitis,
+    )
+    if project_id is not None:
+        stmt = stmt.where(PurchaseOrder.project_id == project_id)
+    toplam = await session.scalar(stmt)
+    return toplam if toplam is not None else Decimal("0")
+
+
 async def existing_stock_item_ids(
     session: AsyncSession, item_ids: list[uuid.UUID]
 ) -> set[uuid.UUID]:
@@ -627,7 +701,10 @@ __all__ = [
     "list_requests",
     "list_suppliers",
     "load_request_lines",
+    "order_status_counts",
+    "orders_total_in_month",
     "request_estimated_total",
+    "request_status_counts",
     "request_quantity_total",
     "request_totals",
     "supplier_order_totals",

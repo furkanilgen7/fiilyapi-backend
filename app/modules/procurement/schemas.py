@@ -535,3 +535,27 @@ class PurchaseOrderListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+# --- Ozet (T4) ---
+
+
+class PurchasingSummaryResponse(BaseModel):
+    """SAT 69-86 + SIP 38-43 KPI seridi — alan gerekceleri `summary.py`de.
+
+    ZARF YOKTUR (`MetricPlaceholder`): bu ucun TUM alanlarinin veri kaynagi
+    VARDIR. Yer tutucu zarf "kaynagi henuz yazilmamis alan" icindir; sifir
+    degeri ise gercek bir cevaptir ("hic acik talep yok") ve ikisi ayni sey
+    DEGILDIR.
+
+    Kart ETIKETLERI burada YOKTUR — Turkce basliklar ekranin isidir; sunucu
+    yalniz sayilari verir (`StockSummaryKpis` deseni).
+    """
+
+    open_requests: int
+    quote_wait_requests: int
+    pending_approval_requests: int
+    orders_this_month_total: Decimal
+    active_orders: int
+    in_transit_orders: int
+    delivered_orders: int

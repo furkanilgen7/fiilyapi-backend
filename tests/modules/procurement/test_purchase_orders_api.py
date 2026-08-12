@@ -268,11 +268,23 @@ def test_siparis_matrisi_TAM_OLARAK_tek_gecis_tanimlar():
     (denetimde bizzat görüldü). Tablonun İÇERİĞİ bu yüzden ayrıca ve
     LİTERAL olarak kilitlenir; talep tarafındaki karşılığı
     `test_matris_tam_olarak_dort_gecis_tanimlar`tır.
+
+    T4 NOTU: teslim geçişleri bu tabloya EKLENMEDİ — `ORDER_TRANSITIONS` PATCH
+    ucunun tablosudur ve `delivered` oraya girseydi kullanıcı hiç mal girmemiş
+    bir siparişi elle teslim edilmiş yapabilirdi (§7 S4'ün yasakladığı şey).
+    Teslim damgası AYRI tablodan (`ORDER_DELIVERY_TRANSITIONS`) geçer ve tek
+    çağıranı `stock_link`tir.
     """
     from app.modules.procurement import transitions
 
     assert transitions.ORDER_TRANSITIONS == frozenset(
         {(PurchaseOrderStatus.approved, PurchaseOrderStatus.in_transit)}
+    )
+    assert transitions.ORDER_DELIVERY_TRANSITIONS == frozenset(
+        {
+            (PurchaseOrderStatus.approved, PurchaseOrderStatus.delivered),
+            (PurchaseOrderStatus.in_transit, PurchaseOrderStatus.delivered),
+        }
     )
 
 

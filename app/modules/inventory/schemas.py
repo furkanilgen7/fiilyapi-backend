@@ -182,11 +182,16 @@ class StockEntryCreate(BaseModel):
     `source_warehouse_id` (transfer) · `supplier_name` (86, SERBEST METİN —
     §7 S3) · `delivery_note_no` (87) · `received_by_user_id` (88) · `note` (169).
 
+    ## SG 85 "İlgili Sipariş" — SA T4'te AÇILDI
+    `purchase_order_id` isteğe bağlıdır ve YALNIZ `purchase` hareketinde
+    verilir. Taşındığında sipariş (ve varsa bağlı talep) otomatik `delivered`
+    olur (§7 S4): ayrı bir "mal kabul" ucu YOKTUR.
+
     ## SG'de OLUP BURAYA ALINMAYANLAR (icat yasağı, spec §5)
-    "İlgili Sipariş" (85) · "Sipariş" sütunu (95/113) · "eksik teslimat"
-    rozeti (107) · otomatik tedarikçi bildirimi (176) → **SA dilimi**.
-    Belge slotları (149-166) → **BC form-slot**. Gövdede gönderilseler bile
-    Pydantic onları yok sayar; şema ASLA genişletilmez.
+    "Sipariş" SÜTUNU (95/113 — satır düzeyi sipariş bağı) · "eksik teslimat"
+    rozeti (107) · otomatik tedarikçi bildirimi (176) → **hiçbir dilimde
+    açılmaz** (kısmi teslim ayrımı bilinen sınırdır). Belge slotları (149-166)
+    → **BC form-slot**. Gövdede gönderilseler bile Pydantic onları yok sayar.
 
     `note` tavanı `app.core.text.FREE_TEXT_MAX_LENGTH`tir: kolonu `Text`
     (DB'de sınırsız) olan TEK alan budur ve TB4 standardı gereği tavanı
@@ -198,6 +203,7 @@ class StockEntryCreate(BaseModel):
     warehouse_id: uuid.UUID
     source_warehouse_id: uuid.UUID | None = None
     supplier_name: str | None = Field(default=None, max_length=200)
+    purchase_order_id: uuid.UUID | None = None
     delivery_note_no: str | None = Field(default=None, max_length=50)
     received_by_user_id: uuid.UUID | None = None
     note: str | None = Field(default=None, max_length=FREE_TEXT_MAX_LENGTH)
@@ -220,7 +226,13 @@ class StockEntryCreate(BaseModel):
         * miktar SIFIR olamaz (her tipte): stoğa hiçbir etkisi olmayan satır.
         * `purchase`/`transfer` → miktar POZİTİF: eksi alım/eksi transfer
           düzeltmenin işidir ve `adjustment` ile yapılır.
+        * sipariş bağı YALNIZ `purchase`ta: serbest bırakılsaydı bir depo
+          transferi ya da sayım düzeltmesi siparişi sessizce "teslim edildi"
+          yapardı (SG 85 alanı da ALIM formundadır).
         """
+        if self.purchase_order_id is not None and self.entry_type is not StockEntryType.purchase:
+            raise ValueError("Sipariş bağı yalnızca alım hareketinde verilir.")
+
         if self.entry_type is StockEntryType.transfer:
             if self.source_warehouse_id is None:
                 raise ValueError("Transferde kaynak depo zorunludur.")
@@ -252,8 +264,13 @@ class StockEntryLineResponse(BaseModel):
 class StockEntryResponse(BaseModel):
     """Hareket künyesi + satırları.
 
-    **Sipariş alanı YOKTUR** (spec §5). Bakiye de yoktur: hareket bakiyeyi
-    TAŞIMAZ, bakiye hareketlerden TÜREVDİR (spec §3).
+    SG 85 "İlgili Sipariş" (`purchase_order_id`) SA T4'te gerçeğe döndü.
+    Siparişin NUMARASI burada YOKTUR: künye kimliği taşır, ekran sipariş
+    detayını kendi ucundan çeker — ikinci bir JOIN her hareket listesine
+    satınalma tablosunu bağlardı.
+
+    Bakiye de yoktur: hareket bakiyeyi TAŞIMAZ, bakiye hareketlerden TÜREVDİR
+    (spec §3).
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -264,6 +281,7 @@ class StockEntryResponse(BaseModel):
     warehouse_id: uuid.UUID
     source_warehouse_id: uuid.UUID | None
     supplier_name: str | None
+    purchase_order_id: uuid.UUID | None
     delivery_note_no: str | None
     received_by_user_id: uuid.UUID | None
     note: str | None

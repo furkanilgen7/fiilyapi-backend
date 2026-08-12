@@ -153,12 +153,18 @@ def _matris_disi_ciftler() -> list[tuple[PurchaseRequestStatus, transitions.Requ
 
 
 def test_matris_tam_olarak_dort_gecis_tanimlar():
-    """§3'ün geçiş kümesi: submit · approve · reject · select-and-order.
+    """§3'ün ELLE tetiklenen geçiş kümesi: submit · approve · reject ·
+    select-and-order.
 
     Sayı bir korkuluktur: beşinci bir geçiş sessizce eklenemesin. `delivered`
-    T4'ün ST zincirine aittir ve BURADA TABLODA YOKTUR — elle bir uçla
-    ulaşılabilir olsaydı stok girişi olmadan "teslim edildi" damgası düşerdi.
+    BURADA YOKTUR ve T4'ten sonra da yoktur — elle bir uçla ulaşılabilir olsaydı
+    stok girişi olmadan "teslim edildi" damgası düşerdi. Teslim, `stock_link`in
+    AYRI tablosundan geçer (`REQUEST_DELIVERY_TRANSITIONS`, aşağıda) ve o tablo
+    kendi literal testine de sahiptir (`test_stock_entry_delivery_chain`).
     """
+    assert transitions.REQUEST_DELIVERY_TRANSITIONS == frozenset(
+        {(PurchaseRequestStatus.ordered, PurchaseRequestStatus.delivered)}
+    )
     assert transitions.REQUEST_TRANSITIONS == {
         (PurchaseRequestStatus.draft, transitions.RequestAction.submit): (
             PurchaseRequestStatus.pending_approval
