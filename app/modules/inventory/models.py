@@ -15,10 +15,12 @@ Modul adi `inventory`dir cunku IZIN anahtari da odur: seed'de "Stok & Depo"
 (ModuleGroup.STOK_SATINALMA) ZATEN vardir — spec §7 S5 geregi yeni izin modulu
 ACILMAZ, izin migration'i YOKTUR.
 
-Kapsam disi (spec §5, kasitli): siparis FK'si · tedarikci KATALOGU (yalniz
+Kapsam disi (spec §5, kasitli): tedarikci KATALOGU (yalniz
 `supplier_name` serbest metin) · sarf/cikis tablosu (tek kapi `adjustment`
 satirinin negatif miktaridir) · belge alani (BC form-slot) · bolum-ihtiyac
 kolonu (ŞS "Aylik Ihtiyac"/"Bolum" PENDING). Bunlar SA ve BC dilimlerinin isidir.
+ST'nin siparis FK'si SA T1'de (`f3a4b5c6d7e8`) ADDITIVE olarak acildi:
+`stock_entries.purchase_order_id` — tedarikci ise HALA serbest metindir.
 
 Serbest metin tavani: `note` kolonu `Text`tir (DB'de sinirsiz); 2000 karakter
 tavani TB4 standardi geregi SEMA katmanindadir (`app.core.text.FREE_TEXT_MAX_LENGTH`)
@@ -202,6 +204,21 @@ class StockEntry(Base):
         index=True,
     )
     supplier_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # SA dilimi (T1) ile ACILDI: SG 85 "Ilgili Siparis" gercege doner.
+    #
+    # IMPORT CEMBERI KURULMAZ (P10 `cost_cards` tuzagi): hedef tablo STRING adla
+    # yazilir, `app.modules.procurement` BURADA import EDILMEZ ve karsi tarafta
+    # cift yonlu bir `relationship` de KURULMAZ. Bagi okuyan uc (T4) siparisi
+    # kendi sorgusuyla getirir.
+    #
+    # SET NULL: siparis kaydi bir gun dusurulse bile stok hareketi KALIR —
+    # bakiye bir satinalma kaydina bagli olarak yok olamaz.
+    purchase_order_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("purchase_orders.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     delivery_note_no: Mapped[str | None] = mapped_column(String(50), nullable=True)
     received_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),

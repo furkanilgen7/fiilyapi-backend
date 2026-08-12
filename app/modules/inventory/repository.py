@@ -21,6 +21,7 @@ from sqlalchemy import (
     case,
     func,
     literal,
+    or_,
     select,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -414,6 +415,23 @@ def _summary_joined(base: Select, ctx: SummaryContext, *, only_moved: bool) -> S
     return stmt.outerjoin(ctx.price_subq, ctx.price_subq.c.item_id == StockItem.id)
 
 
+def gorunur_kalem_kosulu(ctx: SummaryContext) -> ColumnElement:
+    """Pasif kalem görünürlüğü — yönetim kararı 2026-08-12 (F-ST canlı smoke).
+
+    * **pasif + bakiye 0 → SÜZÜLÜR**: pasifleştirilmiş ve elde kalmamış kart
+      E3/ŞS kataloğunda yer kaplamaz (canlıda `SMOKE-FST-01` böyle takılı kaldı).
+    * **pasif + bakiye ≠ 0 → LİSTELENİR**: envanter gerçeği gizlenmez; elde
+      stoğu olan kartı saklamak "depoda yok" izlenimi verir ve yanıltıcıdır.
+    * **aktif → her zaman listelenir** (bakiye 0 olsa da).
+
+    Koşul `_summary_filtered` içinden TEK yerden uygulanır ki liste, `total`
+    sayımı ve KPI şeridi aynı kümeyi görsün: üçü ayrışsaydı ekranda "3 kalem"
+    yazıp 2 satır görünürdü. Süzgeç Python'da değil SQL'de olmak ZORUNDADIR —
+    sayfalanmış satırları elde eleseydik `limit` dolmadan sayfa kırpılırdı.
+    """
+    return or_(StockItem.is_active.is_(True), ctx.balance != literal(Decimal("0")))
+
+
 def _summary_filtered(
     stmt: Select,
     ctx: SummaryContext,
@@ -425,8 +443,12 @@ def _summary_filtered(
     """E3 filtre çubuğu: durum sekmeleri · kategori select'i · arama kutusu.
 
     **Durum süzgeci SQL'de uygulanır**, Python'da değil: türev bir alana göre
-    süzüp sonra sayfalasaydık `total` ile gösterilen satır sayısı ayrışırdı."""
+    süzüp sonra sayfalasaydık `total` ile gösterilen satır sayısı ayrışırdı.
+
+    Pasif kalem süzgeci (`gorunur_kalem_kosulu`) da BURADADIR: her iki uç ve her
+    üç sorgu (sayfa/sayım/KPI) bu tek kapıdan geçer."""
     stmt = _item_filtered(stmt, category, q, None)
+    stmt = stmt.where(gorunur_kalem_kosulu(ctx))
     if status is not None:
         stmt = stmt.where(ctx.status == status)
     return stmt

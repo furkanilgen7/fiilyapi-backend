@@ -58,7 +58,7 @@ from app.modules.inventory.schemas import (
     StockWarehouseBalance,
     WarehouseCreate,
 )
-from app.modules.projects.schemas import MetricPlaceholder
+from app.modules.projects.schemas import MetricPlaceholder, metric
 from app.modules.projects.service import visible_projects
 from app.modules.sites import repository as sites_repository
 from app.modules.sites.models import Site
@@ -358,7 +358,19 @@ async def create_stock_entry(
 
     ÇİFT BACAK için AYNA SATIR YAZILMAZ: kaynak bacağı bakiye sorgusunda
     (`balance.legs`) üretilir. Gerekçesi o modülün docstring'indedir.
+
+    ⚠️ **SİPARİŞ BAĞI (SA T4, §7 S4):** `purchase_order_id` gövdede varsa
+    sipariş YAZIMDAN ÖNCE çözülür (görünmeyen/olmayan → **404**, hiçbir şey
+    yazılmaz) ve yazımdan SONRA `delivered` damgalanır. İki adım, `stock_link`
+    modülünün gerekçesindeki sebeple ayrıdır.
+
+    ⚠️ **İMPORT GECİKMELİDİR ve bu bilinçlidir:** `procurement` bu dosyanın
+    başında import EDİLMEZ, çünkü `procurement.repository` zaten `inventory`yi
+    okur ve modül düzeyinde çember kurulurdu (P10 `cost_cards` dersi). Yön iki
+    bekçi testiyle kilitli (`test_stock_entry_delivery_chain`).
     """
+    from app.modules.procurement import stock_link
+
     # Şantiye künyesi hareket denetiminde KULLANILMAZ (depo adı kapsamı zaten
     # taşır); `visible_warehouse` yine de tek görünürlük kapısı olduğu için çağrılır.
     hedef, _ = await visible_warehouse(session, actor, data.warehouse_id)
@@ -371,6 +383,11 @@ async def create_stock_entry(
 
     await _assert_items_exist(session, [satir.item_id for satir in data.lines])
     await _assert_receiver_exists(session, data.received_by_user_id)
+    order = (
+        None
+        if data.purchase_order_id is None
+        else await stock_link.resolve_order(session, actor, data.purchase_order_id)
+    )
 
     entry = StockEntry(
         entry_type=data.entry_type,
@@ -378,6 +395,7 @@ async def create_stock_entry(
         warehouse_id=hedef.id,
         source_warehouse_id=None if kaynak is None else kaynak.id,
         supplier_name=None if data.supplier_name is None else data.supplier_name.strip(),
+        purchase_order_id=None if order is None else order.id,
         delivery_note_no=(None if data.delivery_note_no is None else data.delivery_note_no.strip()),
         received_by_user_id=data.received_by_user_id,
         note=data.note,
@@ -397,6 +415,12 @@ async def create_stock_entry(
     ]
     session.add_all(lines)
     await session.flush()
+
+    if order is not None:
+        # Damga YAZIMDAN SONRA: hareket yazılamasaydı sipariş teslim
+        # görünmemeliydi. Zaten `delivered` siparişte sessizce hiçbir şey
+        # olmaz (idempotent — `stock_link` gerekçesi).
+        await stock_link.stamp_delivery(session, order)
 
     detail = messages.stock_entry_created(
         entry.entry_type.value,
@@ -421,6 +445,7 @@ def to_entry_response(entry: StockEntry, lines: list[StockEntryLine]) -> StockEn
         warehouse_id=entry.warehouse_id,
         source_warehouse_id=entry.source_warehouse_id,
         supplier_name=entry.supplier_name,
+        purchase_order_id=entry.purchase_order_id,
         delivery_note_no=entry.delivery_note_no,
         received_by_user_id=entry.received_by_user_id,
         note=entry.note,
@@ -534,10 +559,32 @@ async def build_stock_summary(
             low_count=kpi.low_count,
             total_items=kpi.total_items,
             items_without_price=kpi.items_without_price,
-            # E3 81 "Bekleyen Sipariş": sipariş tablosu YOKTUR, değer UYDURULMAZ.
-            pending_orders=MetricPlaceholder(pending_module=PENDING_PURCHASING),
+            # E3 81 "Bekleyen Sipariş": SA T4'te GERÇEĞE döndü (aşağıdaki
+            # yardımcının gerekçesi).
+            pending_orders=await _pending_orders_metric(session, actor),
         ),
     )
+
+
+async def _pending_orders_metric(session: AsyncSession, actor: User) -> MetricPlaceholder:
+    """E3 81 "Bekleyen Sipariş" = `approved` + `in_transit` sipariş sayısı.
+
+    ⚠️ **İKİ ANAHTAR KARIŞTIRILMAZ:** `PENDING_PURCHASING` (`"purchasing"`) bu
+    zarfın ETİKETİ, `procurement` ise izin matrisinin modül anahtarıdır. Etiket
+    yalnızca zarf BOŞ kaldığında görünür ve artık o dal koşmaz — sabit yine de
+    silinmez, ŞS'nin kardeş zarfı ile aynı sözleşmeyi belgeler.
+
+    Zarf ELLE KURULMAZ: `metric` tek kapıdır (P10 dersi — tutarsız üçlü
+    pydantic doğrulayıcısında 500 üretir). Sayı her zaman vardır, dolayısıyla
+    zarf her zaman DOLUDUR: sıfır bekleyen sipariş "veri yok" değil gerçek bir
+    cevaptır.
+
+    ⚠️ İmport GECİKMELİDİR (`create_stock_entry` gerekçesi: çember yasağı).
+    """
+    from app.modules.procurement import stock_link
+
+    sayi = await stock_link.pending_order_count(session, await _visible_project_ids(session, actor))
+    return metric(Decimal(sayi), PENDING_PURCHASING)
 
 
 async def _visible_site(session: AsyncSession, actor: User, site_id: uuid.UUID) -> Site:

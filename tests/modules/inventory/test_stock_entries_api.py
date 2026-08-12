@@ -97,25 +97,36 @@ async def test_satinalma_girisi_sg_alanlariyla_kaydedilir(
 
 
 @pytest.mark.asyncio
-async def test_siparis_alanlari_semada_yoktur(
+async def test_yalnizca_BASLIK_siparis_bagi_vardir(
     client, satinalma_headers, depo_fabrikasi, kart_fabrikasi
 ):
-    """SA BEKÇİSİ: sipariş bağı gönderilse bile sessizce YOK SAYILIR ve yanıtta
-    HİÇBİR sipariş alanı çıkmaz (spec §5 — icat yasağı)."""
+    """SA BEKÇİSİ (T4'te güncellendi): SG 85 "İlgili Sipariş" AÇILDI, gerisi HAYIR.
+
+    T3'te bu test "hiçbir sipariş alanı yok" diyordu; SA T4 başlıktaki
+    `purchase_order_id`yi gerçeğe döndürdü (§7 S4). Bekçinin geri kalanı AYNEN
+    durur ve hâlâ kalıcı kararları korur:
+
+    * `notify_supplier` (SG 176 otomatik bildirim) → bildirim altyapısı yok;
+    * SATIR düzeyi sipariş alanı (SG 95/113) → kısmi teslim ayrımı YOKTUR.
+
+    Var olmayan bir sipariş kimliği artık sessizce yutulmaz, **404**tür — o
+    kanonun testleri `tests/modules/procurement/test_stock_entry_delivery_chain`
+    paketindedir.
+    """
     depo = await depo_fabrikasi("Merkez Depo (Sincan)")
     kart = await kart_fabrikasi("SNK-0421")
 
     yanit = await client.post(
         "/stock/entries",
-        json=_govde(depo.id, kart.id, purchase_order_id=str(uuid.uuid4()), notify_supplier=True),
+        json=_govde(depo.id, kart.id, notify_supplier=True),
         headers=satinalma_headers,
     )
 
     assert yanit.status_code == 201, yanit.text
     govde = yanit.json()
-    assert "purchase_order_id" not in govde
+    assert govde["purchase_order_id"] is None
     assert "notify_supplier" not in govde
-    assert not [a for a in govde if "order" in a or "siparis" in a]
+    assert [a for a in govde if "order" in a] == ["purchase_order_id"]
     assert not [a for a in govde["lines"][0] if "order" in a]
 
 

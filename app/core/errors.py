@@ -110,6 +110,41 @@ class DocumentValidationError(DomainError):
     """
 
 
+class ProcurementValidationError(DomainError):
+    """Satınalma iş kuralı ihlali (SA spec §3) — 422.
+
+    `DocumentValidationError`/`PersonnelValidationError` deseninin aynısı: DB
+    `CHECK` ile zorlanamayan ya da zorlansa bile kullanıcıya Türkçe mesaj
+    veremeyecek kurallar tek yazma yolunda servis korkuluğuyla tutulur. İki
+    kullanıcısı vardır:
+
+    * `submit` engelleri — TASLAK-FARKINDALIKLI zorunluluklar (`validation.
+      submit_blockers`); taslakta gevşek, onaya gönderirken sıkı. Tüm engeller
+      TEK gövdede birleşir, çünkü uzun bir formda eksikleri birer birer
+      keşfettirmek kabul edilemez.
+    * teklifin nakliye kuralı — PATCH kısmi gövde gönderir, kural ancak
+      DB'deki kayıtla BİRLEŞTİRİLMİŞ değerler üzerinde anlamlıdır; bu yüzden
+      Pydantic'te değil serviste koşar.
+
+    404 DEĞİL: istenen kaynak vardır ve görünür, ihlal eden şey düzeltilebilir
+    ALAN DEĞERLERİDİR. 409 da DEĞİL: engel kaydın DURUMU değil İÇERİĞİDİR.
+    """
+
+
+class ApprovalNotAllowedError(DomainError):
+    """Onay YETKİSİ tutar eşiğini karşılamıyor (SA spec §3, §7 S2) — 403.
+
+    `DeleteNotAllowedError`in kardeşi ve aynı sebeple ondan AYRI: ikisi de
+    yetki engelidir ama biri silmeye, öteki onaya bakar; tek sınıfta
+    toplanırlarsa mesajlar da tek yerde toplanır ve "silme yetkiniz yok"
+    cümlesi bir onay ucundan dönerdi.
+
+    409 DEĞİL: kayıt DOĞRU durumdadır (`pending_approval`), engelleyen şey
+    AKTÖRÜN SEVİYESİDİR — başka bir kullanıcı aynı anda onaylayabilir. 422 da
+    değildir: gövdede düzeltilecek bir alan yoktur.
+    """
+
+
 class ConflictError(DomainError):
     """Durum makinesi / iş kuralı çakışması — 409 (P7 hakediş spec §7, §9.2, §9.7).
 

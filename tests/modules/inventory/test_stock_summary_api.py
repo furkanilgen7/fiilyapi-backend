@@ -139,6 +139,55 @@ async def test_hareketsiz_kart_sifir_bakiye_ile_listelenir(client, admin_headers
     assert satir["status"] == "critical"
 
 
+# --- Pasif kalem görünürlüğü (F-ST canlı smoke bulgusu, yönetim kararı 2026-08-12) ---
+#
+# pasif + bakiye 0  → SÜZÜLÜR (pasifleştirilen, elde kalmayan kart katalogda yer kaplamaz)
+# pasif + bakiye ≠ 0 → LİSTELENİR (envanter gerçeği gizlenmez)
+# aktif             → HER ZAMAN listelenir (bakiye 0 olsa da)
+# KPI sayaçları AYNI kurala uyar: liste ile sayaç ayrışırsa ekranda "3 kalem"
+# yazıp 2 satır görünürdü.
+
+
+@pytest.mark.asyncio
+async def test_ozet_pasif_bakiyesiz_kart_listelenmez(client, admin_headers, kart_fabrikasi):
+    """Pasif + bakiye 0 → ne listede ne KPI'da (canlıda `SMOKE-FST-01` kaldı)."""
+    await kart_fabrikasi("SNK-0421", min_stock="10.000")
+    await kart_fabrikasi("PSF-0001", name="Pasif Bakiyesiz", is_active=False)
+
+    govde = await _ozet(client, admin_headers, "?limit=200")
+    assert {s["code"] for s in govde["items"]} == {"SNK-0421"}
+    assert govde["total"] == 1
+    assert govde["kpis"]["total_items"] == 1
+
+
+@pytest.mark.asyncio
+async def test_ozet_pasif_bakiyeli_kart_listelenir(
+    client, admin_headers, depo_fabrikasi, kart_fabrikasi
+):
+    """Pasif + bakiye ≠ 0 → LİSTELENİR: elde stoğu olan kartı saklamak yanıltıcı."""
+    depo = await depo_fabrikasi("Merkez Depo (Sincan)")
+    kart = await kart_fabrikasi("PSF-0002", name="Pasif Bakiyeli", is_active=False)
+    await _giris(client, admin_headers, depo, kart, "7.000", fiyat="10.00")
+
+    govde = await _ozet(client, admin_headers, "?limit=200")
+    assert {s["code"] for s in govde["items"]} == {"PSF-0002"}
+    assert govde["total"] == 1
+    assert govde["kpis"]["total_items"] == 1
+    assert Decimal(govde["kpis"]["total_value"]) == Decimal("70.00")
+
+
+@pytest.mark.asyncio
+async def test_ozet_aktif_bakiyesiz_kart_listelenir(client, admin_headers, kart_fabrikasi):
+    """Aktif + bakiye 0 → listede VE KPI'da: "min 10 olan kalem hiç alınmamış"
+    uyarısı ancak böyle doğar."""
+    await kart_fabrikasi("SNK-0421", min_stock="10.000")
+
+    govde = await _ozet(client, admin_headers, "?limit=200")
+    assert {s["code"] for s in govde["items"]} == {"SNK-0421"}
+    assert govde["kpis"]["total_items"] == 1
+    assert govde["kpis"]["critical_count"] == 1
+
+
 # --- Süzgeçler (E3 filtre çubuğu) ---
 
 
@@ -268,14 +317,21 @@ async def test_kpi_sayfalanan_degil_tum_kumeyi_kapsar(
 
 
 @pytest.mark.asyncio
-async def test_bekleyen_siparis_pending_zarfla_doner(client, admin_headers):
-    """E3 "Bekleyen Sipariş" (12 Sipariş): sipariş tablosu YOKTUR, değer
-    UYDURULMAZ — yer tutucu zarf SA dilimini bildirir."""
-    kpi = (await _ozet(client, admin_headers))["kpis"]
-    zarf = kpi["pending_orders"]
-    assert zarf["available"] is False
-    assert zarf["value"] is None
-    assert zarf["pending_module"] == "purchasing"
+async def test_bekleyen_siparis_zarfi_gercektir(client, admin_headers):
+    """E3 "Bekleyen Sipariş": SA T4'te GERÇEĞE döndü.
+
+    Sipariş tablosu artık VARDIR; zarf DOLUDUR (`available=true`) ve bu yüzden
+    `pending_module` **null**dur — dolu bir zarf "hangi modül gelince dolacak"
+    bilgisi taşımaz (`MetricPlaceholder` sözleşmesi, P10 T3).
+
+    Sipariş verisiyle kurulmuş uçtan uca hâli `tests/modules/procurement/
+    test_purchasing_summary_api.py`dedir (bu paketin fixture'ları satınalma
+    kayıtları üretmez).
+    """
+    zarf = (await _ozet(client, admin_headers))["kpis"]["pending_orders"]
+    assert zarf["available"] is True
+    assert zarf["value"] == "0"
+    assert zarf["pending_module"] is None
 
 
 # --- Depo kırılımı ---
@@ -355,6 +411,63 @@ async def test_santiye_stogu_hareketsiz_karti_listelemez(
     govde = (await client.get(f"/sites/{gorunen_santiye.id}/stock", headers=admin_headers)).json()
     assert govde["total"] == 1
     assert govde["items"][0]["code"] == "SNK-0421"
+
+
+@pytest.mark.asyncio
+async def test_santiye_stogu_pasif_bakiyesiz_karti_listelemez(
+    client, admin_headers, gorunen_santiye, depo_fabrikasi, kart_fabrikasi
+):
+    """Pasif + bakiye 0 → ŞS'de de düşer; hareketi OLSA bile (giriş + düzeltme
+    ile sıfırlanmış). Sayaç da düşer, yoksa liste ile KPI ayrışırdı."""
+    depo = await depo_fabrikasi("D-1 Ambar", site=gorunen_santiye)
+    kalan = await kart_fabrikasi("SNK-0421", min_stock="10.000")
+    biten = await kart_fabrikasi("PSF-0001", name="Pasif Bakiyesiz", is_active=False)
+    await _giris(client, admin_headers, depo, kalan, "5.000")
+    await _giris(client, admin_headers, depo, biten, "5.000")
+    await _giris(client, admin_headers, depo, biten, "-5.000", tip="adjustment")
+
+    govde = (
+        await client.get(f"/sites/{gorunen_santiye.id}/stock?limit=200", headers=admin_headers)
+    ).json()
+    assert {s["code"] for s in govde["items"]} == {"SNK-0421"}
+    assert govde["total"] == 1
+    assert govde["kpis"]["total_items"] == 1
+
+
+@pytest.mark.asyncio
+async def test_santiye_stogu_pasif_bakiyeli_karti_listeler(
+    client, admin_headers, gorunen_santiye, depo_fabrikasi, kart_fabrikasi
+):
+    """Pasif + bakiye ≠ 0 → ŞS'de KALIR: şantiyede fiilen duran malzeme gizlenmez."""
+    depo = await depo_fabrikasi("D-1 Ambar", site=gorunen_santiye)
+    kart = await kart_fabrikasi("PSF-0002", name="Pasif Bakiyeli", is_active=False)
+    await _giris(client, admin_headers, depo, kart, "7.000", fiyat="10.00")
+
+    govde = (
+        await client.get(f"/sites/{gorunen_santiye.id}/stock?limit=200", headers=admin_headers)
+    ).json()
+    assert {s["code"] for s in govde["items"]} == {"PSF-0002"}
+    assert govde["kpis"]["total_items"] == 1
+    assert Decimal(govde["kpis"]["total_value"]) == Decimal("70.00")
+
+
+@pytest.mark.asyncio
+async def test_santiye_stogu_aktif_bakiyesiz_karti_listeler(
+    client, admin_headers, gorunen_santiye, depo_fabrikasi, kart_fabrikasi
+):
+    """Aktif + bakiye 0 → ŞS'de KALIR: "bu şantiyede tükendi" bilgisi "hiç
+    olmadı"dan farklıdır (hareketi olduğu için ŞS'nin INNER JOIN'ine girer)."""
+    depo = await depo_fabrikasi("D-1 Ambar", site=gorunen_santiye)
+    kart = await kart_fabrikasi("SNK-0421", min_stock="10.000")
+    await _giris(client, admin_headers, depo, kart, "5.000")
+    await _giris(client, admin_headers, depo, kart, "-5.000", tip="adjustment")
+
+    govde = (
+        await client.get(f"/sites/{gorunen_santiye.id}/stock?limit=200", headers=admin_headers)
+    ).json()
+    assert {s["code"] for s in govde["items"]} == {"SNK-0421"}
+    assert Decimal(govde["items"][0]["balance"]) == Decimal("0")
+    assert govde["kpis"]["total_items"] == 1
 
 
 @pytest.mark.asyncio
