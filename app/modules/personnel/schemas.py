@@ -13,13 +13,16 @@ AÇILMADI (spec §5 K2/K6); belge alt-kaynağı şeması T3'ün işidir.
 """
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.modules.personnel import guards
 from app.modules.personnel.models import Gender, MaritalStatus, PaymentMethod, WageType
 from app.modules.site_diary.models import WorkerSource
+
+_FREE_LABEL_MAX = 150
 
 
 class PersonnelCreate(BaseModel):
@@ -123,3 +126,77 @@ class PersonnelListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+# --- İK-1 T3: belge alt-kaynağı (spec §2, §3, §5 K5) -----------------------
+
+
+class PersonnelDocumentCreate(BaseModel):
+    """Belge takip kaydı — `type_id` XOR `free_label` (tam biri, spec §2).
+
+    XOR pydantic'te BURADA da doğrulanır (giriş katmanı 422): `model_validator`
+    "tam biri" kuralını uygular. Servis (`guards.TYPE_XOR_LABEL`) ile DB CHECK
+    ikinci ve üçüncü katlardır — biri düşse öteki tutar (WORKFLOW savunma
+    derinliği).
+
+    `document_id` BC arşiv künyesine bağdır (opsiyonel; dosyasız takip meşru,
+    spec §2). Görünürlük denetimi SERVİSTEDİR (IDOR) — pydantic yalnız biçime bakar.
+    """
+
+    type_id: uuid.UUID | None = None
+    free_label: str | None = Field(default=None, max_length=_FREE_LABEL_MAX)
+    valid_until: date | None = None
+    issued_at: date | None = None
+    note: str | None = None
+    document_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def _type_xor_label(self) -> "PersonnelDocumentCreate":
+        has_type = self.type_id is not None
+        has_label = bool(self.free_label and self.free_label.strip())
+        if has_type == has_label:
+            raise ValueError(guards.TYPE_XOR_LABEL)
+        return self
+
+
+class PersonnelDocumentUpdate(BaseModel):
+    """Kısmi güncelleme (spec §3). `type_id`/`free_label` DEĞİŞMEZ — belgenin
+
+    KİMLİĞİ (hangi tip/etiket) sabittir; yanlış tiple açılan kayıt silinip yeniden
+    açılır. Yalnız künye alanları ve BC bağı güncellenir. `document_id`
+    gönderildiğinde görünürlük denetimi serviste yapılır (create ile aynı IDOR
+    korkuluğu); `null` göndermek bağı çözer (dosyasız takibe döner) ve meşrudur.
+
+    `exclude_unset` ile "gönderilmedi" ≠ "null gönderildi" ayrımı korunur.
+    """
+
+    valid_until: date | None = None
+    issued_at: date | None = None
+    note: str | None = None
+    document_id: uuid.UUID | None = None
+
+
+class PersonnelDocumentResponse(BaseModel):
+    """Belge kaydı + tip künyesi (JOIN'li, N+1 yok) + TÜREV durum (spec §2, §3).
+
+    `status` ve `days_left` kolon DEĞİL, `status.derive_document_status` ile
+    hesaplanır (tek kaynak). `type_name`/`is_mandatory`/`validity_months` katalog
+    tipinden gelir ve serbest etiketli kayıtta None'dur.
+    """
+
+    id: uuid.UUID
+    personnel_id: uuid.UUID
+    type_id: uuid.UUID | None
+    type_name: str | None
+    is_mandatory: bool | None
+    validity_months: int | None
+    free_label: str | None
+    document_id: uuid.UUID | None
+    issued_at: date | None
+    valid_until: date | None
+    note: str | None
+    # TÜREV alanlar (kolon değil) — `status.py` tek kaynağından.
+    status: str
+    days_left: int | None
+    created_at: datetime
+    updated_at: datetime

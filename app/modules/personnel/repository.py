@@ -14,10 +14,14 @@ denetlenir.
 
 import uuid
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Row, Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.personnel.models import Personnel
+from app.modules.personnel.models import (
+    Personnel,
+    PersonnelDocument,
+    PersonnelDocumentType,
+)
 from app.modules.site_diary.models import WorkerSource
 
 
@@ -113,3 +117,51 @@ async def add_personnel(session: AsyncSession, personnel: Personnel) -> Personne
     await session.flush()
     await session.refresh(personnel)
     return personnel
+
+
+# --- İK-1 T3: belge alt-kaynağı --------------------------------------------
+
+
+async def list_personnel_documents(
+    session: AsyncSession, personnel_id: uuid.UUID
+) -> list[Row[tuple[PersonnelDocument, PersonnelDocumentType | None]]]:
+    """Bir personelin belgeleri + tip künyesi — TEK JOIN'li sorgu (N+1 YOK).
+
+    `OUTER JOIN`: serbest etiketli kayıtta (`type_id IS NULL`) tip satırı yoktur,
+    bu yüzden `LEFT JOIN` ile o kayıtlar da listede kalır ve tip sütunları None
+    gelir. Belge başına ayrı bir tip sorgusu (N+1) AÇILMAZ — kanıt:
+    `test_liste_tek_join_sorgusu` tip tablosuna ekstra SELECT atılmadığını sayar.
+
+    Sıralama DB'dedir (`created_at`) — liste her yenilendiğinde aynı sırada gelsin.
+    """
+    stmt = (
+        select(PersonnelDocument, PersonnelDocumentType)
+        .outerjoin(
+            PersonnelDocumentType,
+            PersonnelDocument.type_id == PersonnelDocumentType.id,
+        )
+        .where(PersonnelDocument.personnel_id == personnel_id)
+        .order_by(PersonnelDocument.created_at)
+    )
+    return list((await session.execute(stmt)).all())
+
+
+async def get_personnel_document(
+    session: AsyncSession, document_id: uuid.UUID
+) -> PersonnelDocument | None:
+    return await session.get(PersonnelDocument, document_id)
+
+
+async def get_document_type(
+    session: AsyncSession, type_id: uuid.UUID
+) -> PersonnelDocumentType | None:
+    return await session.get(PersonnelDocumentType, type_id)
+
+
+async def add_personnel_document(
+    session: AsyncSession, document: PersonnelDocument
+) -> PersonnelDocument:
+    session.add(document)
+    await session.flush()
+    await session.refresh(document)
+    return document

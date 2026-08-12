@@ -26,6 +26,25 @@ from app.modules.site_diary.models import WorkerSource
 # 404 gövdesi (`customers/guards.py` deseni).
 PERSONNEL_MISSING = "Personel bulunamadı"
 
+# --- İK-1 T3: belge alt-kaynağı korkulukları ------------------------------
+
+# 404 — personelin belge kaydı yok/görünmez (`PERSONNEL_MISSING` deseni).
+PERSONNEL_DOCUMENT_MISSING = "Personel belgesi bulunamadı"
+
+# 404 — gövdedeki `type_id` katalogda hiç yok (spec §4b: gövde içi varlık ref 404).
+DOCUMENT_TYPE_MISSING = "Belge tipi bulunamadı"
+
+# 422 — tip katalogda VAR ama pasif (`is_active=false`). 404 DEĞİL: kayıt vardır,
+# engelleyen şey düzeltilebilir bir DURUMDUR (başka aktif tip seçilebilir).
+DOCUMENT_TYPE_INACTIVE = "Seçilen belge tipi pasif, kullanılamaz"
+
+# 422 — `type_id` XOR `free_label`: katalogdan bir tip SEÇİLİR YA DA serbest
+# etiket girilir, ikisi birden ya da hiçbiri OLAMAZ. Aynı kural pydantic'te (giriş
+# doğrulaması) ve DB CHECK'inde (`ck_personnel_document_type_xor_label`) de vardır;
+# bu servis korkuluğu ikisinin arasındaki üçüncü kattır ve kullanıcıya Türkçe
+# 422 verir (çıplak DB CHECK 409 "veri bütünlüğü" verirdi).
+TYPE_XOR_LABEL = "Belge için ya katalog tipi ya da serbest etiket girilmeli (yalnız biri)"
+
 # 422 — kaynak/taşeron uyuşmazlığı.
 SUBCONTRACTOR_NOT_ALLOWED = (
     "Taşeron firması yalnız kaynağı taşeron olan personelde doldurulabilir; "
