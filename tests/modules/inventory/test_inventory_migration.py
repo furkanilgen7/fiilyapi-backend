@@ -62,7 +62,10 @@ INDEXES = (
 # SA ve BC dilimlerinin isidir; bakiye ise TUREVDIR, kolon DEGILDIR.
 FORBIDDEN_ITEM_COLUMNS = ("balance", "current_stock", "stock_qty", "monthly_need", "section_id")
 FORBIDDEN_WAREHOUSE_COLUMNS = ("balance", "current_stock")
-FORBIDDEN_ENTRY_COLUMNS = ("purchase_order_id", "order_id", "supplier_id", "document_id")
+# `purchase_order_id` 2026-08-12'de SA T1 (`f3a4b5c6d7e8`) ile ACILDI ve artik
+# yasakli degildir — SG 85 "Ilgili Siparis" gercege dondu. Yasakli kalanlar:
+# `supplier_id` (tedarikci HALA serbest metindir — kayitli karar) ve `document_id`.
+FORBIDDEN_ENTRY_COLUMNS = ("order_id", "supplier_id", "document_id")
 FORBIDDEN_LINE_COLUMNS = ("line_total", "amount", "order_id", "document_id", "balance_after")
 
 
@@ -271,6 +274,8 @@ def test_stock_entry_columns_and_delete_semantics():
         "warehouse_id",
         "source_warehouse_id",
         "supplier_name",
+        # SA T1 (`f3a4b5c6d7e8`) ile ADDITIVE olarak eklendi — SG 85 "Ilgili Siparis".
+        "purchase_order_id",
         "delivery_note_no",
         "received_by_user_id",
         "note",
@@ -350,12 +355,31 @@ def test_permission_module_already_seeded():
     assert "stock" not in keys, "ikinci bir stok modulu acilmis — tek anahtar `inventory`"
 
 
-def test_no_supplier_or_order_table_opened():
-    """SA diliminin tablolari BU dilimde acilmaz (spec §5)."""
-    from app.core.db import Base
+def test_supplier_and_order_tables_belong_to_procurement():
+    """SA tablolari ST modulunde DEGIL, `procurement` modulunde yasar.
 
-    for table in ("suppliers", "purchase_orders", "purchase_requests", "stock_consumptions"):
-        assert table not in Base.metadata.tables, f"{table} ST diliminde acilmamaliydi"
+    Test 2026-08-12'de SA T1 ile guncellendi: `suppliers`/`purchase_orders`
+    artik VARDIR (ST spec §5 onlari yalnizca ST DILIMINDEN disliyordu). Olcum
+    "yoklar mi"dan "hangi modulun dosyasinda tanimlilar mi"ya dondu — ST'nin
+    kendi modulune sizmalarina karsi korkuluk ayakta kalsin.
+
+    `stock_consumptions` ise HALA ACILMAZ: sarf/cikis tek kapisi `adjustment`
+    satirinin negatif miktaridir (ST §7 S4).
+    """
+    from app.core.db import Base
+    from app.modules.procurement import models as procurement_models
+
+    procurement_tables = {
+        cls.__tablename__
+        for cls in vars(procurement_models).values()
+        if isinstance(cls, type) and hasattr(cls, "__tablename__")
+    }
+    for table in ("suppliers", "purchase_orders", "purchase_requests"):
+        assert table in Base.metadata.tables, f"{table} SA T1'de acilmis olmaliydi"
+        assert table in procurement_tables, f"{table} `procurement` modulunde tanimli degil"
+    assert "stock_consumptions" not in Base.metadata.tables, (
+        "sarf/cikis tablosu acilmis — tek kapi `adjustment` negatif miktaridir"
+    )
 
 
 # --------------------------------------------------------------------------- #

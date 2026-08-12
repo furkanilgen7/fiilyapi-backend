@@ -20,6 +20,7 @@ from app.modules.customers import models as customers_models  # noqa: F401
 from app.modules.documents import models as documents_models  # noqa: F401
 from app.modules.inventory import models as inventory_models  # noqa: F401
 from app.modules.personnel import models as personnel_models  # noqa: F401
+from app.modules.procurement import models as procurement_models  # noqa: F401
 from app.modules.progress_payments import models as progress_payments_models  # noqa: F401
 from app.modules.projects import models as projects_models  # noqa: F401
 from app.modules.projects.models import Project, ProjectStatus, ProjectType
