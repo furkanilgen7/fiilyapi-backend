@@ -28,6 +28,7 @@ Fixture seçimi bu dört seviyeyi temsil eder:
 """
 
 import uuid
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -141,6 +142,30 @@ async def sef_headers(
 
 
 @pytest.fixture
+async def pm_headers(
+    client: AsyncClient,
+    seeded_db: AsyncSession,
+    user_factory,
+    gorunen_proje: Project,
+) -> dict[str, str]:
+    """`project_manager` — `procurement=_APR`: ONAYLAR ama **eşik üstünü onaylayamaz**.
+
+    ₺500K eşiğinin taşıyıcı fixture'ı budur (T3): normal onay kapısı `approve`,
+    eşik üstü onay kapısı `full`tur (`transitions.APPROVAL_THRESHOLD_LEVEL`) ve
+    PM `full` DEĞİLDİR. `satinalma_headers` (`_F`) ise ikisini de geçer.
+    """
+    email = "pm@satinalma.co"
+    user = await user_factory(email=email, password="parola1234", role_key="project_manager")
+    seeded_db.add(
+        UserProjectAccess(user_id=user.id, project_id=gorunen_proje.id, all_projects=False)
+    )
+    await seeded_db.flush()
+    resp = await client.post("/auth/login", json={"email": email, "password": "parola1234"})
+    assert resp.status_code == 200, resp.text
+    return _auth(resp.json()["access_token"])
+
+
+@pytest.fixture
 async def yetkisiz_headers(
     client: AsyncClient, seeded_db: AsyncSession, user_factory
 ) -> dict[str, str]:
@@ -211,8 +236,6 @@ def depo_fabrikasi(seeded_db: AsyncSession):
 def stok_girisi_fabrikasi(seeded_db: AsyncSession):
     """Bakiye üretir: `purchase` hareketi + tek satır (ST `balance.legs` kaynağı)."""
 
-    from datetime import date
-
     from app.modules.inventory.models import StockEntry, StockEntryLine, StockEntryType
 
     async def _create(warehouse: Warehouse, item: StockItem, quantity: str) -> StockEntry:
@@ -228,6 +251,148 @@ def stok_girisi_fabrikasi(seeded_db: AsyncSession):
         )
         await seeded_db.flush()
         return entry
+
+    return _create
+
+
+async def _resolve_or_create_user(seeded_db, user_factory, email: str, role_key: str):
+    """Fabrika kullanıcısını ÇÖZER, yoksa KURAR.
+
+    Fabrikaların `sef_headers`/`satinalma_headers` fixture'larına bağlanması
+    istenmiyor: durum makinesi testlerinin çoğu o başlıkları kullanmaz ve
+    bağımlılık, ilgisiz bir login'i her teste taşırdı.
+    """
+    mevcut = (await seeded_db.execute(select(User).where(User.email == email))).scalar_one_or_none()
+    if mevcut is not None:
+        return mevcut
+    return await user_factory(email=email, password="parola1234", role_key=role_key)
+
+
+@pytest.fixture
+def talep_fabrikasi(seeded_db: AsyncSession, user_factory):
+    """Durum makinesi testlerinin taşıyıcısı: talebi İSTENEN DURUMDA doğrudan kurar.
+
+    Uçlardan geçilerek kurulamaz — `rejected`/`ordered` gibi durumlara ulaşmak
+    testin konusu olan geçişleri kullanmayı gerektirirdi ve matris testi kendi
+    kendini doğrulardı. Numara da elle verilir (`SAT-TEST-…`): sunucu üreticisi
+    burada devre dışıdır, çünkü test numara biçimini değil DURUMU sınar.
+    """
+    from app.modules.procurement.models import (
+        PurchasePriority,
+        PurchaseRequest,
+        PurchaseRequestLine,
+        PurchaseRequestStatus,
+    )
+
+    sayac = {"n": 0}
+
+    async def _create(
+        project: Project,
+        *,
+        status: PurchaseRequestStatus = PurchaseRequestStatus.draft,
+        lines: list[tuple[str, str | None]] | None = None,
+        needed_by: date | None = date(2026, 9, 1),
+        created_by_email: str = "sef@satinalma.co",
+        site: Site | None = None,
+    ) -> PurchaseRequest:
+        sayac["n"] += 1
+        creator = await _resolve_or_create_user(
+            seeded_db, user_factory, created_by_email, "site_chief"
+        )
+        request = PurchaseRequest(
+            request_no=f"SAT-TEST-{sayac['n']:04d}",
+            request_date=date(2026, 8, 12),
+            priority=PurchasePriority.normal,
+            project_id=project.id,
+            site_id=None if site is None else site.id,
+            needed_by=needed_by,
+            status=status,
+            created_by_user_id=creator.id,
+        )
+        seeded_db.add(request)
+        await seeded_db.flush()
+        for sira, (quantity, price) in enumerate(lines or []):
+            seeded_db.add(
+                PurchaseRequestLine(
+                    request_id=request.id,
+                    free_text_name=f"Kalem {sira + 1}",
+                    free_text_unit="Adet",
+                    quantity=Decimal(quantity),
+                    estimated_unit_price=None if price is None else Decimal(price),
+                    sort_order=sira,
+                )
+            )
+        await seeded_db.flush()
+        return request
+
+    return _create
+
+
+@pytest.fixture
+def teklif_fabrikasi(seeded_db: AsyncSession):
+    """Teklif kaydı — karşılaştırma/seçim testleri için."""
+    from app.modules.procurement.models import PurchaseQuote, PurchaseRequest
+
+    async def _create(
+        request: PurchaseRequest,
+        supplier: Supplier,
+        *,
+        unit_price: str = "100.00",
+        delivery_time: str = "3 iş günü",
+        payment_terms: PaymentTerms = PaymentTerms.days_30,
+        shipping_included: bool = True,
+        shipping_cost: str | None = None,
+        is_selected: bool = False,
+    ) -> PurchaseQuote:
+        quote = PurchaseQuote(
+            request_id=request.id,
+            supplier_id=supplier.id,
+            unit_price=Decimal(unit_price),
+            delivery_time=delivery_time,
+            payment_terms=payment_terms,
+            shipping_included=shipping_included,
+            shipping_cost=None if shipping_cost is None else Decimal(shipping_cost),
+            is_selected=is_selected,
+        )
+        seeded_db.add(quote)
+        await seeded_db.flush()
+        return quote
+
+    return _create
+
+
+@pytest.fixture
+def siparis_fabrikasi(seeded_db: AsyncSession, user_factory):
+    """Sipariş kaydı — liste/süzgeç/durum testleri için."""
+    from app.modules.procurement.models import PurchaseOrder, PurchaseOrderStatus
+
+    sayac = {"n": 0}
+
+    async def _create(
+        project: Project,
+        supplier: Supplier,
+        *,
+        total_amount: str = "120000.00",
+        status: PurchaseOrderStatus = PurchaseOrderStatus.approved,
+        created_by_email: str = "satinalma@satinalma.co",
+        note: str | None = None,
+    ) -> PurchaseOrder:
+        sayac["n"] += 1
+        creator = await _resolve_or_create_user(
+            seeded_db, user_factory, created_by_email, "procurement"
+        )
+        order = PurchaseOrder(
+            order_no=f"SP-TEST-{sayac['n']:04d}",
+            supplier_id=supplier.id,
+            project_id=project.id,
+            total_amount=Decimal(total_amount),
+            status=status,
+            note=note,
+            created_by_user_id=creator.id,
+        )
+        seeded_db.add(order)
+        await seeded_db.flush()
+        return order
 
     return _create
 

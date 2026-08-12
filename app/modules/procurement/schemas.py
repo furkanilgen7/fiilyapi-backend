@@ -26,11 +26,12 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.text import FREE_TEXT_MAX_LENGTH
 from app.modules.procurement.models import (
     PaymentTerms,
+    PurchaseOrderStatus,
     PurchasePriority,
     PurchaseRequestStatus,
 )
@@ -198,9 +199,15 @@ class PurchaseRequestLineResponse(BaseModel):
     `current_stock` (FST 75) katalogsuz kalemde `null`dur: stok karti yoksa
     bakiye de yoktur ve 0 yazmak "stokta yok" ile "stok karti bile yok"u ayni
     gosterirdi.
+
+    `sort_order` YANITTA VARDIR ama GOVDEDE (Create) YOKTUR: sunucu onu dizinin
+    indeksinden uretir. Ekran, satirlari yeniden sirasa dizmek zorunda kalmadan
+    listeyi oldugu gibi basar; alan yine de dondurulur ki istemci kendi yerel
+    durumunu (surukle-birak) sunucununkiyle karsilastirabilsin.
     """
 
     id: uuid.UUID
+    sort_order: int
     stock_item_id: uuid.UUID | None
     stock_item_code: str | None
     free_text_name: str | None
@@ -323,6 +330,208 @@ class PurchaseRequestResponse(PurchaseRequestBase):
 
 class PurchaseRequestListResponse(BaseModel):
     items: list[PurchaseRequestListRow]
+    total: int
+    limit: int
+    offset: int
+
+
+# --- Ret gerekcesi (T3) ---
+
+
+class PurchaseRequestRejection(BaseModel):
+    """`POST /purchase-requests/{id}/reject` govdesi.
+
+    Gerekce ZORUNLUDUR (TH emsali): "reddedildi" tek basina eyleme donuk
+    degildir — talebi acan sef neyi duzeltip yeniden acacagini bilmelidir.
+    `min_length=1` bosu, `strip_whitespace` ise yalniz bosluktan olusan bir
+    gerekceyi reddeder (Pydantic kirpmayi ONCE yapar).
+    """
+
+    reason: str = Field(min_length=1, max_length=FREE_TEXT_MAX_LENGTH)
+
+    @field_validator("reason")
+    @classmethod
+    def _bos_olmasin(cls, deger: str) -> str:
+        kirpik = deger.strip()
+        if not kirpik:
+            raise ValueError("Ret gerekçesi zorunludur.")
+        return kirpik
+
+
+# --- Teklif (TEK) ---
+
+# `purchase_quotes.delivery_time` String(100) · `warranty_note` String(200).
+_DELIVERY_TIME = Field(min_length=1, max_length=100)
+_WARRANTY_NOTE = Field(default=None, max_length=200)
+_MONEY = Field(ge=0, max_digits=18, decimal_places=2)
+
+
+class PurchaseQuoteCreate(BaseModel):
+    """`POST /purchase-requests/{id}/quotes` govdesi.
+
+    `delivery_time` SERBEST METINDIR (TEK 67: "3 is gunu" / "Yarin sabah") ve
+    gun SAYISINA ZORLANMAZ. Siralanabilir bir `delivery_days` alani ACILSAYDI
+    mockup'un yazdigi ifadeler kaybolurdu; "EN HIZLI" rozeti bu yuzden sunucu
+    turevi DEGILDIR (bkz. `PurchaseQuoteCard`).
+
+    NAKLIYE IKI HALLIDIR (TEK 90): "Dahil" ya da "Hariç (+₺8.000)". Ikisi
+    birden gonderilirse hangisinin gecerli oldugu belirsizdir — 422.
+    """
+
+    supplier_id: uuid.UUID
+    unit_price: Decimal = _MONEY
+    delivery_time: str = _DELIVERY_TIME
+    warranty_note: str | None = _WARRANTY_NOTE
+    payment_terms: PaymentTerms
+    shipping_included: bool = False
+    shipping_cost: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=2)
+
+    @model_validator(mode="after")
+    def _nakliye(self) -> "PurchaseQuoteCreate":
+        if self.shipping_included and self.shipping_cost is not None:
+            raise ValueError("Nakliye dahilse ayrıca nakliye tutarı girilemez.")
+        return self
+
+
+class PurchaseQuoteUpdate(BaseModel):
+    """`PATCH …/quotes/{quote_id}` — TUM alanlar istege bagli.
+
+    Nakliye kurali BURADA DEGIL SERVISTE kosar: kismi govde yalniz
+    `shipping_cost` tasiyabilir ve kural ancak DB'deki kayitla BIRLESTIRILMIS
+    degerler uzerinde anlamlidir (`CustomerValidationError` dersi).
+
+    `supplier_id` DEGISTIRILEMEZ ve alan burada YOKTUR: teklif bir tedarikcinin
+    verdigi fiyattir, tedarikcisi degisen sey artik BASKA bir tekliftir.
+    """
+
+    unit_price: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=2)
+    delivery_time: str | None = Field(default=None, min_length=1, max_length=100)
+    warranty_note: str | None = _WARRANTY_NOTE
+    payment_terms: PaymentTerms | None = None
+    shipping_included: bool | None = None
+    shipping_cost: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=2)
+
+
+class PurchaseQuoteResponse(BaseModel):
+    """Teklifin kunyesi (POST/PATCH yaniti)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    request_id: uuid.UUID
+    supplier_id: uuid.UUID
+    supplier_name: str
+    unit_price: Decimal
+    delivery_time: str
+    warranty_note: str | None
+    payment_terms: PaymentTerms
+    shipping_included: bool
+    shipping_cost: Decimal | None
+    is_selected: bool
+    created_at: datetime
+
+
+class PurchaseQuoteCard(PurchaseQuoteResponse):
+    """TEK karsilastirma karti: kunye + TOPLAM MALIYET + "EN IYI FIYAT" rozeti.
+
+    ⚠️ `total_cost` BIRIM FIYAT DEGILDIR: `unit_price × talebin toplam miktari`
+    ve nakliye HARICSE `shipping_cost` eklenir. Rozet birim fiyata bakilarak
+    verilseydi, nakliyesi haric ucuz gorunen bir teklif "EN IYI FIYAT" damgasi
+    alir ve kullanici daha pahali olani secerdi (TEK 90'in tam senaryosu).
+
+    **"EN HIZLI" rozeti YOKTUR** ve uydurulmaz: `delivery_time` serbest
+    metindir ("Yarin sabah" ile "3 is gunu" karsilastirilamaz). Rozet mockup'ta
+    vardir ama sunucunun sirali bir veri kaynagi yoktur — uydurma bir siralama
+    yanlis tedarikciyi one cikarirdi. Istemci isterse metni kendi yorumlar.
+
+    Beraberlikte HEPSI rozetlenir: iki teklif ayni toplamdaysa birini keyfi
+    secmek yaniltici olurdu.
+    """
+
+    total_cost: Decimal
+    is_best_price: bool
+
+
+class PurchaseQuoteListResponse(BaseModel):
+    """TEK karsilastirma yanitinin zarfi.
+
+    `limit`/`offset` YOKTUR ve bu bilinclidir: teklifler bir TALEBIN altindadir
+    ve sayilari doga geregi tek hanelidir (TEK ekrani hepsini yan yana dizer).
+    Sayfalama eklenseydi ekran "en iyi fiyat" rozetini eksik bir kume uzerinden
+    hesaplamak zorunda kalirdi.
+
+    `request_quantity_total` yanitta durur cunku `total_cost`un carpanidir:
+    ekran tutari kendi yeniden hesaplamak isterse tabani gormeli.
+    """
+
+    items: list[PurchaseQuoteCard]
+    total: int
+    request_quantity_total: Decimal
+
+
+# --- Siparis (SIP) ---
+
+
+class PurchaseOrderCreate(BaseModel):
+    """`POST /purchase-orders` — DOGRUDAN (talepsiz) siparis (§7 S3, SIP 35).
+
+    **`request_id` GOVDEDE YOKTUR** ve bu bir eksiklik degil karardir: talebe
+    bagli siparisin TEK yolu `select-and-order`dir. Burada kabul edilseydi
+    talebin durum makinesi (talep → `ordered`) atlanir ve talebi hala
+    `quote_wait` gorunen bir siparis dogardi.
+
+    KALEM DE YOKTUR: spec §2'de siparis kalemi TABLOSU acilmadi — dogrudan
+    siparis tek bir `total_amount` tasir (SIP tablosu da tutari tek sutunda
+    gosterir).
+    """
+
+    project_id: uuid.UUID
+    supplier_id: uuid.UUID
+    total_amount: Decimal = _MONEY
+    expected_delivery: date | None = None
+    note: str | None = Field(default=None, max_length=FREE_TEXT_MAX_LENGTH)
+
+
+class PurchaseOrderUpdate(BaseModel):
+    """`PATCH /purchase-orders/{id}` — durum gecisi + duzeltilebilir alanlar.
+
+    `status` GONDERILMEZSE durum degismez: not/tarih duzeltmesi bir gecis
+    DEGILDIR ve onu bir gecis saymak, kargo notunu duzelten kullaniciyi durum
+    makinesine carpar.
+
+    `total_amount` DEGISTIRILEMEZ ve alan burada YOKTUR: siparis, teklifin o
+    andaki fiyatinin DONMUS halidir (T1 karari) — tutari elle duzeltilebilseydi
+    "sipariste ne uzerinde anlasildi" sorusunun cevabi kaybolurdu.
+    """
+
+    status: PurchaseOrderStatus | None = None
+    expected_delivery: date | None = None
+    note: str | None = Field(default=None, max_length=FREE_TEXT_MAX_LENGTH)
+
+
+class PurchaseOrderResponse(BaseModel):
+    """SIP satiri/detayi. `request_no` TUREVDIR (JOIN) — talepsiz sipariste `null`."""
+
+    id: uuid.UUID
+    order_no: str
+    request_id: uuid.UUID | None
+    request_no: str | None
+    quote_id: uuid.UUID | None
+    supplier_id: uuid.UUID
+    supplier_name: str
+    project_id: uuid.UUID
+    total_amount: Decimal
+    expected_delivery: date | None
+    status: PurchaseOrderStatus
+    note: str | None
+    created_by_user_id: uuid.UUID
+    created_at: datetime
+
+
+class PurchaseOrderListResponse(BaseModel):
+    """TB3 sayfalama zarfi (`inventory`/`personnel` deseni)."""
+
+    items: list[PurchaseOrderResponse]
     total: int
     limit: int
     offset: int

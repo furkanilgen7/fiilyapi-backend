@@ -62,11 +62,24 @@ from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
-from app.modules.procurement import service
-from app.modules.procurement.models import PurchasePriority, PurchaseRequestStatus
+from app.modules.procurement import service, transitions
+from app.modules.procurement.models import (
+    PurchaseOrderStatus,
+    PurchasePriority,
+    PurchaseRequestStatus,
+)
 from app.modules.procurement.schemas import (
+    PurchaseOrderCreate,
+    PurchaseOrderListResponse,
+    PurchaseOrderResponse,
+    PurchaseOrderUpdate,
+    PurchaseQuoteCreate,
+    PurchaseQuoteListResponse,
+    PurchaseQuoteResponse,
+    PurchaseQuoteUpdate,
     PurchaseRequestCreate,
     PurchaseRequestListResponse,
+    PurchaseRequestRejection,
     PurchaseRequestResponse,
     PurchaseRequestUpdate,
     SupplierCard,
@@ -81,6 +94,7 @@ router = APIRouter(tags=["procurement"], responses=COMMON_ERROR_RESPONSES)
 
 _VIEW = require_permission(service.PERMISSION_MODULE, AccessLevel.view)
 _REQUEST = require_permission(service.PERMISSION_MODULE, AccessLevel.request)
+_APPROVE = require_permission(service.PERMISSION_MODULE, AccessLevel.approve)
 _FULL = require_permission(service.PERMISSION_MODULE, AccessLevel.full)
 
 # TB3 sayfalama standardı: varsayılan 50, tavan 200 — tavan aşımı sessizce
@@ -316,3 +330,338 @@ async def delete_purchase_request_endpoint(
     purchase_request = await service.visible_request(session, user, request_id)
     detail = await service.delete_request(session, user, purchase_request)
     await _audit(request, session, user, AuditAction.delete, detail)
+
+
+# --- Onay akışı (T3) ---
+#
+# Kapılar: `submit` → `request` (talebi açan onu onaya da gönderir) ·
+# `approve`/`reject` → `approve` (matriste PM'in seviyesi) · ₺500K üstü onay
+# ek olarak `full` ister ve bu SERVİS katmanındadır (`transitions`), çünkü
+# karar TUTARA bağlıdır ve bir route bağımlılığı tutarı bilemez.
+
+
+@router.post(
+    "/purchase-requests/{request_id}/submit",
+    response_model=PurchaseRequestResponse,
+    responses={
+        404: {"description": "Talep bulunamadı"},
+        409: {"description": "Talep bu işleme uygun durumda değil"},
+        422: {"description": "Onaya göndermeyi engelleyen eksikler var"},
+    },
+    dependencies=[_REQUEST],
+)
+async def submit_purchase_request_endpoint(
+    request: Request,
+    request_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> PurchaseRequestResponse:
+    """`draft → pending_approval`. **SIKI doğrulama buradadır.**
+
+    Taslak gevşektir (T2); onaya gönderirken `validation.submit_blockers`
+    koşar ve engellerin HEPSİ tek 422'de döner — uzun bir formda eksikleri
+    birer birer keşfettirmek kabul edilemez. Engel varsa durum DEĞİŞMEZ.
+    """
+    purchase_request = await service.visible_request(session, user, request_id)
+    purchase_request, detail = await service.perform_request_action(
+        session, user, purchase_request, transitions.RequestAction.submit
+    )
+    await _audit(request, session, user, AuditAction.update, detail)
+    return await service.build_request_detail(session, user, purchase_request)
+
+
+@router.post(
+    "/purchase-requests/{request_id}/approve",
+    response_model=PurchaseRequestResponse,
+    responses={
+        403: {"description": "₺500K ve üstü talep üst seviye yetki ister"},
+        404: {"description": "Talep bulunamadı"},
+        409: {"description": "Talep bu işleme uygun durumda değil"},
+    },
+    dependencies=[_APPROVE],
+)
+async def approve_purchase_request_endpoint(
+    request: Request,
+    request_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> PurchaseRequestResponse:
+    """`pending_approval → quote_wait` (§3: onay ARA durum üretmez).
+
+    **₺500K eşiği BURADA ve ONAY ANINDA koşar** (`transitions`): tutar o anki
+    kalemlerden yeniden hesaplanır, kayıtta donmuş bir toplam okunmaz.
+    `approved_by_user_id`/`approved_at` damgalanır.
+    """
+    purchase_request = await service.visible_request(session, user, request_id)
+    purchase_request, detail = await service.perform_request_action(
+        session, user, purchase_request, transitions.RequestAction.approve
+    )
+    await _audit(request, session, user, AuditAction.approve, detail)
+    return await service.build_request_detail(session, user, purchase_request)
+
+
+@router.post(
+    "/purchase-requests/{request_id}/reject",
+    response_model=PurchaseRequestResponse,
+    responses={
+        404: {"description": "Talep bulunamadı"},
+        409: {"description": "Talep bu işleme uygun durumda değil"},
+    },
+    dependencies=[_APPROVE],
+)
+async def reject_purchase_request_endpoint(
+    request: Request,
+    request_id: uuid.UUID,
+    data: PurchaseRequestRejection,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> PurchaseRequestResponse:
+    """`pending_approval → rejected`. **Gerekçe ZORUNLUDUR** (boş → 422).
+
+    Gerekçe `rejection_reason` KOLONUNA yazılır (SAT ekranı onu kaydın üstünde
+    gösterir) — `sale_cancelled`ın denetim-günlüğü kararının aksine burada
+    kalıcı bir yer vardır. `rejected` TERMİNALDİR: diriltme geçişi yoktur,
+    ihtiyaç sürüyorsa YENİ talep açılır.
+    """
+    purchase_request = await service.visible_request(session, user, request_id)
+    purchase_request, detail = await service.perform_request_action(
+        session, user, purchase_request, transitions.RequestAction.reject, reason=data.reason
+    )
+    await _audit(request, session, user, AuditAction.update, detail)
+    return await service.build_request_detail(session, user, purchase_request)
+
+
+# --- Teklif alt-kaynağı (TEK) ---
+#
+# Teklif TALEBİN ALTINDA yaşar; ayrı bir `/quotes/{id}` kökü AÇILMADI — açılsaydı
+# teklif, talebin kapsam süzgecinden bağımsız bir giriş kapısı kazanırdı. Yol
+# çaprazı (başka talebin teklifi) **404**tür.
+#
+# OKUMA `view`, YAZMA `full`: teklif toplamak ve pazarlık etmek satınalmanın
+# işidir (tedarikçi kataloğuyla aynı kapı), şefin değil.
+
+
+@router.get(
+    "/purchase-requests/{request_id}/quotes",
+    response_model=PurchaseQuoteListResponse,
+    dependencies=[_VIEW],
+)
+async def list_quotes_endpoint(
+    request_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> PurchaseQuoteListResponse:
+    """TEK karşılaştırma ekranı. **Okuma her durumda açıktır** — siparişe dönmüş
+    bir talebin karşılaştırma geçmişi silinmez.
+
+    Sayfalama YOKTUR (şema gerekçesi): teklifler bir talebin altındadır ve
+    "EN İYİ FİYAT" rozeti eksik bir küme üzerinden hesaplanamaz.
+    """
+    purchase_request = await service.visible_request(session, user, request_id)
+    return await service.list_quotes(session, purchase_request)
+
+
+@router.post(
+    "/purchase-requests/{request_id}/quotes",
+    response_model=PurchaseQuoteResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        404: {"description": "Talep ya da seçilen tedarikçi bulunamadı"},
+        409: {"description": "Teklifler yalnızca teklif bekleyen talebe eklenebilir"},
+    },
+    dependencies=[_FULL],
+)
+async def create_quote_endpoint(
+    request: Request,
+    request_id: uuid.UUID,
+    data: PurchaseQuoteCreate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> PurchaseQuoteResponse:
+    """Yalnız `quote_wait` (aksi **409**). `delivery_time` SERBEST metindir."""
+    purchase_request = await service.visible_request(session, user, request_id)
+    quote, detail = await service.create_quote(session, purchase_request, data)
+    await _audit(request, session, user, AuditAction.create, detail)
+    return quote
+
+
+@router.patch(
+    "/purchase-requests/{request_id}/quotes/{quote_id}",
+    response_model=PurchaseQuoteResponse,
+    responses={
+        404: {"description": "Talep ya da teklif bulunamadı"},
+        409: {"description": "Teklifler yalnızca teklif bekleyen talepte düzenlenebilir"},
+    },
+    dependencies=[_FULL],
+)
+async def update_quote_endpoint(
+    request: Request,
+    request_id: uuid.UUID,
+    quote_id: uuid.UUID,
+    data: PurchaseQuoteUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> PurchaseQuoteResponse:
+    """Kısmi güncelleme. Nakliye kuralı BİRLEŞİK değerlerde koşar (**422**):
+    gövde yalnız `shipping_cost` taşısa bile DB'deki `shipping_included`
+    hesaba katılır."""
+    purchase_request = await service.visible_request(session, user, request_id)
+    quote, detail = await service.update_quote(session, purchase_request, quote_id, data)
+    await _audit(request, session, user, AuditAction.update, detail)
+    return quote
+
+
+@router.delete(
+    "/purchase-requests/{request_id}/quotes/{quote_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        404: {"description": "Talep ya da teklif bulunamadı"},
+        409: {"description": "Teklifler yalnızca teklif bekleyen talepte silinebilir"},
+    },
+    dependencies=[_FULL],
+)
+async def delete_quote_endpoint(
+    request: Request,
+    request_id: uuid.UUID,
+    quote_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """Yanlış girilmiş bir teklif SİLİNİR (talep hâlâ `quote_wait` iken).
+
+    `can_delete` taslak istisnası BURADA GEÇERSİZDİR: teklifin "sahibi" onu
+    giren kullanıcı değil TEDARİKÇİDİR ve kayıtta `created_by` kolonu yoktur.
+    Kapı bu yüzden düz `full`dur.
+    """
+    purchase_request = await service.visible_request(session, user, request_id)
+    detail = await service.delete_quote(session, purchase_request, quote_id)
+    await _audit(request, session, user, AuditAction.delete, detail)
+
+
+@router.post(
+    "/purchase-requests/{request_id}/quotes/{quote_id}/select-and-order",
+    response_model=PurchaseOrderResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        404: {"description": "Talep ya da teklif bulunamadı"},
+        409: {"description": "Talep bu işleme uygun durumda değil"},
+    },
+    dependencies=[_FULL],
+)
+async def select_and_order_endpoint(
+    request: Request,
+    request_id: uuid.UUID,
+    quote_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> PurchaseOrderResponse:
+    """TEK'in "Sipariş Ver" düğmesi — **ATOMİK** üçlü (spec §3).
+
+    Teklif işaretlenir (aynı talepteki diğerleri sıfırlanır) · sipariş üretilir
+    (`SP-YYYY-NNNN`, tutar = teklif × talebin toplam miktarı + nakliye) · talep
+    `ordered` olur. Ara adımda hata çıkarsa HİÇBİRİ kalmaz (servisteki açık
+    SAVEPOINT). Denetime TEK satır düşer: kullanıcının yaptığı tek bir eylemdir.
+    """
+    purchase_request = await service.visible_request(session, user, request_id)
+    order, detail = await service.select_and_order(session, user, purchase_request, quote_id)
+    await _audit(request, session, user, AuditAction.create, detail)
+    return order
+
+
+# --- Sipariş (SIP) ---
+#
+# **`DELETE /purchase-orders/{id}` YOKTUR:** verilmiş bir sipariş bir OLAYDIR;
+# geri alınması bir iptal akışı ister ve o akış hiçbir mockup'ta çizilmemiştir.
+# Yol tanımlı olmadığı için FastAPI **405** döner (bekçi testiyle kilitli).
+
+
+@router.get("/purchase-orders", response_model=PurchaseOrderListResponse, dependencies=[_VIEW])
+async def list_orders_endpoint(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    status_filter: Annotated[PurchaseOrderStatus | None, Query(alias="status")] = None,
+    project_id: uuid.UUID | None = None,
+    supplier_id: uuid.UUID | None = None,
+    q: str | None = None,
+    limit: _LIMIT = 50,
+    offset: _OFFSET = 0,
+) -> PurchaseOrderListResponse:
+    """SIP tablosu — süzgeçler AND'lidir, kapsam HER ZAMAN uygulanır.
+
+    `q` sipariş NUMARASI ve NOT üzerinde arar; tedarikçi için AYRI ve kesin bir
+    süzgeç (`supplier_id`) vardır. `limit` varsayılan 50, tavan 200 — aşım 422.
+    """
+    return await service.list_orders(
+        session,
+        user,
+        status=status_filter,
+        project_id=project_id,
+        supplier_id=supplier_id,
+        q=q,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.post(
+    "/purchase-orders",
+    response_model=PurchaseOrderResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={404: {"description": "Seçilen proje ya da tedarikçi bulunamadı"}},
+    dependencies=[_FULL],
+)
+async def create_order_endpoint(
+    request: Request,
+    data: PurchaseOrderCreate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> PurchaseOrderResponse:
+    """DOĞRUDAN (talepsiz) sipariş — §7 S3, SIP 35 "+ Sipariş Oluştur".
+
+    Gövde `request_id` KABUL ETMEZ (şema gerekçesi): talebe bağlı siparişin tek
+    yolu `select-and-order`dır. Numara sunucu üretir, durum `approved` başlar.
+    """
+    order, detail = await service.create_order(session, user, data)
+    await _audit(request, session, user, AuditAction.create, detail)
+    return order
+
+
+@router.get(
+    "/purchase-orders/{order_id}", response_model=PurchaseOrderResponse, dependencies=[_VIEW]
+)
+async def get_order_endpoint(
+    order_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> PurchaseOrderResponse:
+    """Görünmeyen projenin siparişi var olmayanla AYNI 404'ü alır."""
+    return await service.get_order_detail(session, user, order_id)
+
+
+@router.patch(
+    "/purchase-orders/{order_id}",
+    response_model=PurchaseOrderResponse,
+    responses={
+        404: {"description": "Sipariş bulunamadı"},
+        409: {"description": "Siparişin durumu bu işleme uygun değil"},
+    },
+    dependencies=[_FULL],
+)
+async def update_order_endpoint(
+    request: Request,
+    order_id: uuid.UUID,
+    data: PurchaseOrderUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> PurchaseOrderResponse:
+    """Tek meşru geçiş `approved → in_transit`tir.
+
+    **`delivered`e ELLE geçilmez (409)** — o damgayı `purchase_order_id` taşıyan
+    bir STOK GİRİŞİ atar (§7 S4, T4'ün zinciri). Elle açık olsaydı hiç mal
+    girmemiş bir sipariş teslim görünür, stok bakiyesiyle satınalma kaydı
+    sessizce ayrışırdı. `total_amount` da düzeltilemez (şema gerekçesi).
+    """
+    order = await service.visible_order(session, user, order_id)
+    order_response, detail = await service.update_order(session, order, data)
+    await _audit(request, session, user, AuditAction.update, detail)
+    return order_response

@@ -381,6 +381,8 @@ def test_purchase_request_line_columns_and_delete_semantics():
         "free_text_unit",
         "quantity",
         "estimated_unit_price",
+        # T3: FST kalem tablosu SIRALIDIR — kullanicinin girdigi sira korunur.
+        "sort_order",
     }
     (request_fk,) = tuple(columns["request_id"].foreign_keys)
     assert request_fk.ondelete == "CASCADE", "yetim kalem"
@@ -392,6 +394,10 @@ def test_purchase_request_line_columns_and_delete_semantics():
     assert columns["free_text_unit"].nullable
     assert not columns["quantity"].nullable
     assert columns["estimated_unit_price"].nullable
+    # SUNUCU VARSAYILANI YOKTUR: her yazma yolu sirayi acikca doldurmak
+    # zorundadir (varsayilan 0 olsaydi eksik doldurulan yol sessizce keyfi dizerdi).
+    assert not columns["sort_order"].nullable
+    assert columns["sort_order"].server_default is None
 
 
 def test_purchase_quote_columns_and_delete_semantics():
@@ -629,18 +635,31 @@ async def test_db_level_semantics():
             line_id = uuid.uuid4()
             await conn.execute(
                 "INSERT INTO purchase_request_lines (id, request_id, free_text_name, "
-                "free_text_unit, quantity) VALUES ($1, $2, 'Ozel Kalip', 'Adet', $3)",
+                "free_text_unit, quantity, sort_order) "
+                "VALUES ($1, $2, 'Ozel Kalip', 'Adet', $3, 0)",
                 line_id,
                 request_id,
                 Decimal("10.000"),
             )
+
+            # 2b) `sort_order` NOT NULL ve SUNUCU VARSAYILANI YOKTUR (T3): kolonu
+            #     atlayan bir yazma REDDEDILIR. Varsayilan 0 olsaydi eksik
+            #     doldurulan bir yol tum satirlari ayni sirada birakip FST kalem
+            #     tablosunu sessizce keyfi dizerdi.
+            with pytest.raises(asyncpg.NotNullViolationError):
+                await conn.execute(
+                    "INSERT INTO purchase_request_lines (id, request_id, free_text_name, "
+                    "free_text_unit, quantity) VALUES ($1, $2, 'Sirasiz', 'Adet', 1)",
+                    uuid.uuid4(),
+                    request_id,
+                )
 
             # 3) Miktar POZITIF olmak ZORUNDA (spec §2) — ST'nin negatif duzeltme
             #    istisnasi burada YOKTUR: sifir/negatif talep kalemi anlamsizdir.
             with pytest.raises(asyncpg.CheckViolationError):
                 await conn.execute(
                     "INSERT INTO purchase_request_lines (id, request_id, free_text_name, "
-                    "quantity) VALUES ($1, $2, 'Sifir', 0)",
+                    "quantity, sort_order) VALUES ($1, $2, 'Sifir', 0, 0)",
                     uuid.uuid4(),
                     request_id,
                 )

@@ -48,6 +48,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Integer,
     Numeric,
     String,
     Text,
@@ -254,6 +255,12 @@ class PurchaseRequestLine(Base):
     SATIR TUTARI KOLONU YOKTUR: `quantity * estimated_unit_price` TUREVDIR.
     "Mevcut Stok" (FST 75) de TUREVDIR — ST bakiyesinden okunur.
 
+    `sort_order` (T3): FST kalem tablosu SIRALIDIR. Deger govdedeki kalem
+    dizisinin INDEKSIDIR — istemci ayri bir alan GONDERMEZ, cunku gonderseydi
+    cakisan/bosluklu siralar dogar ve sunucunun onlari yeniden duzenlemesi
+    gerekirdi. Sunucu varsayilani da YOKTUR (NOT NULL, `server_default` yok):
+    her yazma yolu degeri acikca doldurmak zorundadir.
+
     Zaman damgasi TASIMAZ: satirin omru basliga baglidir (CASCADE) ve mockup
     satir bazinda tarih GOSTERMEZ.
     """
@@ -282,6 +289,7 @@ class PurchaseRequestLine(Base):
     # Miktar olcegi repo standardi Numeric(14, 3) — boq/sozlesme/hakedis/ST ile ayni.
     quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False)
     estimated_unit_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
 class PurchaseQuote(Base):

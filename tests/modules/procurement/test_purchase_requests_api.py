@@ -142,15 +142,18 @@ async def test_durum_istemciden_gelmez(client, sef_headers, gorunen_proje):
     assert yanit.json()["status"] == "draft"
 
 
-async def test_onay_ve_teklif_uclari_t2de_acilmaz(client, sef_headers, gorunen_proje):
-    """Bekçi: `submit`/`approve`/`reject` ve teklif alt-kaynağı **T3'ündür**.
+async def test_acilmayan_talep_uclari_bekcisi(client, admin_headers, gorunen_proje):
+    """Bekçi: `submit`/`approve`/`reject` ve teklif alt-kaynağı T3'te AÇILDI;
+    kalıcı olarak AÇILMAYANLAR ise hâlâ 404/405 vermelidir (spec §5).
 
-    T2'de yolları TANIMLI DEĞİLDİR; biri erkenden açarsa bu test kırılır.
+    * `unsubmit`/`unapprove` — geri çekme geçişi YOKTUR (matris dört geçişlidir).
+    * `deliver` — teslim damgasını stok girişi atar (§7 S4, T4).
+    * `approvals` — çok adımlı onay MOTORU hiçbir dilimde açılmaz (§7 S2).
     """
-    olustur = await client.post(_YOL, json=_govde(gorunen_proje.id), headers=sef_headers)
+    olustur = await client.post(_YOL, json=_govde(gorunen_proje.id), headers=admin_headers)
     talep_id = olustur.json()["id"]
-    for yol in ("submit", "approve", "reject", "quotes"):
-        yanit = await client.post(f"{_YOL}/{talep_id}/{yol}", json={}, headers=sef_headers)
+    for yol in ("unsubmit", "unapprove", "deliver", "approvals"):
+        yanit = await client.post(f"{_YOL}/{talep_id}/{yol}", json={}, headers=admin_headers)
         assert yanit.status_code == 404, f"{yol} → {yanit.status_code}"
 
 
@@ -311,13 +314,12 @@ async def test_turev_tutarlar_ve_mevcut_stok(
     assert detay.status_code == 200, detay.text
     govde = detay.json()
 
-    # Satırlar ADA göre çözülür, SIRAYA göre değil: `purchase_request_lines`ta
-    # `sort_order` kolonu YOKTUR (T1 şeması) ve `id` bir UUID4'tür — sıralama
-    # kararlıdır ama kullanıcının girdiği sırayı korumaz (bilinen sınır,
-    # `repository.list_request_lines` gerekçesi).
-    satirlar = {s["name"]: s for s in govde["lines"]}
-    kart_satiri = satirlar["Nervürlü Demir Ø12"]
-    serbest_satir = satirlar["PP-R Boru 32mm"]
+    # Satırlar GÖVDEDEKİ SIRAYLA döner (`sort_order`, T3'te açılan kolon): T2'de
+    # sıra korunmadığı için satırlar ADA göre çözülüyordu; borç kapandı.
+    assert [s["sort_order"] for s in govde["lines"]] == [0, 1]
+    kart_satiri, serbest_satir = govde["lines"]
+    assert kart_satiri["name"] == "Nervürlü Demir Ø12"
+    assert serbest_satir["name"] == "PP-R Boru 32mm"
     assert Decimal(kart_satiri["line_total"]) == Decimal("322500.00")
     assert Decimal(kart_satiri["current_stock"]) == Decimal("2.400")
     assert kart_satiri["stock_item_code"] == "SNK-0421"

@@ -27,21 +27,27 @@ import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from sqlalchemy import Row, Select, func, literal, select
+from sqlalchemy import Row, Select, func, literal, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Subquery
 
+from app.core.access import AccessLevel
 from app.modules.inventory import balance as stock_balance
 from app.modules.inventory import repository as inventory_repository
 from app.modules.inventory.models import StockItem
+from app.modules.procurement.guards import PERMISSION_MODULE
 from app.modules.procurement.models import (
     PurchaseOrder,
+    PurchaseOrderStatus,
     PurchasePriority,
+    PurchaseQuote,
     PurchaseRequest,
     PurchaseRequestLine,
     PurchaseRequestStatus,
     Supplier,
 )
+from app.modules.roles.repository import get_permission
+from app.modules.users.models import User
 
 
 def _like_escape(deger: str) -> str:
@@ -305,22 +311,21 @@ async def list_request_lines(
     kosulsaydi 40 kalemlik bir talep 40 sorgu acardi. `OUTER JOIN` katalogsuz
     kalemleri de tasir (kart tarafi `None` gelir).
 
-    Siralama kimlige gore SABITTIR: FST kalem tablosu satirlarini her aciliste
-    AYNI sirada gostermelidir.
+    Siralama **KULLANICININ GIRDIGI SIRADIR** (`sort_order`, T3'te acilan kolon):
+    FST kalem tablosu siralidir ve satirlar her aciliste kullanicinin yazdigi
+    duzende gorunmelidir. T2'de bu bir BILINEN SINIRDI — `id` bir UUID4'tur,
+    yani ona gore siralamak kararli ama EKLEME SIRASINDAN BAGIMSIZ bir dizilis
+    verirdi; borc T3'te kolonla kapatildi.
 
-    ⚠️ **BILINEN SINIR — kullanicinin girdigi SIRA korunmaz.** `id` bir UUID4'tur,
-    yani siralama deterministik ama ekleme sirasindan BAGIMSIZDIR: kullanicinin
-    once yazdigi kalem tabloda ikinci gorunebilir. Duzeltmek bir `sort_order`
-    kolonu (yani migration) ister; T1 semasinda yoktur ve T2 sema
-    DEGISTIRMEZ. Emsal de bu yondedir: ST'nin `stock_entry_lines`i satirlarini
-    hic siralamaz (`selectinload`, keyfi sira) — buradaki durum ondan DAHA
-    iyidir cunku en azindan kararlidir. SA T3/T5'e devredilen aday borctur.
+    Ikinci olcut `id`dir: `sort_order` NOT NULL ve her yazma yolunda dizinin
+    indeksinden gelse de, DB'ye elle girmis bir cift kayit siralamayi kararsiz
+    birakmasin.
     """
     stmt = (
         select(PurchaseRequestLine, StockItem)
         .outerjoin(StockItem, StockItem.id == PurchaseRequestLine.stock_item_id)
         .where(PurchaseRequestLine.request_id == request_id)
-        .order_by(PurchaseRequestLine.id)
+        .order_by(PurchaseRequestLine.sort_order, PurchaseRequestLine.id)
     )
     return [(satir, kart) for satir, kart in (await session.execute(stmt)).all()]
 
@@ -328,13 +333,237 @@ async def list_request_lines(
 async def load_request_lines(
     session: AsyncSession, request_id: uuid.UUID
 ) -> list[PurchaseRequestLine]:
-    """Yalniz satir nesneleri (yazma yolunun REPLACE adimi icindir)."""
+    """Yalniz satir nesneleri (yazma yolunun REPLACE adimi + `submit` dogrulamasi).
+
+    Siralama okuma yoluyla AYNIDIR (`sort_order`, `id`): `submit_blockers`in
+    urettigi engel listesi kullanicinin gordugu satir duzeniyle ortusmelidir.
+    """
     stmt = (
         select(PurchaseRequestLine)
         .where(PurchaseRequestLine.request_id == request_id)
-        .order_by(PurchaseRequestLine.id)
+        .order_by(PurchaseRequestLine.sort_order, PurchaseRequestLine.id)
     )
     return list((await session.execute(stmt)).scalars().all())
+
+
+# --- T3: esik turevleri, teklif ve siparis ---
+
+
+async def actor_level(session: AsyncSession, actor: User) -> AccessLevel:
+    """Aktorun `procurement` modulundeki GERCEK seviyesi.
+
+    Router bagimliligi yalniz YETKI TABANI verir (`approve`); ₺500K esigi ise
+    seviyeyi BILMEK zorundadir. Yardimci burada durur cunku iki cagirani vardir
+    (`service.can_delete_request` ve `transitions._assert_approver_level`) ve
+    `transitions` → `service` ithalati donguye girerdi.
+    """
+    permission = await get_permission(session, actor.role_id, PERMISSION_MODULE)
+    return permission.access_level if permission is not None else AccessLevel.none
+
+
+async def request_estimated_total(session: AsyncSession, request_id: uuid.UUID) -> Decimal:
+    """Talebin O ANKI tahmini toplami — ₺500K esiginin TEK kaynagi.
+
+    ⚠️ Kayitta donmus bir toplam OKUNMAZ ve boyle bir kolon ACILMAZ (T1):
+    olsaydi kalem degisiminde bayatlar ve esik sessizce atlatilabilirdi.
+
+    Formul liste turevi (`request_totals`) ile AYNIDIR: fiyatsiz kalem toplama
+    GIRMEZ (`SUM` NULL'lari atlar). Iki taban olsaydi ekranda gorulen tutar ile
+    esigin baktigi tutar ayni talep icin farkli cikabilirdi.
+    """
+    toplam = await session.scalar(
+        select(
+            func.sum(PurchaseRequestLine.quantity * PurchaseRequestLine.estimated_unit_price)
+        ).where(PurchaseRequestLine.request_id == request_id)
+    )
+    return toplam if toplam is not None else Decimal("0")
+
+
+async def request_quantity_total(session: AsyncSession, request_id: uuid.UUID) -> Decimal:
+    """Talebin toplam MIKTARI — teklifin toplam maliyetinin carpanidir.
+
+    Teklif tek bir `unit_price` tasir (spec §2, TEK karti): karsiligi talebin
+    tumudur. Kalemsiz talepte sifirdir ve o durumda her teklifin maliyeti de
+    yalniz nakliyeden ibaret kalir — uydurma bir 1 carpani KULLANILMAZ.
+    """
+    toplam = await session.scalar(
+        select(func.sum(PurchaseRequestLine.quantity)).where(
+            PurchaseRequestLine.request_id == request_id
+        )
+    )
+    return toplam if toplam is not None else Decimal("0")
+
+
+async def list_quotes(session: AsyncSession, request_id: uuid.UUID) -> list[Row]:
+    """Teklifler + TEDARIKCI tek sorguda (`JOIN`).
+
+    Kart basina `session.get(Supplier, …)` kosulsaydi 8 teklifli bir
+    karsilastirma 8 sorgu acardi. `INNER JOIN` yeterlidir: `supplier_id` NOT
+    NULL ve FK'dir.
+
+    Siralama SUNUCUDA sabittir (`created_at`, `id`): TEK ekrani kartlari
+    yan yana dizer ve her aciliste ayni duzeni gostermelidir.
+    """
+    stmt = (
+        select(PurchaseQuote, Supplier.name.label("supplier_name"))
+        .join(Supplier, Supplier.id == PurchaseQuote.supplier_id)
+        .where(PurchaseQuote.request_id == request_id)
+        .order_by(PurchaseQuote.created_at, PurchaseQuote.id)
+    )
+    return list((await session.execute(stmt)).all())
+
+
+async def get_quote_in_request(
+    session: AsyncSession, request_id: uuid.UUID, quote_id: uuid.UUID
+) -> PurchaseQuote | None:
+    """YOL CAPRAZININ kapisi: teklif BU talebin altinda degilse `None`.
+
+    `session.get(PurchaseQuote, quote_id)` + ayri bir `request_id` kontrolu
+    YAZILMAZ — iki adim arasinda birinin unutulmasi tam olarak caprazi acardi.
+    Tek `WHERE` her iki olcutu de tasir.
+    """
+    stmt = select(PurchaseQuote).where(
+        PurchaseQuote.id == quote_id, PurchaseQuote.request_id == request_id
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def clear_selected_quotes(
+    session: AsyncSession, request_id: uuid.UUID, keep_quote_id: uuid.UUID
+) -> None:
+    """Talepte TEK secili teklif kalir. Toplu `UPDATE` — satir basina dongu YOK.
+
+    Kismi UNIQUE indeks tercih EDILMEDI (T1 karari): teklif duzenleme sirasinda
+    gecici iki-secili durumu imkansiz kilarak ucu kilitlerdi. Tekillik bu tek
+    yazma yolunun sorumlulugudur.
+    """
+    await session.execute(
+        update(PurchaseQuote)
+        .where(
+            PurchaseQuote.request_id == request_id,
+            PurchaseQuote.id != keep_quote_id,
+            PurchaseQuote.is_selected.is_(True),
+        )
+        .values(is_selected=False)
+    )
+
+
+def _order_filtered(
+    stmt: Select,
+    project_ids: list[uuid.UUID],
+    *,
+    status: PurchaseOrderStatus | None,
+    project_id: uuid.UUID | None,
+    supplier_id: uuid.UUID | None,
+    q: str | None,
+) -> Select:
+    """SIP filtre cubugu + KAPSAM. Suzgecler AND'lidir.
+
+    Kapsam (`project_id IN gorunenler`) HER ZAMAN uygulanir ve kullanicinin
+    verdigi `project_id` onun USTUNE gecer: gorunmeyen bir proje kimligi
+    verildiginde kesisim BOSTUR, yani sizinti olmaz.
+
+    `q` siparis NUMARASI ve NOT uzerinde kismi arar — SIP tablosu ikisini de
+    gosterir. Tedarikci ADINDA aranmaz: tedarikci icin AYRI ve kesin bir
+    suzgec (`supplier_id`) vardir, metin aramasi onu belirsizlestirirdi.
+    """
+    stmt = stmt.where(PurchaseOrder.project_id.in_(project_ids))
+    if status is not None:
+        stmt = stmt.where(PurchaseOrder.status == status)
+    if project_id is not None:
+        stmt = stmt.where(PurchaseOrder.project_id == project_id)
+    if supplier_id is not None:
+        stmt = stmt.where(PurchaseOrder.supplier_id == supplier_id)
+    if q:
+        desen = f"%{_like_escape(q)}%"
+        stmt = stmt.where(
+            PurchaseOrder.order_no.ilike(desen, escape="\\")
+            | PurchaseOrder.note.ilike(desen, escape="\\")
+        )
+    return stmt
+
+
+def _order_select() -> Select:
+    """Siparis + tedarikci adi + (varsa) talep numarasi TEK sorguda.
+
+    Talep tarafi `OUTER JOIN`dir: talepsiz siparis MESRUDUR (§7 S3) ve `INNER
+    JOIN` tam olarak SIP 35'in dogrudan siparisini listeden dusururdu.
+    """
+    return (
+        select(
+            PurchaseOrder,
+            Supplier.name.label("supplier_name"),
+            PurchaseRequest.request_no.label("request_no"),
+        )
+        .join(Supplier, Supplier.id == PurchaseOrder.supplier_id)
+        .outerjoin(PurchaseRequest, PurchaseRequest.id == PurchaseOrder.request_id)
+    )
+
+
+async def list_orders(
+    session: AsyncSession,
+    project_ids: list[uuid.UUID],
+    *,
+    status: PurchaseOrderStatus | None,
+    project_id: uuid.UUID | None,
+    supplier_id: uuid.UUID | None,
+    q: str | None,
+    limit: int,
+    offset: int,
+) -> list[Row]:
+    """Siralama en yeniden eskiye; son olcut siparis NUMARASI.
+
+    `id` DEGIL numara (T2'nin `list_requests` dersi): `created_at`in varsayilani
+    `now()`dur ve Postgres'te ISLEM BOYU SABITTIR — ayni transaction'da acilan
+    iki siparis birebir ayni damgayi alir. Rastgele bir UUID son olcut olsaydi
+    siralama o eslikte KARARSIZ kalir, sayfalar arasinda satir kaybolurdu.
+    """
+    stmt = _order_filtered(
+        _order_select(),
+        project_ids,
+        status=status,
+        project_id=project_id,
+        supplier_id=supplier_id,
+        q=q,
+    )
+    stmt = (
+        stmt.order_by(PurchaseOrder.created_at.desc(), PurchaseOrder.order_no.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return list((await session.execute(stmt)).all())
+
+
+async def count_orders(
+    session: AsyncSession,
+    project_ids: list[uuid.UUID],
+    *,
+    status: PurchaseOrderStatus | None,
+    project_id: uuid.UUID | None,
+    supplier_id: uuid.UUID | None,
+    q: str | None,
+) -> int:
+    """Sayim liste ile AYNI suzgecten gecer; JOIN'lere GIRMEZ (satir sayisini
+    degistirmezler, gereksiz is yapilmaz)."""
+    stmt = _order_filtered(
+        select(func.count()).select_from(PurchaseOrder),
+        project_ids,
+        status=status,
+        project_id=project_id,
+        supplier_id=supplier_id,
+        q=q,
+    )
+    return (await session.execute(stmt)).scalar_one()
+
+
+async def get_order_row(session: AsyncSession, order_id: uuid.UUID) -> Row | None:
+    """Detay ucu liste ile AYNI turetmeyi kullanir (tek formul kurali)."""
+    stmt = _order_select().where(PurchaseOrder.id == order_id)
+    return (await session.execute(stmt)).one_or_none()
+
+
+async def get_order(session: AsyncSession, order_id: uuid.UUID) -> PurchaseOrder | None:
+    return await session.get(PurchaseOrder, order_id)
 
 
 async def existing_stock_item_ids(
@@ -379,17 +608,27 @@ async def current_stock_by_item(
 
 
 __all__ = [
+    "actor_level",
+    "clear_selected_quotes",
+    "count_orders",
     "count_requests",
     "count_suppliers",
     "current_stock_by_item",
     "existing_stock_item_ids",
+    "get_order",
+    "get_order_row",
+    "get_quote_in_request",
     "get_request",
     "get_supplier",
     "get_supplier_with_totals",
+    "list_orders",
+    "list_quotes",
     "list_request_lines",
     "list_requests",
     "list_suppliers",
     "load_request_lines",
+    "request_estimated_total",
+    "request_quantity_total",
     "request_totals",
     "supplier_order_totals",
 ]

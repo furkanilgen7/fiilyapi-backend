@@ -163,6 +163,12 @@ def upgrade() -> None:
     # 4. purchase_request_lines — CASCADE (yetim kalem) + kart RESTRICT.
     #    Miktar CHECK'i: ST'nin negatif duzeltme istisnasi burada YOKTUR.
     #    Stok karti / serbest metin XOR'u DB'de zorlanmaz: taslak GEVSEKTIR.
+    #    `sort_order` (T3 eklemesi): FST kalem tablosu SIRALIDIR ve kullanicinin
+    #    girdigi sira korunmalidir. `id` bir UUID4'tur, yani ona gore siralamak
+    #    kararli ama EKLEME SIRASINDAN BAGIMSIZ bir dizilis verirdi. Sunucu
+    #    varsayilani YOKTUR: degeri govdedeki dizinin INDEKSI belirler ve her
+    #    yazma yolu onu acikca doldurur — varsayilan 0 olsaydi eksik doldurulan
+    #    bir yol tum satirlari ayni sirada birakip sessizce keyfi dizerdi.
     op.create_table(
         "purchase_request_lines",
         sa.Column("id", sa.UUID(), nullable=False),
@@ -172,6 +178,7 @@ def upgrade() -> None:
         sa.Column("free_text_unit", sa.String(length=20), nullable=True),
         sa.Column("quantity", sa.Numeric(precision=14, scale=3), nullable=False),
         sa.Column("estimated_unit_price", sa.Numeric(precision=18, scale=2), nullable=True),
+        sa.Column("sort_order", sa.Integer(), nullable=False),
         sa.CheckConstraint("quantity > 0", name="ck_purchase_request_lines_quantity_positive"),
         sa.ForeignKeyConstraint(["request_id"], ["purchase_requests.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["stock_item_id"], ["stock_items.id"], ondelete="RESTRICT"),
