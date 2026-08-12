@@ -35,6 +35,7 @@ from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
 from app.modules.personnel import repository, service
 from app.modules.personnel.schemas import (
+    HrDocumentsSummaryResponse,
     PersonnelCreate,
     PersonnelDocumentCreate,
     PersonnelDocumentResponse,
@@ -102,6 +103,23 @@ async def list_personnel_endpoint(
         limit=limit,
         offset=offset,
     )
+
+
+@router.get(
+    "/hr/documents/summary",
+    response_model=HrDocumentsSummaryResponse,
+    dependencies=[_VIEW],
+)
+async def hr_documents_summary_endpoint(
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> HrDocumentsSummaryResponse:
+    """BT özet ucu: 5 KPI + belge tipi dağılımı + süresi-dolan/yaklaşan listeleri.
+
+    Okuma (`view`) yeter — `personnel` şirket-geneli İK varlığıdır (liste ucu
+    deseni). Sayılar yalnız AKTİF + YAYINDA personeli kapsar; durum türevi
+    `status.py` tek kaynağından, sorgu sayısı veri büyüklüğünden bağımsızdır.
+    """
+    return await service.build_hr_documents_summary(session)
 
 
 @router.post(

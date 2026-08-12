@@ -200,3 +200,73 @@ class PersonnelDocumentResponse(BaseModel):
     days_left: int | None
     created_at: datetime
     updated_at: datetime
+
+
+# --- İK-1 T4: belge takibi özeti (spec §2, §3 — BT mockup birebir) ----------
+
+
+class HrDocumentTypeBreakdown(BaseModel):
+    """Bir katalog tipinin BT "Belge Tipi Dağılımı" satırı.
+
+    `valid`/`expiring`/`expired` BELGE sayısıdır (aktif+yayın personelin bu tipteki
+    kayıtları); `missing` PERSONEL sayısıdır — aktif+yayın personel toplamından bu
+    tipte kaydı OLAN aktif+yayın personel sayısı çıkarılır. İki farklı taban (belge
+    vs personel) bilinçlidir: `missing` "kayıt YOKLUĞU" olduğundan yalnız kişi
+    düzeyinde anlamlıdır. `total_documents` = valid+expiring+expired.
+
+    Opsiyonel tip de (is_mandatory=False) dağılımda GÖSTERİLİR ama KPI `missing`
+    toplamına GİRMEZ (o toplam yalnız zorunlu tipler üzerinden — spec §2/§3).
+    """
+
+    type_id: uuid.UUID
+    type_name: str
+    is_mandatory: bool
+    validity_months: int | None
+    total_documents: int
+    valid: int
+    expiring: int
+    expired: int
+    missing: int
+
+
+class HrExpiredDocument(BaseModel):
+    """ "Süresi Dolan Belgeler" listesi satırı — en çok geciken önce."""
+
+    id: uuid.UUID
+    personnel_id: uuid.UUID
+    personnel_name: str
+    document_label: str
+    project_name: str | None
+    valid_until: date
+    days_overdue: int
+
+
+class HrExpiringDocument(BaseModel):
+    """ "30 Gün İçinde Bitecek" listesi satırı — en yakın önce."""
+
+    id: uuid.UUID
+    personnel_id: uuid.UUID
+    personnel_name: str
+    document_label: str
+    project_name: str | None
+    valid_until: date
+    days_left: int
+
+
+class HrDocumentsSummaryResponse(BaseModel):
+    """BT özet ucu: 5 KPI + tip dağılımı + iki liste (spec §2/§3).
+
+    Tüm sayılar AKTİF (`is_active=true`) + YAYINDA (`is_draft=false`) personelin
+    dünyasını anlatır — ekran çalışan iş gücünün belge uyumunu gösterir; taslak
+    (henüz yayınlanmamış) ve pasif (ayrılmış) personelin belgeleri hiçbir sayaca
+    girmez (`missing` tanımıyla tutarlı). Durum türevi `status.py` tek kaynağından.
+    """
+
+    total_documents: int
+    valid: int
+    expiring: int
+    expired: int
+    missing: int
+    by_type: list[HrDocumentTypeBreakdown]
+    expired_documents: list[HrExpiredDocument]
+    expiring_documents: list[HrExpiringDocument]

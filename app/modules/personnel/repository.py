@@ -22,6 +22,7 @@ from app.modules.personnel.models import (
     PersonnelDocument,
     PersonnelDocumentType,
 )
+from app.modules.projects.models import Project
 from app.modules.site_diary.models import WorkerSource
 
 
@@ -165,3 +166,72 @@ async def add_personnel_document(
     await session.flush()
     await session.refresh(document)
     return document
+
+
+# --- İK-1 T4: belge takibi özeti — AGGREGA sorgular (N+1 YOK, sabit sayı) ---
+#
+# Özet ucu (BT) SABİT SAYIDA sorgu kullanır (dashboard/progress_payments toplu
+# çekim deseni): personel×tip döngüsünde per-row SELECT ATILMAZ. Aşağıdaki üç
+# fonksiyon veri büyüklüğünden bağımsız 3 sorgu üretir; durum bucketleme +
+# `missing` sayımı Python'da bu satırlar üzerinden yapılır (`status.py` tek
+# kaynağı). Kanıt: `test_n_plus_1_sabit_sorgu` 2 vs 10 personelde aynı sayıyı ölçer.
+
+
+async def list_document_types(session: AsyncSession) -> list[PersonnelDocumentType]:
+    """Katalog tipleri (dağılım her tip için satır üretir) — `sort_order` sırasıyla."""
+    stmt = select(PersonnelDocumentType).order_by(
+        PersonnelDocumentType.sort_order, PersonnelDocumentType.name
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def count_active_published_personnel(session: AsyncSession) -> int:
+    """AKTİF + YAYINDA personel sayısı — `missing` tabanı (spec §2/§3).
+
+    Taslak (`is_draft=true`) ve pasif (`is_active=false`) personel SAYILMAZ:
+    `missing` yalnız çalışan iş gücü için anlamlıdır.
+    """
+    stmt = (
+        select(func.count())
+        .select_from(Personnel)
+        .where(Personnel.is_active.is_(True), Personnel.is_draft.is_(False))
+    )
+    return (await session.execute(stmt)).scalar_one()
+
+
+async def list_active_published_document_rows(
+    session: AsyncSession,
+) -> list[Row[tuple]]:
+    """AKTİF + YAYINDA personelin TÜM belgeleri + tip künyesi + proje adı — TEK sorgu.
+
+    KPI (valid/expiring/expired), tip dağılımı kırılımı ve iki liste (süresi
+    dolan/yaklaşan) hep bu tek çekimden Python'da türetilir; belge/tip/personel
+    başına ek SELECT (N+1) YOKTUR.
+
+    `INNER JOIN personnel` (+ WHERE aktif/yayın) taslak/pasif personelin
+    belgelerini SQL'de eler — özet yalnız çalışan iş gücünü sayar. Tip ve proje
+    `LEFT JOIN`'dir: serbest etiketli (`type_id NULL`) ya da projesi olmayan
+    kayıtlar da listede kalır (tip/proje sütunları None gelir).
+    """
+    stmt = (
+        select(
+            PersonnelDocument.id,
+            PersonnelDocument.personnel_id,
+            PersonnelDocument.type_id,
+            PersonnelDocument.free_label,
+            PersonnelDocument.valid_until,
+            Personnel.full_name,
+            PersonnelDocumentType.name,
+            PersonnelDocumentType.is_mandatory,
+            PersonnelDocumentType.validity_months,
+            Project.name,
+        )
+        .join(Personnel, PersonnelDocument.personnel_id == Personnel.id)
+        .outerjoin(
+            PersonnelDocumentType,
+            PersonnelDocument.type_id == PersonnelDocumentType.id,
+        )
+        .outerjoin(Project, Personnel.assigned_project_id == Project.id)
+        .where(Personnel.is_active.is_(True), Personnel.is_draft.is_(False))
+    )
+    return list((await session.execute(stmt)).all())
