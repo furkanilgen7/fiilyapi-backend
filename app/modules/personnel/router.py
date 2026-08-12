@@ -7,9 +7,12 @@ Kapılar `personnel` iznidir (seed'de HAZIR, matris DEĞİŞMEZ): okuma `view`,
 yazma `full`. Bu ayrım **şantiye şefini SALT OKUR yapar** (matriste
 `personnel=_V`) — işçiyi İK ekler (spec §5 bilinçli sınır).
 
-**`visible_projects` süzgeci BİLİNÇLİ OLARAK yok** (spec §3): `personnel`
-şirket-geneli bir İK varlığıdır, tabloda `project_id` kolonu bile yoktur. IDOR
-unutulmuş DEĞİLDİR — sonraki okuyucu buraya proje süzgeci EKLEMESİN.
+**`visible_projects` süzgeci yok, ama `?project_id=` süzgeci VAR** (İK-1 spec §5
+K4): `personnel` yine şirket-geneli bir İK varlığıdır ve tüm projelerde görünür.
+Puantaj diliminin "proje süzgeci EKLEMESİN" notu `assigned_project_id` atama
+kolonu YOKKEN geçerliydi; §5 K4 kararı bunu güncelledi — kolon açıldığından
+`?project_id=` meşru bir DARALTMA süzgecidir, yetki genişletmez (IDOR açığı
+DEĞİLDİR: kapsam denetimi yine `personnel` iznidir).
 
 **DELETE ucu AÇILMAZ** (spec §3): puantaj kayıtları personele RESTRICT ile
 bağlıdır; kartoteksten çıkarma `PATCH {"is_active": false}` ile yapılır.
@@ -53,13 +56,17 @@ async def list_personnel_endpoint(
     source: WorkerSource | None = None,
     subcontractor_id: uuid.UUID | None = None,
     is_active: bool | None = None,
+    project_id: uuid.UUID | None = None,
+    is_draft: bool | None = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> PersonnelListResponse:
     """`q` YALNIZ ada kısmi bakar (spec §3); süzgeçler AND'lidir.
 
     `is_active` GÖNDERİLMEZSE süzgeç uygulanmaz — pasif personel sessizce
-    gizlenmez; ekran hangi kümeyi istediğini açıkça söyler.
+    gizlenmez; ekran hangi kümeyi istediğini açıkça söyler. `project_id`
+    (İK-1 §5 K4) `assigned_project_id`e göre DARALTIR — yetki genişletmez;
+    `is_draft` taslakları ayıklamak için opsiyoneldir.
     """
     items = await repository.list_personnel(
         session,
@@ -67,11 +74,19 @@ async def list_personnel_endpoint(
         source=source,
         subcontractor_id=subcontractor_id,
         is_active=is_active,
+        project_id=project_id,
+        is_draft=is_draft,
         limit=limit,
         offset=offset,
     )
     total = await repository.count_personnel(
-        session, q=q, source=source, subcontractor_id=subcontractor_id, is_active=is_active
+        session,
+        q=q,
+        source=source,
+        subcontractor_id=subcontractor_id,
+        is_active=is_active,
+        project_id=project_id,
+        is_draft=is_draft,
     )
     return PersonnelListResponse(
         items=[PersonnelResponse.model_validate(p) for p in items],
