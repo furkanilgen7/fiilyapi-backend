@@ -19,7 +19,13 @@ from decimal import Decimal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.modules.personnel import guards
-from app.modules.personnel.models import Gender, MaritalStatus, PaymentMethod, WageType
+from app.modules.personnel.models import (
+    Gender,
+    LeaveStatus,
+    MaritalStatus,
+    PaymentMethod,
+    WageType,
+)
 from app.modules.site_diary.models import WorkerSource
 
 _FREE_LABEL_MAX = 150
@@ -270,3 +276,118 @@ class HrDocumentsSummaryResponse(BaseModel):
     by_type: list[HrDocumentTypeBreakdown]
     expired_documents: list[HrExpiredDocument]
     expiring_documents: list[HrExpiringDocument]
+
+
+# --- İK-2 T2: izin talebi (spec §3, §5 K2) ---------------------------------
+#
+# **`extra="forbid"` BİLİNÇLİDİR ve bu dilimin çekirdek kuralıdır (spec §5 K2):**
+# `days` SUNUCU hesabıdır, `status`/`decided_by`/`decided_at`/`reject_reason` ise
+# T3'ün (onay/ret) alanlarıdır. Pydantic'in varsayılanı bilinmeyen alanı SESSİZCE
+# YOK SAYMAKTIR — o hâlde `{"days": 99}` gönderen istemci 201 alır ve sunucunun
+# hesabıyla kendi gönderdiği sayının farklı olduğunu HİÇ ÖĞRENMEZ. Emir açık:
+# gönderilirse AÇIKÇA REDDEDİLİR (422).
+
+
+class LeaveRequestCreate(BaseModel):
+    """Yeni izin talebi. `days` ve `status` GÖNDERİLEMEZ (üstteki gerekçe).
+
+    `status` her zaman `pending` başlar — talep açan kişi kendi talebini onaylı
+    doğuramaz (K4 tek adımlı onay bunu T3'te ayrı uçla verir).
+
+    `document_id` BC arşiv künyesine bağdır (İZ 88 "rapor ekli"); görünürlük
+    denetimi SERVİSTEDİR (IDOR) — pydantic yalnız biçime bakar.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    personnel_id: uuid.UUID
+    leave_type_id: uuid.UUID
+    start_date: date
+    end_date: date
+    note: str | None = Field(default=None, max_length=2000)
+    document_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def _date_order(self) -> "LeaveRequestCreate":
+        if self.end_date < self.start_date:
+            raise ValueError(guards.LEAVE_DATE_ORDER)
+        return self
+
+
+class LeaveRequestUpdate(BaseModel):
+    """Kısmi güncelleme — YALNIZ `pending` kayıtta (kural serviste, 409).
+
+    Tarih sırası BURADA doğrulanamaz: PATCH tek uç gönderebilir (`end_date`),
+    kural ancak DB'deki kayıtla BİRLEŞTİRİLMİŞ değerler üzerinde anlamlıdır —
+    bu yüzden servis korkuluğundadır (`PersonnelValidationError` -> 422).
+    `personnel_id` DEĞİŞTİRİLEMEZ: talebin KİMİN olduğu kimliğidir, yanlış
+    personele açılan talep silinip yeniden açılır (`PersonnelDocumentUpdate`
+    tip/etiket dondurma emsali).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    leave_type_id: uuid.UUID | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    note: str | None = Field(default=None, max_length=2000)
+    document_id: uuid.UUID | None = None
+
+
+class LeaveTypeResponse(BaseModel):
+    """Katalog satırı — SALT OKUMA (spec §1: CRUD ucu AÇILMAZ, ayarlar dilimi).
+
+    Talep formunun tip listesine ihtiyacı vardır; yazma ucu yoktur.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    deducts_from_annual: bool
+    is_paid: bool
+    requires_document: bool
+    color: str | None
+    sort_order: int
+
+
+class LeaveRequestResponse(BaseModel):
+    """İZ talep tablosu satırı: kayıt + personel ve tip KÜNYESİ (JOIN'li, N+1 yok).
+
+    `personnel_name`/`personnel_trade` ve `leave_type_*` kolon DEĞİLDİR; liste
+    sorgusunun JOIN'inden gelir — ekran satır başına ikinci istek atmasın.
+    `deducts_from_annual` künyeye dahildir çünkü hak aşımı uyarısı (İZ 98-99)
+    YALNIZ o tiplerde anlamlıdır ve istemci tipi ayrıca sorgulamak zorunda kalmaz.
+
+    `days` TÜREV DEĞİL KOLONdur ama sunucu yazar (spec §5 K2). Karar alanları
+    (`decided_*`, `reject_reason`) T2'de hep boştur; T3 doldurur.
+    """
+
+    id: uuid.UUID
+    personnel_id: uuid.UUID
+    personnel_name: str
+    personnel_trade: str | None
+    leave_type_id: uuid.UUID
+    leave_type_name: str
+    leave_type_color: str | None
+    deducts_from_annual: bool
+    start_date: date
+    end_date: date
+    days: int
+    note: str | None
+    document_id: uuid.UUID | None
+    status: LeaveStatus
+    decided_by: uuid.UUID | None
+    decided_at: datetime | None
+    reject_reason: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class LeaveRequestListResponse(BaseModel):
+    """`PersonnelListResponse` kardeşi (TB3 sayfalama zarfı): `total` + `limit`/`offset`."""
+
+    items: list[LeaveRequestResponse]
+    total: int
+    limit: int
+    offset: int

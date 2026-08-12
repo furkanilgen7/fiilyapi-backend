@@ -34,8 +34,14 @@ from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
 from app.modules.personnel import repository, service
+from app.modules.personnel.models import LeaveStatus
 from app.modules.personnel.schemas import (
     HrDocumentsSummaryResponse,
+    LeaveRequestCreate,
+    LeaveRequestListResponse,
+    LeaveRequestResponse,
+    LeaveRequestUpdate,
+    LeaveTypeResponse,
     PersonnelCreate,
     PersonnelDocumentCreate,
     PersonnelDocumentResponse,
@@ -265,6 +271,140 @@ async def delete_personnel_document_endpoint(
     """İK takip kaydını siler (`admin`; `full` silmeyi KAPSAMAZ). SET NULL: bağlı
     BC arşiv künyesi DURUR (dosya arşivde kalır). Yanıt 204, gövdesiz."""
     detail = await service.delete_personnel_document(session, document_id)
+    await record_audit(
+        session,
+        action=AuditAction.delete,
+        detail=detail,
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+
+
+# --- İK-2 T2: izin talebi (spec §3, İZ mockup) -------------------------------
+#
+# Rota kökü BİLİNÇLİ olarak `/personnel/...` ALTINDA DEĞİLDİR: İZ ekranı talepleri
+# ŞİRKET GENELİNDE listeler (personel seçmeden), yani liste ucunun doğal kimliği
+# personel değildir. Personel bazlı görünüm `?personnel_id=` süzgecidir.
+#
+# **`/leave-types` SALT OKUMADIR** (spec §1): katalog CRUD'u AÇILMAZ, talep
+# formunun tip listesine ihtiyacı olduğu için yalnız GET vardır.
+#
+# approve/reject uçları ve bakiye T3'ün işidir — BURADA YOKTUR.
+
+
+@router.get("/leave-types", response_model=list[LeaveTypeResponse], dependencies=[_VIEW])
+async def list_leave_types_endpoint(
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> list[LeaveTypeResponse]:
+    """Aktif izin tipleri (`sort_order`). Yazma ucu YOKTUR — katalog ayarlar dilimidir."""
+    types = await service.list_leave_types(session)
+    return [LeaveTypeResponse.model_validate(t) for t in types]
+
+
+@router.get("/leave-requests", response_model=LeaveRequestListResponse, dependencies=[_VIEW])
+async def list_leave_requests_endpoint(
+    session: Annotated[AsyncSession, Depends(get_db)],
+    status_filter: Annotated[LeaveStatus | None, Query(alias="status")] = None,
+    personnel_id: uuid.UUID | None = None,
+    project_id: uuid.UUID | None = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> LeaveRequestListResponse:
+    """İZ talep tablosu. Süzgeçler AND'lidir; `project_id` PERSONELİN projesi
+    üzerinden DARALTIR (talebin kendi proje kolonu yoktur).
+
+    `limit` tavanı 200'dür (TB3 korkuluğu): tavanı aşan istek SESSİZCE KIRPILMAZ,
+    422 olur — ekran eksik listeyi tam sanmasın.
+    """
+    items, total = await service.list_leave_requests(
+        session,
+        status=status_filter,
+        personnel_id=personnel_id,
+        project_id=project_id,
+        limit=limit,
+        offset=offset,
+    )
+    return LeaveRequestListResponse(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.post(
+    "/leave-requests",
+    response_model=LeaveRequestResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[_FULL],
+)
+async def create_leave_request_endpoint(
+    request: Request,
+    data: LeaveRequestCreate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> LeaveRequestResponse:
+    """`days` SUNUCU hesabıdır ve `status` `pending` başlar (spec §5 K2); ikisi de
+    gövdeden alınmaz — gönderilirse 422 (şema `extra="forbid"`).
+
+    Personel yok → 404 · izin tipi yok → 404, pasif → 422 · ters tarih → 422 ·
+    görünmez BC belgesi (`document_id`) → 404 (IDOR korkuluğu).
+    """
+    response, detail = await service.create_leave_request(session, user, data)
+    await record_audit(
+        session,
+        action=AuditAction.create,
+        detail=detail,
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return response
+
+
+@router.get(
+    "/leave-requests/{request_id}", response_model=LeaveRequestResponse, dependencies=[_VIEW]
+)
+async def get_leave_request_endpoint(
+    request_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> LeaveRequestResponse:
+    return await service.get_leave_request(session, request_id)
+
+
+@router.patch(
+    "/leave-requests/{request_id}", response_model=LeaveRequestResponse, dependencies=[_FULL]
+)
+async def update_leave_request_endpoint(
+    request: Request,
+    request_id: uuid.UUID,
+    data: LeaveRequestUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> LeaveRequestResponse:
+    """YALNIZ `pending` kayıt düzenlenebilir (karara bağlanmış → 409). Tarih
+    değişirse `days` YENİDEN sunucu hesabıdır."""
+    response, detail = await service.update_leave_request(session, user, request_id, data)
+    await record_audit(
+        session,
+        action=AuditAction.update,
+        detail=detail,
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return response
+
+
+@router.delete(
+    "/leave-requests/{request_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[_VIEW],
+)
+async def delete_leave_request_endpoint(
+    request: Request,
+    request_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """Bekleyen talebi siler. Kapı BİLİNÇLİ olarak `_VIEW`dir: gerçek kural İKİ
+    yoldan açılır (`admin` seviyesi YA DA talebin SAHİBİ olmak, spec §3) ve tek
+    seviyeli bir router kapısı bunu ifade edemez — karar serviste verilir, yetkisiz
+    aktör 403 alır. `procurement` (`personnel=none`) zaten bu kapıda durur."""
+    detail = await service.delete_leave_request(session, user, request_id)
     await record_audit(
         session,
         action=AuditAction.delete,

@@ -85,6 +85,33 @@ PUBLISH_REQUIRED_FIELDS: tuple[tuple[str, str], ...] = (
 )
 PUBLISH_MISSING = "Personeli yayınlamak için şu alanlar zorunludur: {}"
 
+# --- İK-2 T2: izin talebi korkulukları (spec §3, §5 K2/K3) -----------------
+
+# 404 — talep yok/görünmez (`PERSONNEL_MISSING` deseni; var olmayanla ayırt edilemez).
+LEAVE_REQUEST_MISSING = "İzin talebi bulunamadı"
+
+# 404 — gövdedeki `leave_type_id` katalogda hiç yok (spec §4b: gövde içi varlık ref).
+LEAVE_TYPE_MISSING = "İzin tipi bulunamadı"
+
+# 422 — tip katalogda VAR ama pasif. 404 DEĞİL (`DOCUMENT_TYPE_INACTIVE` gerekçesi):
+# kayıt vardır, engelleyen şey düzeltilebilir bir DURUMDUR (başka tip seçilebilir).
+LEAVE_TYPE_INACTIVE = "Seçilen izin tipi pasif, kullanılamaz"
+
+# 422 — bitiş başlangıçtan önce. DB CHECK (`ck_leave_requests_date_order`) VARDIR
+# ama ihlali 409 "veri bütünlüğü" verirdi; servis DB'ye düşmeden Türkçe 422 atar.
+LEAVE_DATE_ORDER = "İzin bitiş tarihi başlangıç tarihinden önce olamaz"
+
+# 409 — karara bağlanmış talep DÜZENLENEMEZ/SİLİNEMEZ (spec §3: "yalnız pending").
+# `ConflictError`: engel kaydın MEVCUT DURUMUDUR, gövdedeki bir alan değil; 422
+# verilseydi ekran "hangi alanı düzelteyim" diye arardı. Onaylı izin bakiyeyi
+# etkilemiştir — geriye dönük düzenlemesi bakiyeyi sessizce kaydırırdı.
+LEAVE_NOT_PENDING = "Yalnız bekleyen (onaylanmamış) izin talebi düzenlenebilir ya da silinebilir"
+
+# 403 — silme yetkisi (spec §3: "pending, sahibi ya da admin"). `full` TEK BAŞINA
+# YETMEZ: `app/core/access.py` "full silmeyi KAPSAMAZ" der. İki kapıdan biri açar —
+# `admin` seviyesi YA DA talebin sahibi olmak (personelin `user_id`si aktör).
+LEAVE_DELETE_NOT_ALLOWED = "Bu izin talebini silme yetkiniz yok"
+
 
 def validate_personnel_source(source: WorkerSource, subcontractor_id: uuid.UUID | None) -> None:
     """Kural BİRLEŞİK kayıt üzerinde koşar.
