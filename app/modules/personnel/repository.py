@@ -2,19 +2,27 @@
 
 (sayfalama) desenlerinin birleşimi.
 
-**`visible_projects` süzgeci BİLİNÇLİ OLARAK yoktur** (spec §3): `personnel`
-şirket-geneli bir İK varlığıdır, tabloda `project_id` kolonu bile YOKTUR — aynı
-işçi ay içinde farklı projelerin şantiyelerinde çalışabilir. IDOR unutulmuş
-DEĞİLDİR; erişim `personnel` izin seviyesiyle denetlenir (router kapıları).
-Kapsam süzgeci PUANTAJ uçlarının (T3) işidir, personel kartoteksinin değil.
+**`visible_projects` süzgeci YOKTUR ama `?project_id=` süzgeci VARDIR** (İK-1 spec
+§5 K4): `personnel` yine şirket-geneli bir İK varlığıdır ve tüm projelerde görünür;
+İK-1 ile `assigned_project_id` ATAMA kolonu açıldığından `project_id` bir
+DARALTMA süzgecidir (yetki genişletmez). Puantaj diliminin "proje süzgeci
+eklenmesin" notu atama kolonu YOKKEN geçerliydi; §5 K4 kararı bunu güncelledi —
+kolon açıldı, `?project_id=` meşru. IDOR unutulmuş DEĞİLDİR: süzgeç bir yetki
+kapısı değildir, erişim yine `personnel` izin seviyesiyle (router kapıları)
+denetlenir.
 """
 
 import uuid
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Row, Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.personnel.models import Personnel
+from app.modules.personnel.models import (
+    Personnel,
+    PersonnelDocument,
+    PersonnelDocumentType,
+)
+from app.modules.projects.models import Project
 from app.modules.site_diary.models import WorkerSource
 
 
@@ -24,6 +32,8 @@ def _filtreli(
     source: WorkerSource | None,
     subcontractor_id: uuid.UUID | None,
     is_active: bool | None,
+    project_id: uuid.UUID | None,
+    is_draft: bool | None,
 ) -> Select:
     """Liste ve sayım AYNI süzgeçleri kullanır — `total` gösterilen listeyle uyuşsun."""
     if q:
@@ -34,6 +44,11 @@ def _filtreli(
         stmt = stmt.where(Personnel.subcontractor_id == subcontractor_id)
     if is_active is not None:
         stmt = stmt.where(Personnel.is_active.is_(is_active))
+    # İK-1 §5 K4: atama kolonuna göre DARALTMA (yetki genişletmez).
+    if project_id is not None:
+        stmt = stmt.where(Personnel.assigned_project_id == project_id)
+    if is_draft is not None:
+        stmt = stmt.where(Personnel.is_draft.is_(is_draft))
     return stmt
 
 
@@ -43,6 +58,8 @@ async def list_personnel(
     source: WorkerSource | None = None,
     subcontractor_id: uuid.UUID | None = None,
     is_active: bool | None = None,
+    project_id: uuid.UUID | None = None,
+    is_draft: bool | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> list[Personnel]:
@@ -50,7 +67,9 @@ async def list_personnel(
 
     Sıralama DB'de (`ORDER BY full_name`) — sayfalama deterministik olsun.
     """
-    stmt = _filtreli(select(Personnel), q, source, subcontractor_id, is_active)
+    stmt = _filtreli(
+        select(Personnel), q, source, subcontractor_id, is_active, project_id, is_draft
+    )
     stmt = stmt.order_by(Personnel.full_name).limit(limit).offset(offset)
     return list((await session.execute(stmt)).scalars().all())
 
@@ -61,9 +80,17 @@ async def count_personnel(
     source: WorkerSource | None = None,
     subcontractor_id: uuid.UUID | None = None,
     is_active: bool | None = None,
+    project_id: uuid.UUID | None = None,
+    is_draft: bool | None = None,
 ) -> int:
     stmt = _filtreli(
-        select(func.count()).select_from(Personnel), q, source, subcontractor_id, is_active
+        select(func.count()).select_from(Personnel),
+        q,
+        source,
+        subcontractor_id,
+        is_active,
+        project_id,
+        is_draft,
     )
     return (await session.execute(stmt)).scalar_one()
 
@@ -72,8 +99,139 @@ async def get_personnel(session: AsyncSession, personnel_id: uuid.UUID) -> Perso
     return await session.get(Personnel, personnel_id)
 
 
+async def get_personnel_by_tc_no(
+    session: AsyncSession, tc_no: str, exclude_id: uuid.UUID | None = None
+) -> Personnel | None:
+    """DOLU TCKN'nin başka bir kayıtta olup olmadığı (`customers` pre-SELECT deseni).
+
+    Servis bunu `IntegrityError`a düşmeden ÇAĞIRIR ki kullanıcıya alanına özel
+    Türkçe 409 verilebilsin; `uq_personnel_tc_no` YARIŞ DURUMU emniyet ağıdır.
+    """
+    stmt = select(Personnel).where(Personnel.tc_no == tc_no)
+    if exclude_id is not None:
+        stmt = stmt.where(Personnel.id != exclude_id)
+    return (await session.execute(stmt)).scalars().first()
+
+
 async def add_personnel(session: AsyncSession, personnel: Personnel) -> Personnel:
     session.add(personnel)
     await session.flush()
     await session.refresh(personnel)
     return personnel
+
+
+# --- İK-1 T3: belge alt-kaynağı --------------------------------------------
+
+
+async def list_personnel_documents(
+    session: AsyncSession, personnel_id: uuid.UUID
+) -> list[Row[tuple[PersonnelDocument, PersonnelDocumentType | None]]]:
+    """Bir personelin belgeleri + tip künyesi — TEK JOIN'li sorgu (N+1 YOK).
+
+    `OUTER JOIN`: serbest etiketli kayıtta (`type_id IS NULL`) tip satırı yoktur,
+    bu yüzden `LEFT JOIN` ile o kayıtlar da listede kalır ve tip sütunları None
+    gelir. Belge başına ayrı bir tip sorgusu (N+1) AÇILMAZ — kanıt:
+    `test_liste_tek_join_sorgusu` tip tablosuna ekstra SELECT atılmadığını sayar.
+
+    Sıralama DB'dedir (`created_at`) — liste her yenilendiğinde aynı sırada gelsin.
+    """
+    stmt = (
+        select(PersonnelDocument, PersonnelDocumentType)
+        .outerjoin(
+            PersonnelDocumentType,
+            PersonnelDocument.type_id == PersonnelDocumentType.id,
+        )
+        .where(PersonnelDocument.personnel_id == personnel_id)
+        .order_by(PersonnelDocument.created_at)
+    )
+    return list((await session.execute(stmt)).all())
+
+
+async def get_personnel_document(
+    session: AsyncSession, document_id: uuid.UUID
+) -> PersonnelDocument | None:
+    return await session.get(PersonnelDocument, document_id)
+
+
+async def get_document_type(
+    session: AsyncSession, type_id: uuid.UUID
+) -> PersonnelDocumentType | None:
+    return await session.get(PersonnelDocumentType, type_id)
+
+
+async def add_personnel_document(
+    session: AsyncSession, document: PersonnelDocument
+) -> PersonnelDocument:
+    session.add(document)
+    await session.flush()
+    await session.refresh(document)
+    return document
+
+
+# --- İK-1 T4: belge takibi özeti — AGGREGA sorgular (N+1 YOK, sabit sayı) ---
+#
+# Özet ucu (BT) SABİT SAYIDA sorgu kullanır (dashboard/progress_payments toplu
+# çekim deseni): personel×tip döngüsünde per-row SELECT ATILMAZ. Aşağıdaki üç
+# fonksiyon veri büyüklüğünden bağımsız 3 sorgu üretir; durum bucketleme +
+# `missing` sayımı Python'da bu satırlar üzerinden yapılır (`status.py` tek
+# kaynağı). Kanıt: `test_n_plus_1_sabit_sorgu` 2 vs 10 personelde aynı sayıyı ölçer.
+
+
+async def list_document_types(session: AsyncSession) -> list[PersonnelDocumentType]:
+    """Katalog tipleri (dağılım her tip için satır üretir) — `sort_order` sırasıyla."""
+    stmt = select(PersonnelDocumentType).order_by(
+        PersonnelDocumentType.sort_order, PersonnelDocumentType.name
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def count_active_published_personnel(session: AsyncSession) -> int:
+    """AKTİF + YAYINDA personel sayısı — `missing` tabanı (spec §2/§3).
+
+    Taslak (`is_draft=true`) ve pasif (`is_active=false`) personel SAYILMAZ:
+    `missing` yalnız çalışan iş gücü için anlamlıdır.
+    """
+    stmt = (
+        select(func.count())
+        .select_from(Personnel)
+        .where(Personnel.is_active.is_(True), Personnel.is_draft.is_(False))
+    )
+    return (await session.execute(stmt)).scalar_one()
+
+
+async def list_active_published_document_rows(
+    session: AsyncSession,
+) -> list[Row[tuple]]:
+    """AKTİF + YAYINDA personelin TÜM belgeleri + tip künyesi + proje adı — TEK sorgu.
+
+    KPI (valid/expiring/expired), tip dağılımı kırılımı ve iki liste (süresi
+    dolan/yaklaşan) hep bu tek çekimden Python'da türetilir; belge/tip/personel
+    başına ek SELECT (N+1) YOKTUR.
+
+    `INNER JOIN personnel` (+ WHERE aktif/yayın) taslak/pasif personelin
+    belgelerini SQL'de eler — özet yalnız çalışan iş gücünü sayar. Tip ve proje
+    `LEFT JOIN`'dir: serbest etiketli (`type_id NULL`) ya da projesi olmayan
+    kayıtlar da listede kalır (tip/proje sütunları None gelir).
+    """
+    stmt = (
+        select(
+            PersonnelDocument.id,
+            PersonnelDocument.personnel_id,
+            PersonnelDocument.type_id,
+            PersonnelDocument.free_label,
+            PersonnelDocument.valid_until,
+            Personnel.full_name,
+            PersonnelDocumentType.name,
+            PersonnelDocumentType.is_mandatory,
+            PersonnelDocumentType.validity_months,
+            Project.name,
+        )
+        .join(Personnel, PersonnelDocument.personnel_id == Personnel.id)
+        .outerjoin(
+            PersonnelDocumentType,
+            PersonnelDocument.type_id == PersonnelDocumentType.id,
+        )
+        .outerjoin(Project, Personnel.assigned_project_id == Project.id)
+        .where(Personnel.is_active.is_(True), Personnel.is_draft.is_(False))
+    )
+    return list((await session.execute(stmt)).all())

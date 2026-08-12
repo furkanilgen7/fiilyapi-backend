@@ -687,6 +687,28 @@ def personnel_updated(full_name: str) -> str:
     return f"Personel güncellendi: {full_name}"
 
 
+# --- Personel belgeleri (İK-1 T3 — belge alt-kaynağı) ---
+#
+# Yeni `AuditAction` GEREKMEDI: belge eklemek `create`, künye/BC bağı güncellemek
+# `update`, silmek `delete` aksiyonuna oturur. Kimlik UUID DEĞİL insan-okur
+# ikilidir: personel adı · belge adı (tip adı ya da serbest etiket). Tarih/durum
+# YAZILMAZ — türevdir ve denetim satırına donmuş bir kopyası düşerse ayrışırdı.
+
+
+def personnel_document_added(full_name: str, label: str) -> str:
+    return f"Personel belgesi eklendi: {full_name} · {label}"
+
+
+def personnel_document_updated(full_name: str, label: str) -> str:
+    return f"Personel belgesi güncellendi: {full_name} · {label}"
+
+
+def personnel_document_deleted(full_name: str, label: str) -> str:
+    """Metin `session.delete`ten ÖNCE kurulur (`site_deleted` dersi) — sonra
+    kurulsaydı ad/etiket okunamaz ve silinenin NE OLDUĞU kaybolurdu."""
+    return f"Personel belgesi silindi: {full_name} · {label}"
+
+
 def timesheet_saved(
     project_name: str, site_name: str, year: int, month: int, cell_count: int
 ) -> str:

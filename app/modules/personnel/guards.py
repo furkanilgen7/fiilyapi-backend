@@ -26,11 +26,64 @@ from app.modules.site_diary.models import WorkerSource
 # 404 gövdesi (`customers/guards.py` deseni).
 PERSONNEL_MISSING = "Personel bulunamadı"
 
+# --- İK-1 T3: belge alt-kaynağı korkulukları ------------------------------
+
+# 404 — personelin belge kaydı yok/görünmez (`PERSONNEL_MISSING` deseni).
+PERSONNEL_DOCUMENT_MISSING = "Personel belgesi bulunamadı"
+
+# 404 — gövdedeki `type_id` katalogda hiç yok (spec §4b: gövde içi varlık ref 404).
+DOCUMENT_TYPE_MISSING = "Belge tipi bulunamadı"
+
+# 422 — tip katalogda VAR ama pasif (`is_active=false`). 404 DEĞİL: kayıt vardır,
+# engelleyen şey düzeltilebilir bir DURUMDUR (başka aktif tip seçilebilir).
+DOCUMENT_TYPE_INACTIVE = "Seçilen belge tipi pasif, kullanılamaz"
+
+# 422 — `type_id` XOR `free_label`: katalogdan bir tip SEÇİLİR YA DA serbest
+# etiket girilir, ikisi birden ya da hiçbiri OLAMAZ. Aynı kural pydantic'te (giriş
+# doğrulaması) ve DB CHECK'inde (`ck_personnel_document_type_xor_label`) de vardır;
+# bu servis korkuluğu ikisinin arasındaki üçüncü kattır ve kullanıcıya Türkçe
+# 422 verir (çıplak DB CHECK 409 "veri bütünlüğü" verirdi).
+TYPE_XOR_LABEL = "Belge için ya katalog tipi ya da serbest etiket girilmeli (yalnız biri)"
+
 # 422 — kaynak/taşeron uyuşmazlığı.
 SUBCONTRACTOR_NOT_ALLOWED = (
     "Taşeron firması yalnız kaynağı taşeron olan personelde doldurulabilir; "
     "kaynağı değiştirin ya da firma bağını temizleyin."
 )
+
+# 422 — TCKN checksum (İK-1 spec §5 K1). NULL/boş tc_no doğrulama ATLANIR (taslak
+# serbest); DOLU ise 11 hane + rakam + ilk hane sıfır DEĞİL + T.C. standart algoritma.
+INVALID_TCKN = "Geçersiz TC kimlik numarası (11 haneli olmalı ve doğrulamayı geçmeli)."
+
+# 409 — aynı TCKN iki DOLU kayıt (`customers` benzersizlik deseni). DB
+# `uq_personnel_tc_no` YARIŞ DURUMU emniyet ağı olarak KALIR.
+DUPLICATE_TCKN = "Bu TC kimlik numarası zaten kayıtlı"
+
+# 404 — gövde içi varlık ref'i yok (spec §4b kanonu: gövde içi varlık ref 404).
+PROJECT_NOT_FOUND = "Atanan proje bulunamadı"
+SECTION_NOT_FOUND = "Atanan bölüm bulunamadı"
+
+# 422 — kural ihlali (spec §4b kanonu; `documents.SITE_NOT_IN_PROJECT` deseni).
+SECTION_NOT_IN_PROJECT = "Seçilen bölüm bu projeye ait değil"
+SECTION_REQUIRES_PROJECT = "Bölüm atamak için önce proje seçilmelidir"
+
+# 422 — yayın (is_draft=false) için PE ✱ zorunlu alan kümesi (mockup 51-118).
+# Cinsiyet/Medeni/E-posta/Bölüm/Ödeme/IBAN/SGK ✱ DEĞİL — bilinçle listede yok.
+PUBLISH_REQUIRED_FIELDS: tuple[tuple[str, str], ...] = (
+    ("full_name", "Ad Soyad"),
+    ("tc_no", "TC Kimlik No"),
+    ("birth_date", "Doğum Tarihi"),
+    ("phone", "Cep Telefonu"),
+    ("address", "Adres"),
+    ("emergency_contact_name", "Acil Durum Kişisi"),
+    ("emergency_contact_phone", "Acil Durum Telefonu"),
+    ("trade", "Meslek / Görev"),
+    ("hire_date", "İşe Giriş Tarihi"),
+    ("assigned_project_id", "Atandığı Proje"),
+    ("wage_type", "Ücret Tipi"),
+    ("wage_amount", "Ücret Tutarı"),
+)
+PUBLISH_MISSING = "Personeli yayınlamak için şu alanlar zorunludur: {}"
 
 
 def validate_personnel_source(source: WorkerSource, subcontractor_id: uuid.UUID | None) -> None:
@@ -43,3 +96,39 @@ def validate_personnel_source(source: WorkerSource, subcontractor_id: uuid.UUID 
     """
     if source is not WorkerSource.subcontractor and subcontractor_id is not None:
         raise PersonnelValidationError(SUBCONTRACTOR_NOT_ALLOWED)
+
+
+def validate_tckn(tc_no: str) -> None:
+    """T.C. kimlik numarası checksum doğrulaması (spec §5 K1) — geçersizse 422.
+
+    Kural: 11 hane, hepsi rakam, ilk hane 0 DEĞİL; 10. hane =
+    ((1.+3.+5.+7.+9. hane)*7 - (2.+4.+6.+8. hane)) mod 10; 11. hane = ilk 10
+    hanenin toplamı mod 10. NULL/boş kontrolü ÇAĞIRANIN işidir — bu fonksiyon
+    yalnız DOLU değerle çağrılır (taslak serbest).
+    """
+    if len(tc_no) != 11 or not tc_no.isdigit():
+        raise PersonnelValidationError(INVALID_TCKN)
+    d = [int(c) for c in tc_no]
+    if d[0] == 0:
+        raise PersonnelValidationError(INVALID_TCKN)
+    tek = d[0] + d[2] + d[4] + d[6] + d[8]
+    cift = d[1] + d[3] + d[5] + d[7]
+    if (tek * 7 - cift) % 10 != d[9]:
+        raise PersonnelValidationError(INVALID_TCKN)
+    if sum(d[:10]) % 10 != d[10]:
+        raise PersonnelValidationError(INVALID_TCKN)
+
+
+def missing_publish_fields(merged: object) -> list[str]:
+    """Birleşik kayıtta EKSİK ✱ alanların Türkçe etiketleri (boş liste = tam).
+
+    `merged` mevcut kayıt + PATCH gövdesinin birleşimidir (P6 `_merged` deseni);
+    yayın (is_draft=false) yalnız bu birleşim tam ise geçer. Boş string de EKSİK
+    sayılır (kullanıcı alanı temizlemiş olabilir).
+    """
+    eksik: list[str] = []
+    for attr, label in PUBLISH_REQUIRED_FIELDS:
+        value = getattr(merged, attr, None)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            eksik.append(label)
+    return eksik
