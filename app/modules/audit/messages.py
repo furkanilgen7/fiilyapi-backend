@@ -878,3 +878,39 @@ def stock_entry_created(
     )
     irsaliye = "" if not delivery_note_no else f" · {delivery_note_no}"
     return f"Stok hareketi kaydedildi: {tip} · {depo}{irsaliye}"
+
+
+# --- Satınalma (SA T2) ---
+#
+# Kimlik UUID DEĞİL kullanıcının gördüğü değerdir: tedarikçide AD, talepte
+# NUMARA (`SAT-2026-0001`). Talep metinlerinde proje adı ya da tutar VERİLMEZ
+# (`SITE_HAS_BLOCKS` dersi): numara künyeyi zaten açar, tutar ise türevdir ve
+# günlüğe donmuş bir kopyası düşerse kalem değişiminde ayrışırdı.
+
+
+def supplier_created(name: str) -> str:
+    return f"Tedarikçi oluşturuldu: {name}"
+
+
+def supplier_updated(name: str) -> str:
+    """Pasifleştirme de BU satırı yazar (`is_active: false` bir PATCH'tir);
+    ayrı bir metin AÇILMAZ çünkü tedarikçi silinmez, yalnız kullanımdan kalkar
+    (`stock_item_updated` deseni)."""
+    return f"Tedarikçi güncellendi: {name}"
+
+
+def purchase_request_created(request_no: str) -> str:
+    return f"Satın alma talebi oluşturuldu: {request_no}"
+
+
+def purchase_request_updated(request_no: str) -> str:
+    """Kalem değişimi de BU satırdır: kalemler talebin gövdesinde REPLACE edilir
+    ve tek atomik işlemdir — satır başına günlük satırı, 40 kalemlik bir talepte
+    günlüğü boğardı (`stock_entry_created` "giriş başına tek olay" kuralı)."""
+    return f"Satın alma talebi güncellendi: {request_no}"
+
+
+def purchase_request_deleted(request_no: str) -> str:
+    """Metin `session.delete`ten ÖNCE kurulur — sonra kurulsaydı numara
+    güvenilir okunamaz ve silinenin NE OLDUĞU kaybolurdu (`site_deleted` dersi)."""
+    return f"Satın alma talebi silindi: {request_no}"
