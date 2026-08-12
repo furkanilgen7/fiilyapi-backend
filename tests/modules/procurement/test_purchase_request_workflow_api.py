@@ -73,6 +73,26 @@ async def test_submit_eksik_talepte_tum_engelleri_tek_422de_verir(
     assert "En az bir malzeme kalemi gereklidir" in detay
 
 
+async def test_submit_FIYATSIZ_kalemi_reddeder(
+    client, sef_headers, seeded_db, gorunen_proje, talep_fabrikasi
+):
+    """🛑 T5 BULGUSU — eşiğin BİRİNCİ katmanı.
+
+    Tahmini fiyat taslakta opsiyoneldir ama onaya gönderirken zorunludur:
+    ₺500K eşiği (FST 166) tahmini TOPLAMDAN hesaplanır ve fiyatsız kalem
+    toplama girmez. Mockup da bunu söyler — FST 168 kutusu hükmünü
+    ("₺340.900 · Patron onayı gerekmiyor") toplamdan verir, yani toplam onay
+    akışının GİRDİSİDİR.
+    """
+    talep = await talep_fabrikasi(gorunen_proje, lines=[("15.000", None)])
+
+    yanit = await client.post(f"{_YOL}/{talep.id}/submit", headers=sef_headers)
+
+    assert yanit.status_code == 422, yanit.text
+    assert "tahmini birim fiyat" in yanit.json()["detail"].lower()
+    assert await _durum(seeded_db, talep.id) is PurchaseRequestStatus.draft
+
+
 async def test_submit_engellendiginde_durum_DEGISMEZ(
     client, sef_headers, seeded_db, gorunen_proje, talep_fabrikasi
 ):
@@ -256,13 +276,32 @@ async def test_esik_ustunu_ust_seviye_rol_onaylar(
     assert yanit.json()["status"] == "quote_wait"
 
 
-async def test_kalemsiz_ve_fiyatsiz_talepte_toplam_sifir_sayilir(
+async def test_kalemsiz_talepte_toplam_sifir_sayilir(
     client, pm_headers, gorunen_proje, talep_fabrikasi
 ):
-    """Fiyatsız kalem toplama GİRMEZ (T2 kararı) — eşik ALTINDA kalır.
+    """Hiç kalemi olmayan talepte harcanacak tutar YOKTUR — eşik altındadır.
 
-    Aksi hâlde fiyatı henüz bilinmeyen bir talep, tutarı sıfır olduğu hâlde
-    onaycıyı bulamaz duruma düşerdi.
+    (Böyle bir talep `submit`ten geçemez; buradaki kayıt doğrudan
+    `pending_approval` kurulur ve yalnız EŞİK kuralının sıfır davranışını
+    ölçer.)
+    """
+    talep = await talep_fabrikasi(
+        gorunen_proje, status=PurchaseRequestStatus.pending_approval, lines=[]
+    )
+
+    assert (await client.post(f"{_YOL}/{talep.id}/approve", headers=pm_headers)).status_code == 200
+
+
+async def test_FIYATSIZ_kalem_esigin_USTU_sayilir_fail_closed(
+    client, pm_headers, seeded_db, gorunen_proje, talep_fabrikasi
+):
+    """🛑 T5 BULGUSU — eşik atlatmanın DB'siz yolu.
+
+    Fiyatsız kalem toplama girmez (`SUM` NULL'ları yutar), yani "eksik fiyat"
+    ile "düşük tutar" aynı 0'ı üretir. Eskiden bu eşik ALTI sayılıyordu:
+    ₺2M'lik bir talep, tahmini fiyat alanı boş bırakılarak toplam 0 gösterir
+    ve DB'ye hiç dokunmadan, yalnızca bir alanı doldurmayarak en düşük
+    yetkiliden geçerdi. Artık BİLİNMEYEN TUTAR BÜYÜK sayılır (fail-closed).
     """
     talep = await talep_fabrikasi(
         gorunen_proje,
@@ -270,7 +309,27 @@ async def test_kalemsiz_ve_fiyatsiz_talepte_toplam_sifir_sayilir(
         lines=[("900000.000", None)],
     )
 
-    assert (await client.post(f"{_YOL}/{talep.id}/approve", headers=pm_headers)).status_code == 200
+    yanit = await client.post(f"{_YOL}/{talep.id}/approve", headers=pm_headers)
+
+    assert yanit.status_code == 403, yanit.text
+    assert await _durum(seeded_db, talep.id) is PurchaseRequestStatus.pending_approval
+
+
+async def test_fiyatsiz_kalemi_ust_seviye_rol_onaylayabilir(
+    client, satinalma_headers, gorunen_proje, talep_fabrikasi
+):
+    """Fail-closed kural bir KİLİT değil YÖNLENDİRMEDİR: tutarı bilinmeyen
+    talep üst seviyeye çıkar, orada onaylanabilir. Aksi hâlde fiyatsız talep
+    hiç onaylanamaz olur ve akış tıkanırdı."""
+    talep = await talep_fabrikasi(
+        gorunen_proje,
+        status=PurchaseRequestStatus.pending_approval,
+        lines=[("900000.000", None)],
+    )
+
+    yanit = await client.post(f"{_YOL}/{talep.id}/approve", headers=satinalma_headers)
+
+    assert yanit.status_code == 200, yanit.text
 
 
 async def test_esik_ATLATMA_denemesi_onay_aninda_yakalanir(

@@ -645,14 +645,23 @@ async def test_submit_engelleri_taslak_gevsekligini_tamamlar():
         stock_item_id = None
         free_text_name = None
         free_text_unit = None
+        estimated_unit_price = None
 
     eksik = validation.submit_blockers(_Talep(), [])
     assert len(eksik) == 2, eksik
 
+    # Kaynaksız VE fiyatsız satır İKİ engel üretir (T5 bulgusu: tahmini fiyat
+    # `submit`te zorunludur — ₺500K eşiği o toplamdan hesaplanır).
     _Talep.needed_by = date(2026, 8, 3)
-    assert validation.submit_blockers(_Talep(), [_Satir()]) == [validation.LINE_SOURCE_REQUIRED]
+    assert validation.submit_blockers(_Talep(), [_Satir()]) == [
+        validation.LINE_SOURCE_REQUIRED,
+        validation.LINE_PRICE_REQUIRED,
+    ]
 
     _Satir.free_text_name, _Satir.free_text_unit = "PP-R Boru", "Metre"
+    assert validation.submit_blockers(_Talep(), [_Satir()]) == [validation.LINE_PRICE_REQUIRED]
+
+    _Satir.estimated_unit_price = Decimal("92.00")
     assert validation.submit_blockers(_Talep(), [_Satir()]) == []
 
 

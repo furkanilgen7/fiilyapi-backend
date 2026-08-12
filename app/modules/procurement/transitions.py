@@ -192,11 +192,20 @@ async def _assert_approver_level(
     """₺500K eşiği (modül docstring'indeki gerekçe).
 
     Tutar `repository.request_estimated_total` ile O AN hesaplanır — kayıtta
-    donmuş bir toplam OKUNMAZ. Fiyatsız kalem toplama girmez (T2 kararı), yani
-    fiyatı henüz bilinmeyen talep eşiğin altında kalır ve onaycısını bulur.
+    donmuş bir toplam OKUNMAZ.
+
+    ⚠️ T5 BULGUSU — FİYATSIZ KALEM EŞİĞİN ÜSTÜ SAYILIR (fail-closed). Toplam,
+    fiyatsız kalemi atlar (`SUM` NULL'ları yutar); "eksik fiyat" bu yüzden
+    "düşük tutar"dan AYIRT EDİLEMEZ. Bilinmeyen küçük sayılsaydı ₺2M'lik bir
+    talep, tek bir alan boş bırakılarak toplam 0 gösterir ve DB'ye hiç
+    dokunmadan en düşük yetkiliden geçerdi. `submit` bunu zaten engeller
+    (`validation.LINE_PRICE_REQUIRED`) — buradaki kontrol İKİNCİ KATMANDIR ve
+    ona DAYANMAZ: eski/elle girmiş fiyatsız satır da onaycısını şaşırtmamalıdır.
     """
+    lines = await repository.load_request_lines(session, request.id)
     total = await repository.request_estimated_total(session, request.id)
-    if total < APPROVAL_THRESHOLD_TRY:
+    tutar_bilinmiyor = validation.lines_missing_price(lines)
+    if total < APPROVAL_THRESHOLD_TRY and not tutar_bilinmiyor:
         return
     level = await repository.actor_level(session, actor)
     if not satisfies(level, APPROVAL_THRESHOLD_LEVEL):
