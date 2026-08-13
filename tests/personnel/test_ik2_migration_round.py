@@ -115,8 +115,13 @@ async def _drop_scratch_database(database: str) -> None:
 def test_alembic_has_single_head():
     """Iki head = canlida deploy kilitlenmesi (`alembic upgrade head` patlar).
 
-    Head ID'si de dogrulanir: İK-2 zincirin EN UCU olmalidir (yoksa yeni
-    migration hicbir zaman kosmaz).
+    HEAD KIMLIGI ARTIK IDDIA EDILMEZ: bu test yazildiginda İK-2 zincirin en
+    ucuydu ve "head == IK2_REVISION" diye sabitlenmisti, ama uc HER DILIMDE
+    ilerler (İK-3 `c5d6e7f8a9b0` onun ustune bindi) — kimlik iddiasi her yeni
+    migration'da yanlis yere KIRMIZI yakan bir tuzaktir. Korunmasi gereken
+    gercek kural iki tanedir ve ikisi de baska yerde durur: TEK head (burasi) ve
+    her diliminin `down_revision`'inin bir onceki uca bagli olmasi (her dilimin
+    kendi tur donusu testi, acik revizyon id'siyle).
     """
     result = subprocess.run(
         [*ALEMBIC_CMD, "heads"],
@@ -128,9 +133,6 @@ def test_alembic_has_single_head():
     assert result.returncode == 0, result.stderr
     heads = [line for line in result.stdout.splitlines() if line.strip()]
     assert len(heads) == 1, f"tek head bekleniyordu, cikti:\n{result.stdout}"
-    assert heads[0].split()[0] == IK2_REVISION, (
-        f"tek head {IK2_REVISION} olmali, bulunan: {heads[0]}"
-    )
 
 
 async def test_upgrade_downgrade_upgrade_round_trip():
