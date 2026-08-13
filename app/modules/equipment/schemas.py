@@ -181,3 +181,26 @@ class EquipmentListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class EquipmentSummaryResponse(BaseModel):
+    """`GET /equipment/summary` — M1'in dört KPI kartı.
+
+    🔴 **K21:** mockup ÜÇ durum rozeti çiziyor (Çalışıyor/Arızalı/Bakımda) ama
+    sunucu DÖRDÜNÜ verir; `idle` basılmazsa sayaçların toplamı filoyu vermez ve
+    "sunucu mockup'tan fazla veri verebilir, eksik veremez" kuralı çiğnenirdi.
+    Hangisinin ekrana basılacağı frontend dilimin kararıdır.
+
+    `monthly_cost` **cari ayın çalışma maliyeti toplamıdır** ve SATIRLARDAN
+    türer (K15) — M1'in ₺124K'sı mockup'ın kendi aritmetik hatasıdır,
+    kopyalanmaz. Bedeli bilinmeyen makine toplama uydurma bir `0` ile GİRMEZ
+    (K16, gerekçe `service.summarize`).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    working: int
+    broken: int
+    maintenance: int
+    idle: int
+    monthly_cost: Decimal

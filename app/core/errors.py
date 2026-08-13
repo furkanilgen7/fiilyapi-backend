@@ -164,6 +164,24 @@ class PayrollValidationError(DomainError):
     """
 
 
+class EquipmentValidationError(DomainError):
+    """Makine & ekipman iş kuralı ihlali (MK-1 spec §3) — 422.
+
+    `PayrollValidationError`/`ProcurementValidationError` deseninin aynısı ve
+    aynı sebeple onlardan AYRI: DB `CHECK` ile zorlanamayan ya da zorlansa bile
+    kullanıcıya Türkçe mesaj veremeyecek kurallar tek yazma yolunda servis
+    korkuluğuyla tutulur. Kullanıcıları:
+
+    * **K2 — koşullu zorunluluk** (`ownership == owned` iken `purchase_amount`).
+      CHECK OLAMAZ: kural kısmi PATCH'te ancak DB'deki kayıtla BİRLEŞTİRİLMİŞ
+      değerler üzerinde anlamlıdır.
+    * (T4) K11 `hours` sunucu hesabının gövde kuralları ve K12 günlük tavan.
+
+    404 DEĞİL: kayıt vardır ve görünür, ihlal eden şey düzeltilebilir ALAN
+    DEĞERLERİDİR. 409 da DEĞİL: engel kaydın DURUMU değil İÇERİĞİDİR.
+    """
+
+
 class ConflictError(DomainError):
     """Durum makinesi / iş kuralı çakışması — 409 (P7 hakediş spec §7, §9.2, §9.7).
 
