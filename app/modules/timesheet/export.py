@@ -63,12 +63,36 @@ CODE_LABELS: dict[TimesheetCode, str] = {
     TimesheetCode.temporary_duty: "G",
 }
 
-#: ŞP 150/170 rozetleri.
+#: ŞP 150/170 rozetleri + BY 253 "Serbest" / BY 281 "Stajyer".
+#:
+#: Son iki etiket İK-3'te EKLENDİ: bordro dilimi paylaşılan `worker_source` DB
+#: tipine `freelance` + `intern` değerlerini takas etti (İK-3 spec S10) ve bu
+#: sözlük üç etiketli kaldığı sürece o kaynaklı bir personel puantaj export'una
+#: girdiği anda `KeyError` → **500** olurdu.
 SOURCE_LABELS: dict[WorkerSource, str] = {
     WorkerSource.company: "Şirket",
     WorkerSource.subcontractor: "Taşeron",
     WorkerSource.general: "Genel",
+    WorkerSource.freelance: "Serbest",
+    WorkerSource.intern: "Stajyer",
 }
+
+#: Tanınmayan enum değerinin GÖRÜNÜR düşüşü. Boş string ya da "Genel" gibi bir
+#: düşüş, tanınmayan kaynağı tanınmış gibi gösterirdi (WORKFLOW §3: sessiz
+#: düşüş yok) — ham değer soru işaretiyle basılır, okuyan eksik etiketi fark eder.
+UNKNOWN_LABEL_PREFIX = "?"
+
+
+def source_label(source: WorkerSource) -> str:
+    """Kaynak rozetinin metni — SÖZLÜK DOĞRUDAN İNDEKSLENMEZ.
+
+    `SOURCE_LABELS[row.source]` yazımı, paylaşılan enum her genişlediğinde
+    (İK-3 iki değer ekledi) export'u sessizce 500'e düşürüyordu. Erişim
+    dayanıklıdır ama düşüş SESSİZ DEĞİLDİR: etiket eklemeyi unutan sonraki
+    dilim hücrede `?yeni_deger` görür.
+    """
+    return SOURCE_LABELS.get(source, f"{UNKNOWN_LABEL_PREFIX}{source.value}")
+
 
 #: Boş metin hücresi (audit/export.py emsali).
 EMPTY_VALUE = "—"
@@ -116,7 +140,7 @@ def _person_cells(row: TimesheetMatrixRow) -> tuple[str, ...]:
     return (
         row.full_name,
         row.trade or EMPTY_VALUE,
-        SOURCE_LABELS[row.source],
+        source_label(row.source),
         row.subcontractor_name or EMPTY_VALUE,
     )
 

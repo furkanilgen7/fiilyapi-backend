@@ -9,6 +9,7 @@ Kapı `timesheet:view`tir (indirme bir OKUMADIR): matrisi göremeyen indiremez,
 gören indirebilir. Görünmeyen şantiye 404'tür (var olmayanla ayırt EDİLEMEZ).
 """
 
+import enum
 from decimal import Decimal
 from io import BytesIO
 
@@ -16,6 +17,7 @@ import openpyxl
 import pytest
 from httpx import AsyncClient
 
+from app.modules.site_diary.models import WorkerSource
 from app.modules.timesheet.export import (
     COLUMN_HEADERS,
     DAY_TOTAL_LABEL,
@@ -23,7 +25,9 @@ from app.modules.timesheet.export import (
     HEADER_ROW,
     INFO_LABELS,
     SHEET_TITLE,
+    SOURCE_LABELS,
     XLSX_MEDIA_TYPE,
+    source_label,
 )
 from app.modules.timesheet.models import TimesheetCode
 from tests.timesheet.conftest import AY, YIL, gun
@@ -241,3 +245,50 @@ async def test_baska_santiyenin_bolumu_404(client, admin_headers, santiye, yaban
         headers=admin_headers,
     )
     assert yanit.status_code == 404, yanit.text
+
+
+# --- İK-3 regresyonu: `worker_source` enum genişlemesi -----------------------
+
+
+async def test_yeni_kaynak_tipleri_export_kirmaz(
+    client, admin_headers, santiye, admin_kullanicisi, personel_fabrikasi, hucre_fabrikasi
+):
+    """İK-3 `worker_source`a `freelance` + `intern` EKLEDİ (BY 243/271).
+
+    `SOURCE_LABELS` üç etiketliydi ve doğrudan indeksleniyordu: yeni kaynaklı bir
+    personel matrise girdiği anda `KeyError` → **500**. Delik canlıda henüz
+    yoktu (enum değerleri deploy edilmemişti) ama İK-3 merge'üyle açılırdı —
+    yani bu dilimin ürettiği bir kırıktır, borç olarak devredilemez.
+
+    Etiketler mockup'tan: BY 253 rozeti "Serbest" · BY 281 rozeti "Stajyer".
+    """
+    serbest = await personel_fabrikasi(
+        "Kemal Tunç", trade="Mühendis", source=WorkerSource.freelance
+    )
+    stajyer = await personel_fabrikasi(
+        "Burak Aydın", trade="İnşaat Müh. Staj", source=WorkerSource.intern
+    )
+    for kisi in (serbest, stajyer):
+        await hucre_fabrikasi(santiye, kisi, gun(1), _C, admin_kullanicisi)
+
+    sheet = _sayfa(await _indir(client, admin_headers, santiye.id))
+
+    assert _kisi_satiri(sheet, "Kemal Tunç")[2] == "Serbest"
+    assert _kisi_satiri(sheet, "Burak Aydın")[2] == "Stajyer"
+
+
+async def test_bilinmeyen_kaynak_etiketi_sessiz_degil():
+    """Enum bir daha genişlerse export 500 VERMEZ ama sessizce de yalan söylemez.
+
+    Boş string ya da "Genel" gibi bir düşüş, tanınmayan kaynağı tanınmış gibi
+    gösterirdi (WORKFLOW §3: sessiz düşüş yok). Ham değer görünür bir işaretle
+    basılır — hücreyi okuyan eksik etiketi hemen fark eder.
+    """
+
+    class _SahteKaynak(str, enum.Enum):
+        yeni_tip = "yeni_tip"
+
+    etiket = source_label(_SahteKaynak.yeni_tip)
+
+    assert "yeni_tip" in etiket
+    assert etiket not in SOURCE_LABELS.values()
