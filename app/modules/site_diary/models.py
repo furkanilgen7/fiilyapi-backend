@@ -56,11 +56,22 @@ class WorkerSource(str, enum.Enum):
 
     Taşeron ADI bağlanmaz (mockup'ta seçici yok); `subcontractor` yalnız kaynağı
     işaretler, puantaj modülü gelince taşeron kaydına köprülenir.
+
+    İK-3 (bordro) `freelance` ve `intern` değerlerini EKLEDİ: BY 243 "SERBEST
+    MESLEK" ve BY 271 "STAJYER" bölümleri oran tablosunun DÖRT tip gerektirdiğini
+    gösteriyor (spec §4, S2) ve İK-1 bu takası açıkça İK-3'e ertelemişti
+    (`personnel/models.py` üstündeki not). Yeni bir `personnel_source` TİPİ
+    AÇILMADI — aynı anlam kümesinin iki DB tipi doğardı (puantaj spec §2).
+
+    `general` ("genel işçi", GK418-430) bordro tipi DEĞİLDİR: BY dört bölüm
+    çiziyor, bu değerin oran satırı yoktur.
     """
 
     company = "company"
     subcontractor = "subcontractor"
     general = "general"
+    freelance = "freelance"
+    intern = "intern"
 
 
 class SiteDiaryEntry(Base):

@@ -89,13 +89,24 @@ def test_personnel_assigned_columns_set_null():
 
 
 def test_personnel_forbidden_columns_absent():
-    """Spec §5 K2/K6: foto kolonu ve vergi no AÇILMADI; enum yeni deger ALMADI."""
+    """Spec §5 K6: foto kolonu ve vergi no AÇILMADI.
+
+    ENUM KISMI GUNCELLENDI: İK-1 spec §5 K2 `Serbest Meslek`/`Stajyer`
+    degerlerini ERTELEMISTI ("takas … İK-3'te yapilir") — bu test o ertelemenin
+    bekcisiydi. İK-3 (`c5d6e7f8a9b0`) takasi YAPTI, dolayisiyla beklenen kume
+    artik BES degerlidir. Kume yine SABITLENIR: kontrolsuz buyume (ör. beklenmedik
+    bir `other`) hala kirmizi yakar. Sirali kanon `payroll` dilimindedir.
+    """
     columns = Personnel.__table__.columns
     for name in ("photo", "photo_url", "tax_no"):
         assert name not in columns, f"personnel.{name} açılmamalıydı"
-    assert [e.value for e in WorkerSource] == ["company", "subcontractor", "general"], (
-        "worker_source enum'una İK-1'de yeni deger EKLENMEMELIYDI (spec §5 K2)"
-    )
+    assert [e.value for e in WorkerSource] == [
+        "company",
+        "subcontractor",
+        "general",
+        "freelance",
+        "intern",
+    ], "worker_source kumesi İK-3 takasindan sonra BES degerlidir"
 
 
 def test_personnel_document_types_columns():
