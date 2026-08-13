@@ -472,3 +472,34 @@ class LeaveBalanceResponse(BaseModel):
     used: int
     remaining: Decimal | None
     usage_pct: int | None
+
+
+# --- İK-2 T4: izin özeti (spec §3, §4 — İZ mockup birebir) ------------------
+
+
+class HrLeavesSummaryResponse(BaseModel):
+    """İZ özet ucu: 5 KPI (46-50) + bakiye tablosu (122-170).
+
+    KPI'ların İKİ AYRI zaman ekseni vardır ve bu bilinçlidir:
+
+    * `pending_requests` / `on_leave_today` / `days_used_this_month` **BUGÜNE**
+      bağlıdır — geçmiş bir yıl seçmek "bugün izinli"yi anlamsız kılardı,
+    * `total_leave_debt` / `carryover_risk_personnel` / `balances` ise SEÇİLEN
+      **yıla** bağlıdır (İZ 120 yıl seçici).
+
+    🔴 `unknown_entitlement_personnel` fail-closed kanonun GÖRÜNÜR yüzüdür: hakkı
+    hesaplanamayan personel (kıdem<1 ya da `hire_date` NULL, İZ 163-167) borç
+    toplamına 0 olarak KARIŞMAZ; ayrı sayılır ki ekran "418 gün" derken kaç kişinin
+    hesap dışı kaldığı SÖYLENSİN. Sessiz 0, veri eksiğini bilançoda saklardı.
+
+    Tüm sayılar AKTİF + YAYINDA personelin dünyasını anlatır (İK-1 özet kanonu).
+    """
+
+    year: int
+    pending_requests: int
+    on_leave_today: int
+    days_used_this_month: int
+    total_leave_debt: Decimal
+    carryover_risk_personnel: int
+    unknown_entitlement_personnel: int
+    balances: list[LeaveBalanceResponse]

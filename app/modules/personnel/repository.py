@@ -440,9 +440,146 @@ async def sum_deductible_approved_days(
         .join(LeaveType, LeaveRequest.leave_type_id == LeaveType.id)
         .where(
             LeaveRequest.personnel_id == personnel_id,
-            LeaveRequest.status == LeaveStatus.approved,
-            LeaveType.deducts_from_annual.is_(True),
-            LeaveRequest.start_date.between(date(year, 1, 1), date(year, 12, 31)),
+            *_deductible_approved_between(*year_window(year)),
         )
     )
     return (await session.execute(stmt)).scalar_one()
+
+
+# --- İK-2 T4: izin özeti — AGGREGA sorgular (N+1 YOK, sabit sayı) -----------
+#
+# İZ özeti (5 KPI + bakiye tablosu) SABİT SAYIDA sorgu kullanır (İK-1 `/hr/
+# documents/summary` emsali): personel döngüsünde per-row SELECT ATILMAZ.
+# Aşağıdaki beş fonksiyon veri büyüklüğünden bağımsız beş sorgu üretir; türevler
+# (hak/kalan/yüzde) Python'da `leave.py` TEK KAYNAĞINDAN hesaplanır.
+# Kanıt: `test_n_plus_1_sabit_sorgu` 2 vs 10 personelde aynı sayıyı ölçer.
+
+
+def year_window(year: int) -> tuple[date, date]:
+    """Bakiye yılının açık tarih penceresi — `extract` DEĞİL `BETWEEN` için."""
+    return date(year, 1, 1), date(year, 12, 31)
+
+
+def _deductible_approved_between(start: date, end: date) -> tuple:
+    """**`kullanılan` gün kuralının TEK KAYNAĞI** (spec §2) — pencere parametrik.
+
+    Üç süzgeç de kuralın parçasıdır: `approved` (bekleyen taahhüt değildir) ·
+    `deducts_from_annual` (İZ 87 "Rapor" yıllık haktan düşmez) · izin BAŞLADIĞI
+    pencereye yazılır (`leave.leave_year` kararı, bölme YOK).
+
+    Yıl toplamı, personel-bazlı toplam ve İZ 48'in "Bu Ay Kullanılan" KPI'ı
+    AYNI predikatı çağırır: pencere değişir, KURAL DEĞİŞMEZ. Kopyalansaydı ay
+    KPI'ı ile tablo sütunu sessizce ayrışırdı (biri raporu sayar, öteki saymaz).
+    """
+    return (
+        LeaveRequest.status == LeaveStatus.approved,
+        LeaveType.deducts_from_annual.is_(True),
+        LeaveRequest.start_date.between(start, end),
+    )
+
+
+def _active_published() -> tuple:
+    """Özetin personel kapsamı: AKTİF + YAYINDA (İK-1 özet kanonu).
+
+    Taslak (henüz yayınlanmamış) ve pasif (ayrılmış) personel hiçbir KPI'ya ve
+    bakiye satırına girmez — ekran ÇALIŞAN iş gücünün izin durumunu gösterir.
+    """
+    return (Personnel.is_active.is_(True), Personnel.is_draft.is_(False))
+
+
+async def count_pending_leave_requests(session: AsyncSession) -> int:
+    """İZ 46 "Bekleyen Talep": `pending` talep sayısı — TİPTEN BAĞIMSIZ.
+
+    Sayaç onay kuyruğunun boyudur (İZ 56 "Onay Bekleyen İzin Talepleri"); hastalık
+    talebi de onay bekler, `deducts_from_annual` süzgeci BURAYA girmez.
+    """
+    stmt = (
+        select(func.count())
+        .select_from(LeaveRequest)
+        .join(Personnel, LeaveRequest.personnel_id == Personnel.id)
+        .where(LeaveRequest.status == LeaveStatus.pending, *_active_published())
+    )
+    return (await session.execute(stmt)).scalar_one()
+
+
+async def count_personnel_on_leave(session: AsyncSession, today: date) -> int:
+    """İZ 47 "Bugün İzinli": bugünü KAPSAYAN onaylı izni olan TEKİL personel.
+
+    `count(distinct personnel_id)`: aynı kişinin iki onaylı kaydı (örneğin ardışık
+    yıllık + rapor) kişiyi iki kez saydırmaz — KPI birim "kişi"dir, "talep" değil.
+    Tip süzgeci YOKTUR: raporlu personel de bugün işbaşında değildir.
+    """
+    stmt = (
+        select(func.count(func.distinct(LeaveRequest.personnel_id)))
+        .select_from(LeaveRequest)
+        .join(Personnel, LeaveRequest.personnel_id == Personnel.id)
+        .where(
+            LeaveRequest.status == LeaveStatus.approved,
+            LeaveRequest.start_date <= today,
+            LeaveRequest.end_date >= today,
+            *_active_published(),
+        )
+    )
+    return (await session.execute(stmt)).scalar_one()
+
+
+async def sum_deductible_approved_days_between(
+    session: AsyncSession, start: date, end: date
+) -> int:
+    """İZ 48 "Bu Ay Kullanılan": verilen pencerede BAŞLAYAN kullanılan gün toplamı.
+
+    `sum_deductible_approved_days` ile aynı kuralın şirket-geneli hâli (personel
+    süzgeci yok, pencere ay). Ay sınırını aşan izin BÖLÜNMEZ — başladığı aya
+    yazılır; bölme, tablo sütunuyla KPI'ı ayrıştırırdı.
+    """
+    stmt = (
+        select(func.coalesce(func.sum(LeaveRequest.days), 0))
+        .select_from(LeaveRequest)
+        .join(LeaveType, LeaveRequest.leave_type_id == LeaveType.id)
+        .join(Personnel, LeaveRequest.personnel_id == Personnel.id)
+        .where(*_deductible_approved_between(start, end), *_active_published())
+    )
+    return (await session.execute(stmt)).scalar_one()
+
+
+async def sum_deductible_approved_days_by_personnel(
+    session: AsyncSession, year: int
+) -> dict[uuid.UUID, int]:
+    """Personel → o yılın kullanılan günü — **TEK group-by** (N+1'in kapısı).
+
+    `sum_deductible_approved_days`i kişi başına çağırmak 50 satırlık tabloda 50
+    SELECT ederdi; kural aynı predikattan gelir, yalnız gruplanır. Sözlükte
+    OLMAYAN personel 0 kullanmıştır (`coalesce` yerine `dict.get(pid, 0)`).
+    """
+    stmt = (
+        select(LeaveRequest.personnel_id, func.sum(LeaveRequest.days))
+        .select_from(LeaveRequest)
+        .join(LeaveType, LeaveRequest.leave_type_id == LeaveType.id)
+        .where(*_deductible_approved_between(*year_window(year)))
+        .group_by(LeaveRequest.personnel_id)
+    )
+    return {pid: int(total) for pid, total in (await session.execute(stmt)).all()}
+
+
+async def list_active_published_personnel_with_balance(
+    session: AsyncSession, year: int
+) -> list[Row[tuple]]:
+    """İZ bakiye tablosunun tabanı: aktif+yayın personel + O YILIN devredeni — TEK sorgu.
+
+    `LEFT JOIN` bilinçlidir: bakiye satırı olmayan personel de tabloda GÖRÜNÜR
+    (devreden 0). `INNER JOIN` olsaydı tablo yalnız elle devreden girilmiş
+    kişileri gösterir, yeni personel ekrandan silinirdi.
+
+    Yıl koşulu WHERE'de değil JOIN ON'da durur: WHERE'e taşınırsa `NULL` satırlar
+    elenir ve LEFT JOIN sessizce INNER JOIN'e döner.
+    """
+    stmt = (
+        select(Personnel, LeaveBalance.carried_over)
+        .outerjoin(
+            LeaveBalance,
+            (LeaveBalance.personnel_id == Personnel.id) & (LeaveBalance.year == year),
+        )
+        .where(*_active_published())
+        .order_by(Personnel.full_name)
+    )
+    return list((await session.execute(stmt)).all())

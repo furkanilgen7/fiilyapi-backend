@@ -37,6 +37,7 @@ from app.modules.personnel import repository, service
 from app.modules.personnel.models import LeaveStatus
 from app.modules.personnel.schemas import (
     HrDocumentsSummaryResponse,
+    HrLeavesSummaryResponse,
     LeaveApproveRequest,
     LeaveBalanceResponse,
     LeaveBalanceUpdate,
@@ -546,3 +547,33 @@ async def upsert_leave_balance_endpoint(
         ip_address=client_ip(request),
     )
     return response
+
+
+# `?year=` süzgeci bakiye ucunun `_YEAR_PATH` sınırının BİREBİR aynısıdır (İZ 120
+# yıl seçici): iki uç aynı yıl penceresini anlatır, sınırlarının ayrışması
+# ekranda seçilebilen ama özette 422 dönen bir yıl bırakırdı.
+_YEAR_QUERY = Query(ge=2000, le=2100)
+
+
+@router.get(
+    "/hr/leaves/summary",
+    response_model=HrLeavesSummaryResponse,
+    dependencies=[_VIEW],
+)
+async def hr_leaves_summary_endpoint(
+    session: Annotated[AsyncSession, Depends(get_db)],
+    year: Annotated[int | None, _YEAR_QUERY] = None,
+) -> HrLeavesSummaryResponse:
+    """İZ özet ucu: 5 KPI + personel bazlı izin bakiyesi tablosu.
+
+    Okuma (`view`) yeter — `personnel` şirket-geneli İK varlığıdır (liste ucu ve
+    `/hr/documents/summary` deseni); proje görünürlüğü süzgeci UYGULANMAZ.
+
+    `year` verilmezse içinde bulunulan yıl. Yıl YALNIZ bakiye eksenini kaydırır:
+    "Bekleyen Talep"/"Bugün İzinli"/"Bu Ay Kullanılan" BUGÜNE bağlıdır.
+
+    Hak/kalan/yüzde **null** olabilir (kıdem<1 ya da `hire_date` yok, İZ 163) ve
+    bu satırlar borç toplamına 0 olarak karışmaz — `unknown_entitlement_personnel`
+    ile AÇIKÇA sayılır (🔴 fail-closed). Sorgu sayısı veri büyüklüğünden bağımsızdır.
+    """
+    return await service.build_hr_leaves_summary(session, year=year)
