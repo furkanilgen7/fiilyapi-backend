@@ -447,3 +447,14 @@ class EquipmentFuelLog(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+    @property
+    def amount(self) -> Decimal:
+        """🔴 T5 — `liters × unit_price`, TÜRETİLİR (bu KOLON DEĞİLDİR, sınıf
+        docstring'i). Formül `cost.fuel_amount`ten TEK YERDEN gelir; deferred
+        import ile, çünkü `cost.py` bu modülden (`EquipmentRatePeriod`) okur —
+        modül düzeyinde import edilseydi çember (P10 `cost_cards` dersi) açardı.
+        """
+        from app.modules.equipment.cost import fuel_amount
+
+        return fuel_amount(liters=self.liters, unit_price=self.unit_price)

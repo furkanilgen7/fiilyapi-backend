@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.equipment.models import (
     Equipment,
     EquipmentCategory,
+    EquipmentFuelLog,
     EquipmentOwnership,
     EquipmentRatePeriod,
     EquipmentStatus,
@@ -523,4 +524,170 @@ async def daily_hours_by_type(
         )
         .group_by(EquipmentWorkLog.work_date, EquipmentWorkLog.record_type)
     )
+    return list((await session.execute(stmt)).all())
+
+
+async def work_hours_by_equipment(
+    session: AsyncSession,
+    project_ids: list[uuid.UUID],
+    *,
+    date_from: date,
+    date_to: date,
+) -> dict[uuid.UUID, Decimal]:
+    """🔴 T5 — ekipman başına dönem ÇALIŞMA saati (yalnız `worked`, K10).
+
+    Yakıt özetinin (`fuel-summary`) `actual`/`lt_per_hour_avg` PAYDASI —
+    "modüller arası bağ" (M4:39 `2.840 / 428 = 6,6`). `worked_hours_by_equipment`
+    (K18 maliyet toplamı) ile AYNI iki kapıyı (K9 + K20) taşır ama `equipment_id`
+    döner: burada makine kimliğine göre GRUPLAMA gerekir, maliyet formülünün
+    girdisi değil.
+    """
+    gorunen_santiyeler = select(Site.id).where(Site.project_id.in_(project_ids))
+    stmt = (
+        scope(
+            select(EquipmentWorkLog.equipment_id, func.sum(EquipmentWorkLog.hours)).join(
+                Equipment, Equipment.id == EquipmentWorkLog.equipment_id
+            ),
+            project_ids,
+        )
+        .where(
+            EquipmentWorkLog.record_type == WorkLogType.worked,
+            EquipmentWorkLog.work_date >= date_from,
+            EquipmentWorkLog.work_date <= date_to,
+            EquipmentWorkLog.site_id.is_(None) | EquipmentWorkLog.site_id.in_(gorunen_santiyeler),
+        )
+        .group_by(EquipmentWorkLog.equipment_id)
+    )
+    return {satir[0]: satir[1] for satir in (await session.execute(stmt)).all()}
+
+
+# --- Yakıt kaydı (M4 · T5) ---
+
+
+def fuel_log_scope(stmt: Select, project_ids: list[uuid.UUID]) -> Select:
+    """`work_log_scope`un kardeşi — kaydın KENDİ `site_id`si (K4 hedefi)."""
+    gorunen_santiyeler = select(Site.id).where(Site.project_id.in_(project_ids))
+    return stmt.where(
+        EquipmentFuelLog.site_id.is_(None) | EquipmentFuelLog.site_id.in_(gorunen_santiyeler)
+    )
+
+
+async def get_fuel_log(session: AsyncSession, log_id: uuid.UUID) -> EquipmentFuelLog | None:
+    return await session.scalar(select(EquipmentFuelLog).where(EquipmentFuelLog.id == log_id))
+
+
+def _fuel_filtered(
+    stmt: Select,
+    project_ids: list[uuid.UUID],
+    *,
+    equipment_id: uuid.UUID | None,
+    site_id: uuid.UUID | None,
+    date_from: date | None,
+    date_to: date | None,
+) -> Select:
+    """`_work_log_filtered`in kardeşi: İKİ kapsam kararı (kaydın kendi şantiyesi
+    + makinenin kendisi) birlikte koşar."""
+    stmt = scope(
+        fuel_log_scope(stmt, project_ids).join(
+            Equipment, Equipment.id == EquipmentFuelLog.equipment_id
+        ),
+        project_ids,
+    )
+    if equipment_id is not None:
+        stmt = stmt.where(EquipmentFuelLog.equipment_id == equipment_id)
+    if site_id is not None:
+        stmt = stmt.where(EquipmentFuelLog.site_id == site_id)
+    if date_from is not None:
+        stmt = stmt.where(EquipmentFuelLog.fuel_date >= date_from)
+    if date_to is not None:
+        stmt = stmt.where(EquipmentFuelLog.fuel_date <= date_to)
+    return stmt
+
+
+async def list_fuel_logs(
+    session: AsyncSession,
+    project_ids: list[uuid.UUID],
+    *,
+    equipment_id: uuid.UUID | None = None,
+    site_id: uuid.UUID | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    limit: int,
+    offset: int,
+) -> list[EquipmentFuelLog]:
+    stmt = _fuel_filtered(
+        select(EquipmentFuelLog),
+        project_ids,
+        equipment_id=equipment_id,
+        site_id=site_id,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    stmt = (
+        stmt.order_by(EquipmentFuelLog.fuel_date.desc(), EquipmentFuelLog.id)
+        .limit(limit)
+        .offset(offset)
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def count_fuel_logs(
+    session: AsyncSession,
+    project_ids: list[uuid.UUID],
+    *,
+    equipment_id: uuid.UUID | None = None,
+    site_id: uuid.UUID | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> int:
+    stmt = _fuel_filtered(
+        select(func.count()).select_from(EquipmentFuelLog),
+        project_ids,
+        equipment_id=equipment_id,
+        site_id=site_id,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    return (await session.execute(stmt)).scalar_one()
+
+
+async def fuel_summary_rows(
+    session: AsyncSession,
+    project_ids: list[uuid.UUID],
+    *,
+    date_from: date,
+    date_to: date,
+    equipment_id: uuid.UUID | None = None,
+) -> list[Row]:
+    """Yakıt özetinin HAM satırları — BİR fuel_log = BİR satır (aggregat DEĞİL).
+
+    `amount` BURADA HESAPLANMAZ: her satırın tutarı `cost.fuel_amount`ten
+    (K19 ROUND_HALF_UP) serviste türetilip TOPLANIR — SQL'de `SUM(liters *
+    unit_price)` yazılsaydı yuvarlama satır bazında değil TOPLAM üzerinde
+    olur ve K19'un "dört satırda doğrulanan" yuvarlaması bozulurdu.
+
+    Yalnız FİİLEN yakıt girilmiş ekipman döner (INNER JOIN): `work_summary_rows`
+    (M3) hiç çalışmamış makineyi de 0 saatle basar çünkü o tablo FİLONUN
+    tamamını temsil eder; M4 yakıt tablosu ise doğası gereği yalnız yakıt
+    ALMIŞ makineleri listeler (mockup'ın kendisi de öyle).
+    """
+    gorunen_santiyeler = select(Site.id).where(Site.project_id.in_(project_ids))
+    stmt = scope(
+        select(
+            Equipment.id,
+            Equipment.name,
+            Equipment.site_id,
+            Equipment.norm_consumption,
+            Equipment.norm_unit,
+            EquipmentFuelLog.liters,
+            EquipmentFuelLog.unit_price,
+        ).join(Equipment, Equipment.id == EquipmentFuelLog.equipment_id),
+        project_ids,
+    ).where(
+        EquipmentFuelLog.fuel_date >= date_from,
+        EquipmentFuelLog.fuel_date <= date_to,
+        EquipmentFuelLog.site_id.is_(None) | EquipmentFuelLog.site_id.in_(gorunen_santiyeler),
+    )
+    if equipment_id is not None:
+        stmt = stmt.where(Equipment.id == equipment_id)
     return list((await session.execute(stmt)).all())

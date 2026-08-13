@@ -35,7 +35,7 @@ from decimal import Decimal
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.text import FREE_TEXT_MAX_LENGTH
-from app.modules.equipment.consumption import UsageReason
+from app.modules.equipment.consumption import ConsumptionStatus, DeviationReason, UsageReason
 from app.modules.equipment.models import (
     DEFAULT_MONTHLY_CAPACITY_HOURS,
     EquipmentCategory,
@@ -362,3 +362,115 @@ class WorkSummaryResponse(BaseModel):
     rows: list[WorkSummaryRow]
     totals: WorkSummaryTotals
     weeks: list[WorkSummaryWeek]
+
+
+# --- Yakıt kaydı (M4 · spec §2.3, §4 · T5) ---
+
+_LITERS = Field(gt=0, max_digits=10, decimal_places=2)
+_UNIT_PRICE = Field(gt=0, max_digits=10, decimal_places=4)
+_LITERS_OPTIONAL = Field(default=None, gt=0, max_digits=10, decimal_places=2)
+_UNIT_PRICE_OPTIONAL = Field(default=None, gt=0, max_digits=10, decimal_places=4)
+_FUEL_NOTE = Field(default=None, max_length=FREE_TEXT_MAX_LENGTH)
+
+
+class FuelLogCreate(BaseModel):
+    """`POST /equipment/fuel-logs` — M4 kaydı.
+
+    `liters`/`unit_price` DB `CHECK`i ile aynı sınırı (`> 0`) burada da taşır:
+    422'nin anlaşılır olması için (İK-3/K2 emsali) — DB'ye düşseydi kullanıcı
+    bütünlük hatası görürdü. `entered_by_id` GÖVDEDE YOKTUR (K14): oturum
+    kullanıcısından serviste damgalanır, istemci başka birini giren gösteremez.
+    """
+
+    equipment_id: uuid.UUID
+    fuel_date: date
+    # K4 ile aynı hedef: NULL = depoda yapılan/kaydedilen iş.
+    site_id: uuid.UUID | None = None
+    liters: Decimal = _LITERS
+    unit_price: Decimal = _UNIT_PRICE
+    note: str | None = _FUEL_NOTE
+
+
+class FuelLogUpdate(BaseModel):
+    """`PATCH /equipment/fuel-logs/{id}` — kayıt hatası düzeltilebilir.
+
+    Alanın GÖNDERİLMEMESİ ile `null` GÖNDERİLMESİ farklıdır (F-İK "touched"
+    dersi); fark `model_fields_set` ile korunur.
+    """
+
+    equipment_id: uuid.UUID | None = None
+    fuel_date: date | None = None
+    site_id: uuid.UUID | None = None
+    liters: Decimal | None = _LITERS_OPTIONAL
+    unit_price: Decimal | None = _UNIT_PRICE_OPTIONAL
+    note: str | None = _FUEL_NOTE
+
+
+class FuelLogResponse(BaseModel):
+    """Kayıt künyesi. `amount` **KOLON DEĞİLDİR** — `Equipment FuelLog.amount`
+    özelliğinden (`cost.fuel_amount`) TÜRETİLİR ve `from_attributes` bunu bir
+    kolon gibi okur; ikinci bir çarpım burada YAZILMAZ."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    equipment_id: uuid.UUID
+    fuel_date: date
+    site_id: uuid.UUID | None
+    liters: Decimal
+    unit_price: Decimal
+    amount: Decimal
+    entered_by_id: uuid.UUID | None
+    note: str | None
+    created_at: datetime
+
+
+class FuelLogListResponse(BaseModel):
+    """TB3 sayfalama kanonu: `limit ≤ 200`, `total` SÜZÜLMÜŞ kümeyi sayar."""
+
+    items: list[FuelLogResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+# --- Yakıt özeti (M4 üst blok + tablo · spec §4 · T5) ---
+
+
+class FuelSummaryRow(BaseModel):
+    """M4 tablosunun BİR satırı — ekipman başına.
+
+    `actual` ve `deviation_pct` AYRI AYRI `null` olabilir (K16): fiili tüketim
+    biliniyorken sapma bilinmiyor olabilir (`lt_km` ya da norm yok). Rozet
+    (`consumption_status`) SUNUCUDAN gelir (K17, F-P10 kanonu).
+    """
+
+    equipment_id: uuid.UUID
+    equipment_name: str
+    site_id: uuid.UUID | None
+    liters: Decimal
+    amount: Decimal
+    actual: Decimal | None
+    norm: Decimal | None
+    deviation_pct: Decimal | None
+    deviation_reason: DeviationReason | None
+    consumption_status: ConsumptionStatus | None
+
+
+class FuelSummaryResponse(BaseModel):
+    """`GET /equipment/fuel-summary` — M4'ün üst bloğu + tablosu.
+
+    🔴 **K15:** `total_liters`/`total_amount` HER ZAMAN satırlardan türer,
+    mockup'ın üst blok sayıları kopyalanmaz. 🔴 **K16:** `lt_per_hour_avg`
+    paydası (dönemin ÇALIŞMA KAYDI saat toplamı) 0 ise `null`dur — uydurma 0
+    basılmaz. `avg_unit_price` de aynı sebeple litre toplamı 0 ise `null`dur.
+    """
+
+    year: int
+    month: int
+    total_liters: Decimal
+    total_amount: Decimal
+    lt_per_hour_avg: Decimal | None
+    avg_unit_price: Decimal | None
+    abnormal_count: int
+    rows: list[FuelSummaryRow]

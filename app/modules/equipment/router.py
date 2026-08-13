@@ -17,10 +17,9 @@ döner ve bu bir BEKÇİ TESTİYLE kilitlenmiştir (`test_silme_ucu_yoktur_405`)
 Kira hakedişi (M5) ve ekipman belgeleri MK-2'nindir (spec §9) — bu router'da
 HİÇBİRİ açılmaz.
 
-Yakıt uçları (spec §4'ün son bloğu) T5'indir.
-
-**`DELETE /equipment/work-logs/{id}` ise VARDIR** ve bu bir çelişki değildir:
-çalışma kaydı MALİ İZ DEĞİLDİR — maliyet ondan her okumada TÜREVDİR (K18) ve
+**`DELETE /equipment/work-logs/{id}` ve `DELETE /equipment/fuel-logs/{id}` ise
+VARDIR** ve bu bir çelişki değildir: çalışma/yakıt kaydı MALİ İZ DEĞİLDİR —
+maliyet/`amount` her okumada TÜREVDİR (K18 · yakıt eşi `cost.fuel_amount`) ve
 kayıt hatası düzeltilebilmelidir. Silinemeyen şey ekipmanın KENDİSİDİR.
 
 `GET` uçları `record_audit` ÇAĞIRMAZ (WORKFLOW kuralı — okumalar denetlenmez);
@@ -29,10 +28,11 @@ kurulur.
 
 ## Yol SIRASI önemlidir
 
-`/equipment/summary`, `/equipment/work-logs` ve `/equipment/work-summary`
-`/equipment/{equipment_id}`den ÖNCE tanımlanır: sonra gelselerdi FastAPI onları
-birer UUID sanıp yolu 422'ye düşürürdü. `/equipment/work-logs/{log_id}` de aynı
-sebeple `/{equipment_id}`nin üstündedir.
+`/equipment/summary`, `/equipment/work-logs`, `/equipment/work-summary`,
+`/equipment/fuel-logs` ve `/equipment/fuel-summary` `/equipment/{equipment_id}`den
+ÖNCE tanımlanır: sonra gelselerdi FastAPI onları birer UUID sanıp yolu 422'ye
+düşürürdü. `/equipment/work-logs/{log_id}` ve `/equipment/fuel-logs/{log_id}` de
+aynı sebeple `/{equipment_id}`nin üstündedir.
 """
 
 import uuid
@@ -63,6 +63,11 @@ from app.modules.equipment.schemas import (
     EquipmentResponse,
     EquipmentSummaryResponse,
     EquipmentUpdate,
+    FuelLogCreate,
+    FuelLogListResponse,
+    FuelLogResponse,
+    FuelLogUpdate,
+    FuelSummaryResponse,
     WorkLogCreate,
     WorkLogListResponse,
     WorkLogResponse,
@@ -288,6 +293,111 @@ async def delete_work_log_endpoint(
     Ekipmanın KENDİSİ silinemez: orada iz `RESTRICT`lidir ve DELETE ucu yoktur.
     """
     detail = await service.delete_work_log(session, user, log_id)
+    await _audit(request, session, user, AuditAction.delete, detail)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/fuel-logs", response_model=FuelLogListResponse, dependencies=[_VIEW])
+async def list_fuel_logs_endpoint(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    equipment_id: uuid.UUID | None = None,
+    site_id: uuid.UUID | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> FuelLogListResponse:
+    """M4 kayıt listesi — `site_id` süzgeci KAYDIN kendi şantiyesine bakar (K4)."""
+    items, total = await service.list_fuel_logs(
+        session,
+        user,
+        equipment_id=equipment_id,
+        site_id=site_id,
+        date_from=date_from,
+        date_to=date_to,
+        limit=limit,
+        offset=offset,
+    )
+    return FuelLogListResponse(
+        items=[FuelLogResponse.model_validate(k) for k in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/fuel-summary", response_model=FuelSummaryResponse, dependencies=[_VIEW])
+async def fuel_summary_endpoint(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    year: Annotated[int, Query(ge=2000, le=2200)],
+    month: Annotated[int, Query(ge=1, le=12)],
+    equipment_id: uuid.UUID | None = None,
+) -> FuelSummaryResponse:
+    """M4 üst blok + tablo.
+
+    🔴 `lt_per_hour_avg` paydası dönemin ÇALIŞMA KAYDI saat toplamıdır
+    (modüller arası bağ, M4:39); rozet (`consumption_status`) SUNUCUDAN gelir.
+    """
+    return await service.fuel_summary(
+        session, user, year=year, month=month, equipment_id=equipment_id
+    )
+
+
+@router.post(
+    "/fuel-logs",
+    response_model=FuelLogResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={404: {"description": "Ekipman ya da şantiye bulunamadı (görünmeyen dahil)"}},
+    dependencies=[_FULL],
+)
+async def create_fuel_log_endpoint(
+    request: Request,
+    data: FuelLogCreate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> FuelLogResponse:
+    """M4 kaydı. `entered_by_id` oturum kullanıcısından DAMGALANIR (K14)."""
+    log, detail = await service.create_fuel_log(session, user, data)
+    await _audit(request, session, user, AuditAction.create, detail)
+    return FuelLogResponse.model_validate(log)
+
+
+@router.get("/fuel-logs/{log_id}", response_model=FuelLogResponse, dependencies=[_VIEW])
+async def get_fuel_log_endpoint(
+    log_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> FuelLogResponse:
+    """Görünmeyen kayıt var olmayanla AYNI 404'ü döner."""
+    return FuelLogResponse.model_validate(await service.visible_fuel_log(session, user, log_id))
+
+
+@router.patch("/fuel-logs/{log_id}", response_model=FuelLogResponse, dependencies=[_FULL])
+async def update_fuel_log_endpoint(
+    request: Request,
+    log_id: uuid.UUID,
+    data: FuelLogUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> FuelLogResponse:
+    """Kayıt hatası düzeltilebilir."""
+    log = await service.visible_fuel_log(session, user, log_id)
+    log, detail = await service.update_fuel_log(session, user, log, data)
+    await _audit(request, session, user, AuditAction.update, detail)
+    return FuelLogResponse.model_validate(log)
+
+
+@router.delete("/fuel-logs/{log_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[_FULL])
+async def delete_fuel_log_endpoint(
+    request: Request,
+    log_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> Response:
+    """🔴 Yakıt kaydı MALİ İZ DEĞİLDİR (maliyet ondan türev) — silinebilir."""
+    detail = await service.delete_fuel_log(session, user, log_id)
     await _audit(request, session, user, AuditAction.delete, detail)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

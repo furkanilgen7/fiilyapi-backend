@@ -31,7 +31,7 @@ Yakıt kaydı kuralları T5'indir.
 
 import uuid
 from datetime import date, datetime, time, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import NamedTuple
 
 from sqlalchemy import Row
@@ -42,6 +42,7 @@ from app.modules.equipment import consumption, cost, repository
 from app.modules.equipment.models import (
     Equipment,
     EquipmentCategory,
+    EquipmentFuelLog,
     EquipmentOwnership,
     EquipmentStatus,
     EquipmentWorkLog,
@@ -50,6 +51,10 @@ from app.modules.equipment.models import (
 from app.modules.equipment.schemas import (
     EquipmentCreate,
     EquipmentUpdate,
+    FuelLogCreate,
+    FuelLogUpdate,
+    FuelSummaryResponse,
+    FuelSummaryRow,
     WorkLogCreate,
     WorkLogUpdate,
     WorkSummaryResponse,
@@ -712,4 +717,225 @@ async def work_summary(
         rows=satirlar,
         totals=toplamlar,
         weeks=_week_buckets(ilk, son, gunluk),
+    )
+
+
+# --- Yakıt kaydı (M4 · spec §2.3, §4 · K13, K14, K16, K17, K19, K20 · T5) ---
+
+FUEL_LOG_MISSING = "Yakıt kaydı bulunamadı."
+"""Görünmeyen VE var olmayan kaydın TEK cümlesi — ikisi ayırt EDİLEMEZ."""
+
+#: Ortalama litre fiyatının yuvarlaması: K19 (`ROUND_HALF_UP`), `unit_price`
+#: kolonuyla AYNI ölçek (4 ondalık) — `cost.quantize_money` (tam sayı) burada
+#: YANLIŞ ölçektir, bu yüzden AYRI bir sabit/işlev (formülü İKİNCİ KEZ YAZMAZ,
+#: yalnız yuvarlama ADIMI farklıdır).
+_UNIT_PRICE_QUANTUM = Decimal("0.0001")
+
+
+def _quantize_unit_price(value: Decimal) -> Decimal:
+    return value.quantize(_UNIT_PRICE_QUANTUM, rounding=ROUND_HALF_UP)
+
+
+async def visible_fuel_log(
+    session: AsyncSession, actor: User, log_id: uuid.UUID
+) -> EquipmentFuelLog:
+    """Yakıt kaydı görünürlüğünün TEK kapısı (`visible_work_log`in kardeşi).
+
+    İKİ kapı birden: kaydın KENDİ şantiyesi görünür olmalı VE makinesi görünür
+    olmalı — ikincisi olmasaydı `site_id IS NULL` bir kayıt, görünmeyen bir
+    projeye atanmış makinenin varlığını ele verirdi.
+    """
+    log = await repository.get_fuel_log(session, log_id)
+    if log is None:
+        raise NotFoundError(FUEL_LOG_MISSING)
+    if not await _is_visible_site(session, actor, log.site_id):
+        raise NotFoundError(FUEL_LOG_MISSING)
+    if not await _is_visible_site(
+        session, actor, (await get_equipment_or_404(session, log.equipment_id)).site_id
+    ):
+        raise NotFoundError(FUEL_LOG_MISSING)
+    return log
+
+
+async def list_fuel_logs(
+    session: AsyncSession,
+    actor: User,
+    *,
+    equipment_id: uuid.UUID | None,
+    site_id: uuid.UUID | None,
+    date_from: date | None,
+    date_to: date | None,
+    limit: int,
+    offset: int,
+) -> tuple[list[EquipmentFuelLog], int]:
+    """Liste + `total` TEK kapsam kararını paylaşır (TB3 kanonu)."""
+    project_ids = await _visible_project_ids(session, actor)
+    suzgecler = {
+        "equipment_id": equipment_id,
+        "site_id": site_id,
+        "date_from": date_from,
+        "date_to": date_to,
+    }
+    items = await repository.list_fuel_logs(
+        session, project_ids, limit=limit, offset=offset, **suzgecler
+    )
+    total = await repository.count_fuel_logs(session, project_ids, **suzgecler)
+    return items, total
+
+
+async def create_fuel_log(
+    session: AsyncSession, actor: User, data: FuelLogCreate
+) -> tuple[EquipmentFuelLog, str]:
+    """`POST /equipment/fuel-logs` — M4 kaydı.
+
+    Sıra ÖNEMLİ (`create_work_log`in aynısı): önce görünürlük/referans (404).
+    `entered_by_id` GÖVDEDE YOKTUR (K14) — oturum kullanıcısından DAMGALANIR;
+    istemci başka birini "giren" gösteremez.
+
+    🔴 `site_id` GÖNDERİLMEMİŞSE makinenin O ANKİ ataması DAMGALANIR — K9'un
+    yakıt kaydındaki eşi: aksi halde her yakıt kaydı varsayılan olarak "depoda"
+    doğar ve `fuel-summary`nin `site_id` süzgeci (M4:109 "aynı hedef", K4) hiçbir
+    zaman eşleşmez. Açıkça `null` GÖNDEREN istek (depoda yapılan ikmal)
+    damgalanmaz — `model_fields_set` bu ikisini ayırır (F-İK "touched" dersi).
+    """
+    equipment = await visible_equipment(session, actor, data.equipment_id)
+    if not await _is_visible_site(session, actor, data.site_id):
+        raise NotFoundError(SITE_MISSING)
+
+    alanlar = data.model_dump()
+    if "site_id" not in data.model_fields_set:
+        alanlar["site_id"] = equipment.site_id
+    log = EquipmentFuelLog(**alanlar, entered_by_id=actor.id)
+    session.add(log)
+    await session.flush()
+    return log, f"Yakıt kaydı eklendi: {equipment.name} · {data.fuel_date} · {data.liters} lt"
+
+
+async def update_fuel_log(
+    session: AsyncSession, actor: User, log: EquipmentFuelLog, data: FuelLogUpdate
+) -> tuple[EquipmentFuelLog, str]:
+    """`PATCH /equipment/fuel-logs/{id}` — kayıt hatası düzeltilebilir."""
+    degisiklikler = data.model_dump(exclude_unset=True)
+    hedef_equipment_id = degisiklikler.get("equipment_id", log.equipment_id)
+    hedef_site_id = degisiklikler.get("site_id", log.site_id)
+
+    if hedef_equipment_id != log.equipment_id:
+        await visible_equipment(session, actor, hedef_equipment_id)
+    if "site_id" in degisiklikler and not await _is_visible_site(session, actor, hedef_site_id):
+        raise NotFoundError(SITE_MISSING)
+
+    for alan, deger in degisiklikler.items():
+        setattr(log, alan, deger)
+    await session.flush()
+    return log, f"Yakıt kaydı güncellendi: {log.fuel_date} · {log.liters} lt"
+
+
+async def delete_fuel_log(session: AsyncSession, actor: User, log_id: uuid.UUID) -> str:
+    """`DELETE /equipment/fuel-logs/{id}` — yakıt kaydı MALİ İZ DEĞİLDİR
+    (`delete_work_log`in aynı gerekçesi): maliyet ondan TÜREVDİR, kayıt hatası
+    silinebilir; ekipmanın kendisi silinemez."""
+    log = await visible_fuel_log(session, actor, log_id)
+    kunye = f"{log.fuel_date} · {log.liters} lt"
+    await session.delete(log)
+    await session.flush()
+    return f"Yakıt kaydı silindi: {kunye}"
+
+
+# --- Yakıt özeti (M4 üst blok + tablo · K15/K16/K17/K19 · T5) ---
+
+
+async def fuel_summary(
+    session: AsyncSession, actor: User, *, year: int, month: int, equipment_id: uuid.UUID | None
+) -> FuelSummaryResponse:
+    """`GET /equipment/fuel-summary` — M4'ün TAMAMI.
+
+    🔴 **K15:** toplamlar HAM satırlardan (`repository.fuel_summary_rows`)
+    üretilir; her satırın tutarı `cost.fuel_amount`ten (K19) TEK TEK
+    yuvarlanıp toplanır — SQL'de tek seferde `SUM(litre*fiyat)` alınıp SONDA
+    yuvarlansaydı K19'un satır bazlı doğrulaması (4 satır) bozulurdu.
+
+    🔴 **K16/K17:** sapma + rozet `consumption.evaluate_consumption`ten gelir,
+    eşikler burada YENİDEN yazılmaz. `lt_per_hour_avg` payda 0 ise `null`dur
+    (dönemin ÇALIŞMA KAYDI saat toplamı — modüller arası bağ, M4:39).
+    """
+    project_ids = await _visible_project_ids(session, actor)
+    ilk, son = month_bounds(year, month)
+    ham = await repository.fuel_summary_rows(
+        session, project_ids, date_from=ilk, date_to=son, equipment_id=equipment_id
+    )
+    saat_haritasi = await repository.work_hours_by_equipment(
+        session, project_ids, date_from=ilk, date_to=son
+    )
+
+    gruplar: dict[uuid.UUID, dict] = {}
+    for eid, name, site_id, norm_consumption, norm_unit, liters, unit_price in ham:
+        grup = gruplar.setdefault(
+            eid,
+            {
+                "name": name,
+                "site_id": site_id,
+                "norm_consumption": norm_consumption,
+                "norm_unit": norm_unit,
+                "liters": Decimal("0"),
+                "amount": Decimal("0"),
+            },
+        )
+        grup["liters"] += liters
+        grup["amount"] += cost.fuel_amount(liters=liters, unit_price=unit_price)
+
+    satirlar: list[FuelSummaryRow] = []
+    for eid, grup in gruplar.items():
+        saat = saat_haritasi.get(eid, Decimal("0"))
+        sonuc = consumption.evaluate_consumption(
+            total_liters=grup["liters"],
+            total_hours=saat,
+            norm_consumption=grup["norm_consumption"],
+            norm_unit=grup["norm_unit"],
+        )
+        satirlar.append(
+            FuelSummaryRow(
+                equipment_id=eid,
+                equipment_name=grup["name"],
+                site_id=grup["site_id"],
+                liters=grup["liters"],
+                amount=grup["amount"],
+                actual=sonuc.actual,
+                norm=grup["norm_consumption"],
+                deviation_pct=sonuc.deviation_pct,
+                deviation_reason=sonuc.deviation_reason,
+                consumption_status=sonuc.status,
+            )
+        )
+    satirlar.sort(key=lambda s: (s.equipment_name, str(s.equipment_id)))
+
+    toplam_litre = sum((s.liters for s in satirlar), Decimal("0"))
+    toplam_tutar = sum((s.amount for s in satirlar), Decimal("0"))
+    # 🔴 Filo düzeyinde AYNI formül (`actual_consumption`, M4:39 `2.840/428=6,6`):
+    # `equipment_id` süzgeci verildiğinde payda TEK makinenin kendi saatidir,
+    # verilmediğinde GÖRÜNÜR filonun tamamıdır.
+    toplam_saat = (
+        saat_haritasi.get(equipment_id, Decimal("0"))
+        if equipment_id is not None
+        else sum(saat_haritasi.values(), Decimal("0"))
+    )
+    lt_per_hour_avg = consumption.actual_consumption(
+        total_liters=toplam_litre, total_hours=toplam_saat
+    )
+    avg_unit_price = _quantize_unit_price(toplam_tutar / toplam_litre) if toplam_litre else None
+    abnormal_count = sum(
+        1
+        for s in satirlar
+        if s.consumption_status
+        in (consumption.ConsumptionStatus.warning, consumption.ConsumptionStatus.critical)
+    )
+
+    return FuelSummaryResponse(
+        year=year,
+        month=month,
+        total_liters=toplam_litre,
+        total_amount=toplam_tutar,
+        lt_per_hour_avg=lt_per_hour_avg,
+        avg_unit_price=avg_unit_price,
+        abnormal_count=abnormal_count,
+        rows=satirlar,
     )
