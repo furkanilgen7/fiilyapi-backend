@@ -356,6 +356,39 @@ async def add_leave_request(session: AsyncSession, request: LeaveRequest) -> Lea
     return request
 
 
+async def lock_personnel_for_update(session: AsyncSession, personnel_id: uuid.UUID) -> None:
+    """İzin kararlarının SERİLEŞTİRME noktası (`documents.lock_folder_for_update`,
+    `inventory.lock_warehouse_for_update` deseni).
+
+    Onay kapısının HER İKİ denetimi de PERSONEL bazlıdır: çakışan onaylı izin (K3)
+    ve kalan hak (K5 — hak + devreden - kullanılan). İkisi de "oku, karar ver,
+    yaz" biçimindedir; kilitsiz koşarsa aynı personelin İKİ bekleyen talebi
+    eşzamanlı onaylandığında her iki transaction da diğerinin HENÜZ COMMIT
+    EDİLMEMİŞ onayını göremez — ikisi de eşiği geçer (hak aşılır) ve üst üste
+    binen iki onaylı izin doğar.
+
+    Kilit talebin DEĞİL personelin satırındadır: iki farklı talep satırını
+    kilitlemek onları birbirinden HABERDAR ETMEZ; ortak kaynak personeldir.
+    """
+    await session.execute(
+        select(Personnel.id).where(Personnel.id == personnel_id).with_for_update()
+    )
+
+
+async def get_leave_request_locked(
+    session: AsyncSession, request_id: uuid.UUID
+) -> LeaveRequest | None:
+    """Karar geçişinin kilit satırı (`progress_payments.get_payment_locked` deseni).
+
+    `populate_existing=True` ZORUNLUDUR: `session.get` kimlik haritasındaki ESKİ
+    nesneyi döndürebilir ve o zaman kilit alınmış ama `status` KİLİTTEN ÖNCEKİ
+    okumadan gelmiş olurdu — iki eşzamanlı karar isteğinden ikincisi birincinin
+    commit'ini GÖREMEDEN `_assert_decidable`i geçer, karar damgasını (kim, ne
+    zaman) sessizce EZERDİ.
+    """
+    return await session.get(LeaveRequest, request_id, with_for_update=True, populate_existing=True)
+
+
 async def find_overlapping_approved_leave(
     session: AsyncSession,
     personnel_id: uuid.UUID,

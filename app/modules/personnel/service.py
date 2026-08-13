@@ -837,12 +837,21 @@ async def upsert_leave_balance(
     aynı isteği iki kez göndermek aynı sonucu verir, ikinci satır AÇILMAZ
     (`uq_leave_balances_personnel_year` yarış emniyet ağı olarak kalır).
 
+    **Kilit neden burada da var:** UQ tek başına yalnız ikinci SATIRI engeller —
+    iki eşzamanlı PUT ikisi de "satır yok" görüp INSERT ederse ikincisi
+    `IntegrityError`a düşer ve kullanıcı 409 alır; oysa PUT'un sözleşmesi
+    "gönderdiğin değer yazılır"dır, ikinci istek UPDATE'e DÜŞMELİDİR. Ayrıca
+    `carried_over` onay eşiğinin (K5) girdisidir: kilit `approve` ile AYNI
+    personel satırında olduğundan devreden gün, onay hesabının ortasında
+    kayamaz. Sıra `_lock_decision_scope` ile aynıdır (personel önce).
+
     Türev alanlar gövdede KABUL EDİLMEZ (`extra="forbid"`) — `annual_entitlement`
     kolon değildir (K1) ve gönderilmesi sessizce yutulsaydı istemci hakkı
     değiştirdiğini sanırdı.
     """
     today = today or date.today()
     personnel = await get_personnel(session, personnel_id)
+    await repository.lock_personnel_for_update(session, personnel.id)
 
     balance = await repository.get_leave_balance(session, personnel.id, year)
     if balance is None:
@@ -856,6 +865,30 @@ async def upsert_leave_balance(
     entitlement, carried_over, used = await _leave_balance_parts(session, personnel, year, today)
     detail = messages.leave_balance_updated(personnel.full_name, year, balance.carried_over)
     return _balance_response(personnel, year, today, entitlement, carried_over, used), detail
+
+
+async def _lock_decision_scope(
+    session: AsyncSession, request: LeaveRequest, personnel: Personnel
+) -> None:
+    """Karar yolunun SERİLEŞTİRME kilidi — TÜM denetimlerden ÖNCE (spec §5 K3/K5).
+
+    **Sıra sabittir: önce `personnel`, sonra `leave_requests`.** Kilit alan üç yol
+    (`approve`, `reject`, `upsert_leave_balance`) AYNI sırayı izler; ters sırada
+    kilitleyen bir yol eklenirse karşılıklı kilitlenme (deadlock) doğar.
+
+    * **Personel satırı** eşiğin ortak kaynağıdır: çakışma (K3) ve kalan hak (K5)
+      denetimleri o personelin TÜM onaylı izinleri üzerinden okunur. Kilit
+      alındıktan sonra yapılan okumalar (READ COMMITTED) rakip transaction'ın
+      COMMIT'ini görür — "ikisi de eşiği geçti" yarışı burada kapanır.
+    * **Talep satırı** çift-karar yarışına karşıdır: `populate_existing` ile durum
+      kilit ALTINDA yeniden okunur, yoksa `_assert_decidable` atlatılabilirdi.
+
+    Talep kilit alınana kadar SİLİNMİŞ olabilir (`delete_leave_request` yalnız
+    `pending` satırı siler) — o hâlde 404, kayıt yokmuş gibi.
+    """
+    await repository.lock_personnel_for_update(session, personnel.id)
+    if await repository.get_leave_request_locked(session, request.id) is None:
+        raise NotFoundError(guards.LEAVE_REQUEST_MISSING)
 
 
 def _assert_decidable(request: LeaveRequest) -> None:
@@ -934,12 +967,17 @@ async def approve_leave_request(
 ) -> tuple[LeaveRequestResponse, str]:
     """Talebi onaylar — TEK adım (spec §5 K4), kapı `personnel` **full+**.
 
-    Sıra: kayıt (404) → durum (409) → çakışma (409) → hak aşımı / fail-closed
-    (409) → damga. TÜM denetimler yazmadan ÖNCE koşar: yarı onaylanmış bir kayıt
-    bırakılmaz.
+    Sıra: kayıt (404) → **satır kilidi** → durum (409) → çakışma (409) → hak aşımı
+    / fail-closed (409) → damga. TÜM denetimler yazmadan ÖNCE koşar: yarı
+    onaylanmış bir kayıt bırakılmaz.
+
+    Kilit denetimlerden ÖNCE ve AYNI transaction içinde alınır
+    (`_lock_decision_scope`): kilitsiz hâlde iki eşzamanlı onay aynı `used`
+    toplamını okuyup ikisi de K5 eşiğini geçerdi.
     """
     today = today or date.today()
     request, personnel, leave_type = await get_leave_request_row(session, request_id)
+    await _lock_decision_scope(session, request, personnel)
     _assert_decidable(request)
     await _assert_approvable(session, request, personnel, leave_type, today)
 
@@ -962,9 +1000,16 @@ async def reject_leave_request(
     satırın ✗ butonu aktiftir). Onaylanamayan bir talebin reddedilememesi onu
     sonsuza dek `pending` bırakır ve İZ'in "Bekleyen" sayacını kalıcı kirletirdi.
 
-    Sıra: kayıt (404) → durum (409) → damga. Gerekçe boşluk denetimi şemadadır (422).
+    Sıra: kayıt (404) → **satır kilidi** → durum (409) → damga. Gerekçe boşluk
+    denetimi şemadadır (422).
+
+    Red iş kuralı kapılarından geçmese de karar damgası bir DURUM GEÇİŞİDİR:
+    kilitsiz hâlde eşzamanlı bir `approve` ile aynı talep hem onaylanıp hem
+    reddedilebilir, ikinci damga birincinin izini EZERDİ. Kilit `approve` ile
+    AYNI sırayı (personel → talep) izler.
     """
     request, personnel, leave_type = await get_leave_request_row(session, request_id)
+    await _lock_decision_scope(session, request, personnel)
     _assert_decidable(request)
 
     reason = data.reason.strip()
