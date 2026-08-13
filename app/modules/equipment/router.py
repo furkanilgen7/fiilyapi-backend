@@ -1,4 +1,4 @@
-"""Makine & ekipman uçları (MK-1 spec §4) — T1'de BOŞ.
+"""Makine & ekipman uçları (MK-1 spec §4).
 
 Kapı `equipment` iznidir (21. modül, spec §6): okuma `view`, yazmanın tamamı
 `full`. Görünmeyen kayıt 404'tür.
@@ -17,22 +17,29 @@ döner ve bu bir BEKÇİ TESTİYLE kilitlenmiştir (`test_silme_ucu_yoktur_405`)
 Kira hakedişi (M5) ve ekipman belgeleri MK-2'nindir (spec §9) — bu router'da
 HİÇBİRİ açılmaz.
 
-Çalışma kaydı, yakıt ve özet uçları (spec §4'ün kalan blokları) T4-T5'indir.
+Yakıt uçları (spec §4'ün son bloğu) T5'indir.
+
+**`DELETE /equipment/work-logs/{id}` ise VARDIR** ve bu bir çelişki değildir:
+çalışma kaydı MALİ İZ DEĞİLDİR — maliyet ondan her okumada TÜREVDİR (K18) ve
+kayıt hatası düzeltilebilmelidir. Silinemeyen şey ekipmanın KENDİSİDİR.
 
 `GET` uçları `record_audit` ÇAĞIRMAZ (WORKFLOW kuralı — okumalar denetlenmez);
-yazma uçlarının ikisi de tek denetim satırı yazar ve metin servis katmanında
+yazma uçlarının hepsi tek denetim satırı yazar ve metin servis katmanında
 kurulur.
 
 ## Yol SIRASI önemlidir
 
-`/equipment/summary` `/equipment/{equipment_id}`den ÖNCE tanımlanır: sonra
-gelseydi FastAPI "summary"yi bir UUID sanıp yolu 422'ye düşürürdü.
+`/equipment/summary`, `/equipment/work-logs` ve `/equipment/work-summary`
+`/equipment/{equipment_id}`den ÖNCE tanımlanır: sonra gelselerdi FastAPI onları
+birer UUID sanıp yolu 422'ye düşürürdü. `/equipment/work-logs/{log_id}` de aynı
+sebeple `/{equipment_id}`nin üstündedir.
 """
 
 import uuid
+from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel
@@ -48,6 +55,7 @@ from app.modules.equipment.models import (
     EquipmentCategory,
     EquipmentOwnership,
     EquipmentStatus,
+    WorkLogType,
 )
 from app.modules.equipment.schemas import (
     EquipmentCreate,
@@ -55,6 +63,11 @@ from app.modules.equipment.schemas import (
     EquipmentResponse,
     EquipmentSummaryResponse,
     EquipmentUpdate,
+    WorkLogCreate,
+    WorkLogListResponse,
+    WorkLogResponse,
+    WorkLogUpdate,
+    WorkSummaryResponse,
 )
 from app.modules.users.models import User
 
@@ -157,6 +170,126 @@ async def create_equipment_endpoint(
     equipment, detail = await service.create_equipment(session, user, data)
     await _audit(request, session, user, AuditAction.create, detail)
     return EquipmentResponse.model_validate(equipment)
+
+
+@router.get("/work-logs", response_model=WorkLogListResponse, dependencies=[_VIEW])
+async def list_work_logs_endpoint(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    equipment_id: uuid.UUID | None = None,
+    site_id: uuid.UUID | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    record_type: WorkLogType | None = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> WorkLogListResponse:
+    """M3 "Son Kayıtlar" listesi — EN YENİ önce.
+
+    `site_id` süzgeci KAYDIN kendi şantiyesine bakar (K9), makinenin bugünkü
+    atamasına değil.
+    """
+    items, total = await service.list_work_logs(
+        session,
+        user,
+        equipment_id=equipment_id,
+        site_id=site_id,
+        date_from=date_from,
+        date_to=date_to,
+        record_type=record_type,
+        limit=limit,
+        offset=offset,
+    )
+    return WorkLogListResponse(
+        items=[WorkLogResponse.model_validate(k) for k in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/work-summary", response_model=WorkSummaryResponse, dependencies=[_VIEW])
+async def work_summary_endpoint(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    year: Annotated[int, Query(ge=2000, le=2200)],
+    month: Annotated[int, Query(ge=1, le=12)],
+    site_id: uuid.UUID | None = None,
+) -> WorkSummaryResponse:
+    """M3 ana tablosu + tfoot + haftalık mini grafik.
+
+    🔴 Toplamlar HER ZAMAN satırlardan türer (K15); mockup'ın tfoot'u kendi
+    satırlarıyla tutarsızdır ve kopyalanmaz.
+    """
+    return await service.work_summary(session, user, year=year, month=month, site_id=site_id)
+
+
+@router.post(
+    "/work-logs",
+    response_model=WorkLogResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        404: {"description": "Ekipman, şantiye ya da operatör bulunamadı (görünmeyen dahil)"},
+        422: {"description": "K11 saat kuralları ya da K12 günlük 24 saat tavanı"},
+    },
+    dependencies=[_FULL],
+)
+async def create_work_log_endpoint(
+    request: Request,
+    data: WorkLogCreate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> WorkLogResponse:
+    """M3 kaydı. `hours` SUNUCU hesabıdır (K11); günlük tavan KİLİTLİDİR (K12)."""
+    log, detail = await service.create_work_log(session, user, data)
+    await _audit(request, session, user, AuditAction.create, detail)
+    return WorkLogResponse.model_validate(log)
+
+
+@router.get("/work-logs/{log_id}", response_model=WorkLogResponse, dependencies=[_VIEW])
+async def get_work_log_endpoint(
+    log_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> WorkLogResponse:
+    """Görünmeyen kayıt var olmayanla AYNI 404'ü döner."""
+    return WorkLogResponse.model_validate(await service.visible_work_log(session, user, log_id))
+
+
+@router.patch(
+    "/work-logs/{log_id}",
+    response_model=WorkLogResponse,
+    responses={422: {"description": "K11 saat kuralları ya da K12 günlük 24 saat tavanı"}},
+    dependencies=[_FULL],
+)
+async def update_work_log_endpoint(
+    request: Request,
+    log_id: uuid.UUID,
+    data: WorkLogUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> WorkLogResponse:
+    """Kayıt hatası düzeltilebilir; K11/K12 BİRLEŞİK değerler üzerinde koşar."""
+    log = await service.visible_work_log(session, user, log_id)
+    log, detail = await service.update_work_log(session, user, log, data)
+    await _audit(request, session, user, AuditAction.update, detail)
+    return WorkLogResponse.model_validate(log)
+
+
+@router.delete("/work-logs/{log_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[_FULL])
+async def delete_work_log_endpoint(
+    request: Request,
+    log_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> Response:
+    """🔴 Çalışma kaydı MALİ İZ DEĞİLDİR (maliyet ondan türev) — silinebilir.
+
+    Ekipmanın KENDİSİ silinemez: orada iz `RESTRICT`lidir ve DELETE ucu yoktur.
+    """
+    detail = await service.delete_work_log(session, user, log_id)
+    await _audit(request, session, user, AuditAction.delete, detail)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/{equipment_id}", response_model=EquipmentResponse, dependencies=[_VIEW])

@@ -134,6 +134,113 @@ async def test_ozette_gorunmeyen_ekipman_sayilmaz(
 
 
 @pytest.mark.asyncio
+async def test_gorunmeyen_makinenin_calisma_kaydi_gorunmez(
+    client, sef_headers, admin_headers, ekipman_fabrikasi, gorunen_santiye, gorunmeyen_santiye
+):
+    """🔴 K20 · T4: çalışma kaydı KENDİ `site_id`siyle süzülür (K9) ve
+    görünmeyen kayıt listede YOKTUR."""
+    gorunen = await ekipman_fabrikasi("Görünen Vinç", site=gorunen_santiye)
+    gizli = await ekipman_fabrikasi("Gizli Vinç", site=gorunmeyen_santiye)
+
+    for makine in (gorunen, gizli):
+        yanit = await client.post(
+            "/equipment/work-logs",
+            json={
+                "equipment_id": str(makine.id),
+                "work_date": "2026-07-17",
+                "site_id": str(makine.site_id),
+                "hours": "8",
+            },
+            headers=admin_headers,
+        )
+        assert yanit.status_code == 201, yanit.text
+
+    liste = await client.get("/equipment/work-logs", headers=sef_headers)
+    assert liste.status_code == 200, liste.text
+    govde = liste.json()
+    assert govde["total"] == 1
+    assert govde["items"][0]["equipment_id"] == str(gorunen.id)
+
+
+@pytest.mark.asyncio
+async def test_gorunmeyen_calisma_kaydinin_detayi_ve_yazmasi_404(
+    client, sef_headers, admin_headers, ekipman_fabrikasi, gorunmeyen_santiye
+):
+    """Detay · PATCH · DELETE üçü de AYNI 404'ü döner; sızıntı tek uçtan olur."""
+    gizli = await ekipman_fabrikasi("Gizli Vinç", site=gorunmeyen_santiye)
+    kayit = await client.post(
+        "/equipment/work-logs",
+        json={
+            "equipment_id": str(gizli.id),
+            "work_date": "2026-07-17",
+            "site_id": str(gizli.site_id),
+            "hours": "8",
+        },
+        headers=admin_headers,
+    )
+    kayit_id = kayit.json()["id"]
+
+    olmayan = await client.get(f"/equipment/work-logs/{uuid.uuid4()}", headers=sef_headers)
+    gorunmez = await client.get(f"/equipment/work-logs/{kayit_id}", headers=sef_headers)
+    assert gorunmez.status_code == 404, gorunmez.text
+    assert gorunmez.json() == olmayan.json()
+
+    duzeltme = await client.patch(
+        f"/equipment/work-logs/{kayit_id}", json={"hours": "5"}, headers=sef_headers
+    )
+    silme = await client.delete(f"/equipment/work-logs/{kayit_id}", headers=sef_headers)
+    assert duzeltme.status_code == 404, duzeltme.text
+    assert silme.status_code == 404, silme.text
+
+
+@pytest.mark.asyncio
+async def test_gorunmeyen_makineye_calisma_kaydi_acilamaz_404(
+    client, sef_headers, ekipman_fabrikasi, gorunen_santiye, gorunmeyen_santiye
+):
+    """Gövdedeki `equipment_id` ve `site_id` ikisi de süzgeçten geçer."""
+    gizli = await ekipman_fabrikasi("Gizli Vinç", site=gorunmeyen_santiye)
+    gorunen = await ekipman_fabrikasi("Görünen Vinç", site=gorunen_santiye)
+
+    gizli_makineye = await client.post(
+        "/equipment/work-logs",
+        json={"equipment_id": str(gizli.id), "work_date": "2026-07-17", "hours": "8"},
+        headers=sef_headers,
+    )
+    assert gizli_makineye.status_code == 404, gizli_makineye.text
+
+    gizli_santiyeye = await client.post(
+        "/equipment/work-logs",
+        json={
+            "equipment_id": str(gorunen.id),
+            "work_date": "2026-07-17",
+            "site_id": str(gorunmeyen_santiye.id),
+            "hours": "8",
+        },
+        headers=sef_headers,
+    )
+    assert gizli_santiyeye.status_code == 404, gizli_santiyeye.text
+
+
+@pytest.mark.asyncio
+async def test_depodaki_makinenin_kaydi_herkese_gorunur(
+    client, sef_headers, muhendis_headers, ekipman_fabrikasi
+):
+    """K20 depo istisnası çalışma kaydında da geçerlidir: `site_id IS NULL`
+    kayıt hiçbir projeye ait değildir."""
+    depodaki = await ekipman_fabrikasi("Kompresör SC-200")
+    kayit = await client.post(
+        "/equipment/work-logs",
+        json={"equipment_id": str(depodaki.id), "work_date": "2026-07-17", "hours": "8"},
+        headers=sef_headers,
+    )
+    assert kayit.status_code == 201, kayit.text
+
+    for basliklar in (sef_headers, muhendis_headers):
+        liste = await client.get("/equipment/work-logs", headers=basliklar)
+        assert [k["id"] for k in liste.json()["items"]] == [kayit.json()["id"]]
+
+
+@pytest.mark.asyncio
 async def test_gorunmeyen_santiyeye_atama_404(
     client, sef_headers, ekipman_fabrikasi, gorunen_santiye, gorunmeyen_santiye
 ):
