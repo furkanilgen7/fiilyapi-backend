@@ -8,6 +8,7 @@ Mockup otoritesi: `projedesign/Bordro Yönetimi.dc.html` (BY) ·
 | `GET /payroll/periods` | `view` | BG 44-47 + tbody |
 | `POST /payroll/periods` | `full` | BY 52 ay seçici |
 | `GET /payroll/periods/{id}` | `view` | BY 69-93 + 124/172/240/268 |
+| `PATCH /payroll/periods/{id}` | `full` | BY 63 "Son ödeme" (T4b) |
 | `POST /payroll/periods/{id}/compute` | `full` | BY tablosunun doldurulması |
 | `PATCH /payroll/lines/{id}` | `full` | BY 142-147 iki `input` |
 
@@ -56,6 +57,7 @@ from app.modules.payroll.schemas import (
     PayrollPeriodDetailResponse,
     PayrollPeriodListResponse,
     PayrollPeriodPayResult,
+    PayrollPeriodUpdate,
 )
 from app.modules.users.models import User
 
@@ -125,6 +127,37 @@ async def create_payroll_period_endpoint(
     """
     period, detail = await service.create_period(session, data)
     await _audit(request, session, user, AuditAction.create, detail)
+    return await service.get_period_detail(session, period.id)
+
+
+@router.patch(
+    "/payroll/periods/{period_id}",
+    response_model=PayrollPeriodDetailResponse,
+    responses={409: {"description": "Onaylanmış veya ödenmiş dönemin ödeme tarihi değiştirilemez"}},
+    dependencies=[_FULL],
+)
+async def update_payroll_period_endpoint(
+    request: Request,
+    period_id: uuid.UUID,
+    data: PayrollPeriodUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> PayrollPeriodDetailResponse:
+    """Ödeme takvimi (BY 63 "Son ödeme") düzeltmesi — T4b.
+
+    * Yetki diğer yazma uçlarıyla AYNI: `payroll:full`.
+    * **`draft` ve `pending_approval`** yazılabilir; **`approved`/`paid` 409** —
+      ödeme gerçekleştikten sonra takvimi değiştirmek gerçekleşmiş bir olayın
+      kaydını düzeltmek olurdu, `approved`ta da bordronun takvimi tek taraflı
+      kaymamalıdır. Değişmesi gerekiyorsa dönem `pending_approval`a geri alınır.
+    * `payment_due_date` **OPSİYONELDİR** (açma ucunda da): sunucu tarih
+      ÜRETMEZ, varsayılan KOYMAZ, dönemin yıl/ayıyla tutarlılığını DENETLEMEZ
+      (ödeme sonraki aya sarkabilir). Açıkça `null` göndermek tarihi TEMİZLER;
+      boş gövde ise **422**'dir (bir işlem değildir).
+    * Görünmeyen/var olmayan dönem **404** (ayırt edilemez).
+    """
+    period, detail = await service.update_period(session, period_id, data)
+    await _audit(request, session, user, AuditAction.update, detail)
     return await service.get_period_detail(session, period.id)
 
 

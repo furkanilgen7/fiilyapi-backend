@@ -55,6 +55,15 @@ kanonu, WORKFLOW §4). `wage_amount`/`wage_type` NULL ise satır **"hesaplanamad
 brüt/net **`null`** döner ve **ödeme onayına GİRMEZ** (fail-closed). Uydurma 0, eksik veriyi
 "ödenecek bir şey yok" gibi gösterir — para sınıfı yalan.
 
+**S4.1 · PUANTAJ KAYDI olmayan personelde de brüt HESAPLANMAZ — yönetim kararı,
+2026-08-13 (T4b).** Dönemde personele ait HİÇ `timesheet_entries` kaydı yoksa
+"bu ay hiç çalışmadı" ile "puantaj henüz girilmedi" AYIRT EDİLEMEZ → satır
+**`uncomputed`**, para alanları `null`, gün `null`. **`daily` · `hourly` ·
+`monthly` — üçünde de** (aylıkçıda sessiz tam maaş, işe hiç başlamamış kişiye
+maaş hesaplardı). ⚠️ Kayıt VAR ama hepsi `MAN_DAY_CODES` dışıysa (izin/tatil)
+gün 0 **GERÇEKTİR** → normal hesap (`pending`). Çıkış yolu K3 override'ıdır
+(`uncomputed → pending`); kural bordroyu TIKAMAZ.
+
 **S5 · Onaylanan satır DEĞİŞTİRİLEMEZ.** `approved`/`paid` satırda brüt/kesinti/bölüşüm PATCH'i
 **409**. Gerekçe: ödeme izi. Düzeltme yolu satırı `pending`e geri alma yetkisidir (ayrı izin),
 dönem `paid` ise o da kapalıdır.
@@ -118,7 +127,8 @@ yalnız `income_tax_pct = 20` (S2, BY 243), stajyer **tüm oranlar 0** (BY 284).
 | Uç | Not |
 |---|---|
 | `GET /payroll/periods` | BG listesi: dönem + çalışan sayısı + brüt/SGK işveren/net/toplam maliyet + ödeme tarihi + durum. Sayfalama TB3 deseni (`limit` varsayılan 50, `le=200` → aşım **422**). |
-| `POST /payroll/periods` | Ay aç (`year`+`month`). Var olan ay → **409**. |
+| `POST /payroll/periods` | Ay aç (`year`+`month`). Var olan ay → **409**. `payment_due_date` **opsiyonel** (T4b). |
+| `PATCH /payroll/periods/{id}` | **T4b** — yalnız `payment_due_date`. `draft`/`pending_approval` yazılabilir; `approved`/`paid` → **409**. Sunucu tarih ÜRETMEZ/DENETLEMEZ; boş gövde **422**. |
 | `GET /payroll/periods/{id}` | Dönem + 4 özet kartı (BY 69-93) + tip bazında gruplanmış satırlar. |
 | `POST /payroll/periods/{id}/compute` | Puantaj+ücret+oranlardan satırları üret/güncelle. `is_overridden` satırları KORUR (S6). Dönem `approved`/`paid` ise **409**. |
 | `PATCH /payroll/lines/{id}` | Brüt override (K3) + banka/elden bölüşümü (S3). `approved`/`paid` satırda **409** (S5). |

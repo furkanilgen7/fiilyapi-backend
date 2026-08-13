@@ -80,6 +80,168 @@ async def test_acma_ucu_view_ile_gecilmez_403(client, yetkisiz_headers):
     ).status_code == 403
 
 
+# --- PATCH /payroll/periods/{id} · ödeme tarihi (T4b, YÖNETİM KARARI 2) -----
+#
+# BY 63 banner'ı "Son ödeme: 20 Temmuz 2026" diye OKUR ama mockup bu alanın
+# FORMUNU çizmez; BG'de üç dönemin de ayın 20'sini göstermesi bir İŞ KURALI
+# değildir (WORKFLOW §3: mockup'ta olmayan kural uydurulmaz). Bu yüzden alan
+# OPSİYONELDİR: sunucu tarih ÜRETMEZ, varsayılan KOYMAZ, yıl/ay tutarlılığı
+# DENETLEMEZ — verilmezse `null` kalır ve banner'ın basılıp basılmaması
+# frontend'in zarif düşüşüdür.
+
+
+async def test_odeme_tarihi_OPSIYONEL_sunucu_URETMEZ(client, ik_headers, seeded_db):
+    """🔴 Alan gönderilmezse `null` KALIR — "her ayın 20'si" uydurulmaz."""
+    resp = await client.post(
+        "/payroll/periods", json={"year": 2026, "month": 8}, headers=ik_headers
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["payment_due_date"] is None
+
+
+async def test_odeme_tarihi_SONRAKI_AYA_sarkabilir(client, ik_headers, seeded_db):
+    """Yıl/ay tutarlılığı DENETLENMEZ: Temmuz bordrosu Ağustos'ta ödenebilir.
+
+    Gerçek hayatta olan bir durumu şemayla yasaklamak, kullanıcıyı yanlış tarih
+    girmeye zorlardı.
+    """
+    resp = await client.post(
+        "/payroll/periods",
+        json={"year": 2026, "month": 8, "payment_due_date": "2026-09-05"},
+        headers=ik_headers,
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["payment_due_date"] == "2026-09-05"
+
+
+async def test_PATCH_odeme_tarihini_yazar(client, ik_headers, donem):
+    """BY 63'ün beslendiği alan `draft` dönemde yazılabilir."""
+    resp = await client.patch(
+        f"/payroll/periods/{donem.id}",
+        json={"payment_due_date": "2026-07-20"},
+        headers=ik_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["payment_due_date"] == "2026-07-20"
+
+    detay = (await client.get(f"/payroll/periods/{donem.id}", headers=ik_headers)).json()
+    assert detay["payment_due_date"] == "2026-07-20"
+
+
+async def test_PATCH_ONAY_BEKLEYEN_donemde_de_acik(client, ik_headers, donem, db_session):
+    """Ödeme takvimi onaya girmiş bordroda hâlâ düzeltilebilir — para henüz çıkmadı."""
+    from app.modules.payroll.models import PayrollPeriodStatus
+
+    donem.status = PayrollPeriodStatus.pending_approval
+    await db_session.flush()
+
+    resp = await client.patch(
+        f"/payroll/periods/{donem.id}",
+        json={"payment_due_date": "2026-07-25"},
+        headers=ik_headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.parametrize("durum", ["approved", "paid"])
+async def test_PATCH_onayli_ve_odenmis_donemde_409(client, ik_headers, donem, db_session, durum):
+    """🔴 `approved` ve `paid` KAPALIDIR.
+
+    Ödeme gerçekleştikten sonra "son ödeme tarihi"ni değiştirmek, gerçekleşmiş
+    bir olayın kaydını sonradan düzeltmektir ve para izini bozar. `approved`ta
+    da kapalıdır: onaylanmış bordronun ödeme takvimi tek taraflı kaymamalıdır —
+    değişmesi gerekiyorsa dönem `pending_approval`a geri alınır (S8'in zaten
+    izin verdiği yol; YENİ yol icat edilmez).
+    """
+    from app.modules.payroll.models import PayrollPeriodStatus
+
+    donem.status = PayrollPeriodStatus(durum)
+    await db_session.flush()
+
+    resp = await client.patch(
+        f"/payroll/periods/{donem.id}",
+        json={"payment_due_date": "2026-07-20"},
+        headers=ik_headers,
+    )
+    assert resp.status_code == 409, resp.text
+
+
+async def test_PATCH_ACIK_null_ile_tarih_SILINIR(client, ik_headers, donem):
+    """Açıkça `null` göndermek tarihi TEMİZLER — yanlış girilen tarih geri alınabilir."""
+    await client.patch(
+        f"/payroll/periods/{donem.id}",
+        json={"payment_due_date": "2026-07-20"},
+        headers=ik_headers,
+    )
+    resp = await client.patch(
+        f"/payroll/periods/{donem.id}", json={"payment_due_date": None}, headers=ik_headers
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["payment_due_date"] is None
+
+
+async def test_PATCH_BOS_govde_422(client, ik_headers, donem):
+    """Boş gövde bir işlem DEĞİLDİR (satır PATCH'iyle aynı karar).
+
+    `{}` ile `{"payment_due_date": null}` ayrımı `model_fields_set` ile korunur:
+    ikisi tek davranışa indirgenseydi ya boş istek sessizce tarihi silerdi ya da
+    açık `null` ile silmek imkânsız olurdu.
+    """
+    resp = await client.patch(f"/payroll/periods/{donem.id}", json={}, headers=ik_headers)
+    assert resp.status_code == 422, resp.text
+
+
+async def test_PATCH_bilinmeyen_alan_422(client, ik_headers, donem):
+    """`extra="forbid"` — durum/onay alanları bu uçtan sızamaz."""
+    resp = await client.patch(
+        f"/payroll/periods/{donem.id}",
+        json={"payment_due_date": "2026-07-20", "status": "paid"},
+        headers=ik_headers,
+    )
+    assert resp.status_code == 422, resp.text
+
+
+async def test_PATCH_olmayan_donem_404(client, ik_headers, seeded_db):
+    """Görünmeyen ile var olmayan AYIRT EDİLEMEZ (spec §6.8)."""
+    resp = await client.patch(
+        "/payroll/periods/00000000-0000-0000-0000-000000000001",
+        json={"payment_due_date": "2026-07-20"},
+        headers=ik_headers,
+    )
+    assert resp.status_code == 404
+
+
+async def test_PATCH_yetkisiz_rol_403(client, yetkisiz_headers, donem):
+    """Diğer yazma uçlarıyla AYNI kapı: `payroll:full`."""
+    resp = await client.patch(
+        f"/payroll/periods/{donem.id}",
+        json={"payment_due_date": "2026-07-20"},
+        headers=yetkisiz_headers,
+    )
+    assert resp.status_code == 403
+
+
+async def test_PATCH_DENETIM_satiri_yazar(client, ik_headers, donem, db_session):
+    """Dönem değişikliği iz bırakır (B5 deseni, mevcut yazma uçlarıyla aynı)."""
+    from sqlalchemy import select
+
+    from app.modules.audit.models import AuditAction, AuditLog
+
+    await client.patch(
+        f"/payroll/periods/{donem.id}",
+        json={"payment_due_date": "2026-07-20"},
+        headers=ik_headers,
+    )
+
+    kayitlar = (
+        (await db_session.execute(select(AuditLog).where(AuditLog.action == AuditAction.update)))
+        .scalars()
+        .all()
+    )
+    assert len(kayitlar) == 1, [k.detail for k in kayitlar]
+    assert "2026-07-20" in kayitlar[0].detail
+
+
 # --- POST /payroll/periods/{id}/compute -------------------------------------
 
 

@@ -149,9 +149,10 @@ async def _payroll_personnel(session: AsyncSession) -> list[Personnel]:
 async def _man_day_counts(session: AsyncSession, year: int, month: int) -> dict[uuid.UUID, int]:
     """Kişi başına adam-gün — `MAN_DAY_CODES` kanonu (S7).
 
-    Kaydı olmayan kişi sözlükte BULUNMAZ ve çağıran 0 sayar: bu uydurma bir
-    değer değil, sayımın gerçek sonucudur (kişi o ay hiç çalışmamıştır). Ücret
-    verisi eksik olsaydı S4 yolu devreye girerdi — iki durum karıştırılmaz.
+    Kaydı olmayan kişi sözlükte BULUNMAZ ve çağıran 0 sayar; ama o 0'ın anlamı
+    `_personnel_with_timesheet_records` ile belirlenir: kaydı hiç yoksa sayı
+    BİLİNMİYOR demektir (fail-closed), kaydı varken 0 çıkmışsa (izin/tatil ayı)
+    sayı GERÇEKTİR. İki durum burada karıştırılmaz.
     """
     ilk, son = month_bounds(year, month)
     rows = await session.execute(
@@ -164,6 +165,29 @@ async def _man_day_counts(session: AsyncSession, year: int, month: int) -> dict[
         .group_by(TimesheetEntry.personnel_id)
     )
     return {personnel_id: sayi for personnel_id, sayi in rows.all()}
+
+
+async def _personnel_with_timesheet_records(
+    session: AsyncSession, year: int, month: int
+) -> set[uuid.UUID]:
+    """🔴 Dönemde HERHANGİ bir puantaj hücresi olan personel (YÖNETİM KARARI T4b).
+
+    `_man_day_counts`ten AYRI bir sorgudur ve ayrı olması ZORUNLUDUR: orası
+    `MAN_DAY_CODES` süzer, burası **kod ayrımı YAPMAZ**. Tek sorguya
+    indirgenseydi izin/tatil kodlu bir ay ile hiç girilmemiş bir ay aynı sonucu
+    (0) verir, ikisi ayırt edilemezdi — birinde gün 0 GERÇEKTİR, ötekinde
+    BİLİNMEZ.
+
+    Pencere gün sayımıyla AYNIDIR (`month_bounds`): geçen ayın kaydı bu ayın
+    eksik verisini kapatsaydı, işten geçen ay ayrılmış birine maaş hesaplanırdı.
+    """
+    ilk, son = month_bounds(year, month)
+    rows = await session.execute(
+        select(TimesheetEntry.personnel_id)
+        .where(TimesheetEntry.work_date >= ilk, TimesheetEntry.work_date <= son)
+        .distinct()
+    )
+    return set(rows.scalars().all())
 
 
 async def _existing_lines(
@@ -219,6 +243,7 @@ async def compute_period(session: AsyncSession, period_id: uuid.UUID) -> Payroll
 
     rates = await rates_by_source(session, period.year)
     man_days = await _man_day_counts(session, period.year, period.month)
+    kayitli = await _personnel_with_timesheet_records(session, period.year, period.month)
     existing = await _existing_lines(session, period.id)
 
     created = updated = skipped_overridden = skipped_approved = 0
@@ -237,6 +262,7 @@ async def compute_period(session: AsyncSession, period_id: uuid.UUID) -> Payroll
             wage_amount=person.wage_amount,
             payment_method=person.payment_method,
             man_days=man_days.get(person.id, 0),
+            has_timesheet_records=person.id in kayitli,
             rate=rates.get(person.source),
         )
         if line is None:
@@ -308,6 +334,41 @@ async def create_period(
     session.add(period)
     await session.flush()
     return period, messages.payroll_period_created(period.year, period.month)
+
+
+#: Ödeme TAKVİMİNİ donduran dönem durumları (T4b). Bugün `LOCKED_PERIOD_STATUSES`
+#: ile aynı ikiliyi taşır ama ona BAĞLANMAZ ve bu bilinçlidir: o küme "yeniden
+#: HESAP" kapısıdır, bu küme "ödeme TARİHİ" kapısı. Takma ad verilseydi birinin
+#: yarın gevşetilmesi ötekini sessizce sürükler ve ödenmiş bir bordronun tarihi
+#: kimse istemeden yazılabilir hâle gelirdi.
+SCHEDULE_LOCKED_PERIOD_STATUSES = frozenset(
+    {PayrollPeriodStatus.approved, PayrollPeriodStatus.paid}
+)
+
+
+async def update_period(
+    session: AsyncSession, period_id: uuid.UUID, data: schemas.PayrollPeriodUpdate
+) -> tuple[PayrollPeriod, str]:
+    """`PATCH /payroll/periods/{id}` — ödeme takvimi (BY 63) düzeltmesi.
+
+    🔴 **EŞİK = KİLİT (WORKFLOW §4):** dönem satırı `FOR UPDATE` ile ve DURUM
+    DENETİMİNDEN ÖNCE okunur, sıra tüm uçlardaki gibi dönem → satır (burada
+    satır tarafı yoktur). Kilit denetimden sonra alınsaydı eşzamanlı bir
+    `approve` ile bu PATCH aynı `draft` durumunu okur, dönem onaylanırken tarihi
+    de kayardı.
+
+    Yalnız `draft` ve `pending_approval` yazılabilir; `approved`/`paid` **409**
+    (gerekçe `guards.PERIOD_LOCKED_FOR_SCHEDULE`).
+    """
+    period = await _lock_period(session, period_id)
+    if period.status in SCHEDULE_LOCKED_PERIOD_STATUSES:
+        raise ConflictError(guards.PERIOD_LOCKED_FOR_SCHEDULE)
+
+    period.payment_due_date = data.payment_due_date
+    await session.flush()
+    return period, messages.payroll_period_updated(
+        period.year, period.month, period.payment_due_date
+    )
 
 
 async def get_period(session: AsyncSession, period_id: uuid.UUID) -> PayrollPeriod:

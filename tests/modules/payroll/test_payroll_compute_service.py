@@ -224,22 +224,92 @@ async def test_mesai_SAATI_brute_eklenmez(
     assert satir_of(satirlar, sade.id).gross_amount == satir_of(satirlar, mesaili.id).gross_amount
 
 
-async def test_puantaji_olmayan_personel_sifir_gunle_satir_alir(
-    db_session, donem, oranlar, personel_fabrikasi
+@pytest.mark.parametrize(
+    ("wage_type", "wage_amount"),
+    [
+        (WageType.daily, Decimal("1800.00")),
+        (WageType.hourly, Decimal("225.00")),
+        (WageType.monthly, Decimal("50600.00")),
+    ],
+)
+async def test_puantaj_KAYDI_OLMAYAN_personel_UC_UCRET_TIPINDE_de_FAIL_CLOSED(
+    db_session, donem, oranlar, personel_fabrikasi, wage_type, wage_amount
 ):
-    """Ay boyu hiç kaydı olmayan kişi de BORDROYA GİRER, gün 0'dır.
+    """🔴 YÖNETİM KARARI (T4b) — dönemde HİÇ kaydı olmayan kişi `uncomputed`.
 
-    Satır açılmasaydı kişi ekranda hiç görünmez ve "unutuldu mu, sıfır mı"
-    ayrımı yapılamazdı. Gün 0 burada UYDURMA DEĞİLDİR: puantaj sayımının gerçek
-    sonucudur (ücret verisi eksik olsaydı S4 yolu işlerdi).
+    Satır yine AÇILIR (kişi ekranda görünmelidir, "unutuldu mu?" sorusu ancak
+    böyle sorulabilir) ama para alanları `null`dur: "hiç çalışmadı" ile
+    "puantajı girilmedi" DB'de ayırt edilemez ve ikisine de 0 basmak, eksik
+    veriyi "ödenecek bir şey yok" gibi gösterirdi (S4 · NULL-EŞİK kanonu).
+
+    `monthly` DE dâhildir (yönetim kararı): gün sayısının brütü etkilememesi,
+    işe hiç başlamamış personele tam maaş hesaplamayı meşrulaştırmaz.
     """
-    await personel_fabrikasi("Kayıtsız Kişi")
+    await personel_fabrikasi("Kayıtsız Kişi", wage_type=wage_type, wage_amount=wage_amount)
 
     await service.compute_period(db_session, donem.id)
     (satir,) = await _satirlar(db_session, donem)
 
+    assert satir.status is PayrollLineStatus.uncomputed
+    assert satir.days is None
+    assert satir.gross_amount is None
+    assert satir.deduction_amount is None
+    assert satir.net_amount is None
+    assert satir.bank_amount is None
+    assert satir.cash_amount is None
+
+
+@pytest.mark.parametrize(
+    ("wage_type", "wage_amount", "beklenen_brut"),
+    [
+        (WageType.daily, Decimal("1800.00"), Decimal("0.00")),
+        (WageType.monthly, Decimal("50600.00"), Decimal("50600.00")),
+    ],
+)
+async def test_kaydi_VAR_ama_hepsi_IZIN_kodlu_ise_gun_0_GERCEKTIR(
+    db_session,
+    donem,
+    oranlar,
+    personel_fabrikasi,
+    puantaj_fabrikasi,
+    wage_type,
+    wage_amount,
+    beklenen_brut,
+):
+    """🔴 AYRIM — "hiç kayıt yok" ≠ "kayıt var ama `MAN_DAY_CODES` dışı".
+
+    İzin/tatil kodlu bir ay VERİ GİRİLMİŞ bir aydır: adam-gün 0'dır ve bu 0
+    gerçektir, bilinmeyen değil. Satır hesaplanır ve onaya girebilir. İki durum
+    tek koşula (`man_days == 0`) indirgenirse bu test kırmızıya döner — o
+    indirgeme, izinli geçen gerçek bir ayı "veri eksik" diye kilitlerdi.
+    """
+    kisi = await personel_fabrikasi("İzinli Kişi", wage_type=wage_type, wage_amount=wage_amount)
+    await puantaj_fabrikasi(kisi, [1, 2, 3], code=TimesheetCode.leave)
+
+    await service.compute_period(db_session, donem.id)
+    (satir,) = await _satirlar(db_session, donem)
+
+    assert satir.status is PayrollLineStatus.pending
     assert satir.days == 0
-    assert satir.gross_amount == Decimal("0.00")
+    assert satir.gross_amount == beklenen_brut
+
+
+async def test_BASKA_AYIN_kaydi_bu_ayin_kapisini_ACMAZ(
+    db_session, donem, oranlar, personel_fabrikasi, puantaj_fabrikasi
+):
+    """Kayıt varlığı da DÖNEMİN AYINA bakar (gün sayımıyla aynı pencere).
+
+    Haziran puantajı Temmuz'un eksik verisini kapatsaydı, işten Haziran'da
+    ayrılmış birine Temmuz'da maaş hesaplanırdı.
+    """
+    kisi = await personel_fabrikasi("Geçen Ay Çalıştı", wage_type=WageType.monthly)
+    await puantaj_fabrikasi(kisi, [1, 2, 3], month=6)
+
+    await service.compute_period(db_session, donem.id)
+    (satir,) = await _satirlar(db_session, donem)
+
+    assert satir.status is PayrollLineStatus.uncomputed
+    assert satir.gross_amount is None
 
 
 # --- Kimler bordroya girer (ŞEF KARARI 5) ----------------------------------

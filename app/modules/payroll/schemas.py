@@ -118,6 +118,36 @@ class PayrollPeriodCreate(BaseModel):
     payment_due_date: date | None = None
 
 
+class PayrollPeriodUpdate(BaseModel):
+    """`PATCH /payroll/periods/{id}` gövdesi — YALNIZ ödeme tarihi (T4b).
+
+    Dönemin başka hiçbir alanı buradan değişmez: `year`/`month` kimliktir (UQ),
+    `status` geçiş tablosunun (S8) işidir, damgalar (`approved_at`/`paid_at`/
+    `sgk_submitted_at`) kendi uçlarında basılır. Alan eklemek bu uçtan onay
+    zincirini atlamayı mümkün kılardı.
+
+    🔴 **Boş gövde 422'dir ve bu `null` göndermekten AYRIDIR.** Tek alanlı ve
+    nullable bir şemada `{}` ile `{"payment_due_date": null}` varsayılan
+    değerle ayırt edilemez; ayrım `model_fields_set` ile korunur. İkisi tek
+    davranışa indirgenseydi ya boş bir istek tarihi sessizce SİLERDİ ya da
+    yanlış girilmiş bir tarihi temizlemek imkânsız olurdu.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: BY 63 "Son ödeme". **Sunucu tarih ÜRETMEZ, varsayılan KOYMAZ ve dönemin
+    #: yıl/ayıyla tutarlılığını DENETLEMEZ:** mockup bu alanın formunu çizmez,
+    #: BG'nin üç dönemde de ayın 20'sini göstermesi bir iş kuralı DEĞİLDİR
+    #: (WORKFLOW §3, uydurma yasağı) ve ödeme gerçek hayatta sonraki aya sarkar.
+    payment_due_date: date | None = None
+
+    @model_validator(mode="after")
+    def _en_az_bir_alan(self) -> "PayrollPeriodUpdate":
+        if "payment_due_date" not in self.model_fields_set:
+            raise ValueError("Güncellenecek en az bir alan gönderilmelidir")
+        return self
+
+
 # --- Satır yazma -----------------------------------------------------------
 
 

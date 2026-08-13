@@ -1053,6 +1053,16 @@ def payroll_period_created(year: int, month: int) -> str:
     return f"Bordro dönemi açıldı: {year}/{month:02d}"
 
 
+def payroll_period_updated(year: int, month: int, payment_due_date: object) -> str:
+    """Odeme tarihi degisikligi — TARIH metne KONUR ve bu bir ISTISNA DEGILDIR.
+
+    Yukaridaki "tutar konmaz" kurali SUNUCU HESAPLARI icindir; son odeme tarihi
+    kullanicinin KENDI GIRDISIDIR ve turemez. Denetimi okuyan kisi takvimin ne
+    yapildigini gormelidir; tarih silindiginde de bu acikca yazilir.
+    """
+    return f"Bordro dönemi güncellendi: {year}/{month:02d} · son ödeme {payment_due_date or '—'}"
+
+
 def payroll_period_computed(year: int, month: int) -> str:
     return f"Bordro dönemi hesaplandı: {year}/{month:02d}"
 

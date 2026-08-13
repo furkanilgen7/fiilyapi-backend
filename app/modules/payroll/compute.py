@@ -24,6 +24,16 @@ Uydurma 0, eksik veriyi "ödenecek bir şey yok" gibi gösterirdi — para sın�
   kolonu yoktur (`timesheet_entries` yalnız `overtime_hours` taşır, o da sadece
   `overtime` kodunda dolu). "Günde 8 saat" gibi bir sabit İCAT ETMEK yasaktır
   (WORKFLOW §3) ve para sınıfı bir uydurma olurdu → satır `uncomputed`.
+* **🔴 YÖNETİM KARARI (T4b) — puantaj KAYDI olmayan personel FAIL-CLOSED,
+  ÜÇ ÜCRET TİPİNDE DE.** Dönemde personele ait HİÇ `timesheet_entries` kaydı
+  yoksa "bu ay hiç çalışmadı" ile "puantajı henüz girilmedi" veritabanında
+  AYIRT EDİLEMEZ; ikisi de brüt 0 üretseydi veri eksikliği "ödenecek bir şey
+  yok" gibi görünürdü. `monthly` DE dâhildir: "aylık ücretlide gün brütü
+  etkilemez" varsayımı, işe hiç başlamamış ya da çıkmış personele sessizce tam
+  maaş hesaplamayı meşrulaştırırdı. ⚠️ Bu kural KAYDIN VARLIĞINA bakar, gün
+  SAYISINA değil: kaydı olan ama tüm günleri izin/tatil kodlu (`MAN_DAY_CODES`
+  dışı) personelde gün 0 GERÇEKTİR — veri girilmiştir, hesap yapılır. Kuralın
+  çıkışı K3 override'ıdır (`uncomputed → pending`), yoksa bordro kilitlenirdi.
 * **🔴 ŞEF KARARI 2 — oran seti yoksa FAIL-CLOSED.** `(yıl, tip)` için satır
   yoksa (`general` tipi personel; ya da seti henüz girilmemiş bir yıl) kesintiyi
   0 varsaymak "kesinti yok" yalanı olurdu → satır `uncomputed`.
@@ -283,9 +293,17 @@ def compute_line(
     wage_amount: Decimal | None,
     payment_method: PaymentMethod | None,
     man_days: int,
+    has_timesheet_records: bool,
     rate: PayrollRate | None,
 ) -> ComputedLine:
     """Bir satırın TAM hesabı. Saf: aynı girdiye her zaman aynı çıktı.
+
+    `has_timesheet_records` personelin dönemde HERHANGİ bir puantaj hücresi
+    olup olmadığıdır (kod ayrımı YAPILMAZ) ve `man_days`ten AYRI bir olgudur:
+    biri verinin VAR olup olmadığını, öteki içindeki adam-gün sayısını söyler.
+    Kayıt yoksa satır her ücret tipinde `uncomputed` kalır (YÖNETİM KARARI T4b,
+    modül docstring'i) ve **gün de `null`dur** — kaydı olmayan kişinin gün
+    sayısı 0 değil BİLİNMEYENDİR; 0 yazmak eksik verinin yerini gizlerdi.
 
     `man_days` puantajdan gelen `MAN_DAY_CODES` sayısıdır (`matrix.py` kanonu);
     `rate` `(dönemin yılı, personel tipi)` ile seçilmiş oran satırıdır — **yıl
@@ -295,6 +313,9 @@ def compute_line(
     (ŞEF KARARI 2): kesintisi bilinmeyen bir brütten net türetmek, kesintiyi 0
     saymak demektir.
     """
+    if not has_timesheet_records:
+        return _uncomputed(personnel_source, days=None)
+
     days = computed_days(personnel_source, man_days)
     gross = compute_gross(wage_type, wage_amount, days)
     if gross is None or rate is None:

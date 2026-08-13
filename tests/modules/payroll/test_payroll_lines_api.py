@@ -233,6 +233,37 @@ async def test_K3_override_UNCOMPUTED_satiri_odenebilir_yapar(client, ik_headers
     assert govde["previous_gross_amount"] is None  # önceki değer YOKTU — 0 uydurulmaz
 
 
+async def test_PUANTAJSIZ_satirin_CIKIS_YOLU_override_ile_ACIK(
+    client, ik_headers, donem, dort_tip, personel_fabrikasi
+):
+    """🔴 T4b — puantajsızlık kuralı bordroyu TIKAMAMALIDIR.
+
+    Fail-closed bir kural, çıkışı olmadığında kabul edilemez: kullanıcı bir
+    şekilde bordroyu kapatabilmelidir. Yol K3 override'ıdır — elle girilen brüt
+    satırı `pending` yapar ve satır ONAYA GİREBİLİR. Bu test uçtan uca o yolu
+    yürür: `uncomputed` → PATCH → `pending` → approve → `approved`.
+
+    5.000,00 × %25,759 = 1.287,95 → net 3.712,05 (ücretsiz kişideki hesabın
+    aynısı: iki fail-closed sebebi de AYNI çıkışa bağlanır).
+    """
+    await personel_fabrikasi("Puantajsız Kişi")
+
+    satir = (await _satirlar(client, ik_headers, donem))["Puantajsız Kişi"]
+    assert satir["status"] == PayrollLineStatus.uncomputed.value
+    assert satir["gross_amount"] is None
+
+    resp = await client.patch(
+        f"/payroll/lines/{satir['id']}", json={"gross_amount": "5000.00"}, headers=ik_headers
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == PayrollLineStatus.pending.value
+    assert Decimal(resp.json()["net_amount"]) == Decimal("3712.05")
+
+    onay = await client.post(f"/payroll/lines/{satir['id']}/approve", headers=ik_headers)
+    assert onay.status_code == 200, onay.text
+    assert onay.json()["status"] == PayrollLineStatus.approved.value
+
+
 async def test_K3_override_sonrasi_COMPUTE_satiri_ezmez(client, ik_headers, donem, dort_tip):
     """S6 — yeniden hesap kullanıcının düzeltmesini sessizce ezemez (T2 kanonu)."""
     satir = (await _satirlar(client, ik_headers, donem))["Ayşe Demir"]

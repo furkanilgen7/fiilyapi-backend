@@ -72,6 +72,13 @@ LINE_NOT_APPROVED = "Yalnız onaylanmış bir satırın onayı geri alınabilir"
 #: ÖDEMEDİR, onay ucundan basılmaz) ya da `paid`.
 PERIOD_NOT_APPROVABLE = "Bordro dönemi onay adımına geçirilemez"
 
+#: 409 — T4b: onaylanmış/ödenmiş dönemin ÖDEME TAKVİMİ değişmez. `paid`te
+#: gerçekleşmiş bir olayın kaydını sonradan düzeltmek para izini bozardı;
+#: `approved`ta ise onaylanmış bordronun takvimi tek taraflı kaymamalıdır —
+#: değişmesi gerekiyorsa dönem `pending_approval`a geri alınır (S8'in zaten
+#: izin verdiği yol; yeni bir yol icat EDİLMEZ).
+PERIOD_LOCKED_FOR_SCHEDULE = "Onaylanmış veya ödenmiş dönemin ödeme tarihi değiştirilemez"
+
 #: 409 — fail-closed (NULL-EŞİK kanonu): onaylı görünse de tutarı bilinmeyen bir
 #: satır ÖDENMEZ. Bilinmeyeni 0 sayıp geçmek, eksik ödemeyi banka ekstresine
 #: bırakırdı.

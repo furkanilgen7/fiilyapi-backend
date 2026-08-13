@@ -48,6 +48,7 @@ def hesapla(**kwargs) -> compute.ComputedLine:
         "wage_amount": Decimal("1800.00"),
         "payment_method": PaymentMethod.bank,
         "man_days": 21,
+        "has_timesheet_records": True,
         "rate": rate(),
     }
     return compute.compute_line(**{**varsayilan, **kwargs})
@@ -143,6 +144,63 @@ def test_ucreti_tanimsiz_personel_FAIL_CLOSED(eksik: str):
     assert satir.net_amount is None
     assert satir.bank_amount is None
     assert satir.cash_amount is None
+
+
+@pytest.mark.parametrize(
+    ("wage_type", "wage_amount"),
+    [
+        (WageType.daily, Decimal("1800.00")),
+        (WageType.hourly, Decimal("225.00")),
+        (WageType.monthly, Decimal("50600.00")),
+    ],
+)
+def test_puantaj_KAYDI_OLMAYAN_personel_UC_UCRET_TIPINDE_de_fail_closed(
+    wage_type: WageType, wage_amount: Decimal
+):
+    """🔴 YÖNETİM KARARI (T4b) — dönemde HİÇ puantaj kaydı yoksa satır `uncomputed`.
+
+    "Bu ay hiç çalışmadı" ile "puantajı henüz girilmedi" veritabanında AYIRT
+    EDİLEMEZ; ikisi de brüt 0 üretseydi veri eksikliği "ödenecek bir şey yok"
+    gibi görünürdü (S4'ün yasakladığı yalan). Ayın 3'ünde bordro hesaplayan
+    kullanıcı, puantajı girilmemiş 40 işçiyi 0,00 ile onaya sokabilirdi.
+
+    **`monthly` DE dâhildir:** "aylık ücretlide gün brütü etkilemez" varsayımı
+    işe hiç başlamamış ya da çıkmış personele sessizce tam maaş hesaplardı.
+
+    Gün de `null`dur: kaydı olmayan kişinin gün sayısı 0 DEĞİL, BİLİNMEYENDİR.
+    """
+    satir = hesapla(wage_type=wage_type, wage_amount=wage_amount, has_timesheet_records=False)
+
+    assert satir.status is PayrollLineStatus.uncomputed
+    assert satir.days is None
+    assert satir.gross_amount is None
+    assert satir.deduction_amount is None
+    assert satir.net_amount is None
+    assert satir.bank_amount is None
+    assert satir.cash_amount is None
+
+
+def test_kaydi_VAR_ama_adam_gunu_0_ise_hesap_YAPILIR():
+    """🔴 Ayrımın öteki yüzü: "kayıt yok" ≠ "kayıt var ama izin/tatil kodlu".
+
+    Puantajı girilmiş ama tüm günleri `MAN_DAY_CODES` dışında kalan personelin
+    gün sayısı 0'dır ve bu GERÇEKTİR — veri girilmiştir. Satır hesaplanır.
+    Tetikleyici gün SAYISI değil KAYDIN VARLIĞIdır; bu test iki durumun tek
+    koşula indirgenmesini (örneğin `man_days == 0` ile kapı kurmayı) engeller.
+    """
+    gunlukcu = hesapla(man_days=0, has_timesheet_records=True)
+    aylikci = hesapla(
+        wage_type=WageType.monthly,
+        wage_amount=Decimal("50600.00"),
+        man_days=0,
+        has_timesheet_records=True,
+    )
+
+    assert gunlukcu.status is PayrollLineStatus.pending
+    assert gunlukcu.days == 0
+    assert gunlukcu.gross_amount == Decimal("0.00")
+    assert aylikci.status is PayrollLineStatus.pending
+    assert aylikci.gross_amount == Decimal("50600.00")
 
 
 def test_oran_seti_YOKSA_fail_closed():
