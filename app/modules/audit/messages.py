@@ -1094,3 +1094,21 @@ def payroll_period_approved(year: int, month: int, status: str) -> str:
 
 def payroll_period_paid(year: int, month: int, count: int, total: object) -> str:
     return f"Bordro dönemi ödendi: {year}/{month:02d} · {count} satır · {total} ₺"
+
+
+# --- İK-3 T5: SGK damgasi + oran tablosu ---
+#
+# SGK damgasinin denetim satirinda TUTAR YOKTUR (yukaridaki kural): prim sunucu
+# hesabidir ve oran degisiminde ayrisirdi. ORAN satirinda ise DEGERLER YAZILIR
+# ve bu bir ISTISNA DEGILDIR: oranlar kullanicinin KENDI GIRDISIDIR, turemez ve
+# neyin ne yapildigini denetimden okuyabilmek K1'in ("oranlar veridir") tek
+# geriye donuk izidir — tabloda yalnizca SON hali durur.
+
+
+def payroll_sgk_submitted(year: int, month: int) -> str:
+    return f"SGK bildirimi gönderildi olarak işaretlendi: {year}/{month:02d}"
+
+
+def payroll_rate_updated(year: int, source: str, rates: dict[str, object]) -> str:
+    degerler = " · ".join(f"{alan}={deger}" for alan, deger in sorted(rates.items()))
+    return f"Bordro kesinti oranları güncellendi: {year}/{source} · {degerler}"

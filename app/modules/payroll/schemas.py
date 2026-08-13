@@ -19,6 +19,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.modules.payroll.models import (
     MONEY_PRECISION,
     MONEY_SCALE,
+    RATE_PRECISION,
+    RATE_SCALE,
     PayrollLineStatus,
     PayrollPeriodStatus,
 )
@@ -303,3 +305,156 @@ class PayrollPeriodListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+# --- T5: SGK bildirimi (SGK 55-95) -----------------------------------------
+
+
+class PayrollSgkSummaryResponse(BaseModel):
+    """SGK 55-95 — KPI dörtlüsü + işçi payları + işveren payları + ödenecek prim.
+
+    🔴 **Mockup TUTARLARI beklenti değildir** (spec S1): SGK mockup'ı kendi
+    aritmetiğine uymuyor (SGK 82 işveren toplamını 148.800 yazar, kendi
+    oranlarından 174.652 çıkar). Açık ORAN kazanır ve buradaki sayılar
+    mockup'takinden BÜYÜKTÜR — gerekçe `sgk.py` docstring'inde.
+
+    🔴 **SGK 96-118 (çalışan listesi + "SGK No") YOKTUR:** spec §5 bu ucu 55-95
+    ile sınırlar ve `sgk_no` diye bir kolon İK-1'de yoktur (uydurulmaz).
+
+    İki sayaç `null` sayı ÜRETMEDEN eksiği görünür kılar (WORKFLOW §3):
+    `uncomputed_count` ücreti tanımsız satırları, `unknown_rate_count` oran seti
+    olmayan tipleri sayar; ikisi de matraha GİRMEZ (fail-closed).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    period_id: uuid.UUID
+    year: int
+    month: int
+    #: SGK 44-47 banner'ı: damga basılmışsa bildirim "gönderildi" sayılır.
+    sgk_submitted_at: datetime | None
+    #: --- KPI dörtlüsü (SGK 55-58) ---
+    declared_personnel_count: int = Field(description="SGK 55 — bildirilen çalışan (4a + 4b)")
+    sgk_base_total: Decimal = Field(description="SGK 56 — SGK matrahı")
+    sgk_premium_total: Decimal = Field(description="SGK 57 — SGK primi (işçi + işveren)")
+    unemployment_total: Decimal = Field(description="SGK 58 — işsizlik sigortası (işçi + işveren)")
+    #: --- işçi payları (SGK 69-73) ---
+    sgk_employee_total: Decimal
+    unemployment_employee_total: Decimal
+    income_tax_total: Decimal
+    stamp_tax_total: Decimal
+    employee_deduction_total: Decimal = Field(description="SGK 73 — toplam işçi kesintisi")
+    #: --- işveren payları (SGK 79-82) ---
+    sgk_employer_total: Decimal
+    unemployment_employer_total: Decimal
+    short_work_total: Decimal
+    #: SGK 82 — **ÜÇ kalemin tamamı** (spec §7); brüt DAHİL DEĞİLDİR (o BY 90'ın
+    #: `total_employer_cost`udur, ayrı bir kavramdır).
+    employer_burden_total: Decimal
+    #: SGK 86-91 — etiket AÇIKÇA "İşçi + İşveren SGK + İşsizlik" (SGK 89): gelir
+    #: vergisi/damga (vergi dairesine gider) ve kısa çalışma bu toplamda YOKTUR.
+    sgk_payable_total: Decimal
+    uncomputed_count: int
+    unknown_rate_count: int
+
+
+class PayrollSgkSubmitResult(BaseModel):
+    """`POST /payroll/periods/{id}/sgk-submit` — YALNIZ damga (spec §1).
+
+    Dış sistem entegrasyonu YOKTUR: ne HTTP isteği, ne kuyruk, ne dosya
+    gönderimi. Yanıt bu yüzden bir "gönderim sonucu" değil, damganın ZAMANIDIR.
+    """
+
+    period_id: uuid.UUID
+    sgk_submitted_at: datetime
+
+
+# --- T5: oran tablosu (K1) -------------------------------------------------
+
+#: Oran alanlarının şema karşılığı — `Numeric(6,3)` ile AYNI ölçek (models.py).
+#: **Üst sınır %100:** bir kalem brütün tamamından fazlasını kesemez. Sınırsız
+#: bırakılsaydı bir yazım hatası (%2000) neti eksiye düşürür ve
+#: `ck_payroll_lines_net_positive` ihlaliyle `compute` 500'e patlardı —
+#: kullanıcı hatası sunucu hatası gibi görünürdü.
+Rate = Annotated[Decimal, Field(ge=0, le=100, max_digits=RATE_PRECISION, decimal_places=RATE_SCALE)]
+
+#: `compute.EMPLOYEE_RATE_FIELDS`in şema tarafındaki aynası: neti belirleyen
+#: kalemler. İşveren kalemleri KASTEN dışarıdadır — onlar maliyettir, kesinti
+#: değil (spec §7) ve toplamları %100'ü aşsa bile net eksiye düşmez.
+_EMPLOYEE_RATE_FIELDS = (
+    "sgk_employee_pct",
+    "unemployment_employee_pct",
+    "income_tax_pct",
+    "stamp_tax_pct",
+)
+
+MAX_TOTAL_PCT = Decimal("100")
+
+
+class PayrollRateUpdate(BaseModel):
+    """`PUT /payroll/rates/{year}/{source}` gövdesi — **TAM SET** (K1).
+
+    Yedi oranın hepsi ZORUNLUDUR: kısmi gönderim kabul edilseydi eksik alan
+    sessizce 0 olur ve "kesinti yok" yalanı üretilirdi. PUT bir DEĞİŞTİRMEDİR,
+    yama değildir; anahtar (`year`, `source`) yoldadır, gövdede TEKRARLANMAZ —
+    ikisi çelişirse hangisinin kazandığı sorusu doğardı.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    sgk_employee_pct: Rate
+    unemployment_employee_pct: Rate
+    income_tax_pct: Rate
+    stamp_tax_pct: Rate
+    sgk_employer_pct: Rate
+    unemployment_employer_pct: Rate
+    short_work_pct: Rate
+    #: Eski yılın seti SİLİNMEZ, pasifleştirilir (models.py): geçmiş bordronun
+    #: hesabı okunabilir kalmalıdır.
+    is_active: bool = True
+
+    @model_validator(mode="after")
+    def _isci_paylari_yuzu_asamaz(self) -> "PayrollRateUpdate":
+        """🔴 Dört İŞÇİ kaleminin TOPLAMI da %100'ü aşamaz.
+
+        Tek tek geçerli (her biri ≤ %100) ama toplamı %101 olan bir set, brütü
+        tanımlı HER personelin netini negatife çevirir ve DB CHECK'ine çarpardı.
+        Sınır kalem başına değil TOPLAM üzerinde de durmalıdır.
+        """
+        toplam = sum(getattr(self, alan) for alan in _EMPLOYEE_RATE_FIELDS)
+        if toplam > MAX_TOTAL_PCT:
+            raise ValueError(
+                f"İşçi kesinti oranlarının toplamı %100'ü aşamaz (gönderilen: %{toplam})"
+            )
+        return self
+
+
+class PayrollRateResponse(BaseModel):
+    """Bir oran seti — `(yıl, personel tipi)` anahtarlı (S2)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    year: int
+    personnel_source: WorkerSource
+    sgk_employee_pct: Decimal
+    unemployment_employee_pct: Decimal
+    income_tax_pct: Decimal
+    stamp_tax_pct: Decimal
+    sgk_employer_pct: Decimal
+    unemployment_employer_pct: Decimal
+    short_work_pct: Decimal
+    is_active: bool
+
+
+class PayrollRateListResponse(BaseModel):
+    """Oran setleri — **sayfalama YOKTUR ve bu bilinçlidir.**
+
+    Tablo yılda en çok DÖRT satır büyür (spec §4'ün dört bordro tipi); TB3
+    sayfalama korkuluğu sınırsız büyüyen listeler içindir. `limit` eklenseydi
+    ekran oran matrisini sayfalamak zorunda kalır ve kullanıcı bir yılın
+    setini parça parça görürdü.
+    """
+
+    items: list[PayrollRateResponse]
+    total: int

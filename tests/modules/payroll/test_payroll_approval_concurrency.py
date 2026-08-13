@@ -36,6 +36,7 @@ from app.modules.payroll.models import (
     PayrollLineStatus,
     PayrollPeriod,
     PayrollPeriodStatus,
+    PayrollRate,
 )
 from app.modules.personnel.models import Personnel
 from app.modules.roles.models import Role
@@ -175,6 +176,8 @@ async def _temizle(kurulum: _Kurulum) -> None:
             delete(PayrollLine).where(PayrollLine.payroll_period_id == kurulum.period_id)
         )
         await session.execute(delete(PayrollPeriod).where(PayrollPeriod.id == kurulum.period_id))
+        # T5: oran yarışı senaryosu bu yıl için satır YARATABİLİR (upsert).
+        await session.execute(delete(PayrollRate).where(PayrollRate.year == _YIL))
         await session.execute(delete(Personnel).where(Personnel.id.in_(kurulum.personnel_ids)))
         await session.execute(delete(User).where(User.id.in_(kurulum.actor_ids)))
         await session.execute(delete(Role).where(Role.id == kurulum.role_id))
@@ -491,3 +494,80 @@ async def test_odeme_de_AYNI_sirayla_kilitler() -> None:
     assert satir_kilidi, f"bordro satırları FOR UPDATE ile okunmadı: {ifadeler}"
     assert donem_kilidi[0] < satir_kilidi[0], f"kilit sırası ters (dönem → satır): {ifadeler}"
     assert sorted(d.value for d in odenen) == ["excluded", "paid"]
+
+
+# --- Senaryo 4: dönem onayı ile ORAN YAZIMI yarışı (T5) --------------------
+#
+# 🔴 Bu senaryonun ölçtüğü şey bir çift onay değil, GEÇMİŞİN DEĞİŞMESİDİR.
+# `upsert_rate` "bu yılda onaylanmış/ödenmiş dönem var mı?" diye sorar; kilitsiz
+# hâlde bu soru ile cevabın kullanılması arasında bir `approve_period` commit
+# edebilir ve oran yazısı ONAYLANMIŞ bir dönemin raporlanmış işveren maliyetini
+# geriye dönük değiştirir (mutasyon kanıtı: 42.230,00 → 43.085,00).
+
+
+async def _yaz_orani(year: int) -> str:
+    from app.modules.payroll.schemas import PayrollRateUpdate
+
+    govde = PayrollRateUpdate(
+        sgk_employee_pct=Decimal("14.000"),
+        unemployment_employee_pct=Decimal("1.000"),
+        income_tax_pct=Decimal("10.000"),
+        stamp_tax_pct=Decimal("0.759"),
+        sgk_employer_pct=Decimal("30.000"),
+        unemployment_employer_pct=Decimal("2.000"),
+        short_work_pct=Decimal("1.000"),
+    )
+    async with _SessionFactory() as session:
+        try:
+            await service.upsert_rate(session, year, WorkerSource.company, govde)
+            await session.commit()
+            return "written"
+        except ConflictError:
+            await session.rollback()
+            return "conflict"
+
+
+async def test_oran_yazimi_esZamanli_DONEM_ONAYINI_bekler() -> None:
+    """🔴 T5 — oran kapısı dönem satırında SERİLEŞİR (EŞİK = KİLİT).
+
+    tx1 dönemi `approved`e taşır ve kilidi TUTAR; tx2 oran yazmaya çalışır ve
+    BEKLER. Serbest bırakılınca tx2 tazelenmiş durumu okur ve **409** alır —
+    onaylanmış dönemin hesabı geriye dönük değişmez.
+
+    Kilit `WHERE status IN (...)` süzgeciyle alınsaydı bu test KIRMIZI olurdu:
+    tx1 henüz commit etmediği için tx2 hiçbir "onaylı" satır bulamaz, hiçbir
+    şey kilitlemez ve oranı YAZARDI (TOCTOU).
+    """
+    kurulum = await _kur(
+        ay=4,
+        period_status=PayrollPeriodStatus.pending_approval,
+        payable_status=PayrollLineStatus.pending,
+    )
+    kilit_alindi = asyncio.Event()
+    kilidi_birak = asyncio.Event()
+    task1: asyncio.Task | None = None
+    task2: asyncio.Task | None = None
+    try:
+        task1 = asyncio.create_task(
+            _toplu_onayla_ve_tut(
+                kurulum.period_id, kurulum.actor_ids[0], kilit_alindi, kilidi_birak
+            )
+        )
+        await asyncio.wait_for(kilit_alindi.wait(), timeout=5)
+
+        task2 = asyncio.create_task(_yaz_orani(_YIL))
+        await asyncio.sleep(0.3)
+        assert not task2.done(), (
+            "oran yazımı, dönem onayının kilidi serbest bırakılmadan ilerledi — "
+            "`upsert_rate` yılın dönem satırlarını KİLİTLEMİYOR olabilir "
+            "(onaylanmış dönemin hesabı geriye dönük değişebilir)"
+        )
+
+        kilidi_birak.set()
+        _, durum1 = await asyncio.wait_for(task1, timeout=5)
+        sonuc2 = await asyncio.wait_for(task2, timeout=5)
+        assert durum1 == PayrollPeriodStatus.approved.value
+        assert sonuc2 == "conflict", "oran yazıldı — onaylanmış dönemin hesabı değişti"
+    finally:
+        await _gorevleri_bosalt(task1, task2)
+        await _temizle(kurulum)

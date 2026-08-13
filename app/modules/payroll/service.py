@@ -42,7 +42,7 @@ from app.core.errors import (
     PayrollValidationError,
 )
 from app.modules.audit import messages
-from app.modules.payroll import compute, guards, schemas, summary, transitions
+from app.modules.payroll import compute, guards, schemas, sgk, summary, transitions
 from app.modules.payroll.models import (
     PayrollLine,
     PayrollLineStatus,
@@ -908,3 +908,185 @@ async def pay_period(
         ),
         messages.payroll_period_paid(period.year, period.month, odenen, toplam),
     )
+
+
+# --- T5: SGK bildirimi + oran tablosu + Excel ------------------------------
+#
+# ## SGK özeti neden `summary.py`de DEĞİL de `sgk.py`de?
+#
+# İkisi FARKLI SORULARA cevap verir ve tabanları da farklıdır: BY kartları
+# ÖDEME ile MALİYETİ ayırır, SGK ekranı ise BİLDİRİM tabanını kullanır (taşeron
+# DAHİL, oran seti olmayan satır HARİÇ). Tek fonksiyona sıkıştırılsaydı bir
+# ekranın kuralını değiştirmek ötekini sessizce bozardı.
+#
+# ## Excel ikinci bir okuma yolu AÇMAZ
+#
+# `GET .../export` dönem detayını `get_period_detail` ile — ekran ucuyla AYNI
+# çağrıdan — alır ve yalnızca biçimlendirir. İkinci bir sorgu yazılsaydı dosya
+# ile ekran zamanla ayrışır ve hangisinin doğru olduğu tartışılırdı.
+
+
+async def sgk_summary(
+    session: AsyncSession, period_id: uuid.UUID
+) -> schemas.PayrollSgkSummaryResponse:
+    """`GET /payroll/periods/{id}/sgk-summary` — SGK **55-95** (spec §5).
+
+    Görünmeyen dönem var olmayanla AYNI 404'ü alır. Okuma ucudur: kilit ALMAZ
+    (yazma yollarının aksine) ve denetim YAZMAZ.
+
+    🔴 Hesabın tamamı `sgk.py`dedir ve o da `compute.rate_share`e dayanır —
+    burada tek bir çarpma bile yapılmaz.
+    """
+    period = await get_period(session, period_id)
+    lines = [line for line, _ in await _lines_with_names(session, [period.id])]
+    ozet = sgk.build_sgk_summary(lines, await rates_by_source(session, period.year))
+    return schemas.PayrollSgkSummaryResponse(
+        period_id=period.id,
+        year=period.year,
+        month=period.month,
+        sgk_submitted_at=period.sgk_submitted_at,
+        **vars(ozet),
+    )
+
+
+async def submit_sgk(
+    session: AsyncSession, period_id: uuid.UUID
+) -> tuple[schemas.PayrollSgkSubmitResult, str]:
+    """`POST /payroll/periods/{id}/sgk-submit` — YALNIZ `sgk_submitted_at` damgası.
+
+    * **Dış sistem entegrasyonu YOKTUR** (spec §1): ne HTTP isteği, ne kuyruk,
+      ne dosya gönderimi. SGK 44'ün düğmesi bir ELLE İŞARETLEMEDİR.
+    * **Tekrar damgalama 409** (idempotent DEĞİL): damga bir OLAYIN zamanıdır ve
+      SGK 46'daki son bildirim tarihiyle karşılaştırılır. Sessizce yeniden
+      yazılsaydı geç kalınmış bir bildirim ikinci bir tıklamayla zamanında
+      yapılmış gibi görünürdü. `/pay`in "ikinci ödeme 409" kuralıyla aynı aile.
+    * **Dönem DURUMU ön koşul DEĞİLDİR** ve bu bir eksiklik değil bir karardır:
+      SGK 44-47 banner'ı bildirimin beklediğini söylerken BY 61 aynı dönemin
+      bordrosunun HÂLÂ onay beklediğini yazar — mockup bildirimin ödeme
+      onayından ÖNCE yapılabildiğini gösteriyor. Onay şartı koymak mockup'ın
+      çizdiği durumu imkânsız kılardı (WORKFLOW §3: icat yasağı).
+
+    🔴 **EŞİK = KİLİT (WORKFLOW §4):** dönem `FOR UPDATE` ile ve DAMGA
+    DENETİMİNDEN ÖNCE okunur; sıra tüm uçlardaki gibi dönem → satır (burada
+    satır tarafı yoktur). Kilitsiz iki eşzamanlı istek aynı `None` damgayı okur
+    ve İKİSİ DE geçerdi.
+    """
+    period = await _lock_period(session, period_id)
+    if period.sgk_submitted_at is not None:
+        raise ConflictError(guards.SGK_ALREADY_SUBMITTED)
+
+    period.sgk_submitted_at = datetime.now(UTC)
+    await session.flush()
+    return (
+        schemas.PayrollSgkSubmitResult(
+            period_id=period.id, sgk_submitted_at=period.sgk_submitted_at
+        ),
+        messages.payroll_sgk_submitted(period.year, period.month),
+    )
+
+
+async def list_rates(
+    session: AsyncSession, year: int | None = None
+) -> schemas.PayrollRateListResponse:
+    """`GET /payroll/rates` — oran setleri (K1).
+
+    Pasif setler de DÖNER (`is_active` alanıyla birlikte): geçmiş bir bordronun
+    hangi oranla hesaplandığı okunabilir kalmalıdır (models.py). Sıra
+    `(yıl azalan, tip)`tir — en yeni yıl başta.
+    """
+    sorgu = select(PayrollRate)
+    if year is not None:
+        sorgu = sorgu.where(PayrollRate.year == year)
+    rows = list(
+        (
+            await session.execute(
+                sorgu.order_by(PayrollRate.year.desc(), PayrollRate.personnel_source)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return schemas.PayrollRateListResponse(
+        items=[schemas.PayrollRateResponse.model_validate(row) for row in rows], total=len(rows)
+    )
+
+
+async def _year_has_locked_period(session: AsyncSession, year: int) -> bool:
+    """O yılda `approved`/`paid` bir dönem var mı? (T5 oran korkuluğu)
+
+    `LOCKED_PERIOD_STATUSES` YENİDEN KULLANILIR ve bu bilinçlidir: "hesabı
+    donmuş dönem" tanımı tek yerde durmalıdır — `compute` kapısıyla oran kapısı
+    aynı olguyu ölçer.
+
+    🔴 **EŞİK = KİLİT (WORKFLOW §4).** Yılın TÜM dönemleri `FOR UPDATE` ile ve
+    DURUM SÜZGECİ OLMADAN okunur. İki ayrıntı da zorunludur:
+
+    * **Süzgeçsiz:** `WHERE status IN (...)` ile kilitlenseydi "hiç onaylı dönem
+      yok" hâlinde HİÇBİR satır kilitlenmez, koruma da olmazdı. Eşzamanlı bir
+      `approve_period` tam bu anda dönemi onaylayıp commit edebilir ve oran
+      yazısı onaylanmış bir dönemin hesabını yine değiştirirdi (TOCTOU).
+    * **Sıra:** `approve_period` de aynı dönem satırlarını kilitler ve zincir
+      her yerde dönem → satırdır; ters sıra olmadığı için deadlock doğmaz.
+
+    Kilitlenen satır sayısı bir yılda en çok 12'dir (UQ `(year, month)`).
+    """
+    periods = (
+        (
+            await session.execute(
+                select(PayrollPeriod)
+                .where(PayrollPeriod.year == year)
+                .order_by(PayrollPeriod.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return any(period.status in LOCKED_PERIOD_STATUSES for period in periods)
+
+
+async def upsert_rate(
+    session: AsyncSession,
+    year: int,
+    source: WorkerSource,
+    data: schemas.PayrollRateUpdate,
+) -> tuple[PayrollRate, str]:
+    """`PUT /payroll/rates/{year}/{source}` — set açar ya da DEĞİŞTİRİR (K1).
+
+    🔴 **GEÇMİŞ DÖNEM DEĞİŞMEZ (para korkuluğu).** O yılda `approved`/`paid` bir
+    dönem varsa yazma **409**dur. Gerekçe: K1 gereği oran satıra KOPYALANMAZ
+    (tek gerçek kaynak `payroll_rates`) ve `summary.py`/`sgk.py` işveren tarafını
+    dönemin yılına ait CANLI setten türetir; oran değişince onaylanmış dönemin
+    raporlanmış toplamları ve SGK bildiriminin TAMAMI geriye dönük değişirdi.
+
+    Kapı GÜNCELLEMEYE değil YILA kapanır: oran satırı olmayan bir tip için YENİ
+    set açmak da o tipin satırlarını `unknown_cost_count`tan çıkarıp maliyete
+    eklerdi — sonuç aynı şekilde değişirdi.
+
+    Kural bordroyu TIKAMAZ: başka yıl serbesttir (mevzuat değişimi engellenmez)
+    ve `draft`/`pending_approval` dönemli yıl da serbesttir.
+
+    PUT TAM SETTİR (`PayrollRateUpdate`): kısmi gönderim yoktur, eksik alan
+    sessizce 0 olamaz.
+    """
+    if await _year_has_locked_period(session, year):
+        raise ConflictError(guards.RATES_LOCKED_BY_PERIOD)
+
+    rate = (
+        await session.execute(
+            select(PayrollRate).where(
+                PayrollRate.year == year, PayrollRate.personnel_source == source
+            )
+        )
+    ).scalar_one_or_none()
+    if rate is None:
+        rate = PayrollRate(year=year, personnel_source=source)
+        session.add(rate)
+
+    degerler = data.model_dump()
+    for alan, deger in degerler.items():
+        setattr(rate, alan, deger)
+
+    await session.flush()
+    return rate, messages.payroll_rate_updated(year, source.value, degerler)

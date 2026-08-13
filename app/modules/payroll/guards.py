@@ -79,6 +79,29 @@ PERIOD_NOT_APPROVABLE = "Bordro dönemi onay adımına geçirilemez"
 #: izin verdiği yol; yeni bir yol icat EDİLMEZ).
 PERIOD_LOCKED_FOR_SCHEDULE = "Onaylanmış veya ödenmiş dönemin ödeme tarihi değiştirilemez"
 
+#: 409 — T5: SGK damgası TEKRAR BASILMAZ (idempotent DEĞİL). Damga bir OLAYIN
+#: zamanıdır ve SGK 46'daki son bildirim tarihiyle karşılaştırılır; sessizce
+#: yeniden yazılsaydı geç kalınmış bir bildirim ikinci bir tıklamayla zamanında
+#: yapılmış gibi görünürdü — uyum izi bozulurdu.
+SGK_ALREADY_SUBMITTED = "Bu dönemin SGK bildirimi zaten gönderildi olarak işaretlenmiş"
+
+#: 🔴 409 — T5 PARA KORKULUĞU: bir yılda `approved`/`paid` dönem varsa O YILIN
+#: oran setine YAZILAMAZ (ne güncelleme ne yeni tip).
+#:
+#: Gerekçe: K1 gereği oran satıra KOPYALANMAZ, tek gerçek kaynak `payroll_rates`
+#: tablosudur; `summary.py` ve `sgk.py` işveren tarafını DÖNEMİN YILINA ait
+#: CANLI setten türetir. Yazmaya izin verilseydi 2026 oranını değiştirmek
+#: ONAYLANMIŞ bir 2026 döneminin raporlanmış "toplam maliyet"/"SGK işveren"
+#: sayılarını ve SGK bildiriminin TAMAMINI geriye dönük değiştirirdi. Kapı
+#: GÜNCELLEMEYE değil YILA kapanır: oran satırı olmayan bir tip için yeni set
+#: açmak da o tipin satırlarını `unknown_cost_count`tan çıkarıp maliyete
+#: eklerdi. Kural bordroyu TIKAMAZ — başka yıl serbesttir, `draft`/
+#: `pending_approval` dönemli yıl serbesttir.
+RATES_LOCKED_BY_PERIOD = (
+    "Bu yılda onaylanmış veya ödenmiş bordro dönemi var: geçmiş hesabı değiştirmemek için "
+    "yılın kesinti oranları güncellenemez"
+)
+
 #: 409 — fail-closed (NULL-EŞİK kanonu): onaylı görünse de tutarı bilinmeyen bir
 #: satır ÖDENMEZ. Bilinmeyeni 0 sayıp geçmek, eksik ödemeyi banka ekstresine
 #: bırakırdı.

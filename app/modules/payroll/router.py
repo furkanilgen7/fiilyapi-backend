@@ -25,17 +25,21 @@ farklı sayı gösterirdi. Karar `service.py`de gerekçeli ve testle kilitlidir.
 üç yazma ucunun her biri TEK denetim satırı yazar ve metin servis katmanında
 kurulur.
 
-## Bu dilimde AÇILMAYAN uçlar (icat yasağı)
+T4 onay/ödeme yolunu, T5 ise SGK bildirimini, oran tablosunu ve Excel
+çıktısını ekler (aşağıdaki bölüm başlıkları).
 
-Satır/dönem onayı · ödeme damgası · SGK özeti ve damgası · oran yönetimi ·
-Excel export **T4-T5'in işidir** (spec §5). EFT talimatı (BY 319), makbuz
-(BY 328) ve SGK'ya gerçek gönderim (SGK 44) HİÇBİR dilimde açılmaz (spec §1).
+## HİÇBİR dilimde AÇILMAYAN uçlar (icat yasağı)
+
+EFT talimatı (BY 319), makbuz (BY 328) ve SGK'ya GERÇEK gönderim (SGK 44)
+açılmaz (spec §1); SGK 96-118'in çalışan listesi de açılmaz (spec §5 özeti
+55-95'e bağlar, `sgk_no` diye bir kolon yoktur).
 """
 
 import uuid
 from typing import Annotated
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel
@@ -47,8 +51,10 @@ from app.core.ratelimit import client_ip
 from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
-from app.modules.payroll import service
+from app.modules.payroll import export, service
 from app.modules.payroll.schemas import (
+    MAX_PAYROLL_YEAR,
+    MIN_PAYROLL_YEAR,
     PayrollComputeResult,
     PayrollLineResponse,
     PayrollLineUpdate,
@@ -58,7 +64,13 @@ from app.modules.payroll.schemas import (
     PayrollPeriodListResponse,
     PayrollPeriodPayResult,
     PayrollPeriodUpdate,
+    PayrollRateListResponse,
+    PayrollRateResponse,
+    PayrollRateUpdate,
+    PayrollSgkSubmitResult,
+    PayrollSgkSummaryResponse,
 )
+from app.modules.site_diary.models import WorkerSource
 from app.modules.users.models import User
 
 router = APIRouter(tags=["payroll"], responses=COMMON_ERROR_RESPONSES)
@@ -369,3 +381,162 @@ async def pay_payroll_period_endpoint(
     sonuc, detail = await service.pay_period(session, period_id)
     await _audit(request, session, user, AuditAction.approve, detail)
     return sonuc
+
+
+# --- T5: SGK bildirimi + oran tablosu + Excel (spec §5'in son dört satırı) --
+#
+# | Uç | Yetki | Mockup |
+# |---|---|---|
+# | `GET /payroll/periods/{id}/sgk-summary` | `view` | SGK 55-95 |
+# | `POST /payroll/periods/{id}/sgk-submit` | `full` | SGK 44 "SGK'ya Gönder" |
+# | `GET /payroll/rates` · `PUT /payroll/rates/{year}/{source}` | `view`/`full` | K1 |
+# | `GET /payroll/periods/{id}/export` | `view` | BY 55 "Excel" |
+#
+# 🔴 **SGK'ya GERÇEK GÖNDERİM YOKTUR** (spec §1): `sgk-submit` bir DAMGADIR —
+# ne HTTP isteği, ne kuyruk, ne dosya gönderimi. SGK 96-118'in çalışan listesi
+# ("SGK No" + 4a/4b rozeti) de AÇILMAZ: spec §5 özeti 55-95'e bağlar ve `sgk_no`
+# diye bir kolon İK-1'de yoktur (WORKFLOW §3: icat yasağı).
+#
+# İki okuma ucu (`sgk-summary`, `export`) `record_audit` ÇAĞIRMAZ; iki yazma ucu
+# (`sgk-submit`, `PUT rates`) TEK denetim satırı yazar.
+
+
+@router.get(
+    "/payroll/periods/{period_id}/sgk-summary",
+    response_model=PayrollSgkSummaryResponse,
+    dependencies=[_VIEW],
+)
+async def payroll_sgk_summary_endpoint(
+    period_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> PayrollSgkSummaryResponse:
+    """SGK bildirim ekranının prim hesabı — SGK **55-95**.
+
+    * **🔴 Mockup TUTARLARI beklenti DEĞİLDİR** (spec S1): SGK mockup'ı kendi
+      aritmetiğine uymuyor (SGK 82 → 148.800 yazar, kendi oranlarından 174.652
+      çıkar). Açık ORAN kazanır; buradaki işveren sayıları mockup'takinden
+      BÜYÜKTÜR ve bu kararın kendisidir.
+    * **Taban:** taşeron (`excluded`) satır MATRAHA GİRER — SGK bildirimi bir
+      ödeme değil BİLDİRİMDİR (SGK 112-113 taşeron satırlarını listeler,
+      SGK 55'in "48"i BY tfoot 298'in 48'idir). Gerekçe `sgk.py`de.
+    * **Fail-closed:** brütü `null` satır (S4) ve oran seti olmayan tip matraha
+      GİRMEZ, ikisi de AYRI SAYILIR (sessiz atlama yok).
+
+    Görünmeyen dönem var olmayanla AYNI 404'ü alır.
+    """
+    return await service.sgk_summary(session, period_id)
+
+
+@router.post(
+    "/payroll/periods/{period_id}/sgk-submit",
+    response_model=PayrollSgkSubmitResult,
+    responses={409: {"description": "Bu dönemin SGK bildirimi zaten işaretlenmiş"}},
+    dependencies=[_FULL],
+)
+async def payroll_sgk_submit_endpoint(
+    request: Request,
+    period_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> PayrollSgkSubmitResult:
+    """SGK 44 "SGK'ya Gönder" — YALNIZ `sgk_submitted_at` damgası (spec §1).
+
+    * **Dış sistem entegrasyonu YOKTUR.** Bu uç hiçbir yere istek atmaz.
+    * **İkinci damga 409:** damga bir OLAYIN zamanıdır (SGK 46'daki son bildirim
+      tarihiyle karşılaştırılır); sessizce yeniden yazılsaydı geç bir bildirim
+      ikinci tıklamayla zamanında yapılmış görünürdü.
+    * **Dönem durumu ön koşul DEĞİLDİR:** SGK 44-47 bildirimin beklediğini
+      söylerken BY 61 aynı dönemin bordrosunun hâlâ onay beklediğini yazar —
+      mockup bildirimin ödeme onayından ÖNCE yapılabildiğini gösteriyor.
+    """
+    sonuc, detail = await service.submit_sgk(session, period_id)
+    await _audit(request, session, user, AuditAction.update, detail)
+    return sonuc
+
+
+@router.get("/payroll/rates", response_model=PayrollRateListResponse, dependencies=[_VIEW])
+async def list_payroll_rates_endpoint(
+    session: Annotated[AsyncSession, Depends(get_db)],
+    year: int | None = None,
+) -> PayrollRateListResponse:
+    """Oran setleri (K1) — `(yıl, personel tipi)` anahtarlı, yedi oran + `is_active`.
+
+    Pasif setler de döner: geçmiş bir bordronun hangi oranla hesaplandığı
+    okunabilir kalmalıdır. Sayfalama YOKTUR (tablo yılda dört satır büyür,
+    gerekçe `schemas.PayrollRateListResponse`).
+    """
+    return await service.list_rates(session, year)
+
+
+@router.put(
+    "/payroll/rates/{year}/{source}",
+    response_model=PayrollRateResponse,
+    responses={
+        409: {"description": "Bu yılda onaylanmış/ödenmiş dönem var: oranlar değiştirilemez"}
+    },
+    dependencies=[_FULL],
+)
+async def upsert_payroll_rate_endpoint(
+    request: Request,
+    year: Annotated[int, Path(ge=MIN_PAYROLL_YEAR, le=MAX_PAYROLL_YEAR)],
+    source: WorkerSource,
+    data: PayrollRateUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> PayrollRateResponse:
+    """Oran seti açar ya da DEĞİŞTİRİR (K1: oranlar VERİDİR, koda gömülmez).
+
+    🔴 **GEÇMİŞ DÖNEM DEĞİŞMEZ (para korkuluğu):** o yılda `approved`/`paid` bir
+    dönem varsa **409**. Oran satıra kopyalanmaz (K1) ve dönem toplamları canlı
+    setten türer; yazmaya izin verilseydi onaylanmış bir dönemin raporlanmış
+    maliyeti ve SGK bildirimi geriye dönük değişirdi. Kapı YILA kapanır — yeni
+    tip açmak da aynı sonucu doğururdu. Başka yıl ve taslak dönemli yıl
+    SERBESTTİR; kural bordroyu tıkamaz.
+
+    Gövde TAM SETTİR: yedi oranın hepsi zorunludur, kısmi yama yoktur.
+    """
+    rate, detail = await service.upsert_rate(session, year, source, data)
+    await _audit(request, session, user, AuditAction.update, detail)
+    return PayrollRateResponse.model_validate(rate)
+
+
+def _content_disposition(name: str) -> str:
+    """`timesheet/router.py._content_disposition` ile BİREBİR aynı kural.
+
+    Dosya adı Türkçe karakter içerebilir: RFC 5987 `filename*` (UTF-8) yanında
+    eski istemciler için ASCII'ye indirgenmiş bir `filename` de yollanır.
+    """
+    ascii_fallback = name.encode("ascii", errors="ignore").decode("ascii").replace('"', "")
+    if not ascii_fallback:
+        ascii_fallback = "bordro.xlsx"
+    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(name)}"
+
+
+@router.get(
+    "/payroll/periods/{period_id}/export",
+    dependencies=[_VIEW],
+    response_class=Response,
+    responses={200: {"content": {export.XLSX_MEDIA_TYPE: {}}, "description": "Excel dosyasi"}},
+)
+async def export_payroll_period_endpoint(
+    period_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> Response:
+    """BY 55 "Excel" — dönem tablosunun çıktısı (puantaj export emsali).
+
+    Dönem detayı EKRAN UCUYLA AYNI çağrıdan gelir (`get_period_detail`): satır
+    tutarları, bölüm gruplaması ve toplamlar birebir aynıdır — ikinci bir sorgu
+    yazılsaydı dosya ile ekran zamanla ayrışırdı.
+
+    İndirme bir OKUMADIR: kapı `payroll:view`tir ve `record_audit` ÇAĞIRMAZ.
+    Görünmeyen dönem var olmayanla AYNI 404'ü alır.
+    """
+    detail = await service.get_period_detail(session, period_id)
+    buffer = export.build_payroll_workbook(detail)
+    return Response(
+        content=buffer.getvalue(),
+        media_type=export.XLSX_MEDIA_TYPE,
+        headers={
+            "Content-Disposition": _content_disposition(export.filename(detail.year, detail.month))
+        },
+    )
