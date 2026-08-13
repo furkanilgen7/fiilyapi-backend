@@ -133,6 +133,14 @@ MODULES: list[dict] = [
     # sapma, geri alınmaz.
     # sort_order 20: mevcut modüllerin sırası KAYDIRILMAZ (sona eklenir).
     {"key": "documents", "name": "Belgeler", "group": ModuleGroup.MALI, "sort_order": 20},
+    # MK-1 spec §6: 21. modül. Gerekçe: makine sahada kullanılır ama maliyeti ve
+    # varlık kaydı mali bir yüzeydir — mevcut hiçbir modülün altına düşmüyor.
+    # `sites` iznine bağlanırsa muhasebe (sites=_FIN) amortisman/kira bedelini
+    # göremez, İK ise operatör atamasını hiç görmezdi. Grup SAHA: M3 sidebar'ında
+    # saha grubunda durur. `boq`/`contracts`/`sales`/`documents` gibi
+    # `Ayarlar - İzin Matrisi` mockup'ında satırı YOKTUR — bilinçli sapma.
+    # sort_order 21: mevcut modüllerin sırası KAYDIRILMAZ (sona eklenir).
+    {"key": "equipment", "name": "Makine & Ekipman", "group": ModuleGroup.SAHA, "sort_order": 21},
 ]
 
 # Kısayollar — matrisi okunur tutmak için.
@@ -217,6 +225,17 @@ MATRIX: dict[str, list[tuple[AccessLevel, Scope]]] = {
     # hr_manager/project_manager/procurement = _V: okurlar, arşive yazmazlar.
     # Silme yalnız system_admin'dedir (`_A`; `full` silmeyi kapsamaz).
     "documents": [_A, _F, _F, _F, _V, _F, _V, _V],
+    # MK-1 spec §6: site_chief = _F (makineyi sahada o kullanır; çalışma ve
+    # arıza kaydını o girer). field_engineer = _V (izler, kayıt açmaz).
+    # hr_manager = _N (makine İK'yı ilgilendirmez — operatör ataması personel
+    # modülünden değil buradan yapılır ama İK'nın karar yüzeyi değildir).
+    # accounting = _F: makine hem VARLIK hem MALİYET yüzeyidir (alış bedeli,
+    # amortisman süresi, kira bedeli) — `documents`taki gibi mali görünürlük
+    # deseni burada YETMEZ. project_manager = _F, procurement = _V (kiralama
+    # firması `suppliers`tan gelir, satınalma kartı okur ama açmaz).
+    # Silme yalnız system_admin'dedir (`_A`; `full` silmeyi kapsamaz) — zaten
+    # DELETE ucu YOKTUR, kullanımdan kaldırma `is_active=false` iledir.
+    "equipment": [_A, _F, _F, _V, _N, _F, _F, _V],
 }
 
 
@@ -225,7 +244,7 @@ async def seed_reference_data(session: AsyncSession) -> None:
 
     Idempotent: hangi başlangıç durumundan çalıştırılırsa çalıştırılsın (boş DB,
     tamamen seed edilmiş DB, ya da roller/modüller var ama role_permissions boş)
-    sonuçta 8 rol, 20 modül ve 160 izin satırı bulunur; mevcut satırlar
+    sonuçta 8 rol, 21 modül ve 168 izin satırı bulunur; mevcut satırlar
     üzerine yazılmaz ve `uq_role_module` UNIQUE kısıtı asla ihlal edilmez.
     """
     existing_role_rows = (await session.execute(select(Role))).scalars().all()

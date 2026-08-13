@@ -36,6 +36,7 @@ EXPECTED_MODULE_KEYS = {
     "contracts",
     "sales",
     "documents",
+    "equipment",
 }
 
 
@@ -54,15 +55,15 @@ async def test_seeds_eight_roles(seeded_db):
     assert keys == EXPECTED_ROLE_KEYS
 
 
-async def test_seeds_twenty_modules(seeded_db):
+async def test_seeds_all_modules(seeded_db):
     keys = set((await seeded_db.execute(select(Module.key))).scalars())
     assert keys == EXPECTED_MODULE_KEYS
 
 
 async def test_matrix_is_complete(seeded_db):
-    """8 rol × 20 modül = 160 hücre; hiçbiri eksik olamaz."""
+    """8 rol × 21 modül = 168 hücre; hiçbiri eksik olamaz."""
     rows = (await seeded_db.execute(select(RolePermission))).scalars().all()
-    assert len(rows) == 160
+    assert len(rows) == 168
 
 
 async def test_system_admin_has_admin_level_everywhere(seeded_db):
@@ -100,7 +101,7 @@ async def test_hr_manager_is_confined_to_people_modules(seeded_db):
 
 async def test_reseed_after_permissions_wiped_restores_full_matrix(db_session):
     """roles/modules mevcutken role_permissions bosaltilip yeniden seed edilirse
-    160 izin satirinin tamami geri gelmeli - kismi/basarisiz bir onceki calistirma
+    168 izin satirinin tamami geri gelmeli - kismi/basarisiz bir onceki calistirma
     sonrasi operasyonel yeniden calistirmayi simule eder."""
     await seed_reference_data(db_session)
 
@@ -112,12 +113,12 @@ async def test_reseed_after_permissions_wiped_restores_full_matrix(db_session):
     await seed_reference_data(db_session)
 
     rows = (await db_session.execute(select(RolePermission))).scalars().all()
-    assert len(rows) == 160
+    assert len(rows) == 168
 
     role_count = (await db_session.execute(select(Role))).scalars().all()
     module_count = (await db_session.execute(select(Module))).scalars().all()
     assert len(role_count) == 8
-    assert len(module_count) == 20
+    assert len(module_count) == 21
 
 
 async def test_invoicing_module_is_in_mali_group_between_accounting_and_treasury(seeded_db):
@@ -145,7 +146,7 @@ async def test_invoicing_permissions_follow_accounting_row(seeded_db):
 async def test_module_sort_orders_are_unique_and_contiguous(seeded_db):
     """invoicing/projects/sites/boq araya girince sonraki moduller kayar; boşluk/çakışma olmaz."""
     orders = sorted((await seeded_db.execute(select(Module.sort_order))).scalars())
-    assert orders == list(range(1, 21))
+    assert orders == list(range(1, 22))
 
 
 async def test_users_table_exists_in_test_schema(seeded_db):
@@ -311,13 +312,21 @@ async def test_field_roles_cannot_see_sales(seeded_db):
 
 
 async def test_documents_module_row_and_sort(seeded_db):
-    """documents: MALI grubunda, en sonda (belge cekirdegi spec §6 / §7 S2)."""
+    """documents: MALI grubunda, 20. sirada (belge cekirdegi spec §6 / §7 S2).
+
+    documents ARTIK EN SONDA DEGILDIR: MK-1 `equipment`i 21. sira olarak SONA
+    ekledi. Sirasinin DEGISMEMIS olmasi burada kilitlidir — yeni bir modul
+    araya girip mevcut sort_order'lari kaydirsaydi izin matrisi ekraninin
+    satir sirasi sessizce degisirdi.
+    """
     modules = (await seeded_db.execute(select(Module))).scalars().all()
     by_key = {m.key: m for m in modules}
     assert by_key["documents"].group is ModuleGroup.MALI
     assert by_key["documents"].name == "Belgeler"
     assert by_key["documents"].sort_order == 20
-    assert by_key["documents"].sort_order == max(m.sort_order for m in modules)
+    assert {m.key for m in modules if m.sort_order > by_key["documents"].sort_order} == {
+        "equipment"
+    }
 
 
 async def test_documents_permissions_match_spec_row(seeded_db):
