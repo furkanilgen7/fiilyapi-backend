@@ -54,6 +54,51 @@ class PayrollComputeResult(BaseModel):
     )
 
 
+class PayrollPeriodApproveResult(BaseModel):
+    """`POST /payroll/periods/{id}/approve` — BY 303 "Tümünü Onayla".
+
+    🔴 **Atlananlar SEBEBE GÖRE ayrı sayılır** (WORKFLOW §3): "3 satır onaylandı"
+    tek başına, iki satırın niçin dışarıda kaldığını gizlerdi ve kullanıcı eksik
+    ödemeyi banka ekstresinden öğrenirdi. Sebepler farklı İŞ gerektirir:
+
+    * `skipped_excluded` → **K2**: taşeron satırı; ödemesi hakediş modülünün
+      (TH) işidir, burada yapılacak bir şey YOKTUR;
+    * `skipped_uncomputed` → **S4**: ücret verisi eksik; kullanıcı ya personelin
+      ücretini tanımlar ya da brütü elle girer;
+    * `skipped_already_approved` → satır zaten onaylı/ödenmiş; bilgi amaçlıdır.
+
+    `period_status` DÖNÜŞTE VERİLİR çünkü uç dönemi TEK ADIM ilerletir
+    (`draft → pending_approval → approved`) ve ekran hangi adımda olduğunu
+    yanıttan öğrenmelidir — ikinci bir `GET` ile tahmin etmemelidir.
+    """
+
+    period_status: PayrollPeriodStatus
+    approved: int = Field(description="Onaylanan satır sayısı")
+    skipped_uncomputed: int = Field(description="Brütü hesaplanamadığı için atlanan satır (S4)")
+    skipped_excluded: int = Field(description="Taşeron olduğu için atlanan satır (K2)")
+    skipped_already_approved: int = Field(description="Zaten onaylı/ödenmiş satır")
+
+
+class PayrollPeriodPayResult(BaseModel):
+    """`POST /payroll/periods/{id}/pay` — ödendi damgası (spec §5).
+
+    🔴 `paid_net_total` ÖDENEN satırların netidir; **taşeron satırı bu toplama
+    GİRMEZ** (K2). Girseydi banka talimatı taşeron işçisinin netini de taşır ve
+    aynı emek hem hakedişten hem bordrodan ödenirdi.
+
+    `skipped_unapproved` sessiz atlamayı kapatır: onayı geri alınmış bir satır
+    ödenmez ve bu ekranda GÖRÜNÜR.
+    """
+
+    period_status: PayrollPeriodStatus
+    paid_at: datetime
+    paid: int = Field(description="Ödendi damgası basılan satır sayısı")
+    paid_net_total: Decimal = Field(description="Ödenen satırların net toplamı")
+    skipped_unapproved: int = Field(description="Onaylanmadığı için ödenmeyen satır")
+    skipped_uncomputed: int = Field(description="Brütü hesaplanamadığı için ödenmeyen satır (S4)")
+    skipped_excluded: int = Field(description="Taşeron olduğu için ödenmeyen satır (K2)")
+
+
 # --- Dönem yazma -----------------------------------------------------------
 
 

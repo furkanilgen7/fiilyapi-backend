@@ -1059,3 +1059,28 @@ def payroll_period_computed(year: int, month: int) -> str:
 
 def payroll_line_updated(full_name: str, year: int, month: int) -> str:
     return f"Bordro satırı güncellendi: {full_name} · {year}/{month:02d}"
+
+
+# --- İK-3 T4: onay + ödeme (PARA olaylari) ---
+#
+# Onay/red satirinda tutar YOKTUR (yukaridaki gerekce): tutar sunucu hesabidir.
+# ODEME satiri ise ISTISNADIR ve tutar TASIR: odenen toplam, o anda gerceklesen
+# para cikisinin kendisidir; sonradan degisebilecek bir turev degil, olayin
+# BUYUKLUGUDUR. Denetimi okuyan kisi "ne kadar odendi"yi baska bir ekrana
+# bakmadan gormelidir.
+
+
+def payroll_line_approved(full_name: str, year: int, month: int) -> str:
+    return f"Bordro satırı onaylandı: {full_name} · {year}/{month:02d}"
+
+
+def payroll_line_rejected(full_name: str, year: int, month: int) -> str:
+    return f"Bordro satırı onayı geri alındı: {full_name} · {year}/{month:02d}"
+
+
+def payroll_period_approved(year: int, month: int, status: str) -> str:
+    return f"Bordro dönemi onaylandı: {year}/{month:02d} · durum {status}"
+
+
+def payroll_period_paid(year: int, month: int, count: int, total: object) -> str:
+    return f"Bordro dönemi ödendi: {year}/{month:02d} · {count} satır · {total} ₺"

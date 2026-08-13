@@ -51,9 +51,11 @@ from app.modules.payroll.schemas import (
     PayrollComputeResult,
     PayrollLineResponse,
     PayrollLineUpdate,
+    PayrollPeriodApproveResult,
     PayrollPeriodCreate,
     PayrollPeriodDetailResponse,
     PayrollPeriodListResponse,
+    PayrollPeriodPayResult,
 )
 from app.modules.users.models import User
 
@@ -209,3 +211,128 @@ async def update_payroll_line_endpoint(
     satir, detail = await service.update_line(session, user.id, line_id, data)
     await _audit(request, session, user, AuditAction.update, detail)
     return satir
+
+
+# --- T4: onay + ödeme yolu (spec §5'in 6.-8. satırları) --------------------
+#
+# | Uç | Yetki | Mockup |
+# |---|---|---|
+# | `POST /payroll/lines/{id}/approve` · `/reject` | `full` | BY satır durumu |
+# | `POST /payroll/periods/{id}/approve` | `full` | BY 303 "Tümünü Onayla" |
+# | `POST /payroll/periods/{id}/pay` | `full` | BY 56 "Ödemeyi Onayla" sonrası |
+#
+# Dördü de `payroll:full`dur: onay ve ödeme İZİN gerektiren PARA olaylarıdır,
+# `view` seviyesi yalnız görmeye yeter. Dördü de TEK denetim satırı yazar ve
+# `AuditAction.approve` kullanır (`audit/models.py` docstring'i: onay uçları) —
+# yalnız RED bir onay değil bir geri alma olduğu için `update`tir.
+#
+# 🔴 EFT talimatı (BY 319) ve makbuz (BY 328) BU DİLİMDE DE AÇILMAZ (spec §1):
+# `/pay` bir DAMGADIR, banka entegrasyonu yoktur.
+
+
+@router.post(
+    "/payroll/lines/{line_id}/approve",
+    response_model=PayrollLineResponse,
+    responses={
+        409: {
+            "description": (
+                "Taşeron satırı, hesaplanamamış satır, zaten onaylı/ödenmiş satır "
+                "ya da onaylanmış/ödenmiş dönem"
+            )
+        }
+    },
+    dependencies=[_FULL],
+)
+async def approve_payroll_line_endpoint(
+    request: Request,
+    line_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> PayrollLineResponse:
+    """Satır onayı — `pending → approved`.
+
+    * **🔴 K2 (spec §2, §6/2):** taşeron (`excluded`) satırı **409**. Taşeronun
+      ödemesi hakediş (TH) üzerinden yapılır; buradan da onaylanabilseydi aynı
+      emek İKİ KEZ ödenirdi. Çift ödeme yapısal olarak imkânsız kalmalıdır.
+    * **S4 (spec §6/3):** brütü `null` olan (`uncomputed`) satır **409** —
+      "ödenecek bir şey yok" yalanı damgalanmaz; önce brüt girilir.
+    * **S8:** `approved`/`paid` satır **409** (atlama ve tekrar yok).
+    """
+    satir, detail = await service.approve_line(session, line_id)
+    await _audit(request, session, user, AuditAction.approve, detail)
+    return satir
+
+
+@router.post(
+    "/payroll/lines/{line_id}/reject",
+    response_model=PayrollLineResponse,
+    responses={409: {"description": "Yalnız onaylanmış satırın onayı geri alınabilir"}},
+    dependencies=[_FULL],
+)
+async def reject_payroll_line_endpoint(
+    request: Request,
+    line_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> PayrollLineResponse:
+    """Satır reddi = ONAYIN GERİ ALINMASI — `approved → pending` (S5 düzeltme yolu).
+
+    Ayrı bir `rejected` durumu YOKTUR: satır durumu kümesi T1'de kapanmıştır.
+    Geri alınan satır yeniden düzenlenebilir olur. `pending`/`uncomputed`/
+    `paid`/`excluded` satırda **409**.
+    """
+    satir, detail = await service.reject_line(session, line_id)
+    await _audit(request, session, user, AuditAction.update, detail)
+    return satir
+
+
+@router.post(
+    "/payroll/periods/{period_id}/approve",
+    response_model=PayrollPeriodApproveResult,
+    responses={409: {"description": "Dönem onay adımına geçirilemez"}},
+    dependencies=[_FULL],
+)
+async def approve_payroll_period_endpoint(
+    request: Request,
+    period_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> PayrollPeriodApproveResult:
+    """BY 303 "Tümünü Onayla" — dönemi TEK ADIM ilerletir, `pending` satırları onaylar.
+
+    `draft → pending_approval → approved`; **atlama YOKTUR** (S8), üçüncü çağrı
+    **409**. Ödeme damgası bu uçtan basılmaz (`/pay` ayrıdır).
+
+    🔴 "Tümünü" onaylamaz: `uncomputed` (S4) ve taşeron (K2) satırlar ATLANIR ve
+    yanıtta **sebebe göre ayrı sayılarla** raporlanır — sessiz atlama yoktur
+    (WORKFLOW §3).
+    """
+    sonuc, detail = await service.approve_period(session, user.id, period_id)
+    await _audit(request, session, user, AuditAction.approve, detail)
+    return sonuc
+
+
+@router.post(
+    "/payroll/periods/{period_id}/pay",
+    response_model=PayrollPeriodPayResult,
+    responses={409: {"description": "Yalnız onaylanmış dönem ödenebilir"}},
+    dependencies=[_FULL],
+)
+async def pay_payroll_period_endpoint(
+    request: Request,
+    period_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> PayrollPeriodPayResult:
+    """Ödendi damgası (`paid_at`) — dönem ve ONAYLI satırlar `paid`.
+
+    * **S8:** dönem `approved` değilse **409** — `draft → paid` para çıkışının
+      onay zincirini atlardı. İkinci `pay` de **409**: ikinci ödeme demektir.
+    * **🔴 K2:** taşeron satırı `paid` OLMAZ ve `paid_net_total`a GİRMEZ.
+    * Onaylanmamış ve hesaplanamamış satırlar ödenmez, sayıyla raporlanır.
+
+    Dış entegrasyon YOKTUR (spec §1): EFT talimatı gönderilmez.
+    """
+    sonuc, detail = await service.pay_period(session, period_id)
+    await _audit(request, session, user, AuditAction.approve, detail)
+    return sonuc

@@ -65,3 +65,22 @@ def assert_period_transition(current: PayrollPeriodStatus, target: PayrollPeriod
 def assert_line_transition(current: PayrollLineStatus, target: PayrollLineStatus) -> None:
     if (current, target) not in LINE_TRANSITIONS:
         raise ConflictError(LINE_TRANSITION_DENIED)
+
+
+def next_period_step(current: PayrollPeriodStatus) -> PayrollPeriodStatus | None:
+    """Dönemin SIRADAKİ adımı — tabloDAN TÜRETİLİR, ikinci bir tablo yazılmaz.
+
+    T4'ün onay ucu "bir adım ilerlet" der; hedefi kendi `if`iyle seçseydi
+    zincirin şekli iki yerde yaşar ve biri güncellenince öteki unutulurdu.
+
+    Zincir DOĞRUSALDIR (`draft → pending_approval → approved → paid`): bir
+    durumun birden çok ardılı olsaydı "sıradaki adım" ifadesi anlamsızlaşırdı,
+    bu yüzden sessizce birini seçmek yerine YÜKSEK SESLE patlar. Sonu olmayan
+    durum (`paid`) `None` döner.
+    """
+    hedefler = {hedef for kaynak, hedef in PERIOD_TRANSITIONS if kaynak is current}
+    if not hedefler:
+        return None
+    if len(hedefler) > 1:
+        raise ValueError(f"Dönem zinciri artık doğrusal değil: {current} → {hedefler}")
+    return hedefler.pop()

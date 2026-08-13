@@ -47,3 +47,32 @@ SPLIT_WITHOUT_NET = "Hesaplanamamış satırda ödeme bölüşümü yapılamaz; 
 
 #: 422 — ŞEF KARARI 2 (T2): kesintisi bilinmeyen brütten net türetilmez.
 RATE_MISSING = "Bu personel tipi için dönemin yılına ait aktif kesinti oranı tanımlı değil"
+
+
+# --- T4: onay + ödeme yolu -------------------------------------------------
+
+#: 409 — S5'in dönem tarafı, KARAR yüzeyinde: onaylanmış/ödenmiş dönemin
+#: satırlarının durumu da donar. PATCH ile AYNI kapı, ayrı cümle: kullanıcı
+#: burada tutarı değil ONAYI değiştirmeye çalışmaktadır.
+PERIOD_LOCKED_FOR_DECISION = "Onaylanmış veya ödenmiş dönemin satır onayları değiştirilemez"
+
+#: 409 — S4 fail-closed: brütü `null` olan satırda onaylanacak bir tutar YOKTUR.
+#: "Ödenecek bir şey yok" yalanı ödeme listesine damgalanmaz; doğru yol brütü
+#: elle girmektir (K3 override'ı).
+LINE_UNCOMPUTED = (
+    "Hesaplanamamış satır onaylanamaz: önce brüt tutarı girin (personelin ücret tanımı eksik)"
+)
+
+#: 409 — geri alınacak bir onay yoksa red anlamsızdır. Kaynak durumu AÇIKÇA
+#: `approved` olmalıdır: geçiş tablosundaki `uncomputed → pending` çifti K3
+#: override'ının çıkışıdır ve red yolundan kullanılırsa S4 arkadan dolanılır.
+LINE_NOT_APPROVED = "Yalnız onaylanmış bir satırın onayı geri alınabilir"
+
+#: 409 — dönem onay ucunun ilerletecek adımı yok: `approved` (sıradaki adım
+#: ÖDEMEDİR, onay ucundan basılmaz) ya da `paid`.
+PERIOD_NOT_APPROVABLE = "Bordro dönemi onay adımına geçirilemez"
+
+#: 409 — fail-closed (NULL-EŞİK kanonu): onaylı görünse de tutarı bilinmeyen bir
+#: satır ÖDENMEZ. Bilinmeyeni 0 sayıp geçmek, eksik ödemeyi banka ekstresine
+#: bırakırdı.
+PAID_WITHOUT_NET = "Net tutarı hesaplanmamış onaylı satır var: bordro ödenemez"
