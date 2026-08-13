@@ -85,6 +85,61 @@ PUBLISH_REQUIRED_FIELDS: tuple[tuple[str, str], ...] = (
 )
 PUBLISH_MISSING = "Personeli yayınlamak için şu alanlar zorunludur: {}"
 
+# --- İK-2 T2: izin talebi korkulukları (spec §3, §5 K2/K3) -----------------
+
+# 404 — talep yok/görünmez (`PERSONNEL_MISSING` deseni; var olmayanla ayırt edilemez).
+LEAVE_REQUEST_MISSING = "İzin talebi bulunamadı"
+
+# 404 — gövdedeki `leave_type_id` katalogda hiç yok (spec §4b: gövde içi varlık ref).
+LEAVE_TYPE_MISSING = "İzin tipi bulunamadı"
+
+# 422 — tip katalogda VAR ama pasif. 404 DEĞİL (`DOCUMENT_TYPE_INACTIVE` gerekçesi):
+# kayıt vardır, engelleyen şey düzeltilebilir bir DURUMDUR (başka tip seçilebilir).
+LEAVE_TYPE_INACTIVE = "Seçilen izin tipi pasif, kullanılamaz"
+
+# 422 — bitiş başlangıçtan önce. DB CHECK (`ck_leave_requests_date_order`) VARDIR
+# ama ihlali 409 "veri bütünlüğü" verirdi; servis DB'ye düşmeden Türkçe 422 atar.
+LEAVE_DATE_ORDER = "İzin bitiş tarihi başlangıç tarihinden önce olamaz"
+
+# 409 — karara bağlanmış talep DÜZENLENEMEZ/SİLİNEMEZ (spec §3: "yalnız pending").
+# `ConflictError`: engel kaydın MEVCUT DURUMUDUR, gövdedeki bir alan değil; 422
+# verilseydi ekran "hangi alanı düzelteyim" diye arardı. Onaylı izin bakiyeyi
+# etkilemiştir — geriye dönük düzenlemesi bakiyeyi sessizce kaydırırdı.
+LEAVE_NOT_PENDING = "Yalnız bekleyen (onaylanmamış) izin talebi düzenlenebilir ya da silinebilir"
+
+# 403 — silme yetkisi (spec §3: "pending, sahibi ya da admin"). `full` TEK BAŞINA
+# YETMEZ: `app/core/access.py` "full silmeyi KAPSAMAZ" der. İki kapıdan biri açar —
+# `admin` seviyesi YA DA talebin sahibi olmak (personelin `user_id`si aktör).
+LEAVE_DELETE_NOT_ALLOWED = "Bu izin talebini silme yetkiniz yok"
+
+# --- İK-2 T3: onay/red + bakiye korkulukları (spec §2, §5 K3/K4/K5) --------
+
+# 409 — karara BAĞLANMIŞ talep yeniden karara bağlanamaz. `LEAVE_NOT_PENDING`ten
+# AYRI bir metindir çünkü o cümle "düzenlenebilir ya da silinebilir" der; onay
+# ucundan dönseydi kullanıcı yanlış eylemi aradığını sanırdı. Onay TEK adımdır
+# (spec §5 K4) — ikinci bir aşama ya da "yeniden değerlendirme" YOKTUR.
+LEAVE_DECISION_NOT_PENDING = "Yalnız bekleyen izin talebi onaylanabilir ya da reddedilebilir"
+
+# 409 — spec §5 K3: aynı personelin ÇAKIŞAN ONAYLI izni. Kural YALNIZ `approve`ta
+# işler (POST/PATCH'te değil, spec §3): İK çakışan bir talebi KAYDEDEBİLMELİ ve
+# çakışmayı onay anında değerlendirebilmelidir. RED bu kapıdan ETKİLENMEZ.
+LEAVE_OVERLAPPING_APPROVED = "Bu personelin seçilen tarih aralığında onaylanmış başka bir izni var"
+
+# 409 — spec §5 K5: talebin günü kalan yıllık haktan büyük (İZ 98-99 onay engeli).
+# YALNIZ `deducts_from_annual` tiplerde denetlenir (hastalık/mazeret düşmez).
+LEAVE_ENTITLEMENT_EXCEEDED = "Talep edilen gün sayısı personelin kalan yıllık izin hakkını aşıyor"
+
+# 🔴 409 — NULL-EŞİK KANONU (fail-closed): kalan hak HESAPLANAMIYOR (kıdem 1 yılı
+# doldurmadı ya da `hire_date` girilmemiş). Bilinmeyen KÜÇÜK değil BÜYÜK sayılır:
+# "hesaplanamadı"yı 0 kullanılmış güne çevirmek TAM HAKKI açardı. Red serbesttir.
+LEAVE_ENTITLEMENT_UNKNOWN = (
+    "Personelin yıllık izin hakkı hesaplanamıyor (kıdem 1 yılı doldurmamış ya da "
+    "işe giriş tarihi girilmemiş); talep onaylanamaz"
+)
+
+# 422 — red gerekçesi ZORUNLU (TH emsali) ve YALNIZ BOŞLUKTAN oluşamaz.
+LEAVE_REJECT_REASON_REQUIRED = "İzin reddi için gerekçe zorunludur"
+
 
 def validate_personnel_source(source: WorkerSource, subcontractor_id: uuid.UUID | None) -> None:
     """Kural BİRLEŞİK kayıt üzerinde koşar.

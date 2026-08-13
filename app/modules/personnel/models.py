@@ -62,6 +62,17 @@ class PaymentMethod(str, enum.Enum):
     mixed = "mixed"
 
 
+class LeaveStatus(str, enum.Enum):
+    """İZ talep tablosu durumu (İK-2 spec §1). Onay TEK adimdir (spec §5 K4) —
+
+    cok-asamali onay MOTORU ACILMAZ, bu yuzden ara durum (`in_review` vb.) YOK.
+    """
+
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+
+
 class Personnel(Base):
     """Puantajin ihtiyac duydugu MINIMUM personel cekirdegi (puantaj spec §1, §7 S1)
     + İK-1 kart genislemesi (spec §1, §5).
@@ -250,6 +261,150 @@ class PersonnelDocument(Base):
     issued_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     valid_until: Mapped[date | None] = mapped_column(Date, nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class LeaveType(Base):
+    """Izin tipi katalogu (İK-2 spec §1) — SEED'i 3 sabit tiptir (Yillik /
+
+    Hastalik / Mazeret), CRUD ucu ACILMAZ (ayarlar dilimi). `PersonnelDocumentType`
+    kardesidir.
+
+    `deducts_from_annual` YALNIZ Yillik'ta true: İZ 87 "Rapor" yillik haktan
+    DUSMEZ. `requires_document` YALNIZ Hastalik'ta (İZ 88 "rapor ekli").
+    """
+
+    __tablename__ = "leave_types"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    deducts_from_annual: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    is_paid: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
+    requires_document: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    color: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    sort_order: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class LeaveRequest(Base):
+    """Izin talebi (İK-2 spec §1, İZ talep tablosu birebir).
+
+    `days` KOLONDUR ama SUNUCU hesabidir (spec §5 K2: TAKVIM gunu, baslangic ve
+    bitis DAHIL; hafta sonu/tatil cikarma İK-3). Istemci gonderemez — bu kural
+    SERVIS katmaninda (T2) zorlanir, DB yalnizca `days > 0` ve tarih sirasini
+    zorlar.
+
+    `document_id` BC-2 pilotudur (İK-1 `PersonnelDocument` emsali): rapor dosyasi
+    `documents` arsivine yazilir, bu kayit yalniz kunyeye baglanir. SET NULL —
+    arsiv kaydi silinse de TALEP KALIR (izin gecmisi kaybolmaz).
+
+    `decided_by` SET NULL: karari veren kullanici silinse de talep ve karar
+    zamani ayakta kalir. Hak asimi / cakisma kontrolleri (spec §5 K3, K5) SERVIS
+    katmanindadir — DB seviyesinde exclusion constraint ACILMAZ (kural yalniz
+    ONAYLI izinlere bakar ve `deducts_from_annual` tipe bagimlidir).
+    """
+
+    __tablename__ = "leave_requests"
+    __table_args__ = (
+        CheckConstraint("end_date >= start_date", name="ck_leave_requests_date_order"),
+        CheckConstraint("days > 0", name="ck_leave_requests_days_positive"),
+        Index("ix_leave_requests_personnel_range", "personnel_id", "start_date", "end_date"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # CASCADE: personel silinemez (İK-1 §3) ama tur donusu/testler icin izin de
+    # personelle birlikte gitmelidir — yetim talep birakilmaz.
+    personnel_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("personnel.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # RESTRICT: kullanimda olan katalog tipi silinemez (CRUD ucu zaten YOK).
+    leave_type_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("leave_types.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    days: Mapped[int] = mapped_column(Integer, nullable=False)
+    note: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    # SET NULL: BC arsiv kaydi silinse de talep kalir.
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    status: Mapped[LeaveStatus] = mapped_column(
+        Enum(LeaveStatus, name="leave_status"),
+        nullable=False,
+        default=LeaveStatus.pending,
+        server_default=text("'pending'::leave_status"),
+        index=True,
+    )
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reject_reason: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class LeaveBalance(Base):
+    """Yil bazli izin bakiyesi (İK-2 spec §1, İZ D).
+
+    TEK GERCEK KOLON `carried_over`'dir (İZ 137 "Devreden" — onceki yildan
+    tasinan, ELLE girilir; otomatik devir job'u İK-3). **`annual_entitlement`
+    KOLON DEGILDIR** (spec §5 K1): yillik hak `hire_date` kidemine gore 4857
+    kademelerinden TUREVDIR (<1 yil hak yok · 1-5 → 14 · 5-15 → 20 · >15 → 26) ve
+    tek kaynak sabit servis katmanindadir. `used`/`remaining`/`usage_pct` de
+    TUREVDIR — kolon acilirsa iki gercek kaynak dogar.
+    """
+
+    __tablename__ = "leave_balances"
+    __table_args__ = (
+        CheckConstraint("carried_over >= 0", name="ck_leave_balances_carried_over_positive"),
+        UniqueConstraint("personnel_id", "year", name="uq_leave_balances_personnel_year"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    personnel_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("personnel.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    year: Mapped[int] = mapped_column(Integer, nullable=False)
+    carried_over: Mapped[Decimal] = mapped_column(
+        Numeric(5, 1), nullable=False, default=Decimal("0"), server_default=text("0")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

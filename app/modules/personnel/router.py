@@ -21,7 +21,7 @@ bağlıdır; kartoteksten çıkarma `PATCH {"is_active": false}` ile yapılır.
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Path, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel
@@ -34,8 +34,19 @@ from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
 from app.modules.personnel import repository, service
+from app.modules.personnel.models import LeaveStatus
 from app.modules.personnel.schemas import (
     HrDocumentsSummaryResponse,
+    HrLeavesSummaryResponse,
+    LeaveApproveRequest,
+    LeaveBalanceResponse,
+    LeaveBalanceUpdate,
+    LeaveRejectRequest,
+    LeaveRequestCreate,
+    LeaveRequestListResponse,
+    LeaveRequestResponse,
+    LeaveRequestUpdate,
+    LeaveTypeResponse,
     PersonnelCreate,
     PersonnelDocumentCreate,
     PersonnelDocumentResponse,
@@ -272,3 +283,297 @@ async def delete_personnel_document_endpoint(
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
+
+
+# --- İK-2 T2: izin talebi (spec §3, İZ mockup) -------------------------------
+#
+# Rota kökü BİLİNÇLİ olarak `/personnel/...` ALTINDA DEĞİLDİR: İZ ekranı talepleri
+# ŞİRKET GENELİNDE listeler (personel seçmeden), yani liste ucunun doğal kimliği
+# personel değildir. Personel bazlı görünüm `?personnel_id=` süzgecidir.
+#
+# **`/leave-types` SALT OKUMADIR** (spec §1): katalog CRUD'u AÇILMAZ, talep
+# formunun tip listesine ihtiyacı olduğu için yalnız GET vardır.
+#
+# approve/reject uçları ve bakiye T3'ün işidir — BURADA YOKTUR.
+
+
+@router.get("/leave-types", response_model=list[LeaveTypeResponse], dependencies=[_VIEW])
+async def list_leave_types_endpoint(
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> list[LeaveTypeResponse]:
+    """Aktif izin tipleri (`sort_order`). Yazma ucu YOKTUR — katalog ayarlar dilimidir."""
+    types = await service.list_leave_types(session)
+    return [LeaveTypeResponse.model_validate(t) for t in types]
+
+
+@router.get("/leave-requests", response_model=LeaveRequestListResponse, dependencies=[_VIEW])
+async def list_leave_requests_endpoint(
+    session: Annotated[AsyncSession, Depends(get_db)],
+    status_filter: Annotated[LeaveStatus | None, Query(alias="status")] = None,
+    personnel_id: uuid.UUID | None = None,
+    project_id: uuid.UUID | None = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> LeaveRequestListResponse:
+    """İZ talep tablosu. Süzgeçler AND'lidir; `project_id` PERSONELİN projesi
+    üzerinden DARALTIR (talebin kendi proje kolonu yoktur).
+
+    `limit` tavanı 200'dür (TB3 korkuluğu): tavanı aşan istek SESSİZCE KIRPILMAZ,
+    422 olur — ekran eksik listeyi tam sanmasın.
+    """
+    items, total = await service.list_leave_requests(
+        session,
+        status=status_filter,
+        personnel_id=personnel_id,
+        project_id=project_id,
+        limit=limit,
+        offset=offset,
+    )
+    return LeaveRequestListResponse(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.post(
+    "/leave-requests",
+    response_model=LeaveRequestResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[_FULL],
+)
+async def create_leave_request_endpoint(
+    request: Request,
+    data: LeaveRequestCreate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> LeaveRequestResponse:
+    """`days` SUNUCU hesabıdır ve `status` `pending` başlar (spec §5 K2); ikisi de
+    gövdeden alınmaz — gönderilirse 422 (şema `extra="forbid"`).
+
+    Personel yok → 404 · izin tipi yok → 404, pasif → 422 · ters tarih → 422 ·
+    görünmez BC belgesi (`document_id`) → 404 (IDOR korkuluğu).
+    """
+    response, detail = await service.create_leave_request(session, user, data)
+    await record_audit(
+        session,
+        action=AuditAction.create,
+        detail=detail,
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return response
+
+
+@router.get(
+    "/leave-requests/{request_id}", response_model=LeaveRequestResponse, dependencies=[_VIEW]
+)
+async def get_leave_request_endpoint(
+    request_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> LeaveRequestResponse:
+    return await service.get_leave_request(session, request_id)
+
+
+@router.patch(
+    "/leave-requests/{request_id}", response_model=LeaveRequestResponse, dependencies=[_FULL]
+)
+async def update_leave_request_endpoint(
+    request: Request,
+    request_id: uuid.UUID,
+    data: LeaveRequestUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> LeaveRequestResponse:
+    """YALNIZ `pending` kayıt düzenlenebilir (karara bağlanmış → 409). Tarih
+    değişirse `days` YENİDEN sunucu hesabıdır."""
+    response, detail = await service.update_leave_request(session, user, request_id, data)
+    await record_audit(
+        session,
+        action=AuditAction.update,
+        detail=detail,
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return response
+
+
+@router.delete(
+    "/leave-requests/{request_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[_VIEW],
+)
+async def delete_leave_request_endpoint(
+    request: Request,
+    request_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """Bekleyen talebi siler. Kapı BİLİNÇLİ olarak `_VIEW`dir: gerçek kural İKİ
+    yoldan açılır (`admin` seviyesi YA DA talebin SAHİBİ olmak, spec §3) ve tek
+    seviyeli bir router kapısı bunu ifade edemez — karar serviste verilir, yetkisiz
+    aktör 403 alır. `procurement` (`personnel=none`) zaten bu kapıda durur."""
+    detail = await service.delete_leave_request(session, user, request_id)
+    await record_audit(
+        session,
+        action=AuditAction.delete,
+        detail=detail,
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+
+
+# --- İK-2 T3: onay/red + bakiye (spec §3, §5 K4/K5) --------------------------
+#
+# **Onay TEK ADIMDIR** (K4): çok-aşamalı onay MOTORU açılmaz (SA onay-motoru
+# kararının emsali). İZ 57'deki "şef → İK" akışı METİNdir; satır-içi tek ✓ tek
+# onay adımıdır ve kapısı `personnel` **full+**tir.
+#
+# Uçlar POST'tur, PATCH DEĞİL: karar bir DURUM GEÇİŞİDİR (`pending -> approved`),
+# alan güncellemesi değil. PATCH `/leave-requests/{id}` ile karıştırılmaları da
+# tehlikeli olurdu — o uç yalnız `pending` kaydı düzenler ve karar alanlarını
+# HİÇ kabul etmez.
+
+
+@router.post(
+    "/leave-requests/{request_id}/approve",
+    response_model=LeaveRequestResponse,
+    dependencies=[_FULL],
+)
+async def approve_leave_request_endpoint(
+    request: Request,
+    request_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    data: LeaveApproveRequest | None = None,
+) -> LeaveRequestResponse:
+    """Talebi onaylar (TEK adım). Karar alanları SUNUCU damgasıdır — gövde ALAN
+    KABUL ETMEZ (gönderilirse 422).
+
+    Talep yok → 404 · `pending` değil → 409 · çakışan ONAYLI izin → 409 (K3) ·
+    hak aşımı → 409 (K5) · **kalan hak hesaplanamıyor → 409** (🔴 fail-closed:
+    kıdem 1 yılı doldurmadı ya da `hire_date` boş). RED bu kapılardan etkilenmez.
+    """
+    response, detail = await service.approve_leave_request(session, user, request_id)
+    await record_audit(
+        session,
+        action=AuditAction.update,
+        detail=detail,
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return response
+
+
+@router.post(
+    "/leave-requests/{request_id}/reject",
+    response_model=LeaveRequestResponse,
+    dependencies=[_FULL],
+)
+async def reject_leave_request_endpoint(
+    request: Request,
+    request_id: uuid.UUID,
+    data: LeaveRejectRequest,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> LeaveRequestResponse:
+    """Talebi reddeder — `reason` ZORUNLU (boş/boşluk → 422).
+
+    **Red HER ZAMAN serbesttir:** hak aşımı ya da çakışma yüzünden onaylanamayan
+    talep REDDEDİLEBİLİR (İZ 98-99: ✓ pasif, ✗ aktif). Talep yok → 404 ·
+    `pending` değil → 409.
+    """
+    response, detail = await service.reject_leave_request(session, user, request_id, data)
+    await record_audit(
+        session,
+        action=AuditAction.update,
+        detail=detail,
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return response
+
+
+# `year` sınırı: bakiye takvim yılıdır ve serbest bir tam sayı olarak bırakılırsa
+# `9999` gibi bir değer anlamsız bir kıdem penceresi hesaplatırdı. Aralık İZ'in
+# gerçekçi kullanım ömrüdür.
+_YEAR_PATH = Path(ge=2000, le=2100)
+
+
+@router.get(
+    "/leave-balances/{personnel_id}/{year}",
+    response_model=LeaveBalanceResponse,
+    dependencies=[_VIEW],
+)
+async def get_leave_balance_endpoint(
+    personnel_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_db)],
+    year: Annotated[int, _YEAR_PATH],
+) -> LeaveBalanceResponse:
+    """İZ bakiye satırı: hak / devreden / kullanılan / kalan / kullanım yüzdesi.
+
+    Hepsi TÜREVdir (`annual_entitlement` KOLON DEĞİL, spec §5 K1). Bakiye SATIRI
+    olmayan personel için de 200 döner (devreden 0) — satır yalnız MANUEL devreden
+    içindir, yokluğu veri eksikliği değildir. Personel yok → 404.
+
+    Hak/kalan/yüzde **null** olabilir: kıdem 1 yılı doldurmadıysa ya da `hire_date`
+    boşsa hak hesaplanamaz (İZ 163 "1 yıl dolunca hak kazanır") — ekran 0 değil
+    "Hak yok" basar.
+    """
+    return await service.get_leave_balance(session, personnel_id, year)
+
+
+@router.put(
+    "/leave-balances/{personnel_id}/{year}",
+    response_model=LeaveBalanceResponse,
+    dependencies=[_FULL],
+)
+async def upsert_leave_balance_endpoint(
+    request: Request,
+    personnel_id: uuid.UUID,
+    data: LeaveBalanceUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    year: Annotated[int, _YEAR_PATH],
+) -> LeaveBalanceResponse:
+    """Devreden günü yazar (UPSERT) — YALNIZ `carried_over` (İZ 137).
+
+    Türev alan (`annual_entitlement`/`used`/`remaining`) gönderilirse 422: hiçbiri
+    kolon değildir ve sessizce yutulsalardı istemci hakkı değiştirdiğini sanırdı.
+    Personel yok → 404. Aynı isteği iki kez göndermek ikinci satır AÇMAZ.
+    """
+    response, detail = await service.upsert_leave_balance(session, personnel_id, year, data)
+    await record_audit(
+        session,
+        action=AuditAction.update,
+        detail=detail,
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return response
+
+
+# `?year=` süzgeci bakiye ucunun `_YEAR_PATH` sınırının BİREBİR aynısıdır (İZ 120
+# yıl seçici): iki uç aynı yıl penceresini anlatır, sınırlarının ayrışması
+# ekranda seçilebilen ama özette 422 dönen bir yıl bırakırdı.
+_YEAR_QUERY = Query(ge=2000, le=2100)
+
+
+@router.get(
+    "/hr/leaves/summary",
+    response_model=HrLeavesSummaryResponse,
+    dependencies=[_VIEW],
+)
+async def hr_leaves_summary_endpoint(
+    session: Annotated[AsyncSession, Depends(get_db)],
+    year: Annotated[int | None, _YEAR_QUERY] = None,
+) -> HrLeavesSummaryResponse:
+    """İZ özet ucu: 5 KPI + personel bazlı izin bakiyesi tablosu.
+
+    Okuma (`view`) yeter — `personnel` şirket-geneli İK varlığıdır (liste ucu ve
+    `/hr/documents/summary` deseni); proje görünürlüğü süzgeci UYGULANMAZ.
+
+    `year` verilmezse içinde bulunulan yıl. Yıl YALNIZ bakiye eksenini kaydırır:
+    "Bekleyen Talep"/"Bugün İzinli"/"Bu Ay Kullanılan" BUGÜNE bağlıdır.
+
+    Hak/kalan/yüzde **null** olabilir (kıdem<1 ya da `hire_date` yok, İZ 163) ve
+    bu satırlar borç toplamına 0 olarak karışmaz — `unknown_entitlement_personnel`
+    ile AÇIKÇA sayılır (🔴 fail-closed). Sorgu sayısı veri büyüklüğünden bağımsızdır.
+    """
+    return await service.build_hr_leaves_summary(session, year=year)

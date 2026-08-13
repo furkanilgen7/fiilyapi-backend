@@ -993,3 +993,47 @@ def purchase_order_updated(order_no: str) -> str:
     """Durum geçişi de bu satırdır: `approved → in_transit` tek meşru geçiştir
     ve ayrı bir metin, not düzeltmesiyle karışmayacak kadar az bilgi eklerdi."""
     return f"Sipariş güncellendi: {order_no}"
+
+
+# --- İK-2 T2: izin talebi ---
+#
+# Kimlik kullanicinin GORDUGU degerdir: personel adi · izin tipi · tarih araligi.
+# `days` metne KONMAZ — SUNUCU hesabidir (spec §5 K2) ve gunluge donmus bir
+# kopyasi tarih duzeltmesinde ayrisirdi; tarih araligi zaten onu belirler.
+
+
+def leave_request_created(full_name: str, type_name: str, start: date, end: date) -> str:
+    return f"İzin talebi oluşturuldu: {full_name} · {type_name} · {start} - {end}"
+
+
+def leave_request_updated(full_name: str, type_name: str, start: date, end: date) -> str:
+    return f"İzin talebi güncellendi: {full_name} · {type_name} · {start} - {end}"
+
+
+def leave_request_deleted(full_name: str, type_name: str, start: date, end: date) -> str:
+    """Metin `session.delete`ten ONCE kurulur (`site_deleted` dersi) — sonra
+    kurulsaydi silinenin NE OLDUGU kaybolurdu."""
+    return f"İzin talebi silindi: {full_name} · {type_name} · {start} - {end}"
+
+
+# --- İK-2 T3: izin onayı/reddi + bakiye ---
+#
+# Karar metinleri talebin KİMLİĞİNİ (kim · hangi tip · hangi aralık) taşır; red
+# ayrıca GEREKÇEYİ taşır — red kararının denetim değeri gerekçesindedir ve talep
+# kaydı silinirse (pending değil, ama bakiye turlarında) gerekçe yalnız burada kalır.
+
+
+def leave_request_approved(full_name: str, type_name: str, start: date, end: date) -> str:
+    return f"İzin talebi onaylandı: {full_name} · {type_name} · {start} - {end}"
+
+
+def leave_request_rejected(
+    full_name: str, type_name: str, start: date, end: date, reason: str
+) -> str:
+    return f"İzin talebi reddedildi: {full_name} · {type_name} · {start} - {end} · {reason}"
+
+
+def leave_balance_updated(full_name: str, year: int, carried_over: Decimal) -> str:
+    """Devreden gün MANUEL girilir (İZ 137) — bakiyeyi doğrudan büyüten tek yazma
+    yolu budur, bu yüzden yeni değer metne KONUR (denetim onu geri okuyabilsin)."""
+    return f"İzin devreden günü güncellendi: {full_name} · {year} · {carried_over}"
