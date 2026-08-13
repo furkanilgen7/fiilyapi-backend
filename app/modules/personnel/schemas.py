@@ -391,3 +391,84 @@ class LeaveRequestListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+# --- İK-2 T3: onay/red + bakiye (spec §2, §3, §5 K1/K4/K5) -----------------
+#
+# **`extra="forbid"` burada da ÇEKİRDEK KURALDIR.** Karar alanları
+# (`decided_by`/`decided_at`/`status`) SUNUCU damgasıdır: istemci bir başkasının
+# adına imza atamaz. Bakiye tarafında ise `annual_entitlement`/`used`/`remaining`
+# KOLON DEĞİLDİR (spec §5 K1) — gönderilirlerse sessizce yok sayılmak yerine
+# AÇIKÇA 422 olurlar, aksi hâlde istemci "yazdım" sanıp türevin değişmediğini
+# hiç öğrenmezdi. Aynı kapı BC sızıntısını da kapatır: bu yolların hiçbiri
+# `document_id` KABUL ETMEZ (K6 bağı yalnız talep POST/PATCH'inde kurulur).
+
+
+class LeaveApproveRequest(BaseModel):
+    """Onay gövdesi — **ALAN YOKTUR** (spec §5 K4: onay TEK adım, veri taşımaz).
+
+    Gövde tümüyle İSTEĞE BAĞLIDIR (uç gövdesiz de çağrılabilir); ama BOŞ OLMAYAN
+    bir gövde gönderilirse `extra="forbid"` onu reddeder. Şemayı büsbütün
+    kaldırmak bu reddi de kaldırır ve `{"decided_by": ...}` sessizce yutulurdu.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class LeaveRejectRequest(BaseModel):
+    """Red gövdesi — `reason` ZORUNLU (TH emsali, spec §3).
+
+    Red HER ZAMAN serbesttir (hak aşımı/çakışma onayı engeller ama reddi ASLA):
+    İZ 98-99'da hak aşan satırın ✓ butonu pasif, ✗ butonu AKTİFtir. Bu yüzden
+    burada hiçbir eşik denetimi YOKTUR; tek zorunluluk gerekçedir.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def _reason_not_blank(self) -> "LeaveRejectRequest":
+        """`min_length=1` TEK BAŞINA yetmez: `"   "` onu geçer ve denetim günlüğüne
+        boş bir gerekçe düşerdi."""
+        if not self.reason.strip():
+            raise ValueError(guards.LEAVE_REJECT_REASON_REQUIRED)
+        return self
+
+
+class LeaveBalanceUpdate(BaseModel):
+    """Bakiye yazma gövdesi — **YALNIZ `carried_over`** (spec §1, §5 K1).
+
+    Devreden gün İZ 137'nin "Devreden" sütunudur ve ELLE girilir (otomatik devir
+    job'u İK-3). Tablodaki tek gerçek kolon budur; ötekiler türevdir ve gövdede
+    kabul EDİLMEZ.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    carried_over: Decimal = Field(ge=0, max_digits=5, decimal_places=1)
+
+
+class LeaveBalanceResponse(BaseModel):
+    """İZ bakiye tablosu satırı — TEK gerçek kolon + türevler (spec §2).
+
+    `annual_entitlement`/`remaining`/`usage_pct` **None olabilir** ve bu bir veri
+    eksikliği DEĞİL, kanonun kendisidir (🔴 fail-closed): kıdem 1 yılı doldurmadıysa
+    ya da `hire_date` yoksa hak HESAPLANAMAZ. Ekran bunu İZ 163'teki gibi
+    "Hak yok · 1 yıl dolunca hak kazanır" olarak basar — 0 basmaz.
+
+    `seniority_years`/`seniority_months` İZ 134'ün "2 yıl 1 ay" kıdem sütunudur
+    (kolon değil, `hire_date` türevi); `hire_date` NULL ise ikisi de None'dur.
+    """
+
+    personnel_id: uuid.UUID
+    personnel_name: str
+    year: int
+    hire_date: date | None
+    seniority_years: int | None
+    seniority_months: int | None
+    annual_entitlement: int | None
+    carried_over: Decimal
+    used: int
+    remaining: Decimal | None
+    usage_pct: int | None

@@ -21,7 +21,7 @@ bağlıdır; kartoteksten çıkarma `PATCH {"is_active": false}` ile yapılır.
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Path, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel
@@ -37,6 +37,10 @@ from app.modules.personnel import repository, service
 from app.modules.personnel.models import LeaveStatus
 from app.modules.personnel.schemas import (
     HrDocumentsSummaryResponse,
+    LeaveApproveRequest,
+    LeaveBalanceResponse,
+    LeaveBalanceUpdate,
+    LeaveRejectRequest,
     LeaveRequestCreate,
     LeaveRequestListResponse,
     LeaveRequestResponse,
@@ -412,3 +416,133 @@ async def delete_leave_request_endpoint(
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
+
+
+# --- İK-2 T3: onay/red + bakiye (spec §3, §5 K4/K5) --------------------------
+#
+# **Onay TEK ADIMDIR** (K4): çok-aşamalı onay MOTORU açılmaz (SA onay-motoru
+# kararının emsali). İZ 57'deki "şef → İK" akışı METİNdir; satır-içi tek ✓ tek
+# onay adımıdır ve kapısı `personnel` **full+**tir.
+#
+# Uçlar POST'tur, PATCH DEĞİL: karar bir DURUM GEÇİŞİDİR (`pending -> approved`),
+# alan güncellemesi değil. PATCH `/leave-requests/{id}` ile karıştırılmaları da
+# tehlikeli olurdu — o uç yalnız `pending` kaydı düzenler ve karar alanlarını
+# HİÇ kabul etmez.
+
+
+@router.post(
+    "/leave-requests/{request_id}/approve",
+    response_model=LeaveRequestResponse,
+    dependencies=[_FULL],
+)
+async def approve_leave_request_endpoint(
+    request: Request,
+    request_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    data: LeaveApproveRequest | None = None,
+) -> LeaveRequestResponse:
+    """Talebi onaylar (TEK adım). Karar alanları SUNUCU damgasıdır — gövde ALAN
+    KABUL ETMEZ (gönderilirse 422).
+
+    Talep yok → 404 · `pending` değil → 409 · çakışan ONAYLI izin → 409 (K3) ·
+    hak aşımı → 409 (K5) · **kalan hak hesaplanamıyor → 409** (🔴 fail-closed:
+    kıdem 1 yılı doldurmadı ya da `hire_date` boş). RED bu kapılardan etkilenmez.
+    """
+    response, detail = await service.approve_leave_request(session, user, request_id)
+    await record_audit(
+        session,
+        action=AuditAction.update,
+        detail=detail,
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return response
+
+
+@router.post(
+    "/leave-requests/{request_id}/reject",
+    response_model=LeaveRequestResponse,
+    dependencies=[_FULL],
+)
+async def reject_leave_request_endpoint(
+    request: Request,
+    request_id: uuid.UUID,
+    data: LeaveRejectRequest,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> LeaveRequestResponse:
+    """Talebi reddeder — `reason` ZORUNLU (boş/boşluk → 422).
+
+    **Red HER ZAMAN serbesttir:** hak aşımı ya da çakışma yüzünden onaylanamayan
+    talep REDDEDİLEBİLİR (İZ 98-99: ✓ pasif, ✗ aktif). Talep yok → 404 ·
+    `pending` değil → 409.
+    """
+    response, detail = await service.reject_leave_request(session, user, request_id, data)
+    await record_audit(
+        session,
+        action=AuditAction.update,
+        detail=detail,
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return response
+
+
+# `year` sınırı: bakiye takvim yılıdır ve serbest bir tam sayı olarak bırakılırsa
+# `9999` gibi bir değer anlamsız bir kıdem penceresi hesaplatırdı. Aralık İZ'in
+# gerçekçi kullanım ömrüdür.
+_YEAR_PATH = Path(ge=2000, le=2100)
+
+
+@router.get(
+    "/leave-balances/{personnel_id}/{year}",
+    response_model=LeaveBalanceResponse,
+    dependencies=[_VIEW],
+)
+async def get_leave_balance_endpoint(
+    personnel_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_db)],
+    year: Annotated[int, _YEAR_PATH],
+) -> LeaveBalanceResponse:
+    """İZ bakiye satırı: hak / devreden / kullanılan / kalan / kullanım yüzdesi.
+
+    Hepsi TÜREVdir (`annual_entitlement` KOLON DEĞİL, spec §5 K1). Bakiye SATIRI
+    olmayan personel için de 200 döner (devreden 0) — satır yalnız MANUEL devreden
+    içindir, yokluğu veri eksikliği değildir. Personel yok → 404.
+
+    Hak/kalan/yüzde **null** olabilir: kıdem 1 yılı doldurmadıysa ya da `hire_date`
+    boşsa hak hesaplanamaz (İZ 163 "1 yıl dolunca hak kazanır") — ekran 0 değil
+    "Hak yok" basar.
+    """
+    return await service.get_leave_balance(session, personnel_id, year)
+
+
+@router.put(
+    "/leave-balances/{personnel_id}/{year}",
+    response_model=LeaveBalanceResponse,
+    dependencies=[_FULL],
+)
+async def upsert_leave_balance_endpoint(
+    request: Request,
+    personnel_id: uuid.UUID,
+    data: LeaveBalanceUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    year: Annotated[int, _YEAR_PATH],
+) -> LeaveBalanceResponse:
+    """Devreden günü yazar (UPSERT) — YALNIZ `carried_over` (İZ 137).
+
+    Türev alan (`annual_entitlement`/`used`/`remaining`) gönderilirse 422: hiçbiri
+    kolon değildir ve sessizce yutulsalardı istemci hakkı değiştirdiğini sanırdı.
+    Personel yok → 404. Aynı isteği iki kez göndermek ikinci satır AÇMAZ.
+    """
+    response, detail = await service.upsert_leave_balance(session, personnel_id, year, data)
+    await record_audit(
+        session,
+        action=AuditAction.update,
+        detail=detail,
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return response

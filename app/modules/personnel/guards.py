@@ -112,6 +112,34 @@ LEAVE_NOT_PENDING = "Yalnız bekleyen (onaylanmamış) izin talebi düzenlenebil
 # `admin` seviyesi YA DA talebin sahibi olmak (personelin `user_id`si aktör).
 LEAVE_DELETE_NOT_ALLOWED = "Bu izin talebini silme yetkiniz yok"
 
+# --- İK-2 T3: onay/red + bakiye korkulukları (spec §2, §5 K3/K4/K5) --------
+
+# 409 — karara BAĞLANMIŞ talep yeniden karara bağlanamaz. `LEAVE_NOT_PENDING`ten
+# AYRI bir metindir çünkü o cümle "düzenlenebilir ya da silinebilir" der; onay
+# ucundan dönseydi kullanıcı yanlış eylemi aradığını sanırdı. Onay TEK adımdır
+# (spec §5 K4) — ikinci bir aşama ya da "yeniden değerlendirme" YOKTUR.
+LEAVE_DECISION_NOT_PENDING = "Yalnız bekleyen izin talebi onaylanabilir ya da reddedilebilir"
+
+# 409 — spec §5 K3: aynı personelin ÇAKIŞAN ONAYLI izni. Kural YALNIZ `approve`ta
+# işler (POST/PATCH'te değil, spec §3): İK çakışan bir talebi KAYDEDEBİLMELİ ve
+# çakışmayı onay anında değerlendirebilmelidir. RED bu kapıdan ETKİLENMEZ.
+LEAVE_OVERLAPPING_APPROVED = "Bu personelin seçilen tarih aralığında onaylanmış başka bir izni var"
+
+# 409 — spec §5 K5: talebin günü kalan yıllık haktan büyük (İZ 98-99 onay engeli).
+# YALNIZ `deducts_from_annual` tiplerde denetlenir (hastalık/mazeret düşmez).
+LEAVE_ENTITLEMENT_EXCEEDED = "Talep edilen gün sayısı personelin kalan yıllık izin hakkını aşıyor"
+
+# 🔴 409 — NULL-EŞİK KANONU (fail-closed): kalan hak HESAPLANAMIYOR (kıdem 1 yılı
+# doldurmadı ya da `hire_date` girilmemiş). Bilinmeyen KÜÇÜK değil BÜYÜK sayılır:
+# "hesaplanamadı"yı 0 kullanılmış güne çevirmek TAM HAKKI açardı. Red serbesttir.
+LEAVE_ENTITLEMENT_UNKNOWN = (
+    "Personelin yıllık izin hakkı hesaplanamıyor (kıdem 1 yılı doldurmamış ya da "
+    "işe giriş tarihi girilmemiş); talep onaylanamaz"
+)
+
+# 422 — red gerekçesi ZORUNLU (TH emsali) ve YALNIZ BOŞLUKTAN oluşamaz.
+LEAVE_REJECT_REASON_REQUIRED = "İzin reddi için gerekçe zorunludur"
+
 
 def validate_personnel_source(source: WorkerSource, subcontractor_id: uuid.UUID | None) -> None:
     """Kural BİRLEŞİK kayıt üzerinde koşar.

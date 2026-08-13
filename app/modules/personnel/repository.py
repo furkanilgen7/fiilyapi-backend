@@ -19,6 +19,7 @@ from sqlalchemy import Row, Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.personnel.models import (
+    LeaveBalance,
     LeaveRequest,
     LeaveStatus,
     LeaveType,
@@ -386,3 +387,62 @@ async def find_overlapping_approved_leave(
     if exclude_id is not None:
         stmt = stmt.where(LeaveRequest.id != exclude_id)
     return (await session.execute(stmt.limit(1))).scalars().first()
+
+
+# --- İK-2 T3: bakiye satırı + kullanılan gün toplamı ------------------------
+
+
+async def get_leave_balance(
+    session: AsyncSession, personnel_id: uuid.UUID, year: int
+) -> LeaveBalance | None:
+    """O yılın bakiye satırı — YOKLUĞU meşrudur (`carried_over` sıfır demektir).
+
+    `uq_leave_balances_personnel_year` gereği en fazla bir satır olabilir.
+    """
+    stmt = select(LeaveBalance).where(
+        LeaveBalance.personnel_id == personnel_id, LeaveBalance.year == year
+    )
+    return (await session.execute(stmt)).scalars().first()
+
+
+async def add_leave_balance(session: AsyncSession, balance: LeaveBalance) -> LeaveBalance:
+    session.add(balance)
+    await session.flush()
+    await session.refresh(balance)
+    return balance
+
+
+async def sum_deductible_approved_days(
+    session: AsyncSession, personnel_id: uuid.UUID, year: int
+) -> int:
+    """O yılın **kullanılan** günü: ONAYLI + yıllık haktan DÜŞEN izinlerin toplamı.
+
+    Üç süzgeç de kuralın parçasıdır (spec §2):
+
+    * `status == approved` — bekleyen talep henüz taahhüt değildir,
+    * `LeaveType.deducts_from_annual` — hastalık/mazeret yıllık haktan DÜŞMEZ
+      (İZ 87 "Rapor"), bu yüzden JOIN yapılır ve tip süzülür,
+    * `start_date` o yılın içinde — talep BAŞLADIĞI yıla sayılır
+      (`leave.leave_year` kararı; yıl sınırını aşan talep BÖLÜNMEZ).
+
+    Yıl penceresi `BETWEEN` ile kurulur (`extract` DEĞİL): açık tarih aralığı
+    `ix_leave_requests_personnel_range` indeksini kullanabilir, fonksiyon çağrısı
+    kullanamazdı.
+
+    `coalesce(..., 0)`: hiç satır yoksa SUM **NULL** döner. 🔴 NULL-eşik kanonunun
+    burada okunuşu şudur — bu NULL "veri bilinmiyor" DEĞİL, "hiç izin kullanılmadı"
+    demektir ve 0'a çevrilmesi DOĞRUDUR. Bilinmezlik `hire_date` tarafındadır ve
+    orada None olarak KORUNUR (`leave.annual_entitlement`), toplamda değil.
+    """
+    stmt = (
+        select(func.coalesce(func.sum(LeaveRequest.days), 0))
+        .select_from(LeaveRequest)
+        .join(LeaveType, LeaveRequest.leave_type_id == LeaveType.id)
+        .where(
+            LeaveRequest.personnel_id == personnel_id,
+            LeaveRequest.status == LeaveStatus.approved,
+            LeaveType.deducts_from_annual.is_(True),
+            LeaveRequest.start_date.between(date(year, 1, 1), date(year, 12, 31)),
+        )
+    )
+    return (await session.execute(stmt)).scalar_one()
