@@ -18,6 +18,7 @@ from app.modules.contracts.router import router as contracts_router
 from app.modules.customers.router import router as customers_router
 from app.modules.dashboard.router import router as dashboard_router
 from app.modules.documents.router import router as documents_router
+from app.modules.equipment.router import router as equipment_router
 from app.modules.inventory.router import router as inventory_router
 from app.modules.payroll.router import router as payroll_router
 from app.modules.personnel.router import router as personnel_router
@@ -88,6 +89,7 @@ app.include_router(customers_router)
 app.include_router(dashboard_router)
 app.include_router(documents_router)
 app.include_router(employers_router)
+app.include_router(equipment_router)
 app.include_router(inventory_router)
 app.include_router(payroll_router)
 app.include_router(personnel_router)
