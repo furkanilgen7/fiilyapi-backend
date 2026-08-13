@@ -108,6 +108,66 @@ def employee_deduction_pct(rate: PayrollRate) -> Decimal:
     return sum((getattr(rate, alan) for alan in EMPLOYEE_RATE_FIELDS), Decimal("0"))
 
 
+def employer_burden_pct(rate: PayrollRate) -> Decimal:
+    """İşverenin brüt üzerine EKLEDİĞİ toplam yüzde — SGK 79-81 (4a'da %23,5).
+
+    `employee_deduction_pct`in aynadaki eşi ve ondan KESİN olarak ayrıdır:
+    biri işçinin cebinden çıkanı, öteki işverenin cebinden çıkanı ölçer. İkisi
+    tek fonksiyonda toplansaydı net de maliyet de yanlış çıkardı.
+    """
+    return sum((getattr(rate, alan) for alan in EMPLOYER_RATE_FIELDS), Decimal("0"))
+
+
+def total_employer_cost(gross_amount: Decimal | None, rate: PayrollRate | None) -> Decimal | None:
+    """İşverene toplam maliyet — **`brüt + ÜÇ işveren kalemi`** (spec §7).
+
+    🔴 Bu formülün TEK KAYNAĞI burasıdır: BY 90-92'nin 4. kartı da, BG 49'un
+    "Toplam Maliyet" sütunu da bu fonksiyondan geçer. İki yere kopyalansaydı
+    biri güncellenip öteki unutulduğunda aynı dönem iki ekranda iki maliyet
+    gösterirdi.
+
+    ⚠️ **Etiket mockup'tan, HESAP spec'ten.** BY 92 "SGK işveren payı dahil"
+    yazar ama işveren tarafı SGK 78-86'da ÜÇ kalemdir (SGK işveren %20,5 ·
+    işsizlik işveren %2 · kısa çalışma %1). Yalnız SGK payını toplamak işveren
+    maliyetini sistematik olarak EKSİK gösterirdi — para sınıfı hata. Mockup
+    toplamları (BG 892.000) bu eksik tabana dayanır ve **test beklentisi
+    DEĞİLDİR** (S1: açık oran kazanır).
+
+    Fail-closed: brüt ya da oran seti yoksa **`None`** — 0 dönmek, maliyeti
+    bilinmiyorken "maliyet yok" demek olurdu (WORKFLOW §4 NULL-EŞİK kanonu).
+    """
+    if gross_amount is None or rate is None:
+        return None
+    return gross_amount + quantize_money(gross_amount * employer_burden_pct(rate) / PERCENT_DIVISOR)
+
+
+def rate_share(gross_amount: Decimal | None, rate_pct: Decimal | None) -> Decimal | None:
+    """Tek bir oran sütununun brütteki karşılığı (BG 47 "SGK İşveren" sütunu).
+
+    `total_employer_cost`in bir parçası DEĞİL, onun YANINDAKİ ayrı bir
+    görünümdür: BG hem SGK işveren payını hem toplam maliyeti ayrı sütunlarda
+    basar. İkisi tek fonksiyondan üretilseydi sütunlardan biri ötekinin
+    yuvarlamasını miras alırdı.
+    """
+    if gross_amount is None or rate_pct is None:
+        return None
+    return quantize_money(gross_amount * rate_pct / PERCENT_DIVISOR)
+
+
+def deduction_and_net(gross_amount: Decimal, rate: PayrollRate) -> tuple[Decimal, Decimal]:
+    """Kesinti ve net — zincirin ORTASI, tek tanım.
+
+    `compute_line` (puantajdan otomatik hesap) ve T3'ün brüt override yolu (K3)
+    AYNI fonksiyonu çağırır. Override kendi aritmetiğini yazsaydı elle
+    düzeltilmiş satırlar zamanla otomatik satırlardan farklı bir kurala tabi
+    olurdu.
+
+    Net BAĞIMSIZ YUVARLANMAZ: kesintinin farkıdır (modül docstring'i, "Kuruş").
+    """
+    deduction = quantize_money(gross_amount * employee_deduction_pct(rate) / PERCENT_DIVISOR)
+    return deduction, gross_amount - deduction
+
+
 def computed_days(personnel_source: WorkerSource, man_days: int) -> int | None:
     """Satıra yazılacak gün — serbest meslekte **`None`** (S7, BY 254 "—").
 
@@ -240,9 +300,8 @@ def compute_line(
     if gross is None or rate is None:
         return _uncomputed(personnel_source, days)
 
-    deduction = quantize_money(gross * employee_deduction_pct(rate) / PERCENT_DIVISOR)
     # Net TÜREVDİR — bağımsız yuvarlanmaz; bölüşüm de netten türer (S3).
-    net = gross - deduction
+    deduction, net = deduction_and_net(gross, rate)
     bank, cash = split_payment(net, payment_method)
     return ComputedLine(
         days=days,

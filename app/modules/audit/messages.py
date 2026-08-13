@@ -1037,3 +1037,25 @@ def leave_balance_updated(full_name: str, year: int, carried_over: Decimal) -> s
     """Devreden gün MANUEL girilir (İZ 137) — bakiyeyi doğrudan büyüten tek yazma
     yolu budur, bu yüzden yeni değer metne KONUR (denetim onu geri okuyabilsin)."""
     return f"İzin devreden günü güncellendi: {full_name} · {year} · {carried_over}"
+
+
+# --- İK-3 T3: bordro dönemi + satırı ---
+#
+# Kimlik kullanicinin GORDUGU degerdir: donem (yil/ay) ve personel ADI.
+# TUTARLAR metne KONMAZ ve bu bilinclidir (`leave_request` `days` dersi): tutar
+# SUNUCU hesabidir, gunluge donmus bir kopyasi brut duzeltmesinde ayrisir ve
+# hangi sayinin dogru oldugu anlasilamazdi. Denetim satiri "neyin degistigini"
+# degil "kimin neye dokundugunu" tasir; tutar izi `previous_gross_amount`
+# kolonundadir (K3).
+
+
+def payroll_period_created(year: int, month: int) -> str:
+    return f"Bordro dönemi açıldı: {year}/{month:02d}"
+
+
+def payroll_period_computed(year: int, month: int) -> str:
+    return f"Bordro dönemi hesaplandı: {year}/{month:02d}"
+
+
+def payroll_line_updated(full_name: str, year: int, month: int) -> str:
+    return f"Bordro satırı güncellendi: {full_name} · {year}/{month:02d}"

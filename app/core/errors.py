@@ -145,6 +145,25 @@ class ApprovalNotAllowedError(DomainError):
     """
 
 
+class PayrollValidationError(DomainError):
+    """Bordro para kuralı ihlali (İK-3 spec §6/1, §6/3) — 422.
+
+    `ProcurementValidationError`/`PersonnelValidationError` deseninin aynısı ve
+    aynı sebeple onlardan AYRI: DB `CHECK` ile zorlanamayan kurallar tek yazma
+    yolunda servis korkuluğuyla tutulur. İki kullanıcısı vardır:
+
+    * **S3 invariantı** (`banka + elden = net`) — DB CHECK'i OLAMAZ çünkü üç
+      kolonun da NULL olabildiği `uncomputed` durumda CHECK ya S4'ü kırar ya da
+      hiçbir şey zorlamaz (`payroll/models.py` gerekçesi). Ayrıca ihlali
+      409/500 olarak dönmek kullanıcıya hangi kuruşun kaydığını söylemezdi.
+    * **fail-closed hesap engelleri** — oran seti yokken brüt override'ı,
+      neti hesaplanmamış satırda bölüşüm.
+
+    409 DEĞİL: kayıt DOĞRU durumdadır (`pending`), engelleyen şey GÖVDEDEKİ
+    düzeltilebilir alan değerleridir. 404 da değildir: satır vardır ve görünür.
+    """
+
+
 class ConflictError(DomainError):
     """Durum makinesi / iş kuralı çakışması — 409 (P7 hakediş spec §7, §9.2, §9.7).
 
