@@ -512,3 +512,73 @@ async def test_yazilan_satirlarda_banka_arti_elden_NETE_ESIT(
     # `mixed` ve yöntemsiz kişide varsayılan HEPSİ BANKA (BY 143/163/259/287).
     for kisi in (karma, yontemsiz):
         assert satir_of(satirlar, kisi.id).cash_amount == Decimal("0.00")
+
+
+# --- T6: `compute` dönemi ONAY BEKLİYOR yapar ------------------------------
+#
+# 🔴 YÖNETİM KARARI (2026-08-13, mockup gerekçeli). BY 63 banner'ı "Temmuz 2026
+# bordrosu onay bekliyor" diyor: hesap biter bitmez dönem ZATEN onay bekler.
+# Kullanıcının TEK tıkı BY 56 "Ödemeyi Onayla"dır (`pending_approval →
+# approved`); ayrıca bir "onaya gönder" tıkı YOKTUR. Geçiş KÜMESİ değişmedi
+# (S8 aynı), yalnız `draft → pending_approval` geçişinin TETİKLEYİCİSİ artık
+# `compute`tur ve geçiş yine `transitions.assert_period_transition`ten geçer.
+
+
+async def test_T6_compute_donemi_ONAY_BEKLIYOR_yapar(
+    db_session, donem, oranlar, personel_fabrikasi, puantaj_fabrikasi
+):
+    """BY 63 — hesaplanan dönem onay bekler; kullanıcı ayrıca "gönder" demez."""
+    kisi = await personel_fabrikasi("Ayşe Demir")
+    await puantaj_fabrikasi(kisi, AY_ICI)
+    assert donem.status is PayrollPeriodStatus.draft
+
+    await service.compute_period(db_session, donem.id)
+
+    assert donem.status is PayrollPeriodStatus.pending_approval
+
+
+async def test_T6_hesaplanabilir_satir_YOKSA_donem_TASLAK_kalir(
+    db_session, donem, oranlar, personel_fabrikasi
+):
+    """🔴 BOŞ dönem onaya DÜŞMEZ.
+
+    Ücreti tanımsız (S4) ve puantajsız (S4.1) personelin satırı `uncomputed`,
+    taşeronunki `excluded`tır — ödenecek hiçbir şey yoktur. Dönem yine de
+    "onay bekliyor" olsaydı kullanıcı BY 56'ya basmaya davet edilir, onaylanacak
+    satır bulamaz ve dönem boşuna `approved` olurdu (geri dönüşü YOK: `compute`
+    kapısı da kapanırdı).
+    """
+    await personel_fabrikasi("Ücretsiz", wage_type=None, wage_amount=None)
+    await personel_fabrikasi("Taşeron", source=WorkerSource.subcontractor)
+
+    sonuc = await service.compute_period(db_session, donem.id)
+
+    assert sonuc.created == 2
+    assert donem.status is PayrollPeriodStatus.draft
+
+
+async def test_T6_ikinci_compute_durumu_GERI_ALMAZ(
+    db_session, donem, oranlar, personel_fabrikasi, puantaj_fabrikasi
+):
+    """Yeniden hesap dönemi `draft`a DÜŞÜRMEZ — ilerleme tek yönlüdür (S8)."""
+    kisi = await personel_fabrikasi("Ayşe Demir")
+    await puantaj_fabrikasi(kisi, AY_ICI)
+    await service.compute_period(db_session, donem.id)
+
+    await service.compute_period(db_session, donem.id)
+
+    assert donem.status is PayrollPeriodStatus.pending_approval
+
+
+async def test_T6_bos_donemden_sonra_hesaplanan_satir_donemi_ILERLETIR(
+    db_session, donem, oranlar, personel_fabrikasi, puantaj_fabrikasi
+):
+    """Boş kalan dönem TIKANMAZ: puantaj girilince ikinci `compute` ilerletir."""
+    kisi = await personel_fabrikasi("Ayşe Demir")
+    await service.compute_period(db_session, donem.id)
+    assert donem.status is PayrollPeriodStatus.draft
+
+    await puantaj_fabrikasi(kisi, AY_ICI)
+    await service.compute_period(db_session, donem.id)
+
+    assert donem.status is PayrollPeriodStatus.pending_approval

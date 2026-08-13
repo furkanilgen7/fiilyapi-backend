@@ -242,7 +242,8 @@ async def test_toplu_onay_ATLANANLARI_SAYIYLA_raporlar(client, ik_headers, donem
     assert govde["skipped_excluded"] == 1
     assert govde["skipped_uncomputed"] == 1
     assert govde["skipped_already_approved"] == 0
-    assert govde["period_status"] == PayrollPeriodStatus.pending_approval.value
+    # T6: `compute` dönemi zaten `pending_approval` yaptı → tek onay `approved`.
+    assert govde["period_status"] == PayrollPeriodStatus.approved.value
 
 
 async def test_K2_toplu_onay_taseron_satirini_ATLAR(
@@ -263,13 +264,42 @@ async def test_K2_toplu_onay_taseron_satirini_ATLAR(
     assert await _durum(db_session, satirlar["Ayşe Demir"]["id"]) is PayrollLineStatus.approved
 
 
-async def test_donem_ADIM_ADIM_ilerler_ve_ucuncu_cagri_409(client, ik_headers, donem, dort_tip):
-    """S8 — her çağrı KOMŞU adıma geçer: `draft → pending_approval → approved`.
+async def test_T6_hesaptan_sonra_TEK_onay_tiki_yeter(client, ik_headers, donem, dort_tip):
+    """🔴 T6 YÖNETİM KARARI — kullanıcının TEK tıkı BY 56 "Ödemeyi Onayla"dır.
 
-    Tek çağrıda `draft → approved` yapılsaydı BY 61'in "onay bekliyor" hâli hiç
-    yaşanmaz ve adım atlama gözlemlenemez hâle gelirdi.
+    `compute` dönemi zaten `pending_approval` yapar (BY 63 banner'ı: "… onay
+    bekliyor"), bu yüzden onay ucuna TEK çağrı dönemi `approved` yapar. Eskiden
+    iki çağrı gerekiyordu (`draft → pending_approval` ilk tıkla atılıyordu) —
+    mockup'ta böyle bir "onaya gönder" tıkı YOK.
+
+    S8 hâlâ atlamıyor: adım zinciri aynı, yalnız ilk adımın tetikleyicisi
+    hesaplamadır.
     """
     await _satirlar(client, ik_headers, donem)
+    durum = (await client.get(f"/payroll/periods/{donem.id}", headers=ik_headers)).json()["status"]
+    assert durum == PayrollPeriodStatus.pending_approval.value
+
+    ilk = await client.post(f"/payroll/periods/{donem.id}/approve", headers=ik_headers)
+    assert ilk.status_code == 200, ilk.text
+    assert ilk.json()["period_status"] == PayrollPeriodStatus.approved.value
+    assert ilk.json()["approved"] == 3
+
+    ikinci = await client.post(f"/payroll/periods/{donem.id}/approve", headers=ik_headers)
+    assert ikinci.status_code == 409, ikinci.text
+
+
+async def test_S8_TASLAK_donemde_onay_yine_KOMSU_adima_gecer(
+    client, ik_headers, donem, dort_tip, db_session
+):
+    """S8 — zincir DEĞİŞMEDİ: `draft`tan çağrılırsa yine BİR adım ilerler.
+
+    Yeni akışta `draft` dönemde onaylanacak satır normalde yoktur (hesaplanmış
+    dönem `pending_approval`dır), ama tablo hâlâ `draft → approved` atlamasını
+    reddeder — geçiş KÜMESİ T6'da dokunulmamıştır.
+    """
+    await _satirlar(client, ik_headers, donem)
+    donem.status = PayrollPeriodStatus.draft
+    await db_session.flush()
 
     ilk = await client.post(f"/payroll/periods/{donem.id}/approve", headers=ik_headers)
     assert ilk.json()["period_status"] == PayrollPeriodStatus.pending_approval.value
@@ -277,12 +307,9 @@ async def test_donem_ADIM_ADIM_ilerler_ve_ucuncu_cagri_409(client, ik_headers, d
     ikinci = await client.post(f"/payroll/periods/{donem.id}/approve", headers=ik_headers)
     assert ikinci.status_code == 200, ikinci.text
     assert ikinci.json()["period_status"] == PayrollPeriodStatus.approved.value
-    # İkinci turda onaylanacak satır KALMAMIŞTIR ve bu da sayıyla raporlanır.
+    # İlk turda satırlar onaylanmıştır; ikincide onaylanacak satır kalmaz.
     assert ikinci.json()["approved"] == 0
     assert ikinci.json()["skipped_already_approved"] == 3
-
-    ucuncu = await client.post(f"/payroll/periods/{donem.id}/approve", headers=ik_headers)
-    assert ucuncu.status_code == 409, ucuncu.text
 
 
 async def test_ODENMIS_donem_yeniden_onaylanamaz_409(
@@ -311,9 +338,11 @@ async def test_yetkisiz_rol_donem_onayi_403(client, yetkisiz_headers, donem, dor
 
 
 async def _onaya_kadar(client, headers, donem) -> dict[str, dict]:
+    """Hesapla + onayla. T6'dan sonra onay TEK çağrıdır: `compute` dönemi zaten
+    `pending_approval` bırakır, tek `approve` onu `approved` yapar."""
     satirlar = await _satirlar(client, headers, donem)
-    await client.post(f"/payroll/periods/{donem.id}/approve", headers=headers)
-    await client.post(f"/payroll/periods/{donem.id}/approve", headers=headers)
+    resp = await client.post(f"/payroll/periods/{donem.id}/approve", headers=headers)
+    assert resp.json()["period_status"] == PayrollPeriodStatus.approved.value, resp.text
     return satirlar
 
 
@@ -456,7 +485,7 @@ async def test_onay_ve_odeme_DENETIM_satiri_yazar(client, ik_headers, donem, dor
 
     satirlar = await _satirlar(client, ik_headers, donem)
     await client.post(f"/payroll/lines/{satirlar['Ayşe Demir']['id']}/approve", headers=ik_headers)
-    await client.post(f"/payroll/periods/{donem.id}/approve", headers=ik_headers)
+    # T6: dönem onayı TEK çağrıdır (`compute` `pending_approval` bıraktı).
     await client.post(f"/payroll/periods/{donem.id}/approve", headers=ik_headers)
     await client.post(f"/payroll/periods/{donem.id}/pay", headers=ik_headers)
 
@@ -465,6 +494,6 @@ async def test_onay_ve_odeme_DENETIM_satiri_yazar(client, ik_headers, donem, dor
         .scalars()
         .all()
     )
-    assert len(kayitlar) == 4, [k.detail for k in kayitlar]
+    assert len(kayitlar) == 3, [k.detail for k in kayitlar]
     assert any("Ayşe Demir" in k.detail for k in kayitlar)
     assert any("ödendi" in k.detail.lower() for k in kayitlar)

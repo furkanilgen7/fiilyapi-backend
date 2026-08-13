@@ -227,6 +227,36 @@ def _apply(line: PayrollLine, source: WorkerSource, hesap: compute.ComputedLine)
     line.excluded_reason = hesap.excluded_reason
 
 
+def _promote_period_after_compute(period: PayrollPeriod, lines: list[PayrollLine]) -> None:
+    """🔴 T6 YÖNETİM KARARI — hesaplanan dönem KENDİLİĞİNDEN "onay bekliyor" olur.
+
+    BY 63 banner'ı "Temmuz 2026 bordrosu onay bekliyor" yazar: mockup'ta hesap
+    ile onay arasında bir "onaya gönder" tıkı YOKTUR. Kullanıcının tek tıkı
+    BY 56 "Ödemeyi Onayla"dır (`pending_approval → approved`). Tetikleyici
+    `approve_period`in İLK çağrısı olsaydı aynı düğmeye iki kez basmak gerekir,
+    ilk basış kullanıcıya hiçbir şey yapmamış gibi görünürdü.
+
+    **Geçiş KÜMESİ değişmedi (S8).** Değişen yalnız `draft → pending_approval`
+    çiftinin tetikleyicisidir; geçiş yine `transitions.assert_period_transition`
+    kapısından geçer — durum elle atanıp tablo ATLANMAZ, yoksa zincirin şekli
+    ikinci bir yerde yaşamaya başlardı.
+
+    **Boş dönem onaya DÜŞMEZ:** hesaplanabilir (`pending`) tek satır bile yoksa
+    dönem `draft` KALIR. Düşseydi kullanıcı onaylayacak satırı olmayan bir
+    dönemi `approved` yapabilir ve `compute` kapısı (S5) o ayın üzerine
+    kapanırdı — geri dönüşü olmayan bir boş onay.
+
+    Çağıran `compute_period`in KİLİDİ altındadır (EŞİK = KİLİT): durum yazımı
+    `_lock_period`in aldığı `FOR UPDATE` penceresinin içindedir.
+    """
+    if period.status is not PayrollPeriodStatus.draft:
+        return
+    if not any(line.status is PayrollLineStatus.pending for line in lines):
+        return
+    transitions.assert_period_transition(period.status, PayrollPeriodStatus.pending_approval)
+    period.status = PayrollPeriodStatus.pending_approval
+
+
 async def compute_period(session: AsyncSession, period_id: uuid.UUID) -> PayrollComputeResult:
     """Dönemin satırlarını puantaj + ücret + oranlardan ÜRETİR/GÜNCELLER.
 
@@ -236,6 +266,9 @@ async def compute_period(session: AsyncSession, period_id: uuid.UUID) -> Payroll
     * `approved`/`paid` satır — ödeme izi (S5) bozulmaz.
 
     Dönem `approved`/`paid` ise hiç başlanmaz: **409**.
+
+    En az bir ödenebilir (`pending`) satır çıktıysa dönem `pending_approval`a
+    ilerler — gerekçe `_promote_period_after_compute`tedir (T6).
     """
     period = await _lock_period(session, period_id)
     if period.status in LOCKED_PERIOD_STATUSES:
@@ -247,13 +280,20 @@ async def compute_period(session: AsyncSession, period_id: uuid.UUID) -> Payroll
     existing = await _existing_lines(session, period.id)
 
     created = updated = skipped_overridden = skipped_approved = 0
+    #: Bu koşuda ÜRETİLEN ya da KORUNAN satırlar — dönem ilerletmesinin tabanı.
+    #: Kapsam dışına düşmüş kişilerin eski satırları (modül notundaki bilinçli
+    #: sınır) burada YOKTUR: `compute` onlara artık dokunmuyor, o hâlde "bu
+    #: hesap ödenebilir bir şey üretti mi" sorusuna da cevap veremezler.
+    dokunulan: list[PayrollLine] = []
     for person in await _payroll_personnel(session):
         line = existing.get(person.id)
         if line is not None and line.is_overridden:
             skipped_overridden += 1
+            dokunulan.append(line)
             continue
         if line is not None and line.status in LOCKED_LINE_STATUSES:
             skipped_approved += 1
+            dokunulan.append(line)
             continue
 
         hesap = compute.compute_line(
@@ -272,6 +312,9 @@ async def compute_period(session: AsyncSession, period_id: uuid.UUID) -> Payroll
         else:
             updated += 1
         _apply(line, person.source, hesap)
+        dokunulan.append(line)
+
+    _promote_period_after_compute(period, dokunulan)
 
     await session.flush()
     return PayrollComputeResult(
