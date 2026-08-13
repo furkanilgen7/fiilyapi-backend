@@ -173,6 +173,37 @@ async def test_bedeli_bilinmeyen_makine_maliyete_sifir_olarak_girmez(
 
 
 @pytest.mark.asyncio
+async def test_maliyeti_bilinmeyen_makine_KPI_da_SAYILARAK_bildirilir(
+    client, admin_headers, ekipman_fabrikasi, gorunen_santiye, kayit_fabrikasi
+):
+    """🔴 FINAL REVIEW bulgusu — atlanan makine SESSİZ kalmamalıdır.
+
+    K16 uydurma 0'ı yasaklar, atlamak da toplamda fiilen 0 saymaktır: kullanıcı
+    ₺1.000 görürken 20 saat çalışmış ikinci makinenin parası hiçbir yerde
+    geçmez ve ekran bunu SÖYLEMEZ. Toplamı `null` yapmak (tek bilinmeyen makine
+    bütün KPI'ı gizlerdi) ile sessizce eksik basmak arasındaki doğru yol, K21'in
+    izin verdiği FAZLA veriyi vermektir: kaç makinenin bedeli bilinmiyor.
+    """
+    bedelsiz = await ekipman_fabrikasi("Bedelsiz", site=gorunen_santiye)
+    await kayit_fabrikasi(bedelsiz, hours="20")
+    donemsiz = await ekipman_fabrikasi(
+        "Dönemsiz", site=gorunen_santiye, rate_amount=Decimal("500.00")
+    )
+    await kayit_fabrikasi(donemsiz, hours="8")
+    bilinen = await ekipman_fabrikasi(
+        "Bilinen",
+        site=gorunen_santiye,
+        rate_amount=Decimal("100.00"),
+        rate_period=EquipmentRatePeriod.hourly,
+    )
+    await kayit_fabrikasi(bilinen, hours="10")
+
+    govde = (await client.get("/equipment/summary", headers=admin_headers)).json()
+    assert Decimal(govde["monthly_cost"]) == Decimal("1000")
+    assert govde["monthly_cost_unknown_count"] == 2
+
+
+@pytest.mark.asyncio
 async def test_aylik_bedelde_payda_ekipmanin_kapasitesidir(
     client, admin_headers, ekipman_fabrikasi, gorunen_santiye, kayit_fabrikasi
 ):
@@ -202,4 +233,5 @@ async def test_kayit_yokken_maliyet_sifirdir(client, admin_headers):
         "maintenance": 0,
         "idle": 0,
         "monthly_cost": govde["monthly_cost"],
+        "monthly_cost_unknown_count": 0,
     }

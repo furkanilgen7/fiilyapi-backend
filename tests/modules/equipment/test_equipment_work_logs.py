@@ -447,3 +447,37 @@ async def test_okuma_izni_yazamaz_403(client, muhendis_headers, makine):
 async def test_izinsiz_kullanici_okuyamaz_403(client, yetkisiz_headers):
     yanit = await client.get("/equipment/work-logs", headers=yetkisiz_headers)
     assert yanit.status_code == 403, yanit.text
+
+
+@pytest.mark.asyncio
+async def test_patch_yalniz_notu_degistiren_istek_aralikSIZ_kaydi_KILITLEMEZ(
+    client, sef_headers, makine
+):
+    """🔴 FINAL REVIEW bulgusu — K11 kuralının PATCH'te kaydı kilitlemesi.
+
+    Arıza kaydında (M3:283) saat aralığı YOKTUR, saat doğrudan girilir. Böyle bir
+    kaydın YALNIZ notunu düzeltmek isteyen bir istek `hours` göndermez ve gönderemez
+    de (K11: sunucu hesabı). `_resolve_hours` gövdedeki `hours`u ve satırdaki
+    aralığı birlikte okuduğu için ikisi de boş kalıyor ve kayıt "saat zorunlu"
+    diye 422'ye takılıyordu: aralıksız HER kayıt, açıldıktan sonra bir daha hiç
+    düzeltilemez oluyordu (T3'ün K2'de bulduğu kilitlenmenin aynısı).
+
+    Doğru davranış: gövde saatin hiçbir girdisine DOKUNMUYORSA satırdaki saat
+    korunur; kural yalnız saate dokunan isteklerde koşar.
+    """
+    kayit = await _kayit_ac(
+        client,
+        sef_headers,
+        makine.id,
+        record_type=WorkLogType.breakdown.value,
+        hours="6",
+        note="Hidrolik hortum patladı",
+    )
+    yanit = await client.patch(
+        f"/equipment/work-logs/{kayit['id']}",
+        json={"note": "Hidrolik hortum değişti, servis bekleniyor"},
+        headers=sef_headers,
+    )
+    assert yanit.status_code == 200, yanit.text
+    assert yanit.json()["hours"] == "6.00"
+    assert yanit.json()["note"] == "Hidrolik hortum değişti, servis bekleniyor"

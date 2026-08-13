@@ -205,7 +205,10 @@ class EquipmentSummaryResponse(BaseModel):
     `monthly_cost` **cari ayın çalışma maliyeti toplamıdır** ve SATIRLARDAN
     türer (K15) — M1'in ₺124K'sı mockup'ın kendi aritmetik hatasıdır,
     kopyalanmaz. Bedeli bilinmeyen makine toplama uydurma bir `0` ile GİRMEZ
-    (K16, gerekçe `service.summarize`).
+    (K16, gerekçe `service.summarize`) — bunun yerine ADETÇE
+    `monthly_cost_unknown_count` ile bildirilir, çünkü sessizce atlanan makine
+    kullanıcıya eksik bir parayı TAM gösterirdi (K21: sunucu fazla veri
+    verebilir, eksik veremez).
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -215,6 +218,7 @@ class EquipmentSummaryResponse(BaseModel):
     maintenance: int
     idle: int
     monthly_cost: Decimal
+    monthly_cost_unknown_count: int
 
 
 # --- Çalışma kaydı (M3 · spec §2.2, §4) ---

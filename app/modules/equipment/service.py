@@ -258,6 +258,7 @@ class EquipmentSummary(NamedTuple):
     maintenance: int
     idle: int
     monthly_cost: Decimal
+    monthly_cost_unknown_count: int
 
 
 def _month_bounds(bugun: date) -> tuple[date, date]:
@@ -282,7 +283,10 @@ async def summarize(session: AsyncSession, actor: User) -> EquipmentSummary:
     UYDURMA bir `0` ile GİRMEZ — atlanır; bilinen makinelerin parası bundan
     etkilenmez. Sonucun kendisi `null` yapılmadı çünkü KPI bir toplamdır ve
     tek bilinmeyen makine yüzünden bütün filonun maliyetini gizlemek
-    kullanıcıyı ekranın tamamından ederdi.
+    kullanıcıyı ekranın tamamından ederdi. **Ama atlamak da SESSİZ kalamaz:**
+    toplamda fiilen 0 sayılan makineler `monthly_cost_unknown_count` ile
+    ADETÇE bildirilir (K21: sunucu mockup'tan fazla veri verebilir) — yoksa
+    kullanıcı eksik bir parayı tam sanırdı.
     """
     project_ids = await _visible_project_ids(session, actor)
     sayaclar = await repository.status_counts(session, project_ids)
@@ -291,6 +295,7 @@ async def summarize(session: AsyncSession, actor: User) -> EquipmentSummary:
         session, project_ids, date_from=ilk, date_to=son
     )
     toplam = Decimal("0")
+    bilinmeyen = 0
     for hours, rate_amount, rate_period, capacity in satirlar:
         satir_maliyeti = cost.compute_cost(
             hours=hours,
@@ -298,7 +303,9 @@ async def summarize(session: AsyncSession, actor: User) -> EquipmentSummary:
             rate_period=rate_period,
             monthly_capacity_hours=capacity,
         )
-        if satir_maliyeti is not None:
+        if satir_maliyeti is None:
+            bilinmeyen += 1
+        else:
             toplam += satir_maliyeti
     return EquipmentSummary(
         working=sayaclar.get(EquipmentStatus.working, 0),
@@ -306,6 +313,7 @@ async def summarize(session: AsyncSession, actor: User) -> EquipmentSummary:
         maintenance=sayaclar.get(EquipmentStatus.maintenance, 0),
         idle=sayaclar.get(EquipmentStatus.idle, 0),
         monthly_cost=toplam,
+        monthly_cost_unknown_count=bilinmeyen,
     )
 
 
@@ -340,6 +348,9 @@ DAILY_HOURS_EXCEEDED = (
 
 #: Saat çözümlemesinin ölçeği — kolon `Numeric(6, 2)`.
 _HOURS_QUANTUM = Decimal("0.01")
+#: PATCH'te K11'i tetikleyen alanlar: gövde bunlardan HİÇBİRİNE dokunmuyorsa
+#: satırdaki saat korunur (bkz. `update_work_log`).
+_HOURS_INPUTS = frozenset({"start_time", "end_time", "hours"})
 _SECONDS_PER_HOUR = Decimal("3600")
 
 
@@ -540,14 +551,23 @@ async def update_work_log(
         raise NotFoundError(OPERATOR_MISSING)
 
     await _lock_equipment(session, log.equipment_id, hedef_equipment_id)
-    hours = _resolve_hours(
-        start_time=degisiklikler.get("start_time", log.start_time),
-        end_time=degisiklikler.get("end_time", log.end_time),
-        # 🔴 `hours` YALNIZ gövdede varsa "verilmiş" sayılır: satırdaki mevcut
-        # saat taşınsaydı, aralığı duran HER kayıt kendi eski saati yüzünden
-        # 2. kapıya takılır ve bir daha hiç düzeltilemezdi.
-        hours=degisiklikler.get("hours"),
-    )
+    if _HOURS_INPUTS & degisiklikler.keys():
+        hours = _resolve_hours(
+            start_time=degisiklikler.get("start_time", log.start_time),
+            end_time=degisiklikler.get("end_time", log.end_time),
+            # 🔴 `hours` YALNIZ gövdede varsa "verilmiş" sayılır: satırdaki mevcut
+            # saat taşınsaydı, aralığı duran HER kayıt kendi eski saati yüzünden
+            # 2. kapıya takılır ve bir daha hiç düzeltilemezdi.
+            hours=degisiklikler.get("hours"),
+        )
+    else:
+        # 🔴 Gövde saatin HİÇBİR girdisine dokunmuyorsa satırdaki saat korunur
+        # (F-İK "touched" deseni, T3'ün K2'de uyguladığının kardeşi). Kural
+        # koşulsuz koşsaydı ARALIKSIZ bir kayıt (arıza — M3:283) açıldıktan
+        # sonra bir daha hiç düzeltilemezdi: notunu değiştiren istek `hours`
+        # göndermez, gönderemez de (K11 sunucu hesabı) ve "saat zorunlu"
+        # 422'sine takılırdı.
+        hours = log.hours
     await _assert_daily_cap(
         session,
         equipment_id=hedef_equipment_id,
