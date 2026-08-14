@@ -1,6 +1,7 @@
-"""MK-1 makine & ekipman çekirdeği — veri modeli (spec §2, §5).
+"""Makine & ekipman — veri modeli (MK-1 spec §2/§5 + MK-2 spec §2.1/§2.2/§5).
 
-Üç tablo: ekipman kartı (M1+M2) · çalışma kaydı (M3) · yakıt kaydı (M4).
+Beş tablo: ekipman kartı (M1+M2) · çalışma kaydı (M3) · yakıt kaydı (M4) ·
+kira hakedişi başlığı (M5) · kira hakedişi satırı (M5 tablosu).
 Router/servis mantığı BU DOSYADA YOKTUR (T3+).
 
 Bu modülün taşıdığı kalıcı kararlar:
@@ -52,6 +53,7 @@ from sqlalchemy import (
     String,
     Text,
     Time,
+    UniqueConstraint,
     func,
     text,
 )
@@ -81,6 +83,21 @@ HOURS_SCALE = 2
 # (186/200 = %93 · 152/200 = %76 · 42/200 = %21 · 168/200 = %84 · 144/200 = %72
 # — beşi de M3 rozetleriyle birebir). Ekipman başına DEĞİŞTİRİLEBİLİR.
 DEFAULT_MONTHLY_CAPACITY_HOURS = 200
+
+# MK-2 K1: KDV oranının VARSAYILANIDIR, SABİTİ DEĞİL. Oran `vat_rate`
+# kolonunda satır satır yaşar; koda gömülseydi mevzuat değişiminde GEÇMİŞ
+# faturaların tutarı geriye dönük oynardı (İK-3 `payroll_rates` dersi).
+DEFAULT_VAT_RATE = Decimal("20.00")
+
+# Oran ölçeği: yüzde iki ondalıkla ifade edilir (%20,00 · %8,00 · %1,00).
+VAT_RATE_PRECISION = 5
+VAT_RATE_SCALE = 2
+
+# MK-2 saat ölçeği. MK-1'in `HOURS_PRECISION`ı (6) TEK GÜNÜN saatidir; kira
+# hakedişi satırı bir AYIN toplamını taşır (M5: 186 saat) ve dönem birikimi
+# altı hanenin altında sıkışmamalıdır.
+RENTAL_HOURS_PRECISION = 8
+RENTAL_HOURS_SCALE = 2
 
 
 class EquipmentCategory(str, enum.Enum):
@@ -175,6 +192,50 @@ class WorkLogType(str, enum.Enum):
     breakdown = "breakdown"
 
 
+# 🔴 MK-2 spec §5: `equipment_rate_period` DB tipi TEKTİR ve MK-1'in malıdır.
+# Hem `equipment.rate_period` hem `equipment_rental_invoices.rate_period` BU
+# NESNEYİ paylaşır; her kolonda ayrı bir `Enum(...)` yazılsaydı `create_all` aynı
+# tipi İKİ KEZ yaratmayı denerdi (`payment_terms` emsali) ve `worker_source`
+# dersinde olduğu gibi iki farklı değer listesi iddia edilebilirdi.
+equipment_rate_period_enum = Enum(
+    EquipmentRatePeriod, name="equipment_rate_period", metadata=Base.metadata
+)
+
+
+class RentalInvoiceStatus(str, enum.Enum):
+    """MK-2 K5 — kira hakedişi durum makinesi (M5:65).
+
+    Zincir: `draft → pending_verification → approved → paid`.
+    Ayrı bir `rejected` durumu YOKTUR: reddetme `approved → pending_verification`
+    geri geçişidir (İK-3'ün red deseni). Ayrı durum açılsaydı reddedilmiş bir
+    fatura "onaya bekleyen" listesinden düşer ve sessizce kaybolurdu.
+    """
+
+    draft = "draft"
+    pending_verification = "pending_verification"
+    approved = "approved"
+    paid = "paid"
+
+
+class RentalLineKind(str, enum.Enum):
+    """MK-2 K3 — satırın ÖDENECEĞE KATILIMI buradan okunur.
+
+    * `rented` → ödenecek toplama **GİRER**
+    * `owned` → görünür, maliyeti raporlanır, toplama **GİRMEZ** (M5:140-151)
+    * `breakdown` → tutarı "hariç tutulan" olarak raporlanır, toplama **GİRMEZ**
+      (M5:128-139 üstü çizili)
+
+    🔴 Çift ödeme YAPISAL olarak imkânsızdır: `owned`/`breakdown` hiçbir toplamın
+    kaynağı değildir (İK-3 K2'nin `excluded` deseni birebir). Tek bir "hariç"
+    bayrağına indirgenseydi `owned` ile `breakdown` ayrımı kaybolur, M5'in iki
+    ayrı sunumu (kendi malı vs. arıza indirimi) üretilemezdi.
+    """
+
+    rented = "rented"
+    owned = "owned"
+    breakdown = "breakdown"
+
+
 class Equipment(Base):
     """Ekipman kartı — M1 listesi + M2 formu (spec §2.1).
 
@@ -258,7 +319,7 @@ class Equipment(Base):
         Numeric(MONEY_PRECISION, MONEY_SCALE), nullable=True
     )
     rate_period: Mapped[EquipmentRatePeriod | None] = mapped_column(
-        Enum(EquipmentRatePeriod, name="equipment_rate_period"), nullable=True
+        equipment_rate_period_enum, nullable=True
     )
     # K4: NULL = "Depoda (Atanmadı)". K20: NULL olan ekipman HERKESE görünür.
     site_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -458,3 +519,208 @@ class EquipmentFuelLog(Base):
         from app.modules.equipment.cost import fuel_amount
 
         return fuel_amount(liters=self.liters, unit_price=self.unit_price)
+
+
+class EquipmentRentalInvoice(Base):
+    """Kira hakedişi başlığı — M5 (MK-2 spec §2.1).
+
+    Kiralama firmasından **GELEN** faturanın kaydıdır: çalışma kayıtlarından
+    hesaplanan saatlerle doğrulanır ve ödenecek tutar buradan çıkar.
+
+    Bu tablonun taşıdığı kalıcı kararlar:
+
+    * **K1 — `invoice_amount` KDV HARİÇ matrahtır** ve `vat_rate` bir KOLONDUR,
+      koda gömülü sabit DEĞİL. `vat_amount` ve `payable_total` KOLON DEĞİLDİR;
+      `invoice_amount` + `vat_rate`ten türer (P10 "tek formül" kanonu). Oran
+      koda gömülseydi mevzuat değişince GEÇMİŞ faturalar geriye dönük oynardı
+      (İK-3 `payroll_rates` dersi).
+    * **UQ `(supplier_id, invoice_no)`** — aynı faturayı iki kez ödemeyi
+      YAPISAL olarak engeller. `invoice_no` NULL iken Postgres'in varsayılan
+      `NULLS DISTINCT` semantiği altında taslaklar serbesttir
+      (`personnel.tc_no` emsali): taslak açan kullanıcı fatura numarasını
+      bilmeyebilir ve ikinci taslakta kilitlenmemelidir.
+    * **`supplier_id` RESTRICT'tir** (`equipment.supplier_id`in SET NULL'ının
+      bilinçli istisnası): fatura bir PARA izidir, tedarikçi kaydı silinerek
+      ödemenin muhatabı yok edilemez.
+    * **K5 — durum makinesi** `RentalInvoiceStatus`tadır; geçiş kapıları
+      SERVİStedir (DB CHECK'i değil), `approved`/`paid` faturada düzenleme
+      409'dur.
+    * Toplamlar (`our_total` · `owned_total` · `excluded_breakdown_amount`)
+      KOLON DEĞİLDİR: SATIRLARDAN türer (MK-1 K15).
+    """
+
+    __tablename__ = "equipment_rental_invoices"
+    __table_args__ = (
+        CheckConstraint(
+            "period_month >= 1 AND period_month <= 12",
+            name="ck_equipment_rental_invoices_month_range",
+        ),
+        CheckConstraint(
+            "invoice_amount IS NULL OR invoice_amount >= 0",
+            name="ck_equipment_rental_invoices_amount_non_negative",
+        ),
+        # Negatif ya da %100'ü aşan bir KDV oranı hiçbir okumada anlamlı değildir.
+        CheckConstraint(
+            "vat_rate >= 0 AND vat_rate <= 100",
+            name="ck_equipment_rental_invoices_vat_rate_range",
+        ),
+        UniqueConstraint(
+            "supplier_id",
+            "invoice_no",
+            name="uq_equipment_rental_invoices_supplier_invoice_no",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # K8: bir fatura TEK tedarikçiye aittir; `rented` satırların ekipmanı bu
+    # tedarikçiyle eşleşmek zorundadır (ihlal 422, denetim SERVİStedir).
+    supplier_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("suppliers.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    # M5:59 — taslakta henüz bilinmeyebilir.
+    invoice_no: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # M5:63 — firmanın kestiği tutar, KDV HARİÇ (K1).
+    invoice_amount: Mapped[Decimal | None] = mapped_column(
+        Numeric(MONEY_PRECISION, MONEY_SCALE), nullable=True
+    )
+    # M5:72 — dönemsiz fatura hiçbir aya düşmezdi.
+    period_year: Mapped[int] = mapped_column(Integer, nullable=False)
+    period_month: Mapped[int] = mapped_column(Integer, nullable=False)
+    # M5:73 "Tüm Projeler" = NULL. K9: NULL olan fatura HERKESE görünür.
+    site_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sites.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    # M5:74 — MK-1'in tipi YENİDEN KULLANILIR (DB tipi TEK, spec §5).
+    rate_period: Mapped[EquipmentRatePeriod] = mapped_column(
+        equipment_rate_period_enum, nullable=False
+    )
+    # K1: oran VERİDİR — varsayılanı %20, ama satır kendi oranını taşır.
+    vat_rate: Mapped[Decimal] = mapped_column(
+        Numeric(VAT_RATE_PRECISION, VAT_RATE_SCALE),
+        nullable=False,
+        default=DEFAULT_VAT_RATE,
+        server_default=text(str(DEFAULT_VAT_RATE)),
+    )
+    status: Mapped[RentalInvoiceStatus] = mapped_column(
+        Enum(RentalInvoiceStatus, name="rental_invoice_status"),
+        nullable=False,
+        default=RentalInvoiceStatus.draft,
+        server_default=text("'draft'::rental_invoice_status"),
+        index=True,
+    )
+    # SET NULL: onaylayan kullanıcı silinse de fatura ve onay ZAMANI ayakta
+    # kalır (İK-3 `payroll_periods` emsali).
+    approved_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class EquipmentRentalInvoiceLine(Base):
+    """Kira hakedişi satırı — M5 tablosu (MK-2 spec §2.2).
+
+    * **K2 — `worked_hours` SNAPSHOT'tır, canlı sorgu DEĞİL.** Satır kurulurken
+      çalışma kaydından okunur ve KOPYALANIR. Canlı JOIN olsaydı, fatura
+      onaylandıktan sonra biri geçmiş bir çalışma kaydını düzelttiğinde
+      ONAYLANMIŞ bir ödemenin dayanağı sessizce değişirdi (İK-3
+      `personnel_source` snapshot'ı ile aynı ilke). Tazeleme AYRI ve AÇIK bir
+      eylemdir (`POST …/reload`, yalnız `draft`ta).
+    * **K4 — `our_amount` KOLON DEĞİLDİR:** `worked_hours × saatlik bedel` her
+      okumada türetilir ve saatlik bedel MK-1'in `cost.py`sinden gelir. Satırın
+      `rate_amount`ı doluysa o, boşsa ekipmanın kendi bedeli; ikisi de yoksa
+      **`null`** (MK-1 K16 fail-closed), 0 DEĞİL.
+    * **K6 — `hours_variance` da KOLON DEĞİLDİR:** `invoiced_hours − worked_hours`
+      türevidir ve rozet (`variance_status`) sunucu damgasıdır (F-P10 kanonu).
+    * **UQ `(invoice_id, equipment_id, line_kind)`** — aynı makine hem `rented`
+      hem `breakdown` satırı taşıyabilir (M5 ikisini AYRI satır çiziyor), ama
+      aynı türden iki satır taşıyamaz. UQ `line_kind`i içermeseydi arıza satırı
+      sessizce reddedilirdi.
+    * `equipment_id` **RESTRICT**'tir: satırı olan ekipman silinemez (para izi);
+      `invoice_id` **CASCADE**'dir: fatura düşünce yetim satır bırakılmaz.
+    """
+
+    __tablename__ = "equipment_rental_invoice_lines"
+    __table_args__ = (
+        CheckConstraint(
+            "worked_hours >= 0", name="ck_equipment_rental_invoice_lines_worked_hours_non_negative"
+        ),
+        CheckConstraint(
+            "breakdown_hours >= 0",
+            name="ck_equipment_rental_invoice_lines_breakdown_hours_non_negative",
+        ),
+        CheckConstraint(
+            "rate_amount IS NULL OR rate_amount >= 0",
+            name="ck_equipment_rental_invoice_lines_rate_amount_non_negative",
+        ),
+        CheckConstraint(
+            "invoiced_hours IS NULL OR invoiced_hours >= 0",
+            name="ck_equipment_rental_invoice_lines_invoiced_hours_non_negative",
+        ),
+        UniqueConstraint(
+            "invoice_id",
+            "equipment_id",
+            "line_kind",
+            name="uq_equipment_rental_invoice_lines_equipment_kind",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    invoice_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("equipment_rental_invoices.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    equipment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("equipment.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    # K3: ödenecek toplama katılım BURADAN okunur.
+    line_kind: Mapped[RentalLineKind] = mapped_column(
+        Enum(RentalLineKind, name="rental_line_kind"), nullable=False
+    )
+    # K2: SNAPSHOT — çalışma kaydından kopyalanır, canlı okunmaz.
+    worked_hours: Mapped[Decimal] = mapped_column(
+        Numeric(RENTAL_HOURS_PRECISION, RENTAL_HOURS_SCALE), nullable=False
+    )
+    # M5:92 — arıza saati. Varsayılanı 0'dır: arızasız satırda "bilinmiyor" ile
+    # "arıza yok" aynı şey değildir ve M5 her satırda bir sayı basar.
+    breakdown_hours: Mapped[Decimal] = mapped_column(
+        Numeric(RENTAL_HOURS_PRECISION, RENTAL_HOURS_SCALE),
+        nullable=False,
+        default=Decimal("0"),
+        server_default=text("0"),
+    )
+    # M5:93 — DÜZENLENEBİLİR; boşsa ekipmanın kendi bedeline düşülür, o da
+    # yoksa maliyet `null` durur (K4, fail-closed).
+    rate_amount: Mapped[Decimal | None] = mapped_column(
+        Numeric(MONEY_PRECISION, MONEY_SCALE), nullable=True
+    )
+    # M5:95 — firmanın İDDİA ETTİĞİ saat. Bizim `worked_hours`umuzdan AYRI
+    # kolondur: fark (K6) ancak iki bağımsız sayı varsa hesaplanabilir.
+    invoiced_hours: Mapped[Decimal | None] = mapped_column(
+        Numeric(RENTAL_HOURS_PRECISION, RENTAL_HOURS_SCALE), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )

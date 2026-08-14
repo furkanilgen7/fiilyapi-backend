@@ -422,8 +422,12 @@ def test_alembic_has_single_head():
     )
     assert result.returncode == 0, result.stderr
     heads = [line for line in result.stdout.splitlines() if line.strip()]
+    # Head'in KİMLİĞİ iddia EDİLMEZ: her yeni dilim head'i ileri taşır ve bu
+    # testi ilgisiz yere kırardı (repo kanonu — P11/ST testleri de yalnız SAYIYI
+    # ölçer). MK-1'in kendi revizyonu aşağıdaki tur dönüşünde AÇIKÇA kullanılır;
+    # burada ölçülen şey yalnız "çatallanma yok"tur. (MK-2 bu dersi kanıtladı:
+    # `e8f9a0b1c2d3` head olunca kimlik iddiası kırıldı.)
     assert len(heads) == 1, f"tek head bekleniyordu, çıktı:\n{result.stdout}"
-    assert MK1_REVISION in heads[0], heads[0]
 
 
 async def test_upgrade_downgrade_upgrade_round_trip():
