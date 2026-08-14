@@ -64,6 +64,8 @@ INDEXES = (
     "ix_equipment_rental_invoices_period",
     "ix_equipment_rental_invoice_lines_invoice_id",
     "ix_equipment_rental_invoice_lines_equipment_id",
+    # Proje bazlı dağılım (M5:177-193) satırın şantiyesinden süzer.
+    "ix_equipment_rental_invoice_lines_site_id",
 )
 
 UNIQUE_CONSTRAINTS = (
@@ -292,6 +294,7 @@ def test_line_columns_match_spec():
         "invoice_id",
         "equipment_id",
         "line_kind",
+        "site_id",
         "worked_hours",
         "breakdown_hours",
         "rate_amount",
@@ -299,6 +302,12 @@ def test_line_columns_match_spec():
         "created_at",
         "updated_at",
     }
+    # 🔴 ŞEF KARARI (T2): satır ŞANTİYESİ SNAPSHOT'tır. M5:89 tabloda satır başına
+    # "Şantiye" sütunu var ve M5:177-193 proje dağılımı tam olarak satırın
+    # şantiyesi + ekipmanı + saati + tutarıdır. Canlı sorguyla türetilseydi,
+    # onaylı bir faturanın proje dağılımı makine taşınınca sessizce kayardı
+    # (K2 ilkesi + MK-1 K9). "Atanmamış" = NULL, uydurma proje adı BASILMAZ.
+    assert columns["site_id"].nullable
     # K2: SNAPSHOT — satır kurulurken kopyalanır, her okumada NOT NULL'dır.
     assert not columns["worked_hours"].nullable
     assert not columns["breakdown_hours"].nullable
@@ -324,6 +333,12 @@ def test_line_foreign_keys_match_spec():
     (equipment_fk,) = tuple(columns["equipment_id"].foreign_keys)
     assert equipment_fk.target_fullname == "equipment.id"
     assert equipment_fk.ondelete == "RESTRICT"
+
+    # Şantiye SET NULL'dır: şantiye kaydı kalksa satırın parası ve saati AYAKTA
+    # kalır, yalnız dağılımdaki kova "Atanmamış"a düşer.
+    (site_fk,) = tuple(columns["site_id"].foreign_keys)
+    assert site_fk.target_fullname == "sites.id"
+    assert site_fk.ondelete == "SET NULL"
 
 
 def test_line_unique_constraint_allows_two_kinds_per_equipment():

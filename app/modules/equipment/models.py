@@ -696,6 +696,18 @@ class EquipmentRentalInvoiceLine(Base):
     line_kind: Mapped[RentalLineKind] = mapped_column(
         Enum(RentalLineKind, name="rental_line_kind"), nullable=False
     )
+    # 🔴 Satırın ŞANTİYESİ — o da bir SNAPSHOT'tır (K2 ilkesi + MK-1 K9). M5:89
+    # tabloda satır başına "Şantiye" sütunu vardır ve M5:177-193 proje dağılımı
+    # tam olarak satırın şantiyesi + ekipmanı + saati + tutarıdır. Dağılım canlı
+    # `equipment.site_id`den türetilseydi, makine bir sonraki ay taşındığında
+    # ONAYLANMIŞ bir faturanın proje maliyeti geriye dönük başka projeye kayardı.
+    # NULL = "Atanmamış" kovası; uydurma bir proje adı BASILMAZ.
+    site_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sites.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     # K2: SNAPSHOT — çalışma kaydından kopyalanır, canlı okunmaz.
     worked_hours: Mapped[Decimal] = mapped_column(
         Numeric(RENTAL_HOURS_PRECISION, RENTAL_HOURS_SCALE), nullable=False

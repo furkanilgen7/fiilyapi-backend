@@ -169,6 +169,12 @@ def upgrade() -> None:
             postgresql.ENUM(name="rental_line_kind", create_type=False),
             nullable=False,
         ),
+        # 🔴 Satirin SANTIYESI de bir SNAPSHOT'tir (K2 ilkesi + MK-1 K9): M5:89
+        # tabloda satir basina "Santiye" sutunu var, M5:177-193 proje dagilimi
+        # tam olarak satirin santiyesi + ekipmani + saati + tutari. Canli
+        # `equipment.site_id`den turetilseydi makine tasininca ONAYLANMIS bir
+        # faturanin proje maliyeti geriye donuk kayardi. NULL = "Atanmamis".
+        sa.Column("site_id", sa.UUID(), nullable=True),
         # 🔴 K2: SNAPSHOT — calisma kaydindan KOPYALANIR, canli okunmaz.
         sa.Column("worked_hours", sa.Numeric(precision=8, scale=2), nullable=False),
         # M5:92 — varsayilani 0: "arizasiz" ile "bilinmiyor" ayni sey degildir.
@@ -225,6 +231,9 @@ def upgrade() -> None:
         ),
         # RESTRICT: satiri olan ekipman silinemez (para izi).
         sa.ForeignKeyConstraint(["equipment_id"], ["equipment.id"], ondelete="RESTRICT"),
+        # SET NULL: santiye kaydi kalksa satirin parasi ve saati AYAKTA kalir,
+        # yalniz dagilimdaki kova "Atanmamis"a duser.
+        sa.ForeignKeyConstraint(["site_id"], ["sites.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
@@ -237,12 +246,21 @@ def upgrade() -> None:
         "equipment_rental_invoice_lines",
         ["equipment_id"],
     )
+    # Proje bazli dagilim (M5:177-193) satirin santiyesinden suzer.
+    op.create_index(
+        "ix_equipment_rental_invoice_lines_site_id",
+        "equipment_rental_invoice_lines",
+        ["site_id"],
+    )
 
 
 def downgrade() -> None:
     """Downgrade schema."""
     bind = op.get_bind()
 
+    op.drop_index(
+        "ix_equipment_rental_invoice_lines_site_id", table_name="equipment_rental_invoice_lines"
+    )
     op.drop_index(
         "ix_equipment_rental_invoice_lines_equipment_id",
         table_name="equipment_rental_invoice_lines",
