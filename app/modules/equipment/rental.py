@@ -85,8 +85,13 @@ class RentalLineInput:
     """Bir hakediş satırının hesap için gereken TÜM girdisi — DONMUŞTUR.
 
     Bilerek DB nesnesi değil, düz bir taşıyıcıdır: çekirdek `AsyncSession`
-    tanımaz. `equipment_rate_amount` ve `monthly_capacity_hours` ekipman
-    kartından, geri kalanı satırın kendisinden gelir; ikisini T3 birleştirir.
+    tanımaz ve girdinin NEREDEN geldiğini de bilmez.
+
+    🔴 Çağıran taraf (`rental_service.invoice_detail`) tutarı etkileyen HER
+    girdiyi satırın KENDİ kolonundan doldurur: `equipment_rate_amount` artık
+    `None` geçilir (MK-2 T5) ve `monthly_capacity_hours` satırın
+    `capacity_hours` snapshot'ından gelir (MK-3 K1). `equipment_rate_amount`
+    alanı yalnız K4'ün yedek kuralını ifade edebilmek için durur.
     """
 
     line_id: uuid.UUID

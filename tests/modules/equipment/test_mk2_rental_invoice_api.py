@@ -16,11 +16,13 @@ from decimal import Decimal
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.equipment.models import (
     Equipment,
     EquipmentOwnership,
+    EquipmentRentalInvoiceLine,
     EquipmentWorkLog,
     WorkLogType,
 )
@@ -43,6 +45,12 @@ _GUNLUK_DILIM = Decimal("20")
 #: kendi testlerinde zaten kapalıdır; burada onu tekrar ölçmek kuralı iki yere
 #: yazardı).
 _BEDEL = Decimal("320.00")
+
+#: MK-3 — `monthly` dönemin AYLIK bedeli ve onu saate çeviren PAYDA. İkisi
+#: birlikte tam bölünecek şekilde seçildi (64.000 / 200 = 320): beklenti
+#: yuvarlamadan değil, kuraldan okunsun.
+_AYLIK_BEDEL = Decimal("64000.00")
+_KAPASITE = 200
 
 
 async def _tedarikci(session: AsyncSession, name: str) -> Supplier:
@@ -121,6 +129,28 @@ def _satir(detay: dict, line_kind: str, equipment_id: uuid.UUID) -> dict:
     ]
     assert len(eslesenler) == 1, f"{line_kind}/{equipment_id} satırı bulunamadı: {detay['lines']}"
     return eslesenler[0]
+
+
+async def _db_satir(session: AsyncSession, invoice_id: str) -> EquipmentRentalInvoiceLine:
+    """Faturanın TEK satırını KOLONLARIYLA okur (yanıt her kolonu basmaz).
+
+    Snapshot iddiası satırın kendi kolonunda ölçülür: yanıttaki türev sayı
+    doğru çıkarken kolon boş kalabilirdi ve delik bir sonraki okumada açılırdı.
+    """
+    satirlar = (
+        (
+            await session.execute(
+                select(EquipmentRentalInvoiceLine).where(
+                    EquipmentRentalInvoiceLine.invoice_id == uuid.UUID(invoice_id)
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(satirlar) == 1, satirlar
+    await session.refresh(satirlar[0])
+    return satirlar[0]
 
 
 async def _durum_ilerlet(
@@ -449,6 +479,200 @@ async def test_K2_bedelsiz_satir_KARTA_BEDEL_EKLENINCE_kendiliginden_dolmaz(
     )
     assert resp.status_code == 200, resp.text
     assert Decimal(resp.json()["totals"]["our_total"]) == Decimal("100") * _BEDEL
+
+
+# --- MK-3: aylık kira paydası da SATIRDAN okunur (spec 2026-08-14 · K1-K5) ---
+
+
+async def test_MK3_snapshot_KAPASITE_degisince_ONAYLI_faturanin_toplami_DEGISMEZ(
+    client: AsyncClient,
+    seeded_db: AsyncSession,
+    admin_headers: dict[str, str],
+    ekipman_fabrikasi,
+    gorunen_santiye: Site,
+) -> None:
+    """🔴 MK-3 nüks testi — snapshot iddiası paranın ÜÇÜNCÜ çarpanını da kapsar.
+
+    `monthly` dönemde saatlik bedel `rate_amount / monthly_capacity_hours`tır.
+    MK-2'de saat donduruldu, bedel unutuldu; bedel donduruldu, PAYDA unutuldu.
+    Payda ekipman kartından CANLI okunsaydı, kapasite düzeltmesi ONAYLANMIŞ
+    (hatta ödenmiş) bir faturanın ödenecek tutarını geriye dönük oynatırdı —
+    kimse faturaya dokunmamışken. Kalıcı ders: bir türev para değeri N çarpandan
+    oluşuyorsa snapshot iddiası N'in HEPSİNİ kapsamalıdır.
+    """
+    supplier = await _tedarikci(seeded_db, "Liebherr Türkiye A.Ş.")
+    kiralik = await ekipman_fabrikasi(
+        "Tower Crane TC-48",
+        site=gorunen_santiye,
+        ownership=EquipmentOwnership.rented,
+        supplier_id=supplier.id,
+        rate_amount=_AYLIK_BEDEL,
+        monthly_capacity_hours=_KAPASITE,
+    )
+    await _kayit(seeded_db, kiralik, hours="100", ilk_gun=1, site=gorunen_santiye)
+
+    fatura = await _fatura_kur(client, admin_headers, supplier, rate_period="monthly")
+    detay = await _detay(client, admin_headers, fatura["id"])
+    beklenen = Decimal("100") * (_AYLIK_BEDEL / Decimal(_KAPASITE))
+    assert Decimal(detay["totals"]["our_total"]) == beklenen
+    # Payda satırın KENDİ kolonunda taşınmalı; dayanağını taşımayan satır okuma
+    # anındaki karta bağımlı kalırdı.
+    assert (await _db_satir(seeded_db, fatura["id"])).capacity_hours == _KAPASITE
+
+    # Fatura ONAYLANIR (`draft → pending_verification → approved`).
+    await _durum_ilerlet(client, admin_headers, fatura["id"], 2)
+
+    # Ekipman kartının kapasitesi SONRADAN düzeltilir (200 → 400).
+    kiralik.monthly_capacity_hours = _KAPASITE * 2
+    await seeded_db.flush()
+
+    sonra = await _detay(client, admin_headers, fatura["id"])
+    assert Decimal(sonra["totals"]["our_total"]) == beklenen
+    assert Decimal(_satir(sonra, "rented", kiralik.id)["our_amount"]) == beklenen
+
+
+async def test_MK3_kapasitesiz_satirin_our_amount_i_NULL_kalir_SIFIR_DEGIL(
+    client: AsyncClient,
+    seeded_db: AsyncSession,
+    admin_headers: dict[str, str],
+    ekipman_fabrikasi,
+    gorunen_santiye: Site,
+) -> None:
+    """🔴 MK-3 K2 — kapasite yok/0 ise `monthly` maliyet BİLİNMEZ, 0 DEĞİL.
+
+    Sıfıra bölmede 0 basmak maliyeti yok göstermek olurdu (MK-1 K16). Uydurma
+    bir varsayılan (200) da ENJEKTE EDİLMEZ: varsayılan ekipman tablosunun
+    işidir, faturanın değil. Bilinmeyen sessiz kalmaz, `our_total_unknown_count`
+    ile adetçe bildirilir.
+
+    İkinci yarı asıl deliği ölçer: karta sonradan geçerli bir kapasite girilince
+    — faturaya HİÇ dokunulmamışken — `null` tutar kendiliğinden bir sayıya
+    dönmemelidir. Bilinmeyen, ancak AÇIK bir eylemle (`reload`) bilinir olur.
+    """
+    supplier = await _tedarikci(seeded_db, "Liebherr Türkiye A.Ş.")
+    kiralik = await ekipman_fabrikasi(
+        "Tower Crane TC-48",
+        site=gorunen_santiye,
+        ownership=EquipmentOwnership.rented,
+        supplier_id=supplier.id,
+        rate_amount=_AYLIK_BEDEL,
+        monthly_capacity_hours=0,
+    )
+    await _kayit(seeded_db, kiralik, hours="100", ilk_gun=1, site=gorunen_santiye)
+
+    fatura = await _fatura_kur(client, admin_headers, supplier, rate_period="monthly")
+    detay = await _detay(client, admin_headers, fatura["id"])
+    assert _satir(detay, "rented", kiralik.id)["our_amount"] is None
+    assert Decimal(detay["totals"]["our_total"]) == Decimal("0")
+    assert detay["totals"]["our_total_unknown_count"] == 1
+
+    satir = await _db_satir(seeded_db, fatura["id"])
+    assert satir.capacity_hours == 0
+    # `NULL` yolu da aynı yerde biter (migration'ın dolduramadığı eski satır).
+    satir.capacity_hours = None
+    kiralik.monthly_capacity_hours = _KAPASITE
+    await seeded_db.flush()
+
+    sonra = await _detay(client, admin_headers, fatura["id"])
+    assert _satir(sonra, "rented", kiralik.id)["our_amount"] is None
+    assert Decimal(sonra["totals"]["our_total"]) == Decimal("0")
+    assert sonra["totals"]["our_total_unknown_count"] == 1
+
+
+async def test_MK3_reload_BOS_kapasiteyi_doldurur_DOLU_degeri_EZMEZ(
+    client: AsyncClient,
+    seeded_db: AsyncSession,
+    admin_headers: dict[str, str],
+    ekipman_fabrikasi,
+    gorunen_santiye: Site,
+) -> None:
+    """🔴 MK-3 K5 — `reload` davranışı `rate_amount`la BİREBİR aynıdır.
+
+    Tazeleme dolu bir paydayı ezseydi, snapshot'ın verdiği güvence her
+    tazelemede geri alınır ve fatura yeniden karta bağlanırdı. Hiç yazılmamış
+    bir değeri doldurmak veri kaybı değildir; yazılmış bir değeri ezmek olurdu.
+    """
+    supplier = await _tedarikci(seeded_db, "Liebherr Türkiye A.Ş.")
+    kiralik = await ekipman_fabrikasi(
+        "Tower Crane TC-48",
+        site=gorunen_santiye,
+        ownership=EquipmentOwnership.rented,
+        supplier_id=supplier.id,
+        rate_amount=_AYLIK_BEDEL,
+        monthly_capacity_hours=_KAPASITE,
+    )
+    await _kayit(seeded_db, kiralik, hours="100", ilk_gun=1, site=gorunen_santiye)
+
+    fatura = await _fatura_kur(client, admin_headers, supplier, rate_period="monthly")
+    beklenen = Decimal("100") * (_AYLIK_BEDEL / Decimal(_KAPASITE))
+
+    # Kart kapasitesi değişir; DOLU satır değeri tazelemede KORUNUR.
+    kiralik.monthly_capacity_hours = _KAPASITE * 2
+    await seeded_db.flush()
+    resp = await client.post(
+        f"/equipment/rental-invoices/{fatura['id']}/reload", headers=admin_headers
+    )
+    assert resp.status_code == 200, resp.text
+    assert Decimal(resp.json()["totals"]["our_total"]) == beklenen
+    satir = await _db_satir(seeded_db, fatura["id"])
+    assert satir.capacity_hours == _KAPASITE
+
+    # BOŞ değer ise tazelemede karttan doldurulur.
+    satir.capacity_hours = None
+    await seeded_db.flush()
+    resp = await client.post(
+        f"/equipment/rental-invoices/{fatura['id']}/reload", headers=admin_headers
+    )
+    assert resp.status_code == 200, resp.text
+    assert (await _db_satir(seeded_db, fatura["id"])).capacity_hours == _KAPASITE * 2
+    assert Decimal(resp.json()["totals"]["our_total"]) == Decimal("100") * (
+        _AYLIK_BEDEL / Decimal(_KAPASITE * 2)
+    )
+
+
+async def test_MK3_hourly_faturada_da_kapasite_satira_YAZILIR(
+    client: AsyncClient,
+    seeded_db: AsyncSession,
+    admin_headers: dict[str, str],
+    ekipman_fabrikasi,
+    gorunen_santiye: Site,
+) -> None:
+    """🔴 MK-3 K3 — kapasite YALNIZ `monthly`de okunur ama HER satırda doldurulur.
+
+    Faturanın dönemi `draft`ta serbestçe `PATCH`lenebilir. Kapasite yalnız
+    `monthly` satırlara yazılsaydı, dönem sonradan `monthly`ye çevrildiğinde
+    payda için canlı karta dönmek gerekirdi — tam da kapattığımız şey.
+    """
+    supplier = await _tedarikci(seeded_db, "Liebherr Türkiye A.Ş.")
+    kiralik = await ekipman_fabrikasi(
+        "Tower Crane TC-48",
+        site=gorunen_santiye,
+        ownership=EquipmentOwnership.rented,
+        supplier_id=supplier.id,
+        rate_amount=_BEDEL,
+        monthly_capacity_hours=_KAPASITE,
+    )
+    await _kayit(seeded_db, kiralik, hours="100", ilk_gun=1, site=gorunen_santiye)
+
+    # Dönem `hourly` — payda hiç OKUNMAZ, yine de YAZILIR.
+    fatura = await _fatura_kur(client, admin_headers, supplier)
+    detay = await _detay(client, admin_headers, fatura["id"])
+    assert Decimal(detay["totals"]["our_total"]) == Decimal("100") * _BEDEL
+    assert (await _db_satir(seeded_db, fatura["id"])).capacity_hours == _KAPASITE
+
+    # Kart kapasitesi değişir, ARDINDAN dönem `monthly`ye çevrilir.
+    kiralik.monthly_capacity_hours = 999
+    await seeded_db.flush()
+    resp = await client.patch(
+        f"/equipment/rental-invoices/{fatura['id']}",
+        json={"rate_period": "monthly"},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    # Payda satırın KURULDUĞU andaki 200'dür; 999 değil.
+    assert Decimal(resp.json()["totals"]["our_total"]) == Decimal("100") * (
+        _BEDEL / Decimal(_KAPASITE)
+    )
 
 
 async def test_reload_taslak_DISINDA_409(
