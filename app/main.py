@@ -18,6 +18,7 @@ from app.modules.contracts.router import router as contracts_router
 from app.modules.customers.router import router as customers_router
 from app.modules.dashboard.router import router as dashboard_router
 from app.modules.documents.router import router as documents_router
+from app.modules.equipment.document_router import router as equipment_document_router
 from app.modules.equipment.rental_router import router as equipment_rental_router
 from app.modules.equipment.router import router as equipment_router
 from app.modules.inventory.router import router as inventory_router
@@ -96,6 +97,10 @@ app.include_router(employers_router)
 # bir UUID sanılıp 422'ye düşerdi. Kural bir bekçi testiyle kilitlidir
 # (`test_rota_sirasi_rental_invoices_UUID_SANILMAZ`).
 app.include_router(equipment_rental_router)
+# 🔴 SIRA ZORUNLU: belge router'ı da `equipment_router`dan ÖNCE — `/equipment/
+# document-types` iki segmentlidir ve `equipment_router`ın `/equipment/{equipment_id}`
+# yoluyla AYNI şekli taşır (bekçi testi: `test_rota_sirasi_document_types_UUID_SANILMAZ`).
+app.include_router(equipment_document_router)
 app.include_router(equipment_router)
 app.include_router(inventory_router)
 app.include_router(payroll_router)
