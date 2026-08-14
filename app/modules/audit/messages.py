@@ -1147,3 +1147,37 @@ def invoice_deleted(invoice_no: str) -> str:
     """Metin `session.delete`ten ÖNCE kurulur — sonra kurulsaydı numara
     güvenilir okunamazdı (`purchase_request_deleted` dersi)."""
     return f"Fatura silindi: {invoice_no}"
+
+
+# --- FAT-1 T4: durum geçişleri ---
+#
+# Dördü de mevcut `AuditAction` üyelerine oturur (`update`, `approve`) — 🔴 YENİ
+# ÜYE AÇILMADI. Bu yüzden AYIRT EDİCİ olan METİNDİR: dört geçiş dört ayrı cümle
+# taşır ve hiçbiri `invoice_updated` ("Fatura güncellendi") ile karışmaz. Tek
+# metne indirgenselerdi denetim tablosunda "gönderildi" ile "tahsil edildi"
+# birbirinden ayrılamazdı.
+#
+# Tutar hiçbirinde geçmez (yukarıdaki kural) ve DURUM ADI da yazılmaz: durum
+# kaydın kendisinden okunur, günlüğe donmuş bir kopyası düşerse ileride bir
+# geçiş yeniden adlandırıldığında iki ad yan yana yaşardı.
+
+
+def invoice_sent(invoice_no: str) -> str:
+    return f"Fatura gönderildi: {invoice_no}"
+
+
+def invoice_collected(invoice_no: str) -> str:
+    return f"Fatura tahsil edildi olarak işaretlendi: {invoice_no}"
+
+
+def invoice_approved(invoice_no: str) -> str:
+    """Gelen faturanın onayı — TEK `AuditAction.approve` kullanan fatura
+    geçişidir (üye seed'den beri tanımlıdır, migration GEREKTİRMEZ)."""
+    return f"Gelen fatura onaylandı: {invoice_no}"
+
+
+def invoice_disputed(invoice_no: str) -> str:
+    """İtiraz bir REDDETMEDİR ama `AuditAction`da `reject` üyesi YOKTUR ve
+    açmak gerçek bir Postgres enum'una migration demektir (TB3 kanonu) —
+    `update` üyesiyle yazılır, ayrım bu cümledir."""
+    return f"Gelen faturaya itiraz edildi: {invoice_no}"

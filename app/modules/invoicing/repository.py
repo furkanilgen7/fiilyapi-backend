@@ -25,9 +25,12 @@ ALINMAZ — TOCTOU penceresi sessizce açık kalırdı.
 """
 
 import uuid
+from collections.abc import Sequence
 from datetime import date
+from decimal import Decimal
+from typing import NamedTuple
 
-from sqlalchemy import Select, delete, func, select
+from sqlalchemy import ColumnElement, Select, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.invoicing.models import (
@@ -38,6 +41,8 @@ from app.modules.invoicing.models import (
 )
 
 __all__ = [
+    "DirectionAggregate",
+    "aggregate_by_direction",
     "count_invoices",
     "delete_lines",
     "get_invoice",
@@ -45,6 +50,19 @@ __all__ = [
     "list_invoices",
     "load_lines",
 ]
+
+
+class DirectionAggregate(NamedTuple):
+    """Bir YÖNÜN toplamı — özet ucunun (T4) tek satır tipi.
+
+    Üç ölçü BİRLİKTE döner çünkü hepsi AYNI satır kümesinden gelir: ayrı
+    sorgulara bölünselerdi araya giren bir yazma yüzünden adet ile tutar
+    ayrışabilir ve kart "18 fatura · ₺0" gibi imkânsız bir çift gösterebilirdi.
+    """
+
+    amount: Decimal
+    count: int
+    vat_amount: Decimal
 
 
 def _like_escape(deger: str) -> str:
@@ -204,6 +222,44 @@ async def delete_lines(session: AsyncSession, invoice_id: uuid.UUID) -> None:
     dönerdi; kilit sırası da bozulmazdı ama gereksiz gidiş-geliş yaratırdı.
     """
     await session.execute(delete(InvoiceLine).where(InvoiceLine.invoice_id == invoice_id))
+
+
+_SIFIR = Decimal("0")
+
+
+async def aggregate_by_direction(
+    session: AsyncSession,
+    project_ids: list[uuid.UUID],
+    *,
+    conditions: Sequence[ColumnElement[bool]] = (),
+) -> dict[InvoiceDirection, DirectionAggregate]:
+    """Özet ucunun (T4) TEK toplama yardımcısı — YÖNE göre gruplar.
+
+    🔴 **Kapsam süzgeci burada da zorunludur** ve imzadan çıkarılamaz:
+    `project_ids` konumsal bir parametredir, çağıran onu vermeyi "unutamaz".
+    Süzgeç düşseydi özet, liste ucunun sakladığı tutarı sızdıran bir yan kapı
+    olurdu — IDOR'un sayısal hâli.
+
+    Beş KPI üç çağrıyla üretilir (yön başına ayrı sorgu AÇILMAZ): sorgu sayısı
+    YÖN ya da DURUM sayısından bağımsızdır, yani N+1 yoktur.
+
+    `coalesce` ŞARTTIR: boş kümede `sum()` NULL döner ve kart "₺0,00" yerine
+    boş basılırdı (SA'nın NULL-EŞİK dersinin görüntü tarafı).
+    """
+    stmt = (
+        select(
+            Invoice.direction,
+            func.coalesce(func.sum(Invoice.total), _SIFIR),
+            func.count(),
+            func.coalesce(func.sum(Invoice.vat_amount), _SIFIR),
+        )
+        .where(scope_clause(project_ids), *conditions)
+        .group_by(Invoice.direction)
+    )
+    return {
+        direction: DirectionAggregate(amount=amount, count=adet, vat_amount=vat)
+        for direction, amount, adet, vat in (await session.execute(stmt)).all()
+    }
 
 
 async def invoice_no_exists(

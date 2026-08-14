@@ -1,4 +1,4 @@
-"""FAT-1 T3 — 🔴 EŞİK = KİLİT: `PATCH`/`PUT lines` faturayı DENETİMDEN ÖNCE kilitler.
+"""FAT-1 T3/T4 — 🔴 EŞİK = KİLİT: yazan uçlar faturayı DENETİMDEN ÖNCE kilitler.
 
 Spec §8/2: *"fatura satırı `with_for_update` + `populate_existing` ile kilitlenir,
 kilit denetimlerden ÖNCE alınır (TOCTOU)"* ve §8/3: *"regresyon İKİ GERÇEK
@@ -22,6 +22,15 @@ ve `not task2.done()` iddiası KIRMIZI'ya döner — mutasyon denetimi budur.
 
 Bu ayrım önemlidir: `UPDATE`in kendi örtük satır kilidi yazma ANINDA alınır,
 denetimlerden SONRA. TOCTOU penceresini kapatan şey OKUMADAKİ açık kilittir.
+
+## T4 — DURUM GEÇİŞİ eş zamanlı İKİ `send`te BİR KEZ koşar
+
+`test_send_ESZAMANLI_iki_istekte_BIR_KEZ_gecer` ikinci bir şey daha kanıtlar:
+kilit yalnız BEKLETMEZ, bekleyen istek uyandığında kararı YENİDEN verir. tx1
+`draft → sent` yazıp commit ettikten sonra tx2 uyanır ve `populate_existing`
+sayesinde BAYAT değil TAZE satırı okur — matris `(sent, send)` çiftini
+tanımadığı için **409** alır. Kilit kaldırılsaydı ikisi de `draft` okur, ikisi
+de geçer ve fatura İKİ KEZ gönderilmiş olurdu (İK-2 "eşik = kilit" kanonu).
 """
 
 import asyncio
@@ -33,8 +42,9 @@ from decimal import Decimal
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.errors import ConflictError
 from app.core.security import hash_password
-from app.modules.invoicing import service
+from app.modules.invoicing import service, state_service
 from app.modules.invoicing.models import (
     Invoice,
     InvoiceDirection,
@@ -43,6 +53,7 @@ from app.modules.invoicing.models import (
     InvoiceStatus,
 )
 from app.modules.invoicing.schemas import InvoiceLineCreate, InvoiceLinesReplace
+from app.modules.invoicing.transitions import InvoiceAction
 from app.modules.roles.models import Role
 from app.modules.users.models import User
 from tests.conftest import test_engine
@@ -105,6 +116,22 @@ async def _kur() -> _Kurulum:
             created_by_id=aktorler[0].id,
         )
         session.add(invoice)
+        await session.flush()
+        # T4: K6 kapısı kalemsiz faturayı 422 ile reddeder — eşzamanlılık testi
+        # KİLİDİ ölçer, kapıyı değil, bu yüzden fatura KALEMLİ kurulur. Kalem
+        # olmasaydı iki `send` de 422'de buluşur ve kilit hiç sınanmazdı.
+        session.add(
+            InvoiceLine(
+                invoice_id=invoice.id,
+                sort_order=0,
+                description="Kurulum kalemi",
+                unit="m³",
+                quantity=Decimal("1.000"),
+                unit_price=Decimal("1000.00"),
+                vat_rate=Decimal("20.00"),
+                line_total=Decimal("1000.00"),
+            )
+        )
         await session.flush()
         await session.commit()
         return _Kurulum(invoice.id, [a.id for a in aktorler], role.id)
@@ -199,4 +226,45 @@ async def test_put_lines_faturayi_denetimden_ONCE_kilitler() -> None:
         assert await asyncio.wait_for(task2, timeout=5) == "written"
     finally:
         await _gorevleri_bosalt(task1, task2)
+        await _temizle(kurulum)
+
+
+async def _gonder(kurulum: _Kurulum, aktor_sirasi: int) -> str:
+    """Bağımsız bir bağlantıda TAM `send` yolu: kilit → matris → K6 → damga."""
+    async with _SessionFactory() as session:
+        actor = await session.get(User, kurulum.actor_ids[aktor_sirasi])
+        try:
+            await state_service.perform_transition(
+                session, actor, kurulum.invoice_id, InvoiceAction.send
+            )
+        except ConflictError:
+            await session.rollback()
+            return "conflict"
+        await session.commit()
+        return "sent"
+
+
+async def test_send_ESZAMANLI_iki_istekte_BIR_KEZ_gecer() -> None:
+    """🔴 EŞİK = KİLİT (spec §8) — ASIL MUTASYON REGRESYONU.
+
+    İki gerçek bağlantı aynı `draft` faturaya AYNI ANDA `send` atar. Doğru
+    davranış: BİRİ `sent` yazar, ÖTEKİ 409 alır.
+
+    `state_service.perform_transition` içindeki `for_update=True` kaldırılırsa
+    ikisi de `draft` okur, ikisi de matrisi geçer ve fatura İKİ KEZ gönderilmiş
+    olur — o hâlde `sonuclar.count("sent") == 1` iddiası KIRMIZI'ya döner.
+    """
+    kurulum = await _kur()
+    try:
+        sonuclar = list(await asyncio.gather(_gonder(kurulum, 0), _gonder(kurulum, 1)))
+        assert sonuclar.count("sent") == 1, (
+            f"iki eşzamanlı `send` de geçti ({sonuclar}) — `perform_transition` faturayı "
+            "DENETİMDEN ÖNCE kilitlemiyor; fatura iki kez gönderilmiş sayılır"
+        )
+        assert sonuclar.count("conflict") == 1, sonuclar
+
+        async with _SessionFactory() as session:
+            invoice = await session.get(Invoice, kurulum.invoice_id)
+            assert invoice.status is InvoiceStatus.sent
+    finally:
         await _temizle(kurulum)

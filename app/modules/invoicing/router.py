@@ -54,15 +54,17 @@ from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
-from app.modules.invoicing import service
+from app.modules.invoicing import service, state_service, summary
 from app.modules.invoicing.models import InvoiceDirection, InvoiceStatus
 from app.modules.invoicing.schemas import (
     InvoiceCreate,
     InvoiceDetailResponse,
     InvoiceLinesReplace,
     InvoiceListResponse,
+    InvoiceSummaryResponse,
     InvoiceUpdate,
 )
+from app.modules.invoicing.transitions import InvoiceAction
 from app.modules.users.models import User
 
 router = APIRouter(tags=["invoicing"], responses=COMMON_ERROR_RESPONSES)
@@ -175,13 +177,32 @@ async def create_invoice_endpoint(
 
 
 # --------------------------------------------------------------------------- #
-# 🔴 AYRILMIŞ YER — `GET /invoices/summary` (spec §7 md.2, **T4**) BURAYA GELİR.
+# 🔴 AYRILMIŞ YER — iki segmentli LİTERAL yollar (`/invoices/summary`).
 #
-# İki segmentlidir ve aşağıdaki `/invoices/{invoice_id}` (UUID) rotasıyla
-# ÇAKIŞIR: FastAPI yolları KAYIT SIRASINA göre eşler, sonra kaydedilirse
-# `summary` bir UUID sanılıp 422'ye düşer (MK-2 dersi, `main.py:94-104`).
-# Yeni iki segmentli LİTERAL yolların hepsi bu satırın ÜSTÜNE eklenir.
+# Aşağıdaki `/invoices/{invoice_id}` (UUID) rotasıyla ÇAKIŞIR: FastAPI yolları
+# KAYIT SIRASINA göre eşler, sonra kaydedilirse `summary` bir UUID sanılıp
+# 422'ye düşer (MK-2 dersi, `main.py:94-104`). Yeni iki segmentli LİTERAL
+# yolların hepsi bu satırın ÜSTÜNE eklenir; bekçi testi
+# `test_rota_sirasi_iki_segmentli_literal_yollar_UUID_rotasindan_ONCE`.
 # --------------------------------------------------------------------------- #
+
+
+# --- Uç 2: özet ---
+
+
+@router.get("/invoices/summary", response_model=InvoiceSummaryResponse, dependencies=[_VIEW])
+async def invoices_summary_endpoint(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> InvoiceSummaryResponse:
+    """FY:69-75 KPI şeridi — beş kart.
+
+    Kapsam süzgeci liste ucundakiyle AYNIDIR: görünmeyen projenin faturası
+    hiçbir toplama girmez (IDOR'un sayısal hâli). `pending_approval` ADETTİR,
+    tutar değil. Ay penceresi `DISPLAY_TIMEZONE`dedir — ayrıntı `summary.py`
+    modül docstring'indedir.
+    """
+    return await summary.build_summary(session, user)
 
 
 # --- Uç 4: detay ---
@@ -303,3 +324,135 @@ async def replace_invoice_lines_endpoint(
     invoice, detail = await service.replace_lines(session, invoice, data)
     await _audit(request, session, user, AuditAction.update, detail)
     return await service.build_detail(session, invoice)
+
+
+# --------------------------------------------------------------------------- #
+# Uçlar 8-11: DURUM GEÇİŞLERİ (spec §3, §7, §8)
+#
+# Dördü de TEK gövdeyi (`_gecis`) paylaşır; aralarındaki tek fark `InvoiceAction`
+# parametresidir ve geçerliliği `transitions.py`nin matrisinden okunur. Uçların
+# hiçbirinde `if invoice.status == …` YOKTUR (§3): dört ayrı gövde yazılsaydı
+# kilidi ya da K6 kapısını birinde unutmak mümkün olurdu.
+#
+# 🔴 Ortak sözleşme: **409** yön dışı ya da matris dışı geçiş · **422** kalemsiz
+# `send`/`approve` (K6) · **404** görünmeyen fatura · **403** `full` altı yetki.
+# Geçiş yalnız `status` damgalar — para alanları YENİDEN HESAPLANMAZ (K7).
+# --------------------------------------------------------------------------- #
+
+_GECIS_YANITLARI = {
+    404: {"description": "Fatura bulunamadı"},
+    409: {"description": "İşlem faturanın yönüne ya da durumuna uygulanamaz"},
+}
+
+_KAPILI_GECIS_YANITLARI = {
+    **_GECIS_YANITLARI,
+    422: {"description": "Kalemsiz fatura gönderilemez / onaylanamaz (K6)"},
+}
+
+
+async def _gecis(
+    request: Request,
+    session: AsyncSession,
+    user: User,
+    invoice_id: uuid.UUID,
+    action: InvoiceAction,
+) -> InvoiceDetailResponse:
+    """Dört geçiş ucunun ORTAK gövdesi — kilit/matris/K6 sırası servistedir."""
+    sonuc = await state_service.perform_transition(session, user, invoice_id, action)
+    await _audit(request, session, user, sonuc.audit_action, sonuc.detail)
+    return await service.build_detail(session, sonuc.invoice)
+
+
+@router.post(
+    "/invoices/{invoice_id}/send",
+    response_model=InvoiceDetailResponse,
+    responses=_KAPILI_GECIS_YANITLARI,
+    dependencies=[_FULL],
+)
+async def send_invoice_endpoint(
+    request: Request,
+    invoice_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> InvoiceDetailResponse:
+    """`draft → sent` (FK:25 `GİB'e Gönder`) — YALNIZ giden fatura.
+
+    **GİB'e gerçek bir gönderim YAPILMAZ** (spec §1: entegratör bağı FAT-3'ün
+    işidir); bu uç yalnızca DURUM damgalar — `progress_payments.mark-paid`
+    emsali. Gelen faturaya çağrılırsa **409** (yön dışı).
+
+    🔴 **K6:** kalemsiz fatura **422**. Kalemsiz fatura 0,00₺ olarak kusursuz
+    hesaplanır — hesap doğrudur, FATURA yanlıştır.
+    """
+    return await _gecis(request, session, user, invoice_id, InvoiceAction.send)
+
+
+@router.post(
+    "/invoices/{invoice_id}/mark-collected",
+    response_model=InvoiceDetailResponse,
+    responses=_GECIS_YANITLARI,
+    dependencies=[_FULL],
+)
+async def mark_collected_invoice_endpoint(
+    request: Request,
+    invoice_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> InvoiceDetailResponse:
+    """`sent → collected` (FY:130 `Tahsil Edildi`) — YALNIZ giden fatura.
+
+    **Tahsilat KAYDI değildir** (FGI:220-247 formu Hazine diliminindir:
+    `bank_accounts` tablosu henüz YOK). Burada yalnız damga vardır; tutar,
+    hesap ve tarih alanları AÇILMAZ — yazma yolu olmayan kolon her zaman NULL
+    döner ve uydurma alan olur.
+
+    K6 kapısı UYGULANMAZ: `sent` bir fatura zaten kapıdan geçmiştir.
+    """
+    return await _gecis(request, session, user, invoice_id, InvoiceAction.mark_collected)
+
+
+@router.post(
+    "/invoices/{invoice_id}/approve",
+    response_model=InvoiceDetailResponse,
+    responses=_KAPILI_GECIS_YANITLARI,
+    dependencies=[_FULL],
+)
+async def approve_invoice_endpoint(
+    request: Request,
+    invoice_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> InvoiceDetailResponse:
+    """`pending → approved` (FGE:25 `Onayla & Muhasebeleştir`) — YALNIZ gelen.
+
+    **Muhasebe fişi ÜRETİLMEZ** (FGE:197-241 önizlemesi Muhasebe diliminindir:
+    hesap planı tablosu YOK). `Kısmi Onayla` (FGE:140) da AÇILMADI — etkisi
+    hiçbir mockup'ta çizilmemiş, FAT-2'nin işi.
+
+    🔴 **K6:** kalemsiz fatura **422**. Giden faturaya çağrılırsa **409**.
+    """
+    return await _gecis(request, session, user, invoice_id, InvoiceAction.approve)
+
+
+@router.post(
+    "/invoices/{invoice_id}/dispute",
+    response_model=InvoiceDetailResponse,
+    responses=_GECIS_YANITLARI,
+    dependencies=[_FULL],
+)
+async def dispute_invoice_endpoint(
+    request: Request,
+    invoice_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> InvoiceDetailResponse:
+    """`pending → disputed` (FGE:24 `İtiraz Et`) — YALNIZ gelen fatura.
+
+    İtiraz GEREKÇESİ alanı AÇILMADI: FGE:24 tek bir düğmedir, gerekçe formu
+    hiçbir mockup'ta çizilmemiştir (icat yasağı). `İtiraz/İade` sekmesinin
+    (FY:65) içeriği de çizilmemiştir — bu uç yalnız durumu damgalar.
+
+    K6 kapısı UYGULANMAZ: itiraz bir REDDETMEDİR ve eksik kalem, itirazı
+    engellemek için sebep değildir.
+    """
+    return await _gecis(request, session, user, invoice_id, InvoiceAction.dispute)

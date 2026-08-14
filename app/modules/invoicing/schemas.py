@@ -56,6 +56,8 @@ __all__ = [
     "InvoiceLinesReplace",
     "InvoiceListResponse",
     "InvoiceResponse",
+    "InvoiceSummaryMetric",
+    "InvoiceSummaryResponse",
     "InvoiceUpdate",
 ]
 
@@ -320,3 +322,33 @@ class InvoiceListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class InvoiceSummaryMetric(BaseModel):
+    """FY:71-73 kartlarının İKİ satırı: büyük rakam (tutar) + alt satır (adet).
+
+    İkisi TEK nesnede durur çünkü aynı kümeden gelirler; `*_amount` ve
+    `*_count` diye düz alanlara açılsalardı bir kart yanlış eşleştirilebilir ve
+    "18 fatura · ₺0,00" gibi imkânsız bir çift ekrana çıkabilirdi.
+    """
+
+    amount: Decimal
+    count: int
+
+
+class InvoiceSummaryResponse(BaseModel):
+    """`GET /invoices/summary` — FY:69-75 KPI şeridi, BEŞ kart.
+
+    🔴 **`pending_approval` ADETTİR, tutar DEĞİL** (FY:75 tek sayı basar, `₺`
+    yoktur); ilk üç kart hem tutar hem adet taşır. `vat_difference` tek bir para
+    değeridir ("Ödenecek KDV", FY:74) ve NEGATİF olabilir — gelen KDV giden
+    KDV'yi aştığında devreden KDV doğar ve bu meşrudur, sıfıra KIRPILMAZ.
+
+    Ay penceresi ve kapsam kuralları `summary.py` modül docstring'indedir.
+    """
+
+    issued_this_month: InvoiceSummaryMetric
+    received_this_month: InvoiceSummaryMetric
+    receivable: InvoiceSummaryMetric
+    vat_difference: Decimal
+    pending_approval: int
