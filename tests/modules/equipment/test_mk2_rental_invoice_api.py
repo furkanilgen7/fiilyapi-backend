@@ -349,6 +349,108 @@ async def test_K2_snapshot_calisma_kaydi_degisince_fatura_toplami_DEGISMEZ(
     assert Decimal(resp.json()["totals"]["our_total"]) == Decimal("92") * _BEDEL
 
 
+async def test_K2_snapshot_EKIPMAN_BEDELI_degisince_fatura_toplami_DEGISMEZ(
+    client: AsyncClient,
+    seeded_db: AsyncSession,
+    admin_headers: dict[str, str],
+    ekipman_fabrikasi,
+    gorunen_santiye: Site,
+) -> None:
+    """🔴 K2 — snapshot SAATİ değil, PARANIN İKİ ÇARPANINI DA kapsar (T5 bulgusu).
+
+    K4'ün "satırın bedeli boşsa ekipmanınki" kuralı bir ÇÖZÜM kuralıdır ve satır
+    KURULURKEN uygulanır: bedel satıra KOPYALANIR (M5:93 alanı zaten dolu ve
+    düzenlenebilir basıyor). Okuma yolunda ekipman kartına CANLI düşülseydi,
+    K2'nin kapattığı delik ikinci çarpandan yeniden açılırdı — ONAYLANMIŞ bir
+    faturanın ödenecek tutarı, kart üzerindeki bir bedel düzeltmesiyle SESSİZCE
+    oynardı. Saatin snapshot'lanıp bedelin canlı bırakılması, aynı paranın
+    yarısını dondurup yarısını serbest bırakmaktır.
+    """
+    supplier = await _tedarikci(seeded_db, "Liebherr Türkiye A.Ş.")
+    kiralik = await ekipman_fabrikasi(
+        "Tower Crane TC-48",
+        site=gorunen_santiye,
+        ownership=EquipmentOwnership.rented,
+        supplier_id=supplier.id,
+        rate_amount=_BEDEL,
+    )
+    await _kayit(seeded_db, kiralik, hours="100", ilk_gun=1, site=gorunen_santiye)
+
+    fatura = await _fatura_kur(client, admin_headers, supplier)
+    detay = await _detay(client, admin_headers, fatura["id"])
+    ilk = Decimal(detay["totals"]["our_total"])
+    assert ilk == Decimal("100") * _BEDEL
+    # Bedel satıra KOPYALANMIŞ olmalı — dayanağı kendi kolonunda taşımayan satır
+    # okuma anındaki karta bağımlı kalırdı.
+    assert Decimal(_satir(detay, "rented", kiralik.id)["rate_amount"]) == _BEDEL
+
+    # Ekipman kartının kira bedeli SONRADAN düzeltilir (320 → 999).
+    kiralik.rate_amount = Decimal("999")
+    await seeded_db.flush()
+
+    sonra = await _detay(client, admin_headers, fatura["id"])
+    assert Decimal(sonra["totals"]["our_total"]) == ilk
+    assert Decimal(_satir(sonra, "rented", kiralik.id)["effective_rate_amount"]) == _BEDEL
+
+    # Tazeleme de yeni bedeli ÇEKMEZ: satırdaki bedel kullanıcının da
+    # düzenleyebildiği bir alandır (M5:93) ve dolu bir değeri ezmek veri kaybı
+    # olurdu. Bedel yalnız BOŞKEN karttan doldurulur.
+    resp = await client.post(
+        f"/equipment/rental-invoices/{fatura['id']}/reload", headers=admin_headers
+    )
+    assert resp.status_code == 200, resp.text
+    assert Decimal(resp.json()["totals"]["our_total"]) == ilk
+
+
+async def test_K2_bedelsiz_satir_KARTA_BEDEL_EKLENINCE_kendiliginden_dolmaz(
+    client: AsyncClient,
+    seeded_db: AsyncSession,
+    admin_headers: dict[str, str],
+    ekipman_fabrikasi,
+    gorunen_santiye: Site,
+) -> None:
+    """🔴 Fail-closed satır SESSİZCE kendiliğinden dolmaz (T5 bulgusu).
+
+    Bedeli olmayan makinenin satırı `our_amount = None` ile durur ve toplama
+    GİRMEZ; adetçe `our_total_unknown_count`ta bildirilir (MK-1 K16 +
+    `monthly_cost_unknown_count` kanonu). Okuma yolu ekipman kartına canlı
+    düşseydi, karta sonradan bir bedel girildiği anda — hiç kimse faturaya
+    dokunmamışken — `pending_verification` bir faturanın toplamı yoktan var
+    olurdu. Bilinmeyen, ancak AÇIK bir eylemle (`reload`) bilinir hâle gelir.
+    """
+    supplier = await _tedarikci(seeded_db, "Liebherr Türkiye A.Ş.")
+    kiralik = await ekipman_fabrikasi(
+        "Tower Crane TC-48",
+        site=gorunen_santiye,
+        ownership=EquipmentOwnership.rented,
+        supplier_id=supplier.id,
+        rate_amount=None,
+    )
+    await _kayit(seeded_db, kiralik, hours="100", ilk_gun=1, site=gorunen_santiye)
+
+    fatura = await _fatura_kur(client, admin_headers, supplier)
+    detay = await _detay(client, admin_headers, fatura["id"])
+    assert Decimal(detay["totals"]["our_total"]) == Decimal("0")
+    assert detay["totals"]["our_total_unknown_count"] == 1
+    assert _satir(detay, "rented", kiralik.id)["our_amount"] is None
+
+    # Karta SONRADAN bedel girilir; faturaya DOKUNULMAZ.
+    kiralik.rate_amount = _BEDEL
+    await seeded_db.flush()
+
+    sonra = await _detay(client, admin_headers, fatura["id"])
+    assert Decimal(sonra["totals"]["our_total"]) == Decimal("0")
+    assert sonra["totals"]["our_total_unknown_count"] == 1
+    assert _satir(sonra, "rented", kiralik.id)["our_amount"] is None
+
+    # AÇIK tazeleme boş bedeli karttan doldurur.
+    resp = await client.post(
+        f"/equipment/rental-invoices/{fatura['id']}/reload", headers=admin_headers
+    )
+    assert resp.status_code == 200, resp.text
+    assert Decimal(resp.json()["totals"]["our_total"]) == Decimal("100") * _BEDEL
+
+
 async def test_reload_taslak_DISINDA_409(
     client: AsyncClient,
     seeded_db: AsyncSession,

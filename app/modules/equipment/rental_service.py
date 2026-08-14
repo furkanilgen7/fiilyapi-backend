@@ -222,11 +222,19 @@ def _line_targets(
 async def _build_lines(session: AsyncSession, actor: User, invoice: EquipmentRentalInvoice) -> None:
     """🔴 K2 — satırları çalışma kaydından KURAR/TAZELER (M5:83).
 
-    Kopyalanan üç şey vardır: `worked_hours`, `breakdown_hours` ve `site_id`.
-    Kullanıcının girdiği iki alan (`rate_amount`, `invoiced_hours`) KORUNUR —
-    onlar bizim çalışma kaydımızdan gelmez; firmanın iddiası ve kullanıcının
-    düzeltmesidir, tazelemede silinselerdi doğrulama emeği her `reload`da
-    çöpe giderdi.
+    Kopyalanan DÖRT şey vardır: `worked_hours`, `breakdown_hours`, `site_id` ve
+    🔴 **`rate_amount`** (T5 bulgusu). K4'ün "satırın bedeli boşsa ekipmanınki"
+    kuralı bir ÇÖZÜM kuralıdır ve BURADA, satır kurulurken uygulanır — okuma
+    yolunda karta canlı düşülseydi K2'nin kapattığı delik paranın İKİNCİ
+    çarpanından yeniden açılır, onaylanmış bir faturanın tutarı kart üzerindeki
+    bir bedel düzeltmesiyle sessizce oynardı. M5:93 alanı zaten dolu ve
+    düzenlenebilir basıyor: mockup da bedeli satırın kendi verisi sayıyor.
+
+    Kullanıcının girdiği alanlar (`rate_amount`, `invoiced_hours`) tazelemede
+    KORUNUR — onlar bizim çalışma kaydımızdan gelmez; firmanın iddiası ve
+    kullanıcının düzeltmesidir, silinselerdi doğrulama emeği her `reload`da
+    çöpe giderdi. Bedel yalnız **boşken** karttan doldurulur: hiç yazılmamış bir
+    değeri doldurmak veri kaybı değildir, yazılmış bir değeri ezmek olurdu.
 
     Dayanağı kalmayan satır SİLİNİR: kaydı geri alınmış bir makine faturada
     kalsaydı, ödenecek toplam artık var olmayan bir saatten beslenirdi.
@@ -254,6 +262,10 @@ async def _build_lines(session: AsyncSession, actor: User, invoice: EquipmentRen
         for satir in await rental_repository.lock_invoice_lines(session, invoice.id)
     }
     for (equipment_id, tur), (calisma, ariza, site_id) in hedefler.items():
+        # Bedel BURADA çözülür ve satıra KOPYALANIR (K4 çözüm kuralı + K2
+        # snapshot ilkesi). Ekipmanın bedeli yoksa satırınki de `None` kalır —
+        # uydurma 0 BASILMAZ (MK-1 K16 fail-closed) ve `our_amount` `None` olur.
+        bedel = ekipmanlar[equipment_id].rate_amount
         satir = mevcut.pop((equipment_id, tur), None)
         if satir is None:
             session.add(
@@ -264,12 +276,15 @@ async def _build_lines(session: AsyncSession, actor: User, invoice: EquipmentRen
                     site_id=site_id,
                     worked_hours=calisma,
                     breakdown_hours=ariza,
+                    rate_amount=bedel,
                 )
             )
             continue
         satir.worked_hours = calisma
         satir.breakdown_hours = ariza
         satir.site_id = site_id
+        if satir.rate_amount is None:
+            satir.rate_amount = bedel
     for artik in mevcut.values():
         await session.delete(artik)
     await session.flush()
@@ -364,9 +379,14 @@ async def invoice_detail(
 ) -> RentalInvoiceDetailResponse:
     """`GET …/{id}` — M5'in TAMAMI: satırlar + üç toplam + KDV + proje dağılımı.
 
-    🔴 **K2:** hiçbir sayı çalışma kaydından CANLI okunmaz; her şey satırların
-    KENDİ kolonlarından türer. Tek istisna `equipment.rate_amount`tır ve o bir
-    saat değil BEDEL yedeğidir (K4: satırın bedeli boşsa ekipmanınki kullanılır).
+    🔴 **K2:** hiçbir sayı CANLI okunmaz — ne saat, ne bedel. **İSTİSNA YOKTUR**
+    (T5 bulgusu): `rate_amount` satır kurulurken kopyalandığı için (`_build_lines`)
+    okuma yolu ekipman kartına hiç düşmez; `equipment_rate_amount=None` geçilir.
+    ⚠️ **Kalan tek canlı okuma `monthly_capacity_hours`tur** (yalnız `monthly`
+    dönemli faturada, saatlik bedelin PAYDASI olarak). Bir para değeri değil,
+    ekipmanın teknik kapasitesidir (K7); yine de kart üzerinde değiştirilirse
+    onaylanmış bir `monthly` faturanın tutarı oynayabilir. Kapatmak satıra yeni
+    bir snapshot kolonu ister → spec değişikliği, ROADMAP'te AÇIK BORÇ.
     """
     satirlar = await rental_repository.invoice_lines(session, invoice.id)
     hesap = compute_invoice(
@@ -382,7 +402,7 @@ async def invoice_detail(
                 worked_hours=satir.worked_hours,
                 breakdown_hours=satir.breakdown_hours,
                 line_rate_amount=satir.rate_amount,
-                equipment_rate_amount=equipment.rate_amount,
+                equipment_rate_amount=None,
                 invoiced_hours=satir.invoiced_hours,
                 monthly_capacity_hours=equipment.monthly_capacity_hours,
             )
