@@ -59,13 +59,21 @@ from app.core.errors import ConflictError
 from app.modules.invoicing.models import InvoiceDirection, InvoiceStatus
 
 __all__ = [
+    "DELETABLE_STATUS",
+    "EDITABLE_STATUS",
     "INCOMING_TRANSITIONS",
     "INITIAL_STATUS",
     "INVALID_TRANSITION_MESSAGE",
+    "LINES_EDITABLE_STATUS",
+    "NOT_DELETABLE_MESSAGE",
+    "NOT_EDITABLE_MESSAGE",
     "OUTGOING_TRANSITIONS",
     "WRONG_DIRECTION_MESSAGE",
     "InvoiceAction",
     "TransitionRejection",
+    "assert_deletable",
+    "assert_editable",
+    "assert_lines_editable",
     "classify_transition",
     "next_status",
 ]
@@ -158,3 +166,65 @@ def next_status(
     if rejection is not None:
         raise ConflictError(_MESSAGES[rejection])
     return _TRANSITIONS[direction][(status, action)]
+
+
+# --------------------------------------------------------------------------- #
+# DÜZENLEME/SİLME KAPILARI (T3 uçları 5, 6, 7)
+#
+# Bunlar bir GEÇİŞ değildir (durum aynı kalır) ama yine de DURUM denetimidir ve
+# bu yüzden burada, matrisin yanında durur: uçlar ve servis kendi `if status ==
+# …` denetimini YAZMAZ (spec §3). İki yerde yazılsalardı `PATCH` bir gün
+# `sent` faturayı kabul eder, `PUT lines` etmezdi ve hangisinin doğru olduğu
+# kodun iki ayrı köşesinden okunurdu.
+# --------------------------------------------------------------------------- #
+
+#: BAŞLIK düzenlemeye açık durumlar — YÖNE göre (spec §7 md.5).
+#: Gelen faturada `pending` düzenlenebilir ama yalnız ÜÇ ALAN (`guards.
+#: INCOMING_PATCHABLE_FIELDS`): hangi ALANLAR sorusu bir DURUM sorusu değildir,
+#: o yüzden burada değil `guards`tadır.
+EDITABLE_STATUS: dict[InvoiceDirection, frozenset[InvoiceStatus]] = {
+    InvoiceDirection.outgoing: frozenset({InvoiceStatus.draft}),
+    InvoiceDirection.incoming: frozenset({InvoiceStatus.pending}),
+}
+
+#: KALEM kümesi yalnız `draft`ta yazılır (spec §7 md.7) ve `draft` yalnız GİDEN
+#: taraftadır (K2) — yani gelen faturanın kalemleri hiçbir durumda toptan
+#: değiştirilmez. Bu, `EDITABLE_STATUS`tan DAHA DARDIR ve bilinçlidir: gelen
+#: faturanın kalemi satıcının belgesindendir, düzeltmesi bizde değildir.
+LINES_EDITABLE_STATUS: frozenset[InvoiceStatus] = frozenset({InvoiceStatus.draft})
+
+#: Silinebilir tek durum `draft`tır (spec §7 md.6). `sent` bir OLAYDIR; iptal
+#: geçişi hiçbir mockup'ta çizilmemiştir (modül docstring'i) ve silme onun
+#: yerine geçirilmez.
+DELETABLE_STATUS: frozenset[InvoiceStatus] = frozenset({InvoiceStatus.draft})
+
+NOT_EDITABLE_MESSAGE = "Fatura bu durumda düzenlenemez"
+NOT_DELETABLE_MESSAGE = "Yalnızca taslak fatura silinebilir"
+
+
+def assert_editable(direction: InvoiceDirection, status: InvoiceStatus) -> None:
+    """Başlık düzenlemesinin TEK kapısı — uygun değilse **409**.
+
+    404 (yok) ya da 403 (yetki) DEĞİL: kullanıcının yetkisi VARDIR, engelleyen
+    şey kaydın DURUMUDUR. Kural aynı zamanda K7'nin bekçisidir: gönderilmiş bir
+    faturanın oranı düzeltilebilseydi donmuş çarpanlar canlıya dönerdi.
+    """
+    if status not in EDITABLE_STATUS[direction]:
+        raise ConflictError(NOT_EDITABLE_MESSAGE)
+
+
+def assert_lines_editable(status: InvoiceStatus) -> None:
+    """Kalem kümesinin TEK kapısı — `draft` dışında **409**."""
+    if status not in LINES_EDITABLE_STATUS:
+        raise ConflictError(NOT_EDITABLE_MESSAGE)
+
+
+def assert_deletable(status: InvoiceStatus) -> None:
+    """Silmenin DURUM kapısı — `draft` dışında **409**.
+
+    YETKİ kapısı (yalnız `admin`) burada DEĞİL router'dadır: biri kaydın
+    durumuna, öteki aktörün seviyesine bakar ve tek yerde toplanırlarsa
+    "yetkiniz yok" cümlesi bir durum engelinden dönerdi.
+    """
+    if status not in DELETABLE_STATUS:
+        raise ConflictError(NOT_DELETABLE_MESSAGE)

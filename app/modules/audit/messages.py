@@ -1112,3 +1112,38 @@ def payroll_sgk_submitted(year: int, month: int) -> str:
 def payroll_rate_updated(year: int, source: str, rates: dict[str, object]) -> str:
     degerler = " · ".join(f"{alan}={deger}" for alan, deger in sorted(rates.items()))
     return f"Bordro kesinti oranları güncellendi: {year}/{source} · {degerler}"
+
+
+# --- FAT-1 T3: fatura çekirdeği ---
+#
+# Kimlik UUID DEĞİL kullanıcının GÖRDÜĞÜ değerdir: FATURA NUMARASI (giden'de
+# `FIL2026000184`, gelen'de satıcının serisi). **Tutar hiçbir metinde geçmez:**
+# toplam TÜREVDİR (`amounts.py`) ve günlüğe donmuş bir kopyası düşerse kalem ya
+# da oran değişiminde ayrışır (`purchase_request_*` kanonu).
+#
+# 🔴 YENİ `AuditAction` ÜYESİ AÇILMADI (TB3/T3 kanonu): `action` gerçek bir
+# Postgres enum tipidir ve yeni üye migration ister. Ayrım metindedir.
+
+
+def invoice_created(invoice_no: str) -> str:
+    return f"Fatura oluşturuldu: {invoice_no}"
+
+
+def invoice_updated(invoice_no: str) -> str:
+    return f"Fatura güncellendi: {invoice_no}"
+
+
+def invoice_lines_replaced(invoice_no: str) -> str:
+    """Kalem kümesi TOPTAN yazılır ve günlüğe TEK satır düşer: kullanıcının
+    yaptığı tek bir eylemdir ("Kaydet") ve satır başına günlük satırı 40
+    kalemlik bir faturada denetimi boğardı (`stock_entry_created` kuralı).
+
+    `invoice_updated`tan AYRI metin: başlık düzeltmesi ile kalem değişimi mali
+    olarak farklı ağırlıktadır ve günlükte ayırt edilebilmelidir."""
+    return f"Fatura kalemleri güncellendi: {invoice_no}"
+
+
+def invoice_deleted(invoice_no: str) -> str:
+    """Metin `session.delete`ten ÖNCE kurulur — sonra kurulsaydı numara
+    güvenilir okunamazdı (`purchase_request_deleted` dersi)."""
+    return f"Fatura silindi: {invoice_no}"

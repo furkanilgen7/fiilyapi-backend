@@ -22,6 +22,7 @@ from app.modules.equipment.document_router import router as equipment_document_r
 from app.modules.equipment.rental_router import router as equipment_rental_router
 from app.modules.equipment.router import router as equipment_router
 from app.modules.inventory.router import router as inventory_router
+from app.modules.invoicing.router import router as invoicing_router
 from app.modules.payroll.router import router as payroll_router
 from app.modules.personnel.router import router as personnel_router
 from app.modules.procurement.router import router as procurement_router
@@ -103,6 +104,10 @@ app.include_router(equipment_rental_router)
 app.include_router(equipment_document_router)
 app.include_router(equipment_router)
 app.include_router(inventory_router)
+# Rota sırası tuzağı `invoicing_router`ın KENDİ İÇİNDE çözülür (router modül
+# docstring'i): `/invoices/summary` (T4) iki segmentlidir ve
+# `/invoices/{invoice_id}` ile çakışır — ayrılmış yer orada işaretlidir.
+app.include_router(invoicing_router)
 app.include_router(payroll_router)
 app.include_router(personnel_router)
 app.include_router(procurement_router)

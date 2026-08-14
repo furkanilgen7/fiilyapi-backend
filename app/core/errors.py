@@ -182,6 +182,31 @@ class EquipmentValidationError(DomainError):
     """
 
 
+class InvoicingValidationError(DomainError):
+    """Fatura gövde kuralı ihlali (FAT-1 spec §2, §5) — 422.
+
+    `EquipmentValidationError`/`ProcurementValidationError` deseninin aynısı ve
+    aynı sebeple onlardan AYRI: DB `CHECK` ile zorlanamayan ya da zorlansa bile
+    kullanıcıya Türkçe mesaj veremeyecek kurallar tek yazma yolunda servis
+    korkuluğuyla tutulur. Kullanıcıları:
+
+    * **`ck_invoices_single_party` / `ck_invoices_single_source`** — CHECK'ler
+      VARDIR (T1) ama ihlalleri 409 "Veri bütünlüğü hatası" olarak dönerdi ve
+      kullanıcı hangi iki alanı birden doldurduğunu öğrenemezdi. DB SON
+      savunmadır; kullanıcıya 500/409 gitmez.
+    * **numaranın sahibi** (§4/S5): giden faturada istemci numara gönderemez,
+      gelen faturada göndermek ZORUNDADIR.
+    * **kesinti oranları toplamı** (`validation.body_blockers`): %100'ü aşan
+      toplam `tax_base`i negatife düşürür ve DB CHECK'i ancak KDV'den sonra,
+      okunamaz bir hatayla yakalardı.
+    * **gelen faturada PATCH kapsamı**: satıcının belgesinin tutarı bizim
+      düzeltebileceğimiz bir alan değildir.
+
+    404 DEĞİL: kayıt vardır ve görünür, ihlal eden şey düzeltilebilir ALAN
+    DEĞERLERİDİR. 409 da DEĞİL: engel kaydın DURUMU değil İÇERİĞİDİR.
+    """
+
+
 class ConflictError(DomainError):
     """Durum makinesi / iş kuralı çakışması — 409 (P7 hakediş spec §7, §9.2, §9.7).
 
