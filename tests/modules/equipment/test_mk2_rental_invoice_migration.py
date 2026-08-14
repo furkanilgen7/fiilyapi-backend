@@ -299,6 +299,10 @@ def test_line_columns_match_spec():
         "breakdown_hours",
         "rate_amount",
         "invoiced_hours",
+        # MK-3 T1 — `monthly` dönemde saatlik bedelin PAYDASI da snapshot'tır
+        # (kendi testi: `test_mk3_capacity_migration.py`). Buradaki küme
+        # BİLEREK tam sayımdır: yeni bir kolon sessizce eklenemesin diye.
+        "capacity_hours",
         "created_at",
         "updated_at",
     }
