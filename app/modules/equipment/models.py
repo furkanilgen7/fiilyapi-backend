@@ -572,6 +572,12 @@ class EquipmentRentalInvoice(Base):
             "invoice_no",
             name="uq_equipment_rental_invoices_supplier_invoice_no",
         ),
+        # 🔴 MK-2 migration'ı (`e8f9a0b1c2d3`) bu bileşik indeksi YARATIYOR ama
+        # model onu BEYAN ETMİYORDU → `alembic check` her koşuda sahte bir
+        # `remove_index` diff'i üretiyordu (TB1 sınıfı sessiz borç: bir gün
+        # birisi autogenerate çıktısına güvenip dönem indeksini düşürürdü).
+        # ŞEMA DEĞİŞMEZ, migration GEREKMEZ — yalnız beyan hizalanır.
+        Index("ix_equipment_rental_invoices_period", "period_year", "period_month"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
