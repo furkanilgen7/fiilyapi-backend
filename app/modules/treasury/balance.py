@@ -47,18 +47,28 @@ ZERO = Decimal("0")
 """Ödemesiz hesabın `SUM()` NULL'ının yerine geçen nötr eleman."""
 
 
+def inflow_condition() -> ColumnElement[bool]:
+    """🔴 YÖNÜN TEK KAYNAĞI: ödeme hesaba GİRİŞ mi (K2/K4)?
+
+    Giden fatura bizim kestiğimizdir → tahsilat → GİRİŞ; gelen fatura bize
+    kesilmiştir → ödeme → ÇIKIŞ. Koşul burada TEK KEZ yazılır çünkü onu okuyan
+    iki yer vardır: bakiye (`signed_legs`, T2) ve nakit akışı serisi
+    (`cash_flow.py`, T5). İkinci bir yerde `direction == outgoing` yazılsaydı
+    biri bir gün değişir, öteki kalır ve grafik ile kart TERS işaret basardı —
+    üstelik ikisi de "bir sayı" gösterdiği için kusur ekranda görünmezdi.
+    """
+    return Invoice.direction == InvoiceDirection.outgoing
+
+
 def signed_legs() -> Subquery:
     """KANONİK kaynak: `(bank_account_id, İŞARETLİ amount)` ikilileri.
 
-    İşaret bağlı faturanın yönünden gelir (K4). `join` INNER'dır ve öyle
-    kalır: `payments.invoice_id` NOT NULL + RESTRICT FK olduğu için faturasız
-    ödeme YAPISAL OLARAK imkânsızdır — OUTER yapmak var olmayan bir satır
-    sınıfı için yönsüz (dolayısıyla işaretsiz) bir dal açardı.
+    İşaret bağlı faturanın yönünden gelir (K4, `inflow_condition`). `join`
+    INNER'dır ve öyle kalır: `payments.invoice_id` NOT NULL + RESTRICT FK olduğu
+    için faturasız ödeme YAPISAL OLARAK imkânsızdır — OUTER yapmak var olmayan
+    bir satır sınıfı için yönsüz (dolayısıyla işaretsiz) bir dal açardı.
     """
-    isaretli = case(
-        (Invoice.direction == InvoiceDirection.outgoing, Payment.amount),
-        else_=-Payment.amount,
-    )
+    isaretli = case((inflow_condition(), Payment.amount), else_=-Payment.amount)
     return (
         select(
             Payment.bank_account_id.label("bank_account_id"),

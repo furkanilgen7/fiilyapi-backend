@@ -27,6 +27,7 @@ istemciye aittir; ISO 13616 alfabesi zaten büyük harftir.
 (kullanılabilir/bloke) çizilmemiştir; gövdede gönderilirlerse **422**dir.
 """
 
+import enum
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
@@ -41,9 +42,14 @@ __all__ = [
     "BankAccountListResponse",
     "BankAccountResponse",
     "BankAccountUpdate",
+    "CashFlowBucket",
+    "CashFlowResponse",
     "PaymentCreate",
     "PaymentListResponse",
     "PaymentResponse",
+    "UpcomingPaymentItem",
+    "UpcomingPaymentsResponse",
+    "UpcomingSourceType",
     "normalize_iban",
 ]
 
@@ -249,3 +255,108 @@ class PaymentListResponse(BaseModel):
     offset: int
     paid_total: Decimal
     remaining: Decimal
+
+
+# --------------------------------------------------------------------------- #
+# HZ-1 T5 — türev uçlar (9, 10) · E9:90-125
+#
+# İkisi de SALT OKUNURDUR: gövde şeması yoktur, dolayısıyla `extra="forbid"`
+# kararı burada geçerli değildir. Riskin tamamı YANITTADIR.
+# --------------------------------------------------------------------------- #
+
+
+class UpcomingSourceType(str, enum.Enum):
+    """Yaklaşan ödemenin KAYNAK EVRAK tipi (K9).
+
+    E9:113/117/121 ÜÇ kaynak çizer — hakediş · **bordro** · fatura — ama bugün
+    yalnız İKİSİ üretilebilir:
+
+    * ✅ `invoice` — `invoices.due_date` gerçek bir vade kolonudur;
+    * ✅ `subcontractor_progress_payment` — vade `approved_at` +
+      `subcontractor_contracts.payment_term_days`ten TÜRER;
+    * ⛔ **bordro — ÜYE OLARAK AÇILMAZ.** `payroll_periods`ta ödeme vadesi
+      kavramı YOKTUR (İK-3'te vade kolonu açılmadı) ve uydurulmaz. Üretilemeyen
+      bir enum üyesi istemciye tutulamayacak bir söz verirdi: ekran o rozeti
+      çizer, hiçbir satır onu taşımazdı. Vade kolonu açıldığında üye de eklenir
+      (ROADMAP borcu).
+    """
+
+    invoice = "invoice"
+    subcontractor_progress_payment = "subcontractor_progress_payment"
+
+
+class UpcomingPaymentItem(BaseModel):
+    """E9:109-125 satırı — mockup'ın BEŞ alanı + kaynak damgası.
+
+    🔴 **K10: aciliyet/renk alanı YOKTUR ve açılmaz.** E9'un kodlaması kendi
+    içinde tutarsızdır (2 gün→turuncu, 3 gün→**kırmızı**, 7 gün→yeşil); sunucu
+    bir eşik uydurursa mockup'ın hangi yarısının doğru olduğuna KARAR VERMİŞ
+    olur. Yanıt yalnız `days_remaining` sayısını ve `source_type`ı verir; renk
+    istemcinindir (SA'nın "EN HIZLI rozeti sunucuda üretilmez" kanonu).
+
+    `counterparty` NULLABLE'dır ve olmalıdır: taşeron sözleşmesinde
+    `subcontractor_name` taslak aşamasında boş bırakılabilir. Boş metinle
+    ya da "Bilinmeyen" gibi bir dolgu ile doldurmak, kullanıcıya var olmayan
+    bir kayıt adı gösterirdi.
+
+    `document_no` yalnız TANIMLAYICIDIR, cümle DEĞİL: faturada `invoice_no`,
+    hakedişte `sequence_no`nun metni. Sunucu "Hakediş #47" cümlesini KURMAZ —
+    o birleştirme (E9:113) `source_type` ile birlikte istemcide yapılır ve
+    çeviri/biçim kararı sunucuya sızmaz.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    source_type: UpcomingSourceType
+    source_id: uuid.UUID
+    counterparty: str | None
+    document_no: str
+    due_date: date
+    days_remaining: int
+    amount: Decimal
+
+
+class UpcomingPaymentsResponse(BaseModel):
+    """`days` ve `as_of` ECHO edilir.
+
+    Sayfalama YOKTUR: pencere `days` ile zaten SINIRLIDIR (tavan 90 gün) ve
+    kart bir kesittir, tablo değil — `limit` eklemek pencerenin üstüne ikinci
+    ve sessiz bir kırpma koyardı.
+
+    `as_of` olmadan `days_remaining` DOĞRULANAMAZ: istemci kendi saatiyle
+    hesaplarsa TR gecesi 00:00-03:00 arasında sunucudan bir gün sapar.
+    """
+
+    items: list[UpcomingPaymentItem]
+    days: int
+    as_of: date
+
+
+class CashFlowBucket(BaseModel):
+    """E9:92-101 serisinin TEK GÜNÜ. İki yön AYRI alandır, net DEĞİL.
+
+    Net tek sayı basılsaydı grafiğin iki eğrisi (giriş/çıkış) çizilemezdi ve
+    E9:104-105'in iki toplamı da tek bir farka çökerdi.
+    """
+
+    day: date
+    inflow: Decimal
+    outflow: Decimal
+
+
+class CashFlowResponse(BaseModel):
+    """E9:90-106 — günlük seri + iki toplam (`Giriş` / `Çıkış`).
+
+    🔴 **Seri SEYREKTİR:** yalnız hareket GÖRMÜŞ günler satır üretir. Ayın 31
+    gününü sıfırla doldurmak, veri olmayan bir günü "0 TL hareket oldu"
+    diye gösterirdi ve boş ayın 31 satırlık yanıtı "boş" görünmezdi.
+
+    🔴 **Toplamlar `0`dır, NULL DEĞİL** (`coalesce`, `paid_sum` dersi): ödemesiz
+    bir ayda `SUM()` NULL döner ve kart "₺" yanında boşluk basardı.
+    """
+
+    year: int
+    month: int
+    series: list[CashFlowBucket]
+    inflow_total: Decimal
+    outflow_total: Decimal

@@ -24,10 +24,10 @@ Hesap başına bakiye sorgusu 3 kartta fark ettirmez, 20 hesapta patlar —
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import Select, func, literal, select
+from sqlalchemy import ColumnElement, Select, Subquery, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.treasury.balance import select_accounts_with_balance
+from app.modules.treasury.balance import ZERO, select_accounts_with_balance
 from app.modules.treasury.models import BankAccount, Payment
 
 __all__ = [
@@ -39,7 +39,9 @@ __all__ = [
     "iban_exists",
     "list_accounts_with_balance",
     "list_payments_for_invoice",
+    "paid_sum",
     "paid_total_for_invoice",
+    "paid_totals_by_invoice",
 ]
 
 
@@ -180,7 +182,30 @@ async def paid_total_for_invoice(session: AsyncSession, invoice_id: uuid.UUID) -
     Yön İŞARETİ YOKTUR ve olmamalıdır: bu toplam bir BAKİYE değil, faturaya
     ödenmiş tutardır. Gelen faturada da ödenen tutar POZİTİFTİR.
     """
-    stmt = select(func.coalesce(func.sum(Payment.amount), literal(Decimal("0")))).where(
-        Payment.invoice_id == invoice_id
-    )
+    stmt = select(paid_sum()).where(Payment.invoice_id == invoice_id)
     return (await session.execute(stmt)).scalar_one()
+
+
+def paid_sum() -> ColumnElement[Decimal]:
+    """🔴 "Faturaya ödenen" ifadesinin TEK yazımı — tekil ve TOPLU okuma paylaşır.
+
+    `paid_total_for_invoice` (tek fatura, T4) ile `paid_totals_by_invoice`
+    (T5'in penceresindeki tüm faturalar) aynı ifadeyi kullanır; ikinci bir
+    `sum(amount)` yazılsaydı biri `coalesce`ı unutur ve NULL yutması yalnız o
+    yolda ortaya çıkardı.
+    """
+    return func.coalesce(func.sum(Payment.amount), literal(ZERO))
+
+
+def paid_totals_by_invoice() -> Subquery:
+    """Fatura başına ödenen toplam — kaç fatura olursa olsun TEK gruplu sorgu.
+
+    T5'in `upcoming-payments` ucu "tam ödenmemiş" süzgecini SQL'de uygular;
+    fatura başına `paid_total_for_invoice` çağırmak klasik N+1 olurdu
+    (`test_N_ARTI_1_YAPMAZ` bunu ÖLÇER).
+    """
+    return (
+        select(Payment.invoice_id.label("invoice_id"), paid_sum().label("paid"))
+        .group_by(Payment.invoice_id)
+        .subquery()
+    )

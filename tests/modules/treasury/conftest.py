@@ -23,7 +23,7 @@ kurmak, olmayan bir süzgeci varmış gibi gösteren bir test üretirdi.
 """
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
@@ -31,14 +31,21 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.contracts.models import SubcontractorContract, SubcontractorContractItem
 from app.modules.invoicing.models import (
     Invoice,
     InvoiceDirection,
     InvoiceDocumentType,
     InvoiceStatus,
 )
+from app.modules.projects.models import Project
+from app.modules.subcontractor_progress_payments.models import (
+    SubcontractorPaymentStatus,
+    SubcontractorProgressPayment,
+    SubcontractorProgressPaymentLine,
+)
 from app.modules.treasury.models import BankAccount, BankAccountType, Payment, PaymentMethodKind
-from app.modules.users.models import User
+from app.modules.users.models import User, UserProjectAccess
 
 
 async def _login(client: AsyncClient, user_factory, role_key: str, email: str) -> str:
@@ -209,6 +216,9 @@ def fatura_fabrikasi(seeded_db: AsyncSession, user_factory):
         status: InvoiceStatus = InvoiceStatus.sent,
         total: str = "1000.00",
         project=None,  # noqa: ANN001
+        due_date: date | None = None,
+        party_name: str = "Test Karşı Taraf",
+        source_payment=None,  # noqa: ANN001
     ) -> Invoice:
         sayac["n"] += 1
         creator = (
@@ -223,7 +233,11 @@ def fatura_fabrikasi(seeded_db: AsyncSession, user_factory):
             document_type=InvoiceDocumentType.einvoice,
             status=status,
             issue_date=date(2026, 8, 1),
-            party_name="Test Karşı Taraf",
+            due_date=due_date,
+            party_name=party_name,
+            subcontractor_progress_payment_id=(
+                None if source_payment is None else source_payment.id
+            ),
             project_id=None if project is None else project.id,
             subtotal=tutar,
             advance_amount=Decimal("0.00"),
@@ -272,6 +286,151 @@ def fatura_odemesi(seeded_db: AsyncSession, user_factory):
         )
         seeded_db.add(payment)
         await seeded_db.flush()
+        return payment
+
+    return _create
+
+
+# --------------------------------------------------------------------------- #
+# HZ-1 T5 — türev uçlar (9, 10)
+#
+# 🔴 K3 BURADA GENİŞLER: banka HESABI şirket geneli olsa da `upcoming-payments`in
+# KAYNAKLARI (fatura · taşeron hakedişi) proje kapsamı taşır. Bu yüzden T5 —
+# T3'ün aksine — proje/erişim fixture'ları KURAR: kapsam süzgeci olmadan
+# `treasury=_V` olan bir proje müdürü, göremediği projenin karşı tarafını,
+# evrak numarasını ve tutarını okurdu.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+async def gorunen_proje(seeded_db: AsyncSession, project_factory) -> Project:
+    return await project_factory(code="HZ-P01", name="Güneşkent Konut")
+
+
+@pytest.fixture
+async def gorunmeyen_proje(seeded_db: AsyncSession, project_factory) -> Project:
+    """`kapsamli_muhasebe_headers` kullanıcısına ASLA erişim verilmeyen proje."""
+    return await project_factory(code="HZ-P02", name="Liman Altyapı")
+
+
+@pytest.fixture
+async def kapsamli_muhasebe_headers(
+    client: AsyncClient,
+    seeded_db: AsyncSession,
+    user_factory,
+    gorunen_proje: Project,
+    gorunmeyen_proje: Project,
+) -> dict[str, str]:
+    """`accounting` (`treasury=_F`, `projects=_FIN`) — kapsamı YALNIZ `gorunen_proje`.
+
+    IDOR testlerinin taşıyıcısı budur: `admin_headers` (`projects=_A`) kapsam
+    süzgecini ATLADIĞI için sızıntıyı hiçbir zaman gösteremez.
+    """
+    email = "kapsamli@hazine.co"
+    await user_factory(email=email, password="parola1234", role_key="accounting")
+    user = (await seeded_db.execute(select(User).where(User.email == email))).scalar_one()
+    seeded_db.add(
+        UserProjectAccess(user_id=user.id, project_id=gorunen_proje.id, all_projects=False)
+    )
+    await seeded_db.flush()
+    return _auth(await _login_mevcut(client, email))
+
+
+async def _login_mevcut(client: AsyncClient, email: str) -> str:
+    resp = await client.post("/auth/login", json={"email": email, "password": "parola1234"})
+    assert resp.status_code == 200, resp.text
+    return resp.json()["access_token"]
+
+
+@pytest.fixture
+def taseron_hakedisi_fabrikasi(seeded_db: AsyncSession, project_factory, user_factory):
+    """Proje + taşeron sözleşmesi + ONAYLI hakediş (satırlarıyla) — TEK yardımcı.
+
+    `tests/subcontractor_progress_payments/conftest.py`nin ağır kurulumu (işveren
+    poz grubu, sözleşme kalemleri, bölüm) BURADA GEREKMEZ: T5 yalnız hakedişin
+    NET tutarını ve vadesini okur. Yüzdeler varsayılan olarak SIFIRDIR ki
+    `net == brüt` olsun ve tutar iddiası hesabın yuvarlamasına değil satırlara
+    bağlansın; yüzdeli senaryo (net ≠ brüt) AYRI bir testin işidir.
+    """
+    sayac = {"n": 0}
+
+    async def _create(
+        *,
+        project: Project | None = None,
+        approved_at: datetime | None = None,
+        payment_term_days: int = 30,
+        status: SubcontractorPaymentStatus = SubcontractorPaymentStatus.approved,
+        subcontractor_name: str | None = "Akın İnşaat",
+        vat_pct: str = "0",
+        advance_pct: str = "0",
+        retainage_pct: str = "0",
+        line_amounts: tuple[str, ...] = ("1000.00",),
+        sequence_no: int | None = None,
+    ) -> SubcontractorProgressPayment:
+        sayac["n"] += 1
+        creator = (
+            await seeded_db.execute(select(User).where(User.email == "hakedis@hazine.co"))
+        ).scalar_one_or_none() or await user_factory(
+            email="hakedis@hazine.co", password="parola1234", role_key="system_admin"
+        )
+        if project is None:
+            project = await project_factory(code=f"HZ-T{sayac['n']:02d}")
+        contract = SubcontractorContract(
+            project_id=project.id,
+            subcontractor_name=subcontractor_name,
+            contract_no=f"HZ-TSZ-{sayac['n']:03d}",
+            advance_pct=Decimal(advance_pct),
+            retainage_pct=Decimal(retainage_pct),
+            vat_pct=Decimal(vat_pct),
+            payment_term_days=payment_term_days,
+            created_by=creator.id,
+        )
+        seeded_db.add(contract)
+        await seeded_db.flush()
+        # Sözleşme BEDELİ kalemlerden türer (`amount` kolonu YOK) ve avans
+        # mahsubunun TAVANI odur: kalemsiz bir sözleşmede bedel 0 olur, tavan
+        # 0'a düşer ve avans kesintisi HİÇ uygulanmaz — net tutar testi o zaman
+        # kesintisiz bir sayıyı doğrulamış olurdu.
+        seeded_db.add(
+            SubcontractorContractItem(
+                contract_id=contract.id,
+                code="S001",
+                description="Sözleşme kalemi",
+                unit="Ton",
+                quantity=Decimal("1000.000"),
+                unit_price=Decimal("1000.00"),
+                sort_order=0,
+            )
+        )
+        await seeded_db.flush()
+        payment = SubcontractorProgressPayment(
+            contract_id=contract.id,
+            project_id=project.id,
+            sequence_no=sayac["n"] if sequence_no is None else sequence_no,
+            status=status,
+            vat_pct=contract.vat_pct,
+            advance_pct=contract.advance_pct,
+            retainage_pct=contract.retainage_pct,
+            approved_at=approved_at,
+            created_by=creator.id,
+        )
+        seeded_db.add(payment)
+        await seeded_db.flush()
+        for index, tutar in enumerate(line_amounts):
+            seeded_db.add(
+                SubcontractorProgressPaymentLine(
+                    payment_id=payment.id,
+                    code=f"K{index + 1:03d}",
+                    description=f"Kalem {index + 1}",
+                    unit="Ton",
+                    contract_unit_price=Decimal(tutar),
+                    coefficient=Decimal("1.000"),
+                    quantity=Decimal("1.000"),
+                    sort_order=index,
+                )
+            )
+        await seeded_db.flush()
+        await seeded_db.refresh(payment)
         return payment
 
     return _create

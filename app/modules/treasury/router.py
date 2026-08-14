@@ -53,12 +53,14 @@ from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
-from app.modules.treasury import service
+from app.modules.treasury import cash_flow, service, upcoming
 from app.modules.treasury.schemas import (
     BankAccountCreate,
     BankAccountListResponse,
     BankAccountResponse,
     BankAccountUpdate,
+    CashFlowResponse,
+    UpcomingPaymentsResponse,
 )
 from app.modules.users.models import User
 
@@ -231,3 +233,71 @@ async def delete_bank_account_endpoint(
     """
     detail = await service.delete_account(session, account_id)
     await _audit(request, session, user, AuditAction.delete, detail)
+
+
+# --------------------------------------------------------------------------- #
+# HZ-1 T5 — türev uçlar (9, 10) · E9:90-125
+#
+# 🔴 ROTA SIRASI: iki yol da `/treasury/<literal>` biçiminde İKİ SEGMENTLİDİR.
+# Bugün `/treasury/{...}` biçiminde bir UUID rotası YOKTUR, ama eklenecek olan
+# HER biri bu iki tanımın ALTINA gelmek zorundadır — FastAPI yolları KAYIT
+# SIRASINA göre eşler ve sonra kaydedilen literal bir UUID sanılıp 422'ye düşer
+# (MK-2 dersi, `main.py:94-104`). Bekçi: `test_rota_sirasi_treasury_literal_
+# UUID_SANILMAZ`.
+#
+# İkisi de SALT OKUNURDUR → `record_audit` ÇAĞIRMAZLAR (WORKFLOW kuralı:
+# okumalar denetlenmez) ve yeni `AuditAction` üyesi AÇILMAZ.
+# --------------------------------------------------------------------------- #
+
+
+@router.get(
+    "/treasury/upcoming-payments",
+    response_model=UpcomingPaymentsResponse,
+    dependencies=[_VIEW],
+)
+async def list_upcoming_payments_endpoint(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    days: Annotated[int, Query(ge=upcoming.MIN_DAYS, le=upcoming.MAX_DAYS)] = upcoming.DEFAULT_DAYS,
+) -> UpcomingPaymentsResponse:
+    """E9:109-125 — önümüzdeki `days` gün içinde ödenecekler.
+
+    `days` varsayılanı **7**dir (E9:110 `(7 Gün)`) ve tavanı 90'dır; aşım
+    **422**dir, sessiz kırpma DEĞİL (TB3 kanonu).
+
+    🔴 **K10:** yanıt `days_remaining` (sayı) + `source_type` taşır; `urgency`/
+    `color` gibi bir alan YOKTUR — renk kararı istemcinindir.
+
+    🔴 **K9:** kaynaklar bugün fatura ve taşeron hakedişidir; **bordro hiç satır
+    üretmez** (vade kolonu yok, uydurulmaz) — ayrıntı `upcoming.py`de.
+
+    🔴 **Kapsam:** hesap şirket geneli olsa da (K3) KAYNAKLAR proje kapsamlıdır
+    ve her satır karşı taraf + tutar sızdırır → süzgeç UYGULANIR.
+    """
+    return await upcoming.build_upcoming_payments(session, user, days=days)
+
+
+@router.get("/treasury/cash-flow", response_model=CashFlowResponse, dependencies=[_VIEW])
+async def get_cash_flow_endpoint(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    year: Annotated[int | None, Query(ge=cash_flow.MIN_YEAR, le=cash_flow.MAX_YEAR)] = None,
+    month: Annotated[int | None, Query(ge=1, le=12)] = None,
+) -> CashFlowResponse:
+    """E9:90-106 — ayın günlük giriş/çıkış serisi + iki toplam.
+
+    `year`/`month` verilmezse **içinde bulunulan ay** (`DISPLAY_TIMEZONE`);
+    aralık dışı değer **422**dir. İkisi BAĞIMSIZ varsayılır: yalnız `month`
+    gönderen istemci içinde bulunulan yılın o ayını okur.
+
+    🔴 Boş ayda seri BOŞTUR ve toplamlar **`0`**dır (NULL değil).
+
+    🔴 Bu uç proje süzgeci UYGULAMAZ — bilinçli karar, gerekçesi
+    `cash_flow.py` modül docstring'indedir (`upcoming-payments`in tersi).
+    """
+    varsayilan_yil, varsayilan_ay = cash_flow.current_year_month()
+    return await cash_flow.build_cash_flow(
+        session,
+        year=varsayilan_yil if year is None else year,
+        month=varsayilan_ay if month is None else month,
+    )
