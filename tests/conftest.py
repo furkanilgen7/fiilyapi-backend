@@ -39,6 +39,7 @@ from app.modules.subcontractor_progress_payments import (  # noqa: F401
     models as subcontractor_progress_payments_models,
 )
 from app.modules.timesheet import models as timesheet_models  # noqa: F401
+from app.modules.treasury import models as treasury_models  # noqa: F401
 from app.modules.units import models as units_models  # noqa: F401
 from app.modules.users import models as users_models  # noqa: F401
 from app.modules.users.models import User, UserStatus
