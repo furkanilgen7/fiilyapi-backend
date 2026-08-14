@@ -22,6 +22,7 @@ from app.core.errors import (
     ProjectValidationError,
     RelatedRecordsExistError,
     SiteValidationError,
+    TreasuryValidationError,
     UnitValidationError,
 )
 
@@ -150,6 +151,14 @@ async def _invoicing_validation_handler(
     )
 
 
+async def _treasury_validation_handler(
+    request: Request, exc: TreasuryValidationError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content={"detail": str(exc)}
+    )
+
+
 async def _domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
     return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
 
@@ -186,5 +195,6 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(PayrollValidationError, _payroll_validation_handler)
     app.add_exception_handler(EquipmentValidationError, _equipment_validation_handler)
     app.add_exception_handler(InvoicingValidationError, _invoicing_validation_handler)
+    app.add_exception_handler(TreasuryValidationError, _treasury_validation_handler)
     app.add_exception_handler(DomainError, _domain_error_handler)
     app.add_exception_handler(IntegrityError, _integrity_error_handler)

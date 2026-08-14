@@ -31,6 +31,23 @@ kilit yalnız BEKLETMEZ, bekleyen istek uyandığında kararı YENİDEN verir. t
 sayesinde BAYAT değil TAZE satırı okur — matris `(sent, send)` çiftini
 tanımadığı için **409** alır. Kilit kaldırılsaydı ikisi de `draft` okur, ikisi
 de geçer ve fatura İKİ KEZ gönderilmiş olurdu (İK-2 "eşik = kilit" kanonu).
+
+## 🔴 ÇAKIŞMA PENCERESİ DETERMİNİSTİKTİR — sabit `sleep` YOKTUR (T4b)
+
+O bekçi ilk hâlinde ÇIPLAK `asyncio.gather` ile yazılmıştı ve KIRILGANDI:
+kilit kaldırıldığında **dosya bütün koşulunca** kırmızı oluyor, ama **tek başına
+koşulunca 3/3 YEŞİL** kalıyordu. Sebep ölçüldü: izole koşuda bağlantı havuzu
+SOĞUKTUR — ilk görev bağlantı kurulumunu beklerken ikincisi henüz başlamamış
+olur, iki görev kritik anda hiç KESİŞMEZ ve kilitsiz kod da doğru sonucu verir.
+*"Test var" ≠ "test bekçilik ediyor".*
+
+Düzeltme `tests/modules/treasury/test_hz1_payment_lock.py` desenidir ve pencereyi
+sabit `asyncio.sleep` ile AÇMAZ: her görev önce kendi bağlantısını ısıtır
+(`session.get(User, …)` — bağlantıyı havuzdan çeker, transaction'ı başlatır),
+ANCAK ONDAN SONRA `asyncio.Barrier`a varır. Isınma barajdan sonra yapılsaydı
+kurulum gecikmesi görevleri yine sıraya sokardı. Baraj açıldığında iki bağlantı
+da sıcaktır ve çakışma GARANTİDİR. İddialar DEĞİŞMEDİ — yalnız pencere
+deterministikleşti.
 """
 
 import asyncio
@@ -64,6 +81,11 @@ _SessionFactory = async_sessionmaker(test_engine, class_=AsyncSession, expire_on
 #: ancak yaratılan satırların tam bilinmesiyle kapanır.
 _ROL_ANAHTARI = "fat1_conc_admin"
 _EPOSTALAR = ("fat1-kilit1@conc.co", "fat1-kilit2@conc.co")
+
+#: Baraj/görev bekleyişlerinin tavanı. Kilit DOĞRUYKEN görevler saniyenin
+#: altında biter; tavan yalnızca BOZUK bir kurulumun testi sonsuza asmasını
+#: engeller — pencere AÇMAK için KULLANILMAZ.
+_TAVAN_SANIYE = 15
 
 
 class _Kurulum:
@@ -164,6 +186,18 @@ async def _temizle(kurulum: _Kurulum) -> None:
         await session.commit()
 
 
+async def _guvenli_temizlik(kurulum: _Kurulum, *gorevler: asyncio.Task | None) -> None:
+    """Görevleri boşalt, sonra TAVANLI temizle.
+
+    Temizliğin kendi hatası `finally` içinde ASIL iddianın hata metnini
+    EZMEMELİDİR: mutasyon koşusunda okunması gereken şey kilit iddiasıdır,
+    temizliğin zaman aşımı değil.
+    """
+    await _gorevleri_bosalt(*gorevler)
+    with contextlib.suppress(Exception):
+        await asyncio.wait_for(_temizle(kurulum), timeout=_TAVAN_SANIYE)
+
+
 async def _kilidi_al_ve_tut(
     kurulum: _Kurulum, kilit_alindi: asyncio.Event, kilidi_birak: asyncio.Event
 ) -> str:
@@ -229,10 +263,18 @@ async def test_put_lines_faturayi_denetimden_ONCE_kilitler() -> None:
         await _temizle(kurulum)
 
 
-async def _gonder(kurulum: _Kurulum, aktor_sirasi: int) -> str:
-    """Bağımsız bir bağlantıda TAM `send` yolu: kilit → matris → K6 → damga."""
+async def _gonder(kurulum: _Kurulum, aktor_sirasi: int, baraj: asyncio.Barrier) -> str:
+    """Bağımsız bir bağlantıda TAM `send` yolu: kilit → matris → K6 → damga.
+
+    🔴 ISINMA + BARAJ — determinizmin tamamı buradadır (modül docstring'i T4b).
+    `session.get` bağlantıyı havuzdan ÇEKER, transaction'ı başlatır ve gerçek bir
+    sorgu koşturur; baraja ANCAK ONDAN SONRA varılır. Isınma barajdan sonra
+    yapılsaydı (ya da hiç yapılmasaydı) izole koşuda bağlantı kurulum gecikmesi
+    iki görevi sıraya sokar ve çakışma penceresi HİÇ AÇILMAZDI.
+    """
     async with _SessionFactory() as session:
         actor = await session.get(User, kurulum.actor_ids[aktor_sirasi])
+        await asyncio.wait_for(baraj.wait(), timeout=_TAVAN_SANIYE)
         try:
             await state_service.perform_transition(
                 session, actor, kurulum.invoice_id, InvoiceAction.send
@@ -250,13 +292,21 @@ async def test_send_ESZAMANLI_iki_istekte_BIR_KEZ_gecer() -> None:
     İki gerçek bağlantı aynı `draft` faturaya AYNI ANDA `send` atar. Doğru
     davranış: BİRİ `sent` yazar, ÖTEKİ 409 alır.
 
-    `state_service.perform_transition` içindeki `for_update=True` kaldırılırsa
-    ikisi de `draft` okur, ikisi de matrisi geçer ve fatura İKİ KEZ gönderilmiş
-    olur — o hâlde `sonuclar.count("sent") == 1` iddiası KIRMIZI'ya döner.
+    Fatura satırındaki `with_for_update` kaldırılırsa ikisi de `draft` okur,
+    ikisi de matrisi geçer ve fatura İKİ KEZ gönderilmiş olur — o hâlde
+    `sonuclar.count("sent") == 1` iddiası KIRMIZI'ya döner. Bu KANIT İZOLE
+    KOŞUDA alınmıştır (T4b): pencereyi açan şey `asyncio.Barrier`dır, dosyadaki
+    önceki testlerin ısıttığı havuz DEĞİL.
     """
     kurulum = await _kur()
+    baraj = asyncio.Barrier(2)
+    gorevler: list[asyncio.Task] = []
     try:
-        sonuclar = list(await asyncio.gather(_gonder(kurulum, 0), _gonder(kurulum, 1)))
+        gorevler = [
+            asyncio.create_task(_gonder(kurulum, 0, baraj)),
+            asyncio.create_task(_gonder(kurulum, 1, baraj)),
+        ]
+        sonuclar = list(await asyncio.wait_for(asyncio.gather(*gorevler), timeout=_TAVAN_SANIYE))
         assert sonuclar.count("sent") == 1, (
             f"iki eşzamanlı `send` de geçti ({sonuclar}) — `perform_transition` faturayı "
             "DENETİMDEN ÖNCE kilitlemiyor; fatura iki kez gönderilmiş sayılır"
@@ -267,4 +317,4 @@ async def test_send_ESZAMANLI_iki_istekte_BIR_KEZ_gecer() -> None:
             invoice = await session.get(Invoice, kurulum.invoice_id)
             assert invoice.status is InvoiceStatus.sent
     finally:
-        await _temizle(kurulum)
+        await _guvenli_temizlik(kurulum, *gorevler)

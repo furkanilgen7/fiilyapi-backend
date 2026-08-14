@@ -207,6 +207,27 @@ class InvoicingValidationError(DomainError):
     """
 
 
+class TreasuryValidationError(DomainError):
+    """Hazine gövde kuralı ihlali (HZ-1 spec §2.1) — 422.
+
+    `InvoicingValidationError`/`EquipmentValidationError` deseninin aynısı ve
+    aynı sebeple onlardan AYRI: DB `CHECK` ile zorlanabilse bile kullanıcıya
+    Türkçe mesaj veremeyecek kurallar tek yazma yolunda servis korkuluğuyla
+    tutulur. Bugünkü tek kullanıcısı:
+
+    * **`ck_bank_accounts_cash_has_name`** — CHECK VARDIR (T1) ve SON savunma
+      olarak kalır; ihlali 409 "Veri bütünlüğü hatası" olarak dönerdi ve
+      kullanıcı Kasa satırında hangi alanı doldurması gerektiğini öğrenemezdi.
+      Pydantic'te DEĞİL: PATCH kısmi gövde gönderir, kural ancak DB'deki kayıtla
+      BİRLEŞTİRİLMİŞ değerler üzerinde anlamlıdır (tipi `cash`e çevirip adı
+      göndermemek de ihlaldir).
+
+    404 DEĞİL: kayıt vardır ve görünür (hesap şirket genelidir, K3), ihlal eden
+    şey düzeltilebilir ALAN DEĞERLERİDİR. 409 da DEĞİL: engel kaydın DURUMU
+    değil İÇERİĞİDİR.
+    """
+
+
 class ConflictError(DomainError):
     """Durum makinesi / iş kuralı çakışması — 409 (P7 hakediş spec §7, §9.2, §9.7).
 

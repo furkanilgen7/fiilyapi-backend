@@ -295,6 +295,14 @@ async def test_gecis_hakedis_satirinin_kilidini_bekler() -> None:
     Yani bu test "geçiş hakediş satırının kilidine TAKILIR" davranışını sabitler
     (ki bu da §7'nin gereğidir), `FOR UPDATE`'in KENDİSİNİ değil.
 
+    T4b denetimi bunu YENİDEN ölçtü ve genişletti: yalnız `get_payment_locked`
+    değil, `get_contract_locked` de kaldırılınca — hatta İKİSİ BİRDEN
+    kaldırılınca — bu test izole koşuda 3/3 YEŞİL kalıyor. Yani bu dosyada
+    hiçbir kilit mutasyonunu öldürmez; kilitlerin regresyon bekçileri
+    `…_olusturma_yalniz_biri_gecer`, `…_onay_yalniz_biri_gecer`,
+    `test_silinirken_…` ve SQL-metin testidir. Bu test BİLEREK korunur (davranış
+    sabiti), bekçi diye SAYILMAZ.
+
     ## Davranışsal ayrım neden KURULAMIYOR (denendi, ölçüldü)
 
     O2 denetimi "sözleşmesi olmayan projede iki eşzamanlı `approve`" senaryosunu
