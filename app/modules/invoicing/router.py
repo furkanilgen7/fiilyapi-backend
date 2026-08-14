@@ -65,6 +65,8 @@ from app.modules.invoicing.schemas import (
     InvoiceUpdate,
 )
 from app.modules.invoicing.transitions import InvoiceAction
+from app.modules.treasury import payments_service
+from app.modules.treasury.schemas import PaymentCreate, PaymentListResponse, PaymentResponse
 from app.modules.users.models import User
 
 router = APIRouter(tags=["invoicing"], responses=COMMON_ERROR_RESPONSES)
@@ -456,3 +458,112 @@ async def dispute_invoice_endpoint(
     engellemek için sebep değildir.
     """
     return await _gecis(request, session, user, invoice_id, InvoiceAction.dispute)
+
+
+# --------------------------------------------------------------------------- #
+# HZ-1 T4 — ÖDEME UÇLARI (6, 7, 8) · FGI:220-247 `Tahsilat Kaydı` formu
+#
+# 🔴 **NEDEN BU DOSYADA** (HZ-1 spec §5, MK-2'nin `main.py:94-104` dersi):
+# `/invoices/{id}/payments` yolları `invoicing` router'ının İÇİNDE tanımlanır.
+# Ayrı bir router'da tutulup `main.py`de `invoicing_router`dan SONRA
+# kaydedilselerdi, `/invoices/{invoice_id}` rotasının önce eşleşme riski taşıyan
+# bir kayıt sırası doğardı; yolun sahibi router'la aynı yerde durması bu soruyu
+# tamamen ortadan kaldırır.
+#
+# `DELETE /payments/{id}` de BURADADIR (`treasury` router'ında değil) ve gerekçe
+# ROTA ÇAKIŞMASI DEĞİLDİR — `/payments` kökü hiçbir yolla çakışmaz. Gerekçe
+# İZİN ve TAG birliğidir: üç ucun kapısı da **`invoicing`**tir (spec §4) ve
+# `treasury` router'ı yalnız `treasury` izinli yolları barındırır. Uç oraya
+# konsaydı `treasury` etiketli bir yol `invoicing` izniyle korunur, hem openapi
+# gruplaması hem BFF kökü yanıltıcı olurdu.
+#
+# 🔴 **İŞ MANTIĞI BURADA DEĞİL** `treasury/payments_service.py`dedir: kilit
+# (K7), eşik (K6) ve durum türetimi (K5) tek dosyada durur. Bu router yalnız
+# yolu, yetkiyi ve denetim satırını taşır.
+# --------------------------------------------------------------------------- #
+
+_ODEME_YANITLARI = {
+    404: {"description": "Fatura ya da seçilen banka hesabı bulunamadı"},
+    422: {"description": "Toplam tahsilat fatura tutarını aşamaz (K6)"},
+}
+
+
+@router.get(
+    "/invoices/{invoice_id}/payments",
+    response_model=PaymentListResponse,
+    responses={404: {"description": "Fatura bulunamadı"}},
+    dependencies=[_VIEW],
+)
+async def list_invoice_payments_endpoint(
+    invoice_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    limit: _LIMIT = 50,
+    offset: _OFFSET = 0,
+) -> PaymentListResponse:
+    """Faturanın tahsilat/ödeme satırları + **`paid_total`** + **`remaining`**.
+
+    🔴 K5: `invoices` üzerinde `paid_amount` kolonu YOKTUR; iki toplam da
+    `Σ payments`ten TÜRETİLİR ve **TÜM satırlardan** gelir — sayfadan DEĞİL.
+
+    `limit` varsayılan 50, tavan 200 — aşım **422** (kırpma DEĞİL). Görünmeyen
+    fatura var olmayanla AYNI 404'ü alır.
+    """
+    return await payments_service.list_payments(
+        session, user, invoice_id, limit=limit, offset=offset
+    )
+
+
+@router.post(
+    "/invoices/{invoice_id}/payments",
+    response_model=PaymentResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses=_ODEME_YANITLARI,
+    dependencies=[_FULL],
+)
+async def create_invoice_payment_endpoint(
+    request: Request,
+    invoice_id: uuid.UUID,
+    data: PaymentCreate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> PaymentResponse:
+    """FGI:220-247 formunun kaydı — tahsilat DA ödeme DE aynı uçtur (K4).
+
+    * 🔴 **K7:** fatura satırı DENETİMLERDEN ÖNCE kilitlenir (`FOR UPDATE`);
+      kilit sırası SABİT: fatura → ödemeler → hesap.
+    * 🔴 **K6:** `Σ payments + yeni > total` → **422**, kuruş bazında TAM
+      karşılaştırma, tolerans YOK. `= total` GEÇER.
+    * 🔴 **K5:** başarıda fatura durumu `Σ`dan TÜRETİLEREK damgalanır ve damga
+      yalnız matrisin TANIDIĞI geçişle konur; gelen faturada durum DEĞİŞMEZ.
+    * `bank_account_id` yoksa **404**; pasif hesap **422**.
+    * Yön gövdeden GELMEZ, bağlı faturanın `direction`'ından okunur (K4).
+    """
+    payment, detail = await payments_service.create_payment(session, user, invoice_id, data)
+    await _audit(request, session, user, AuditAction.create, detail)
+    return PaymentResponse.model_validate(payment)
+
+
+@router.delete(
+    "/payments/{payment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={404: {"description": "Ödeme kaydı bulunamadı"}},
+    dependencies=[_ADMIN],
+)
+async def delete_payment_endpoint(
+    request: Request,
+    payment_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """**YALNIZ `admin`** → 204: yanlış tahsilat geri alınabilmelidir.
+
+    `full` seviyesi (muhasebe) 403 alır — `full` silmeyi KAPSAMAZ (repo kanonu)
+    ve ödeme, bakiyeyi doğrudan oynatan mali bir kayıttır.
+
+    🔴 Silme AYNI kilidi alır (K7) ve fatura durumunu **YENİDEN TÜRETİR**:
+    `collected` → `sent`e düşebilir. Görünmeyen faturanın ödemesi de "yok"tur
+    (404). Yanıt gövdesizdir.
+    """
+    detail = await payments_service.delete_payment(session, user, payment_id)
+    await _audit(request, session, user, AuditAction.delete, detail)

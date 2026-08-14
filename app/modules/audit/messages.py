@@ -1223,3 +1223,38 @@ def bank_account_deleted(bank_name: str, display_name: str | None) -> str:
     """Metin `session.delete`ten ÖNCE kurulur — sonra kurulsaydı ad güvenilir
     okunamazdı (`invoice_deleted` dersi)."""
     return f"Banka hesabı silindi: {bank_account_label(bank_name, display_name)}"
+
+
+# --- HZ-1 T4: ödeme (tahsilat/ödeme) kaydı ---
+#
+# Kimlik İKİ parçalıdır: FATURA NUMARASI (kaydın sahibi) + HESAP ADI (paranın
+# gittiği/geldiği yer). Ödeme UUID'si metne girmez — denetim tablosunda kimse
+# UUID okumaz; numara ile hesap birlikte satırı zaten ayırt eder.
+#
+# 🔴 **TUTAR metne GİRMEZ.** Repoda hiçbir denetim metni para taşımaz
+# (`bank_account_*` kanonu: bakiye de girmez). Tutar ödemenin KENDİ satırında
+# durur ve günlüğe donmuş bir kopyası düşseydi satır silindiğinde günlükte
+# yaşamaya devam eden ikinci bir gerçek olurdu.
+#
+# 🔴 YENİ `AuditAction` ÜYESİ AÇILMADI (TB3/T3 kanonu): `create`/`delete`
+# kullanılır, ayrım METİNDEDİR — "Ödeme kaydı" ile "Fatura" satırları aynı
+# `create` altında bile karışmaz.
+
+
+def payment_label(invoice_no: str, bank_name: str, display_name: str | None) -> str:
+    """İki denetim metninin TEK kimlik kaynağı.
+
+    Ayrı ayrı kurulsalardı biri hesap adını unutur ve aynı faturaya iki farklı
+    hesaptan girilmiş tahsilatlar günlükte ayırt edilemezdi.
+    """
+    return f"{invoice_no} · {bank_account_label(bank_name, display_name)}"
+
+
+def payment_created(invoice_no: str, bank_name: str, display_name: str | None) -> str:
+    return f"Ödeme kaydı eklendi: {payment_label(invoice_no, bank_name, display_name)}"
+
+
+def payment_deleted(invoice_no: str, bank_name: str, display_name: str | None) -> str:
+    """Metin `session.delete`ten ÖNCE kurulur: sonra kurulsaydı hem hesap hem
+    fatura güvenilir okunamaz ve silinenin NE OLDUĞU kaybolurdu."""
+    return f"Ödeme kaydı silindi: {payment_label(invoice_no, bank_name, display_name)}"
