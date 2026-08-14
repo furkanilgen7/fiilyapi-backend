@@ -1181,3 +1181,45 @@ def invoice_disputed(invoice_no: str) -> str:
     açmak gerçek bir Postgres enum'una migration demektir (TB3 kanonu) —
     `update` üyesiyle yazılır, ayrım bu cümledir."""
     return f"Gelen faturaya itiraz edildi: {invoice_no}"
+
+
+# --- HZ-1 T3: banka/kasa hesabı ---
+#
+# Kimlik UUID DEĞİL kullanıcının GÖRDÜĞÜ değerdir: E9 kartında basılan ad, yani
+# Kasa'da `display_name` ("Merkez Kasa"), vadesizde banka adı ("Ziraat Bank").
+#
+# 🔴 **IBAN metne GİRMEZ.** Denetim günlüğü geniş bir okur kitlesine açıktır ve
+# hesap numarasını oraya kopyalamak, kaydı gereğinden fazla hassas kılardı;
+# ayırt etmek için ad zaten yeterlidir.
+#
+# 🔴 **BAKİYE de girmez** — bakiye SAKLANMAZ, TÜRETİLİR (K2). Günlüğe donmuş bir
+# kopyası düşseydi ilk ödemede ayrışır ve iki sayı yan yana yaşardı
+# (`invoice_*` kanonunun aynısı).
+#
+# 🔴 YENİ `AuditAction` ÜYESİ AÇILMADI (TB3/T3 kanonu): `action` gerçek bir
+# Postgres enum tipidir ve yeni üye migration ister. Ayrım metindedir.
+
+
+def bank_account_label(bank_name: str, display_name: str | None) -> str:
+    """Denetim metinlerinin TEK ad kaynağı.
+
+    Üç metin de buradan geçer: ayrı ayrı kurulsalardı biri `display_name`i
+    unutur ve aynı bankada açılmış iki kasa günlükte ayırt edilemezdi.
+    """
+    return f"{bank_name} · {display_name}" if display_name else bank_name
+
+
+def bank_account_created(bank_name: str, display_name: str | None) -> str:
+    return f"Banka hesabı oluşturuldu: {bank_account_label(bank_name, display_name)}"
+
+
+def bank_account_updated(bank_name: str, display_name: str | None) -> str:
+    """Metin GÜNCELLENMİŞ değerlerle kurulur: kullanıcı adı düzelttiyse günlükte
+    yeni ad durmalıdır, yoksa satır neyin ne olduğunu anlatmaz."""
+    return f"Banka hesabı güncellendi: {bank_account_label(bank_name, display_name)}"
+
+
+def bank_account_deleted(bank_name: str, display_name: str | None) -> str:
+    """Metin `session.delete`ten ÖNCE kurulur — sonra kurulsaydı ad güvenilir
+    okunamazdı (`invoice_deleted` dersi)."""
+    return f"Banka hesabı silindi: {bank_account_label(bank_name, display_name)}"

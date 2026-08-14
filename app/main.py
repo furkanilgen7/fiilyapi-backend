@@ -39,6 +39,7 @@ from app.modules.subcontractor_progress_payments.router import (
     router as subcontractor_progress_payments_router,
 )
 from app.modules.timesheet.router import router as timesheet_router
+from app.modules.treasury.router import router as treasury_router
 from app.modules.units.router import router as units_router
 from app.modules.users.router import router as users_router
 
@@ -121,6 +122,12 @@ app.include_router(site_planning_router)
 app.include_router(sites_router)
 app.include_router(subcontractor_progress_payments_router)
 app.include_router(timesheet_router)
+# `treasury_router` yalnız `/bank-accounts` kökünü taşır ve başka hiçbir
+# router'ın yoluyla çakışmaz; kendi içindeki UUID/literal sırası da router modül
+# docstring'inde açıklanmıştır (bugün literal yol YOKTUR). Ödeme uçları (T4)
+# `/invoices/{id}/payments` altında ve `invoicing_router`ın İÇİNDE tanımlanır —
+# ayrı bir router olarak buraya eklenmezler (spec §5, MK-2 dersi).
+app.include_router(treasury_router)
 app.include_router(units_router)
 app.include_router(users_router)
 
