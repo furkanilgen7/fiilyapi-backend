@@ -222,13 +222,22 @@ def _line_targets(
 async def _build_lines(session: AsyncSession, actor: User, invoice: EquipmentRentalInvoice) -> None:
     """🔴 K2 — satırları çalışma kaydından KURAR/TAZELER (M5:83).
 
-    Kopyalanan DÖRT şey vardır: `worked_hours`, `breakdown_hours`, `site_id` ve
-    🔴 **`rate_amount`** (T5 bulgusu). K4'ün "satırın bedeli boşsa ekipmanınki"
-    kuralı bir ÇÖZÜM kuralıdır ve BURADA, satır kurulurken uygulanır — okuma
-    yolunda karta canlı düşülseydi K2'nin kapattığı delik paranın İKİNCİ
-    çarpanından yeniden açılır, onaylanmış bir faturanın tutarı kart üzerindeki
-    bir bedel düzeltmesiyle sessizce oynardı. M5:93 alanı zaten dolu ve
-    düzenlenebilir basıyor: mockup da bedeli satırın kendi verisi sayıyor.
+    Kopyalanan BEŞ şey vardır: `worked_hours`, `breakdown_hours`, `site_id`,
+    🔴 **`rate_amount`** (MK-2 T5 bulgusu) ve 🔴 **`capacity_hours`**
+    (MK-3 K1). K4'ün "satırın bedeli boşsa ekipmanınki" kuralı bir ÇÖZÜM
+    kuralıdır ve BURADA, satır kurulurken uygulanır — okuma yolunda karta canlı
+    düşülseydi K2'nin kapattığı delik paranın İKİNCİ çarpanından yeniden açılır,
+    onaylanmış bir faturanın tutarı kart üzerindeki bir bedel düzeltmesiyle
+    sessizce oynardı. M5:93 alanı zaten dolu ve düzenlenebilir basıyor: mockup
+    da bedeli satırın kendi verisi sayıyor.
+
+    🔴 `capacity_hours` aynı deliğin ÜÇÜNCÜ çarpanıdır: `monthly` dönemde
+    saatlik bedelin PAYDASI'dır ve canlı okunsaydı kapasite düzeltmesi
+    onaylanmış bir faturanın tutarını geriye dönük oynatırdı. Kalıcı ders: bir
+    türev para değeri N çarpandan oluşuyorsa snapshot iddiası N'in HEPSİNİ
+    kapsamalıdır. **Dönem ne olursa olsun HER satırda doldurulur** (K3): dönem
+    `draft`ta `PATCH`le `monthly`ye çevrilebilir ve o an değer yoksa geriye
+    dönük doldurmak için tam da kapattığımız canlı okumaya dönmek gerekirdi.
 
     Kullanıcının girdiği alanlar (`rate_amount`, `invoiced_hours`) tazelemede
     KORUNUR — onlar bizim çalışma kaydımızdan gelmez; firmanın iddiası ve
@@ -266,6 +275,10 @@ async def _build_lines(session: AsyncSession, actor: User, invoice: EquipmentRen
         # snapshot ilkesi). Ekipmanın bedeli yoksa satırınki de `None` kalır —
         # uydurma 0 BASILMAZ (MK-1 K16 fail-closed) ve `our_amount` `None` olur.
         bedel = ekipmanlar[equipment_id].rate_amount
+        # 🔴 MK-3 K1 — `monthly` paydası da BURADA donar. Çözülmüş saatlik bedel
+        # KOLONLAŞMAZ (MK-2 K4: para tek formülden türer, `cost.py`de); donan
+        # şey formülün GİRDİSİDİR.
+        kapasite = ekipmanlar[equipment_id].monthly_capacity_hours
         satir = mevcut.pop((equipment_id, tur), None)
         if satir is None:
             session.add(
@@ -277,6 +290,7 @@ async def _build_lines(session: AsyncSession, actor: User, invoice: EquipmentRen
                     worked_hours=calisma,
                     breakdown_hours=ariza,
                     rate_amount=bedel,
+                    capacity_hours=kapasite,
                 )
             )
             continue
@@ -285,6 +299,11 @@ async def _build_lines(session: AsyncSession, actor: User, invoice: EquipmentRen
         satir.site_id = site_id
         if satir.rate_amount is None:
             satir.rate_amount = bedel
+        # K5 — `rate_amount`la BİREBİR aynı kural: boşken doldurulur, DOLU değer
+        # EZİLMEZ. Ezilseydi snapshot'ın verdiği güvence her tazelemede geri
+        # alınır, fatura yeniden ekipman kartına bağlanırdı.
+        if satir.capacity_hours is None:
+            satir.capacity_hours = kapasite
     for artik in mevcut.values():
         await session.delete(artik)
     await session.flush()
@@ -379,14 +398,22 @@ async def invoice_detail(
 ) -> RentalInvoiceDetailResponse:
     """`GET …/{id}` — M5'in TAMAMI: satırlar + üç toplam + KDV + proje dağılımı.
 
-    🔴 **K2:** hiçbir sayı CANLI okunmaz — ne saat, ne bedel. **İSTİSNA YOKTUR**
-    (T5 bulgusu): `rate_amount` satır kurulurken kopyalandığı için (`_build_lines`)
-    okuma yolu ekipman kartına hiç düşmez; `equipment_rate_amount=None` geçilir.
-    ⚠️ **Kalan tek canlı okuma `monthly_capacity_hours`tur** (yalnız `monthly`
-    dönemli faturada, saatlik bedelin PAYDASI olarak). Bir para değeri değil,
-    ekipmanın teknik kapasitesidir (K7); yine de kart üzerinde değiştirilirse
-    onaylanmış bir `monthly` faturanın tutarı oynayabilir. Kapatmak satıra yeni
-    bir snapshot kolonu ister → spec değişikliği, ROADMAP'te AÇIK BORÇ.
+    🔴 **K2:** tutarı etkileyen hiçbir sayı CANLI okunmaz — ne saat, ne bedel,
+    ne payda. **İSTİSNA YOKTUR.** `rate_amount` (MK-2 T5) ve `capacity_hours`
+    (MK-3) satır kurulurken kopyalandığı için (`_build_lines`) okuma yolu
+    ekipman kartına hiç düşmez: `equipment_rate_amount=None` geçilir, payda
+    `satir.capacity_hours`tan gelir.
+
+    ✅ **MK-2'den devredilen "kalan tek canlı okuma" borcu BURADA KAPANDI.**
+    `monthly_capacity_hours` kartta düzeltildiğinde onaylanmış (hatta ödenmiş)
+    bir aylık-sabit faturanın tutarı geriye dönük oynuyordu; şimdi payda
+    satırın kendi kolonundan okunur. Kapasite `null`/`0` ise saatlik bedel
+    hesaplanamaz ve `our_amount` `null` durur (K2 fail-closed): uydurma 0 ya da
+    enjekte edilmiş bir varsayılan BASILMAZ.
+
+    ⚠️ Ekipmanın **adı/markası/plakası** canlı okunmaya DEVAM eder ve bu kusur
+    değildir: fatura kartın adını dondurmaz. Ayrım şudur — **tutarı etkileyen
+    girdi donar, sunum donmaz.**
     """
     satirlar = await rental_repository.invoice_lines(session, invoice.id)
     hesap = compute_invoice(
@@ -404,7 +431,7 @@ async def invoice_detail(
                 line_rate_amount=satir.rate_amount,
                 equipment_rate_amount=None,
                 invoiced_hours=satir.invoiced_hours,
-                monthly_capacity_hours=equipment.monthly_capacity_hours,
+                monthly_capacity_hours=satir.capacity_hours,
             )
             for satir, equipment in satirlar
         ),

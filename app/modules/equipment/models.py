@@ -674,6 +674,10 @@ class EquipmentRentalInvoiceLine(Base):
             "invoiced_hours IS NULL OR invoiced_hours >= 0",
             name="ck_equipment_rental_invoice_lines_invoiced_hours_non_negative",
         ),
+        CheckConstraint(
+            "capacity_hours IS NULL OR capacity_hours >= 0",
+            name="ck_equipment_rental_invoice_lines_capacity_hours_non_negative",
+        ),
         UniqueConstraint(
             "invoice_id",
             "equipment_id",
@@ -733,6 +737,23 @@ class EquipmentRentalInvoiceLine(Base):
     invoiced_hours: Mapped[Decimal | None] = mapped_column(
         Numeric(RENTAL_HOURS_PRECISION, RENTAL_HOURS_SCALE), nullable=True
     )
+    # 🔴 MK-3 K1 — aylık kira bedelini saate çeviren PAYDA da bir SNAPSHOT'tır.
+    # Satır kurulurken `equipment.monthly_capacity_hours`tan KOPYALANIR. Canlı
+    # okunsaydı, ekipman kartındaki kapasite düzeltildiğinde ONAYLANMIŞ (hatta
+    # ödenmiş) bir aylık-sabit kira faturasının tutarı geriye dönük oynardı —
+    # `worked_hours`/`rate_amount` ile TAM OLARAK aynı sınıf delik. (Kalıcı ders:
+    # bir türev para değeri N çarpandan oluşuyorsa snapshot iddiası N'in HEPSİNİ
+    # kapsamalıdır; MK-2'de saat donduruldu bedel unutuldu, bedel donduruldu
+    # payda unutuldu.)
+    #
+    # NULLABLE'dır (K2, fail-closed): değer yoksa saatlik bedel HESAPLANAMAZ ve
+    # `our_amount` `null` durur — uydurma 0 ya da enjekte edilmiş bir varsayılan
+    # BASILMAZ (varsayılan ekipman tablosunun işidir, faturanın değil). Mevcut
+    # satırlar migration'da (a0b1c2d3e4f5) ekipmandan DOLDURULUR (K4).
+    #
+    # 🔴 Çözülmüş saatlik bedel KOLONLAŞMAZ: para tek formülden türer (MK-2 K4);
+    # burada donan şey GİRDİdir, TÜREV değil.
+    capacity_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
