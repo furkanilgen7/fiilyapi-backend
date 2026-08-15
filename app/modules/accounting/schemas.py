@@ -1,0 +1,170 @@
+"""Muhasebe şemaları (MU-1 T3a) — hesap planı gövde ve yanıtları.
+
+`treasury/schemas.py` üçlüsünün (Create/Update/Response) kardeşi.
+
+## 🔴 `extra="forbid"` — sessiz yok sayma YOK
+
+Gövde şemaları bilinmeyen alanı **422** ile reddeder. Gerekçe bu modülde
+doğrudan MALİ'dir: `balance` TÜREVDİR (K3, `balance.py`) ve saklanan bir kolonu
+yoktur; `class_code` ile `level` de KODDAN türer (K4). Pydantic'in varsayılan
+davranışı gövdedeki `balance`ı SESSİZCE atmak olurdu; istemci gönderdiği
+bakiyenin yazıldığını sanır, ekranda ise formülün ürettiği başka bir sayı
+görürdü.
+
+Reddedilenler: `balance` · `class_code` · `level` (türev) · `id` ·
+`created_at`/`updated_at` (sunucu damgaları) · isimsiz her alan.
+
+## Kod deseni ŞEMADA da vardır
+
+`code` alanı `codes.ACCOUNT_CODE_PATTERN`ı DOĞRUDAN kullanır — ikinci bir regex
+yazılsaydı biri gevşetilip öteki unutulur ve uç, DB CHECK'inin
+(`ck_chart_of_accounts_code_format`) reddedeceği bir kodu kabul ederdi:
+kullanıcı alanına özel Türkçe 422 yerine ayrımsız bir 409 alırdı. DB kısıtı SON
+savunma olarak yerinde KALIR.
+
+## AÇILMAYAN alanlar (spec §9, icat yasağı)
+
+`parent_id` (hiyerarşi kodun içinde) · `is_contra` (`257`in parantezi bir SUNUM
+kuralıdır, hiçbir form onay kutusu çizmemiştir) · sınıf etiketi (HP:187 bandı
+kendi satırlarıyla çelişir — K15) · para birimi/kur · proje/şantiye/maliyet
+merkezi (üç tabloda da kolonu yok, MU-3). Gövdede gönderilirlerse **422**dir.
+
+⚠️ `app.core.text.FREE_TEXT_MAX_LENGTH` bu dosyada HENÜZ kullanılmaz: T3a'nın
+tek metin alanı `name`dir ve tavanı kolonun kendisidir (`String(200)`), o
+sabite BAĞLANMAZ (`core/text.py` kuralı). Tavan T3b'nin `description` (`Text`)
+alanında devreye girer.
+"""
+
+import uuid
+from datetime import datetime
+from decimal import Decimal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from app.modules.accounting import codes
+from app.modules.accounting.models import ChartAccountType
+
+__all__ = [
+    "ChartAccountCreate",
+    "ChartAccountListResponse",
+    "ChartAccountResponse",
+    "ChartAccountUpdate",
+]
+
+#: Bilinmeyen alan = 422 (modül docstring'i). TEK sabit: her gövde şeması aynı
+#: kararı taşısın, biri unutulduğunda o uçtan türev alan sızmasın.
+_SIKI = ConfigDict(extra="forbid")
+
+# Model sınırları: `chart_of_accounts.code` String(20) · `name` String(200).
+# En uzun yasal kod `NNN.NN` = 6 karakterdir; 20 tavanı kolonla birebir kalır ve
+# asıl kapı DESENDİR.
+_CODE = Field(min_length=2, max_length=20, pattern=codes.ACCOUNT_CODE_PATTERN)
+#: HP:153 `Birikmiş Amortismanlar (-)` — `(-)` ADIN parçasıdır, ayrı bir alan
+#: değildir (§1c); bu yüzden ada özel bir karakter kısıtı YOKTUR.
+_NAME = Field(min_length=1, max_length=200)
+
+
+class ChartAccountCreate(BaseModel):
+    """`POST /chart-of-accounts` (HP:50 `+ Hesap Ekle`).
+
+    🔴 K-Ş1: form mockup'ı YOKTUR ve alan İCAT EDİLMEZ — gövde yalnızca HP:58-62'nin
+    çizili sütunlarından türer: `Kod` · `Hesap Adı` · `Tür` · `Durum`.
+    (`Bakiye` sütunu türevdir, gövdeye giremez.)
+
+    `is_active` gövdeden gelebilir çünkü kullanımdan kaldırma yolu odur (repo
+    kanonu: DELETE değil `is_active=false`).
+
+    Ebeveyn kaydı ZORUNLU DEĞİLDİR: hesap planı boş açılır (R14) ve kullanıcı
+    doğrudan `120.01` girebilir. Zorunlu kılınsaydı hiçbir mockup'ın istemediği
+    bir giriş sırası dayatılırdı.
+    """
+
+    model_config = _SIKI
+
+    code: str = _CODE
+    name: str = _NAME
+    account_type: ChartAccountType
+    is_active: bool = True
+
+
+class ChartAccountUpdate(BaseModel):
+    """`PATCH /chart-of-accounts/{id}` — KISMİ gövde.
+
+    Her alan `| None`dır ama bu yalnızca "gönderilmedi" demektir: dört kolonun
+    hiçbiri NULLABLE değildir, dolayısıyla açıkça `null` göndermek bir TEMİZLEME
+    değildir ve servis onu "değişmedi" sayar (`exclude_unset` + `is not None`).
+
+    🔴 `code` değişimi yalnız hiç fiş satırı olmayan hesapta serbesttir
+    (`guards.ACCOUNT_CODE_LOCKED`, 409): satırlar `account_id` ile bağlıdır ama
+    defter ve mizan KODU basar.
+    """
+
+    model_config = _SIKI
+
+    code: str | None = Field(
+        default=None, min_length=2, max_length=20, pattern=codes.ACCOUNT_CODE_PATTERN
+    )
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    account_type: ChartAccountType | None = None
+    is_active: bool | None = None
+
+
+class _ChartAccountStored(BaseModel):
+    """Yalnız SAKLANAN kolonlar — türev alan taşımaz."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    code: str
+    name: str
+    account_type: ChartAccountType
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class ChartAccountResponse(_ChartAccountStored):
+    """Hesap satırı + ÜÇ TÜREV alan (HP:58-62 tablosunun tamamı).
+
+    * `balance` — 🔴 K3, saklanan bir kolon DEĞİLDİR ve buraya `balance.py`nin
+      TEK kaynağından gelir; ikinci bir formül yazılsaydı liste ile detay aynı
+      hesap için farklı sayı basar ve hiçbir kolon farkı ele vermezdi.
+    * `class_code` — 🔴 K15, KODUN ilk hanesi. HP:187 bandı `SINIF 5` yazıp
+      altına `600`/`730`/`760` dizer; **satırlar kazanır**, bant etiketi bir
+      sunucu alanı DEĞİLDİR.
+    * `level` — grup `1` · ana hesap `2` · alt hesap `3`. Sınıf sayılmaz (kayıt
+      değildir). İstemci girintiyi bundan kurar; sunucu HTML girintisi ya da
+      `parent_id` göndermez.
+
+    🔴 `is_active` (HP:62 `Durum`) ile `account_type` (HP:60 `Tür`) AYRI
+    ŞEYLERDİR — ikisi de Türkçe'de "aktif" okunur ama biri boolean bir kaldırma
+    bayrağı, öteki dört üyeli kapalı bir enum'dur (R3).
+    """
+
+    balance: Decimal
+    class_code: str
+    level: int
+
+    @classmethod
+    def from_row(cls, account, balance: Decimal) -> "ChartAccountResponse":  # noqa: ANN001
+        """Satır + bakiye ikilisini TEK yerde birleştirir.
+
+        Dört uç (liste · detay · POST · PATCH) da buradan geçer: ayrı ayrı
+        kurulsalardı biri `class_code`u koddan değil bant etiketinden türetebilir
+        ve fark yalnız `600`/`730` satırlarında ortaya çıkardı.
+        """
+        return cls(
+            **_ChartAccountStored.model_validate(account).model_dump(),
+            balance=balance,
+            class_code=codes.class_code(account.code),
+            level=codes.level(account.code),
+        )
+
+
+class ChartAccountListResponse(BaseModel):
+    """K7 liste zarfı: `items` + `total` + `limit`/`offset` (repo kanonu)."""
+
+    items: list[ChartAccountResponse]
+    total: int
+    limit: int
+    offset: int

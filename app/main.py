@@ -10,6 +10,7 @@ from app.core.bootstrap import ensure_company, ensure_first_admin
 from app.core.config import Settings, settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.ratelimit import limiter, rate_limit_exceeded_handler
+from app.modules.accounting.accounts_router import router as accounting_accounts_router
 from app.modules.audit.router import router as audit_router
 from app.modules.auth.router import router as auth_router
 from app.modules.boq.router import router as boq_router
@@ -84,6 +85,11 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 register_exception_handlers(app)
 _configure_cors(app, settings)
+# `accounting_accounts_router` yalnız `/chart-of-accounts` kökünü taşır ve başka
+# hiçbir router'ın yoluyla çakışmaz; kendi içindeki UUID/literal sırası router
+# modül docstring'inde açıklanmıştır (bugün literal yol YOKTUR). Yevmiye uçları
+# (T3b) AYRI bir router'dadır ve `/journal-entries` + `/journal` köklerini taşır.
+app.include_router(accounting_accounts_router)
 app.include_router(audit_router)
 app.include_router(auth_router)
 app.include_router(boq_router)

@@ -1273,3 +1273,43 @@ def payment_deleted(invoice_no: str, bank_name: str, display_name: str | None) -
     """Metin `session.delete`ten ÖNCE kurulur: sonra kurulsaydı hem hesap hem
     fatura güvenilir okunamaz ve silinenin NE OLDUĞU kaybolurdu."""
     return f"Ödeme kaydı silindi: {payment_label(invoice_no, bank_name, display_name)}"
+
+
+# --- MU-1 T3a: hesap planı kaydı ---
+#
+# Kimlik İKİ parçalıdır: KOD (kaydın gerçek kimliği, HP:58) + AD (HP:59). Hesap
+# UUID'si metne girmez — denetim tablosunda kimse UUID okumaz; kod ile ad
+# birlikte satırı zaten ayırt eder.
+#
+# 🔴 **BAKİYE metne GİRMEZ.** Bakiye SAKLANMAZ, TÜRETİLİR (MU-1 K3); günlüğe
+# donmuş bir kopyası düşseydi ilk fişte ayrışır ve iki sayı yan yana yaşardı
+# (`bank_account_*` kanonunun aynısı). Repoda hiçbir denetim metni para taşımaz.
+#
+# 🔴 YENİ `AuditAction` ÜYESİ AÇILMADI (TB3/T3 kanonu): `create`/`update`/
+# `delete` kullanılır, ayrım METİNDEDİR.
+
+
+def chart_account_label(code: str, name: str) -> str:
+    """Üç denetim metninin TEK kimlik kaynağı.
+
+    Ayrı ayrı kurulsalardı biri kodu unutur ve aynı adı taşıyan iki hesap
+    (`100 Kasa` / `101 Kasa`) günlükte ayırt edilemezdi.
+    """
+    return f"{code} · {name}"
+
+
+def chart_account_created(code: str, name: str) -> str:
+    return f"Hesap oluşturuldu: {chart_account_label(code, name)}"
+
+
+def chart_account_updated(code: str, name: str) -> str:
+    """Metin GÜNCELLENMİŞ değerlerle kurulur: kullanıcı adı ya da kodu
+    düzelttiyse günlükte yeni değer durmalıdır, yoksa satır neyin ne olduğunu
+    anlatmaz."""
+    return f"Hesap güncellendi: {chart_account_label(code, name)}"
+
+
+def chart_account_deleted(code: str, name: str) -> str:
+    """Metin `session.delete`ten ÖNCE kurulur — sonra kurulsaydı kod ve ad
+    güvenilir okunamazdı (`invoice_deleted` dersi)."""
+    return f"Hesap silindi: {chart_account_label(code, name)}"
