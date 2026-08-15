@@ -35,13 +35,15 @@ import asyncio
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import ConflictError
 from app.core.security import hash_password
+from app.core.timezone import today
 from app.modules.accounting import state_service
 from app.modules.accounting.models import (
+    AccountingPeriod,
     ChartAccount,
     ChartAccountType,
     JournalEntry,
@@ -146,7 +148,18 @@ async def _kur(status: JournalEntryStatus) -> _Kurulum:
 
 async def _temizle(kurulum: _Kurulum) -> None:
     """`_kur`un yarattığı HER satırı geri alır — sızıntı paylaşılan test
-    veritabanına KALICI olurdu (TB1'de fiilen yaşandı)."""
+    veritabanına KALICI olurdu (TB1'de fiilen yaşandı).
+
+    🔴 MU-2 T3'ten sonra `accounting_periods` DE silinir: yazma yolları dönem
+    satırını UPSERT ile DOĞURUR (kilitlenecek satır olmadan eşzamanlılık
+    serileşemezdi), yani bu dosya artık kendisinin yaratmadığı sanılan bir satır
+    bırakır. Bırakıldığında `test_mu2_periods_api.py`nin fabrikası aynı `(yıl,
+    ay)` için ikinci kez INSERT etmeye çalışır ve UNIQUE ihlaline düşer —
+    kusur BU DOSYADA doğar, orada patlardı.
+
+    İki dönem dokunulur: fişin dönemi (`2026/07`) ve stornonun düştüğü BUGÜNÜN
+    dönemi (`_build_reversal` → `timezone.today()`).
+    """
     async with _SessionFactory() as session:
         # Storno ÖNCE gider: `reversal_of_id` RESTRICT'tir.
         stornolar = (
@@ -162,6 +175,14 @@ async def _temizle(kurulum: _Kurulum) -> None:
         await session.execute(delete(JournalLine).where(JournalLine.entry_id.in_(hedefler)))
         await session.execute(delete(JournalEntry).where(JournalEntry.id.in_(hedefler)))
         await session.execute(delete(ChartAccount).where(ChartAccount.code.in_(_KODLAR)))
+        bugun = today()
+        await session.execute(
+            delete(AccountingPeriod).where(
+                tuple_(AccountingPeriod.year, AccountingPeriod.month).in_(
+                    [(2026, 7), (bugun.year, bugun.month)]
+                )
+            )
+        )
         await session.execute(delete(User).where(User.role_id == kurulum.role_id))
         await session.execute(delete(Role).where(Role.id == kurulum.role_id))
         await session.commit()

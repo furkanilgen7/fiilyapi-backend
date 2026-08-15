@@ -55,8 +55,8 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import AccountingValidationError, NotFoundError
-from app.modules.accounting import guards, repository, transitions, validation
+from app.core.errors import AccountingValidationError, ConflictError, NotFoundError
+from app.modules.accounting import guards, periods_service, repository, transitions, validation
 from app.modules.accounting.models import (
     ChartAccount,
     JournalEntry,
@@ -81,6 +81,7 @@ __all__ = [
     "build_detail",
     "create_entry",
     "delete_entry",
+    "entry_for_write",
     "entry_or_404",
     "gate_lines",
     "list_entries",
@@ -115,6 +116,50 @@ async def entry_or_404(
     entry = await repository.get_entry(session, entry_id, for_update=for_update)
     if entry is None:
         raise NotFoundError(guards.JOURNAL_ENTRY_MISSING)
+    return entry
+
+
+async def entry_for_write(
+    session: AsyncSession,
+    entry_id: uuid.UUID,
+    *,
+    extra_periods: Sequence[periods_service.Period] = (),
+) -> JournalEntry:
+    """🔴 FİŞE BAĞLI BEŞ YAZMA UCUNUN TEK GİRİŞİ (`PATCH` · `DELETE` ·
+    `PUT lines` · `post` · `reverse`).
+
+    Kilit sırası **SABİT ve GLOBAL**: `accounting_periods` → `journal_entries` →
+    `journal_lines` → `chart_of_accounts` (ayrıntı `periods_service.py` modül
+    docstring'i). Adımlar:
+
+        1. BAKIŞ  — fişin dönemini öğrenmek için KİLİTSİZ okuma (yoksa 404)
+        2. DÖNEM  — bakıştaki dönem + `extra_periods` KİLİTLENİR, kapalıysa 409
+        3. FİŞ    — `for_update=True` (mevcut TOCTOU kilidi, DEĞİŞMEDİ)
+        4. EMNİYET— fişin dönemi bakıştan farklıysa 409 (`PERIOD_MOVED`)
+
+    **1. adım neden kilitsiz:** dönemi kilitlemek için hangi dönem olduğunu
+    bilmek gerekir; bu bir tavuk-yumurta değil, sıralamadır. Bakış hiçbir KARARA
+    dayanak DEĞİLDİR — kapalı/açık kararı 2. adımda KİLİTLİ dönem satırından,
+    durum kararı 3. adımdan sonra KİLİTLİ fişten okunur.
+
+    **4. adım neden var:** bakış ile kilit arasında eşzamanlı bir
+    `PATCH entry_date` fişi başka bir döneme taşımış olabilir; o hâlde elimizdeki
+    dönem kilidi YANLIŞ satırdadır. Pratikte ulaşılması çok zordur (taşıyan
+    isteğin ESKİ dönemi de kilitlemesi gerekir, yani bizimle serileşir) ama
+    "zor" ≠ "imkânsız"tır ve sessizce yanlış kilitle karar vermektense 409
+    dönmek doğrudur.
+
+    🔴 `extra_periods` YALNIZ iki yolda doludur: `PATCH` yeni `entry_date`in
+    dönemini, `reverse` STORNONUN dönemini (`timezone.today()`) ekler. İkisi de
+    sıralanarak kilitlenir (deadlock önlemi).
+    """
+    bakis = await entry_or_404(session, entry_id)
+    donemler = {(bakis.period_year, bakis.period_month), *extra_periods}
+    await periods_service.assert_periods_open(session, donemler)
+
+    entry = await entry_or_404(session, entry_id, for_update=True)
+    if (entry.period_year, entry.period_month) not in donemler:
+        raise ConflictError(guards.PERIOD_MOVED)
     return entry
 
 
@@ -268,7 +313,14 @@ async def create_entry(
     🔴 **DURUM SUNUCUDAN gelir** (`transitions.INITIAL_STATUS`): gövde `status`
     gönderemez (şema 422), yoksa istemci taslak aşamasını atlayıp doğrudan
     `posted` yazabilirdi.
+
+    🔴 **DÖNEM KAPISI EN ÖNDEDİR** (MU-2 T3): hedef dönem KİLİTLENEREK okunur ve
+    kapalıysa **409**. Kilit sırasının başı burasıdır — eşzamanlı bir `close` ile
+    serileşiriz, aksi hâlde kapanışın taslak sayımı ile bu INSERT arasındaki
+    pencereden taze bir fiş kapalı döneme düşerdi. Kapı K1'den de ÖNCEDİR:
+    kapalı bir aya kesilen fişin dengeli olup olmadığı ilgisizdir.
     """
+    await periods_service.assert_periods_open(session, [periods_service.period_of(data.entry_date)])
     await gate_lines(session, data.lines)
 
     entry = JournalEntry(

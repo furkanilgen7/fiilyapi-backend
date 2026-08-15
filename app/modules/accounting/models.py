@@ -130,6 +130,20 @@ PERIOD_MATCHES_DATE_CHECK = (
     "period_month = EXTRACT(MONTH FROM entry_date)::int"
 )
 
+#: MU-2 — kapanis damgasinin BUTUNLUGU. Bir durum damgasi N parcadan
+#: olusuyorsa N'in HEPSI birlikte yazilir (MK-2 N-CARPANLI SNAPSHOT kanonunun
+#: kardesi). Iki yon de kilitlidir:
+#:   * `closed` + eksik damga → "kapali ama kim/ne zaman kapatti belli degil";
+#:     denetim gunlugu (B5) o donemi kimin kilitledigini SORAMAZ hale gelir.
+#:   * `open` + artik damga → yeniden acilmis donem hala eski kapatma damgasini
+#:     tasir ve mali iz YALAN SOYLER.
+#: 🔴 Enum iki degerlidir; ucuncu bir uye acilsaydi bu CHECK'in ikili mantigi
+#: TANIMSIZ kalirdi (bkz. `AccountingPeriodStatus`).
+CLOSED_STAMP_CHECK = (
+    "(status = 'closed' AND closed_at IS NOT NULL AND closed_by_id IS NOT NULL) OR "
+    "(status = 'open' AND closed_at IS NULL AND closed_by_id IS NULL)"
+)
+
 
 class ChartAccountType(str, enum.Enum):
     """Hesap turu — HP:60 `Tur` sutununun KAPALI kumesi birebir.
@@ -171,6 +185,104 @@ class JournalEntryStatus(str, enum.Enum):
     draft = "draft"
     posted = "posted"
     reversed = "reversed"
+
+
+class AccountingPeriodStatus(str, enum.Enum):
+    """Donem durumu — IKI degerli, ucuncu uye ICAT EDILMEZ.
+
+        open ──kapat──▶ closed ──(ac)──▶ open
+
+    `locked`/`archived`/`reopened` gibi bir ucuncu uye ACILMAZ. Iki gerekcesi
+    var: (1) hicbir ekran ucuncu bir rozet cizmiyor, (2) `CLOSED_STAMP_CHECK`
+    IKILI bir mantiktir — ucuncu bir degerde damganin ne olmasi gerektigi
+    TANIMSIZ kalir ve kisit sessizce her seyi kabul eden bir sey haline gelirdi.
+
+    "Yeniden acildi" AYRI BIR DURUM DEGILDIR: donem `open`a doner ve damga
+    SOKULUR (CHECK bunu zorlar). `reopened_at` kolonu da yoktur — kim ne zaman
+    acti sorusunun yeri denetim gunlugudur (B5), bu tablo DEGIL.
+    """
+
+    open = "open"
+    closed = "closed"
+
+
+class AccountingPeriod(Base):
+    """Muhasebe donemi (yil/ay) ve kapanis damgasi.
+
+    MU-1 bu tabloyu BILEREK acmamisti (modul docstring'i "ACILMAYANLAR"):
+    `journal_entries.period_year`/`period_month` cifti ve `ix_journal_entries_
+    period` indeksi tam olarak BU tablo icin hazirlanmisti. Donem kaydi burada
+    dogar; kapali doneme yazma YASAGI ve kilit mantigi SERVIS katmanindadir
+    (T3) — bu sinif yalniz KAYDIN kendisini ve tutarliligini garanti eder.
+
+    🔴 `(year, month)` TEKILDIR. Ayni ay iki kez acilabilseydi biri `open` biri
+    `closed` iki satir dogar ve "2026/07 kapali mi?" sorusunun IKI cevabi
+    olurdu; donem kilidi hangi satira bakacagini bilemezdi.
+
+    🔴 UNIQUE ZATEN bir B-tree indeks URETIR — ayrica bir
+    `ix_accounting_periods_year_month` ACILMAZ. Acilsaydi AYNI iki sutun
+    uzerinde IKINCI bir indeks tasinir, her yazma iki kez maliyetlenir ve
+    hicbir okuma hizlanmazdi. Sorgu yolu (`WHERE year = ? AND month = ?`)
+    zaten UNIQUE indeksin ta kendisini kullanir.
+
+    🔴 `ck_accounting_periods_closed_stamp` bu tablonun ASIL bekcisidir; gerekce
+    `CLOSED_STAMP_CHECK` sabitinin yanindadir. Kaldirilirsa "kapali ama damgasiz"
+    donem yazilabilir hale gelir ve mali iz sessizce bosalir.
+
+    Ay ve yil bantlari (`ck_..._month_range` / `ck_..._year_range`) yazim
+    hatasina karsi son savunmadir: `month = 0`/`13` var olmayan bir donem
+    uretir, mizan hicbir takvimde bulamaz; `year = 26`/`20026` ise sessizce
+    kalici olurdu. Bant `journal_entries`te YOKTU (orada donem `entry_date`ten
+    TURETILIR ve `ck_journal_entries_period_matches_date` ile kilitlidir) —
+    burada tarih dayanagi olmadigi icin bant ACIKCA yazilir.
+
+    KAPSAM (IDOR) — `project_id`/`site_id` YOKTUR, MU-1'in uc tablosuyla AYNI
+    gerekce: hesap plani ve yevmiye sirket geneliyse donem de oyledir. Proje
+    bazli donem acilsaydi ayni ay bir projede kapali bir projede acik olur ve
+    "donem kapali" ifadesi ANLAMINI KAYBEDERDI.
+
+    TUREV ALAN YOKTUR: donemin toplamlari/mizani SAKLANMAZ, yevmiyeden
+    TURETILIR (K3'un kardesi). Saklansaydi kaydigini hicbir kolon farki ele
+    vermezdi.
+
+    `closed_by_id` RESTRICT: donemi kapatan kullanici, mali izi sahipsiz
+    birakacak sekilde silinemez (`journal_entries.created_by_id` deseni). SET
+    NULL olsaydi kapali donem damgasiz kalir ve `ck_accounting_periods_closed_
+    stamp` DB'nin KENDISI tarafindan ihlal edilirdi.
+    """
+
+    __tablename__ = "accounting_periods"
+    __table_args__ = (
+        # Bir (yil, ay) icin TEK kayit — bkz. sinif docstring'i.
+        UniqueConstraint("year", "month", name="uq_accounting_periods_year_month"),
+        CheckConstraint("month BETWEEN 1 AND 12", name="ck_accounting_periods_month_range"),
+        CheckConstraint("year BETWEEN 2000 AND 2100", name="ck_accounting_periods_year_range"),
+        # 🔴 Damga BUTUNDUR: `closed` ise ikisi de DOLU, `open` ise ikisi de NULL.
+        CheckConstraint(CLOSED_STAMP_CHECK, name="ck_accounting_periods_closed_stamp"),
+        # AYRICA `Index(...)` YOK: UNIQUE zaten indekstir (docstring gerekcesi).
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    year: Mapped[int] = mapped_column(Integer, nullable=False)
+    month: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[AccountingPeriodStatus] = mapped_column(
+        Enum(AccountingPeriodStatus, name="accounting_period_status"),
+        nullable=False,
+        default=AccountingPeriodStatus.open,
+        server_default=text("'open'"),
+    )
+    # 🔴 IKISI DE nullable OLMAK ZORUNDA: `open` donemde ikisi de NULL'dir
+    # (CHECK bunu zorlar). NOT NULL olsalardi acik donem HIC yazilamazdi.
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
 
 
 class ChartAccount(Base):

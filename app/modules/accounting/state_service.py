@@ -6,6 +6,8 @@ Tek dosyada toplansalardı 800 satır tavanına doğru itilirdi.
 
 ## 🔴 EŞİK = KİLİT — SIRA DEĞİŞMEZ (spec §5, İK-2 kanonu)
 
+    0. DÖNEM    — 🔴 `accounting_periods` satır(lar)ı UPSERT + `FOR UPDATE`;
+                  kapalıysa **409** (MU-2 T3, `service.entry_for_write`)
     1. KİLİT    — `entry_or_404(..., for_update=True)`
                   (`with_for_update` + **`populate_existing`**)
     2. MATRİS   — `transitions.next_status` → **409**
@@ -13,6 +15,13 @@ Tek dosyada toplansalardı 800 satır tavanına doğru itilirdi.
     4. K1       — `validation.balance_blockers` → **422** (yalnız `post`)
     5. DAMGA    — `status` yazılır, `reverse` ise storno fişi + bacakları
     6. REFRESH  — `session.refresh(entry)`
+
+🔴 **`reverse` İKİ dönem kilitler:** orijinalin dönemi VE stornonun dönemi
+(`_build_reversal` `timezone.today()` kullanır). İkisi **artan `(year, month)`**
+sırasıyla kilitlenir — sabit bir sıra olmasaydı iki istek dönemleri ters sırada
+kilitler ve karşılıklı kilitlenme (deadlock) doğardı. Sıralamayı
+`periods_service.assert_periods_open` yapar; buradaki tek iş dönem çiftini
+DOĞRU kurmaktır.
 
 **Kilit 2. adımdan SONRA alınsaydı** iki eşzamanlı `post` da `draft` okur, ikisi
 de matrisi geçer ve fiş **İKİ KEZ** kayıtlaştırılırdı; iki eşzamanlı `reverse`
@@ -27,8 +36,14 @@ noktasında. TOCTOU penceresini kapatan tek şey OKUMADAKİ açık `FOR UPDATE`t
 Bekleyen istek uyandığında kararı YENİDEN verir: taze satırda durum artık
 `posted` olduğu için matris `(posted, post)` çiftini tanımaz ve **409** döner.
 
-🔴 **Kilit sırası uçtan uca SABİT: fiş → satırlar → hesap.** Ters sırada
-kilitleyen bir yol eklenirse karşılıklı kilitlenme (deadlock) doğar.
+🔴 **Kilit sırası uçtan uca SABİT ve GLOBAL:**
+
+    accounting_periods → journal_entries → journal_lines → chart_of_accounts
+
+Dönem satırı **EN ÖNCE** gelir (MU-2 T3'te başa eklendi). Ters sırada kilitleyen
+bir yol eklenirse karşılıklı kilitlenme (deadlock) doğar. Sıranın tam gerekçesi
+ve dönemi öğrenmek için atılan KİLİTSİZ BAKIŞIN neden karara dayanak olmadığı
+`periods_service.py` modül docstring'i ile `service.entry_for_write`tedir.
 
 ## 🔴 Adım 6 neden var
 
@@ -70,7 +85,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
 from app.core.timezone import today
-from app.modules.accounting import guards, repository, service, transitions, validation
+from app.modules.accounting import (
+    guards,
+    periods_service,
+    repository,
+    service,
+    transitions,
+    validation,
+)
 from app.modules.accounting.models import JournalEntry, JournalEntryStatus, JournalLine
 from app.modules.accounting.transitions import JournalAction
 from app.modules.audit import messages
@@ -175,8 +197,11 @@ async def perform_transition(
     unutmak mümkün olurdu; işlemler arasındaki tek fark `action` PARAMETRESİDİR
     ve geçerliliği matristen okunur — burada hiçbir `if status == …` yoktur.
     """
-    # 1. KİLİT — her şeyden ÖNCE (EŞİK = KİLİT).
-    entry = await service.entry_or_404(session, entry_id, for_update=True)
+    # 0+1. DÖNEM(LER) → FİŞ — kilit sırası SABİT (modül docstring'i). `reverse`
+    #      stornonun kendi dönemini de kilitler: `_build_reversal` fişi BUGÜNE
+    #      yazar ve o ay kapalıysa taptaze bir `posted` fiş kapalı döneme düşerdi.
+    ek_donemler = (periods_service.period_of(today()),) if action is JournalAction.reverse else ()
+    entry = await service.entry_for_write(session, entry_id, extra_periods=ek_donemler)
 
     # 2. MATRİS → 409.
     yeni_durum = transitions.next_status(entry.status, action)
