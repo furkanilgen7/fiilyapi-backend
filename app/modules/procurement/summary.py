@@ -28,11 +28,11 @@ sayaçları). Yedi kart için yedi `count` sorgusu açmak şeridin N+1'i olurdu.
 """
 
 import uuid
-from datetime import date
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.timezone import today
 from app.modules.procurement import repository, transitions
 from app.modules.procurement.models import PurchaseOrderStatus, PurchaseRequestStatus
 from app.modules.procurement.schemas import PurchasingSummaryResponse
@@ -54,7 +54,7 @@ async def build_summary(
     boştur ve sayaçlar sıfır kalır (liste uçlarındaki kuralın aynısı).
     """
     project_ids = [p.id for p in await visible_projects(session, actor)]
-    bugun = date.today()
+    bugun = today()
 
     talepler = await repository.request_status_counts(session, project_ids, project_id=project_id)
     siparisler = await repository.order_status_counts(session, project_ids, project_id=project_id)

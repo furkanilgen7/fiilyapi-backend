@@ -24,6 +24,7 @@ from datetime import date, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import timezone
 from app.core.errors import EquipmentValidationError, NotFoundError
 from app.modules.documents import files
 from app.modules.equipment import document_repository as repository
@@ -133,10 +134,10 @@ async def build_summary(
 ) -> EquipmentDocumentsSummaryResponse:
     """K7 özeti — SABİT sorgu sayısı (İK-1 `build_hr_documents_summary` deseni).
 
-    `today` ENJEKTE EDİLİR (endpoint `date.today()` verir, test sabit tarih
-    kullanır): sınır günleri (bugün / +30 / +31 / dün) deterministik olsun.
+    `today` ENJEKTE EDİLİR (servis sınırı `timezone.today()` verir, test sabit
+    tarih kullanır): sınır günleri (bugün / +30 / +31 / dün) deterministik olsun.
     """
-    today = today or date.today()
+    today = today or timezone.today()
     horizon = today + timedelta(days=EXPIRING_SOON_DAYS)
 
     rows = await repository.list_active_document_rows_for_summary(session)

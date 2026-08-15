@@ -39,6 +39,7 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import timezone
 from app.core.errors import ConflictError, DuplicateError, SiteValidationError
 from app.modules.audit import messages
 from app.modules.sales import guards, plan, repository
@@ -113,7 +114,7 @@ async def get_plan(session: AsyncSession, actor: User, sale_id: uuid.UUID) -> Sa
     tahsilatları gereksiz yere serileştirirdi.
     """
     sale, _ = await guards.visible_sale(session, actor, sale_id)
-    return await _plan_response(session, sale, date.today())
+    return await _plan_response(session, sale, timezone.today())
 
 
 async def _unit_label(session: AsyncSession, sale: UnitSale) -> str:
@@ -198,7 +199,7 @@ async def generate_plan(
         ]
     )
     await session.flush()
-    response = await _plan_response(session, sale, date.today())
+    response = await _plan_response(session, sale, timezone.today())
     detail = messages.sale_plan_generated(
         project.name, await _unit_label(session, sale), len(response.items)
     )
@@ -278,7 +279,7 @@ async def save_installments(
         row.payment_method = entry.payment_method
         _sync_paid_at(row)
     await session.flush()
-    response = await _plan_response(session, sale, date.today())
+    response = await _plan_response(session, sale, timezone.today())
     detail = messages.sale_plan_saved(
         project.name, await _unit_label(session, sale), len(response.items)
     )
@@ -308,4 +309,4 @@ async def pay_installment(
     detail = messages.sale_installment_paid(
         project.name, await _unit_label(session, sale), installment.label, data.amount
     )
-    return _installment_response(installment, date.today()), detail
+    return _installment_response(installment, timezone.today()), detail

@@ -22,6 +22,7 @@ from types import SimpleNamespace
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import timezone
 from app.core.access import AccessLevel, satisfies
 from app.core.errors import (
     ConflictError,
@@ -294,7 +295,7 @@ async def list_personnel_documents(
 ) -> list[PersonnelDocumentResponse]:
     """O personelin belgeleri (tip künyeli, N+1 yok). Personel yok → 404."""
     await get_personnel(session, personnel_id)
-    today = date.today()
+    today = timezone.today()
     rows = await repository.list_personnel_documents(session, personnel_id)
     return [_document_response(document, type_obj, today) for document, type_obj in rows]
 
@@ -328,7 +329,7 @@ async def create_personnel_document(
     detail = messages.personnel_document_added(
         personnel.full_name, _document_label(document, type_obj)
     )
-    return _document_response(document, type_obj, date.today()), detail
+    return _document_response(document, type_obj, timezone.today()), detail
 
 
 async def update_personnel_document(
@@ -359,7 +360,7 @@ async def update_personnel_document(
     detail = messages.personnel_document_updated(
         personnel.full_name, _document_label(document, type_obj)
     )
-    return _document_response(document, type_obj, date.today()), detail
+    return _document_response(document, type_obj, timezone.today()), detail
 
 
 async def delete_personnel_document(session: AsyncSession, document_id: uuid.UUID) -> str:
@@ -409,7 +410,7 @@ async def build_hr_documents_summary(
     sayımı ve iki listenin sıralama+kırpması Python'da bu satırlar üzerinden
     yapılır. Sorgu sayısı VERİ BÜYÜKLÜĞÜNDEN BAĞIMSIZDIR (`test_n_plus_1_sabit_sorgu`).
 
-    `today` ENJEKTE EDİLİR (endpoint `date.today()` verir, test sabit tarih):
+    `today` ENJEKTE EDİLİR (servis sınırı `timezone.today()` verir, test sabit tarih):
     sınır günleri deterministik olsun. Durum `status.derive_document_status` TEK
     KAYNAĞINDAN gelir — eşik (30 gün) burada TEKRARLANMAZ.
 
@@ -417,7 +418,7 @@ async def build_hr_documents_summary(
     `missing` KPI toplamı YALNIZ zorunlu (`is_mandatory=true`) tipler üzerinden;
     opsiyonel tipler dağılımda gösterilir ama KPI'ya girmez.
     """
-    today = today or date.today()
+    today = today or timezone.today()
 
     types = await repository.list_document_types(session)
     active_published_count = await repository.count_active_published_personnel(session)
@@ -817,7 +818,7 @@ async def get_leave_balance(
 ) -> LeaveBalanceResponse:
     """Bakiye görünümü. Personel yok → 404; BAKİYE SATIRI yoksa 404 DEĞİL —
     türevler yine hesaplanabilir (devreden 0)."""
-    today = today or date.today()
+    today = today or timezone.today()
     personnel = await get_personnel(session, personnel_id)
     entitlement, carried_over, used = await _leave_balance_parts(session, personnel, year, today)
     return _balance_response(personnel, year, today, entitlement, carried_over, used)
@@ -849,7 +850,7 @@ async def upsert_leave_balance(
     kolon değildir (K1) ve gönderilmesi sessizce yutulsaydı istemci hakkı
     değiştirdiğini sanırdı.
     """
-    today = today or date.today()
+    today = today or timezone.today()
     personnel = await get_personnel(session, personnel_id)
     await repository.lock_personnel_for_update(session, personnel.id)
 
@@ -975,7 +976,7 @@ async def approve_leave_request(
     (`_lock_decision_scope`): kilitsiz hâlde iki eşzamanlı onay aynı `used`
     toplamını okuyup ikisi de K5 eşiğini geçerdi.
     """
-    today = today or date.today()
+    today = today or timezone.today()
     request, personnel, leave_type = await get_leave_request_row(session, request_id)
     await _lock_decision_scope(session, request, personnel)
     _assert_decidable(request)
@@ -1063,12 +1064,12 @@ async def build_hr_leaves_summary(
     (`test_n_plus_1_sabit_sorgu`).
 
     `year` verilmezse İÇİNDE BULUNULAN yıl (İZ 120 seçicisinin varsayılanı);
-    `today` enjekte edilir (endpoint `date.today()` verir, test sabit tarih).
+    `today` enjekte edilir (servis sınırı `timezone.today()` verir, test sabit tarih).
 
     KPI'lar TÜM personeli sayar, tablo `SUMMARY_LIST_LIMIT` satırda kırpılır
     (İK-1 emsali): kırpma bir GÖRÜNTÜ sınırıdır, sayaçları eksiltmez.
     """
-    today = today or date.today()
+    today = today or timezone.today()
     year = year or today.year
     ay_baslangic, ay_bitis = _month_window(today)
 

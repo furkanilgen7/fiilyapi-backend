@@ -46,7 +46,7 @@ def derive_document_status(
 ) -> str:
     """Bir belgenin durumunu döndürür (`valid`/`expiring`/`expired`).
 
-    `today` ENJEKTE EDİLİR (servis `date.today()` verir, test sabit tarih verir):
+    `today` ENJEKTE EDİLİR (servis `timezone.today()` verir, test sabit tarih verir):
     saat farkına bağlı bir testin gece yarısı kırılmaması için sınır günleri
     deterministik olmalıdır.
 

@@ -38,6 +38,7 @@ from sqlalchemy import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import EquipmentValidationError, NotFoundError
+from app.core.timezone import today
 from app.modules.equipment import consumption, cost, repository
 from app.modules.equipment.models import (
     Equipment,
@@ -290,7 +291,7 @@ async def summarize(session: AsyncSession, actor: User) -> EquipmentSummary:
     """
     project_ids = await _visible_project_ids(session, actor)
     sayaclar = await repository.status_counts(session, project_ids)
-    ilk, son = _month_bounds(date.today())
+    ilk, son = _month_bounds(today())
     satirlar = await repository.worked_hours_by_equipment(
         session, project_ids, date_from=ilk, date_to=son
     )

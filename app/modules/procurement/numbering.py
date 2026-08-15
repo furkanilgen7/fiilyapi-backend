@@ -24,12 +24,11 @@ ve DEGISTIRILMEMELIDIR — degisirse eski surumle yeni surum ayni anda kosarken
 farkli kilitler alip yarisi geri getirirler.
 """
 
-from datetime import date
-
 from sqlalchemy import Integer, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
+from app.core.timezone import today
 from app.modules.procurement.models import PurchaseOrder, PurchaseRequest
 
 REQUEST_NUMBER_PREFIX = "SAT"
@@ -74,7 +73,7 @@ async def _next_number(
     lock_key: int,
     year: int | None,
 ) -> str:
-    effective_year = year if year is not None else date.today().year
+    effective_year = year if year is not None else today().year
 
     # Kilit ONCE alinir: okuma ile yazma arasina baska bir islem giremesin.
     # `_xact_` sonekli surum transaction sonunda KENDILIGINDEN birakilir —

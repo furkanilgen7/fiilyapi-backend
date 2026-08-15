@@ -16,13 +16,13 @@ kendi ünite haritasını YAZMAZ, buradaki `sync_unit_sales_status` yardımcıs�
 """
 
 import uuid
-from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import Row
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import timezone
 from app.core.access import AccessLevel, can_delete
 from app.core.errors import DeleteNotAllowedError, DuplicateError, SiteValidationError
 from app.modules.audit import messages
@@ -197,7 +197,7 @@ async def _cost_allocation(
 
 
 async def response_for(session: AsyncSession, sale_id: uuid.UUID) -> UnitSaleResponse:
-    stats = await repository.installment_stats(session, [sale_id], date.today())
+    stats = await repository.installment_stats(session, [sale_id], timezone.today())
     row = await _sale_row(session, sale_id)
     allocation = await _cost_allocation(session, row[0].project_id)
     return _to_response(row, stats.get(sale_id, InstallmentStats()), allocation)
@@ -216,7 +216,9 @@ async def list_sales(
     """
     project = await guards.visible_project(session, actor, project_id)
     rows = await repository.list_sale_rows(session, project_id)
-    stats = await repository.installment_stats(session, [row[0].id for row in rows], date.today())
+    stats = await repository.installment_stats(
+        session, [row[0].id for row in rows], timezone.today()
+    )
     allocation = costs.allocation(project, await list_units_for_project(session, project_id))
     items = [
         _to_response(row, stats.get(row[0].id, InstallmentStats()), allocation) for row in rows
@@ -242,8 +244,8 @@ async def sales_summary(
     (3) projenin üniteleri ("Boş Ünite" satış tablosundan sayılamaz — boş
     ünitenin satış kaydı yoktur). Satış başına ek SELECT atmak N+1 olurdu.
 
-    `date.today()` BURADA çağrılır ve aşağı geçirilir: saf çekirdek saati
-    okumaz (`summary.py` notu).
+    `timezone.today()` BURADA — servis sınırında — çağrılır ve aşağı geçirilir:
+    saf çekirdek saati okumaz (`summary.py` notu).
     """
     await guards.visible_project(session, actor, project_id)
     sale_rows = await repository.list_sale_rows(session, project_id, exclude_cancelled=True)
@@ -256,7 +258,7 @@ async def sales_summary(
         sale_rows=sale_rows,
         installments=installment_rows,
         units=units,
-        today=date.today(),
+        today=timezone.today(),
     )
 
 
