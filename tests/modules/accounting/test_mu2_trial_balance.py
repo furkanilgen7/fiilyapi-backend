@@ -190,6 +190,32 @@ async def test_secilen_aydan_SONRAKI_fis_HICBIR_kolona_girmez(
     assert govde["rows"] == [], f"aralık dışı fiş satır üretti: {govde['rows']}"
 
 
+async def test_secilen_YILIN_1_OCAGI_ACILISA_DEGIL_yalniz_DONEME_girer(
+    client: AsyncClient, pm_headers: dict[str, str], hesap_fabrikasi, fis_fabrikasi
+) -> None:
+    """🔴 T6 mutasyon boşluğu: açılış penceresi SAĞDAN AÇIKTIR (`<`), kapalı DEĞİL.
+
+    `entry_date < year_start` yerine `<=` yazan bir uygulama seçilen yılın
+    **1 Ocak** fişini HEM açılışa HEM döneme sayar: kapanış (`açılış + borç −
+    alacak`) o tutarı ÇİFT gösterir ve `is_balanced` yine `True` kaldığı için
+    hiçbir banner uyarmaz. Öteki pencere testlerinin hiçbiri bu günü kullanmaz
+    (`2025-12-31` · `2026-03-15` · `2026-08-01`), bu yüzden mutasyon T6'ya kadar
+    **hayatta kaldı** — sınır günü AYRICA ölçülmek zorundadır.
+    """
+    kasa, satici = await _kasa_ve_satici(hesap_fabrikasi)
+    await fis_fabrikasi(
+        [(kasa, "100.00", "0.00"), (satici, "0.00", "100.00")],
+        entry_date=date(2026, 1, 1),
+    )
+
+    satir = _satir(await _mizan(client, pm_headers), "100")
+
+    assert Decimal(satir["opening_debit"]) == Decimal("0.00")
+    assert Decimal(satir["opening_credit"]) == Decimal("0.00")
+    assert Decimal(satir["period_debit"]) == Decimal("100.00")
+    assert Decimal(satir["closing_debit"]) == Decimal("100.00")
+
+
 async def test_birikimli_aralik_ocaktan_secilen_aya_kadar_TOPLAR(
     client: AsyncClient, pm_headers: dict[str, str], hesap_fabrikasi, fis_fabrikasi
 ) -> None:
@@ -488,6 +514,41 @@ async def test_hareketsiz_hesap_VARSAYILANDA_listelenmez(
     kodlar = [s["account_code"] for s in (await _mizan(client, pm_headers))["rows"]]
 
     assert kodlar == ["100", "320"]
+
+
+async def test_donem_neti_SIFIR_olan_HAREKETLI_hesap_VARSAYILANDA_da_LISTELENIR(
+    client: AsyncClient, pm_headers: dict[str, str], hesap_fabrikasi, fis_fabrikasi
+) -> None:
+    """🔴 T6 mutasyon boşluğu: varsayılan süzgecin ÜÇ koşulu da GEREKLİDİR.
+
+    Süzgeç `or_(açılış != 0, dönem_borç != 0, dönem_alacak != 0)`tir. Yalnız
+    KAPANIŞA (`açılış + borç − alacak`) bakan bir uygulama, borcu alacağına
+    EŞİT olan HAREKETLİ bir hesabı mizandan sessizce düşürür: hesap ay içinde
+    para görmüştür ama satırı hiç basılmaz.
+
+    `test_neti_SIFIR_olan_hesabin_IKI_kolonu_da_sifirdir` bu deliği KAPATMAZ —
+    o test `include_empty=True` ile çağırır ve süzgeç o yolda hiç koşmaz. Bu
+    yüzden kapanışa-indirgeyen mutasyon T6'ya kadar **hayatta kaldı**.
+    """
+    kasa, satici = await _kasa_ve_satici(hesap_fabrikasi)
+    await fis_fabrikasi(
+        [(kasa, "500.00", "0.00"), (satici, "0.00", "500.00")], entry_date=date(2026, 5, 1)
+    )
+    await fis_fabrikasi(
+        [(satici, "500.00", "0.00"), (kasa, "0.00", "500.00")], entry_date=date(2026, 6, 1)
+    )
+
+    govde = await _mizan(client, pm_headers)
+
+    assert [s["account_code"] for s in govde["rows"]] == ["100", "320"], (
+        "dönem neti SIFIR olan HAREKETLİ hesap varsayılan mizandan düştü — "
+        "süzgeç kapanışa indirgenmiş olabilir"
+    )
+    satir = _satir(govde, "100")
+    assert Decimal(satir["period_debit"]) == Decimal("500.00")
+    assert Decimal(satir["period_credit"]) == Decimal("500.00")
+    assert Decimal(satir["closing_debit"]) == Decimal("0.00")
+    assert Decimal(satir["closing_credit"]) == Decimal("0.00")
 
 
 async def test_include_empty_true_ile_hareketsiz_hesap_ALTI_KOLONU_SIFIR_gelir(
