@@ -1379,3 +1379,41 @@ def journal_entry_reversed(entry_date: date, description: str) -> str:
     kurulur: denetim satırı "hangi fişe ne oldu" sorusuna yanıt verir, stornonun
     kendi doğuşu orijinalin `reversed` olmasıyla zaten anlatılır."""
     return f"Yevmiye fişi ters kaydedildi: {journal_entry_label(entry_date, description)}"
+
+
+# --------------------------------------------------------------------------- #
+# MU-2 — MUHASEBE DÖNEMİ (kapat / aç)
+#
+# 🔴 YENİ `AuditAction` ÜYESİ AÇILMADI (TB3/T3 kanonu): `action` gerçek bir
+# Postgres enum tipidir ve yeni üye MIGRATION ister. Kapatma mevcut `approve`
+# üyesine oturur (bir ONAYDIR: dönemi mali ize kilitler), açma `update`e.
+# Ayrım METİNDEDİR — iki eylem günlükte YALNIZCA bu cümlelerle ayrılır.
+#
+# Dönemin toplamları/mizanı metne GİRMEZ (HZ-1 kanonu, `journal_entry_*` ile
+# aynı gerekçe): türev sayılar sonradan değişir ve günlüğe donmuş bir kopyası
+# düşseydi iki sayı yan yana yaşardı.
+# --------------------------------------------------------------------------- #
+
+
+def accounting_period_label(year: int, month: int) -> str:
+    """İki denetim metninin TEK kimlik kaynağı — biçim `YYYY/AA`.
+
+    Ay SIFIR DOLGULUDUR: `2026/7` ile `2026/12` yan yana sıralandığında metin
+    sıralaması takvim sırasından ayrışırdı.
+    """
+    return f"{year}/{month:02d}"
+
+
+def accounting_period_closed(year: int, month: int) -> str:
+    """`AuditAction.approve` ile yazılır; ayrım BU METİNDEDİR."""
+    return f"Muhasebe dönemi kapatıldı: {accounting_period_label(year, month)}"
+
+
+def accounting_period_reopened(year: int, month: int) -> str:
+    """`AuditAction.update` ile yazılır.
+
+    "Yeniden açıldı" AYRI BİR DURUM DEĞİLDİR (`AccountingPeriodStatus` iki
+    değerlidir) ve tabloda `reopened_at` kolonu YOKTUR — kim ne zaman açtı
+    sorusunun yeri TAM OLARAK burasıdır.
+    """
+    return f"Muhasebe dönemi yeniden açıldı: {accounting_period_label(year, month)}"

@@ -58,7 +58,14 @@ from app.core.deps import get_current_user
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
-from app.modules.accounting import guards, ledger, service, state_service, summary
+from app.modules.accounting import (
+    guards,
+    ledger,
+    periods_service,
+    service,
+    state_service,
+    summary,
+)
 from app.modules.accounting.models import JournalEntryStatus
 from app.modules.accounting.schemas import (
     JournalEntryCreate,
@@ -258,8 +265,15 @@ async def update_journal_entry_endpoint(
 
     Kayıt DENETİMLERDEN ÖNCE kilitlenir (TOCTOU). `entry_date` değişirse dönem
     kolonları onunla BİRLİKTE taşınır (K9); satır kümesi buradan DEĞİŞMEZ.
+
+    🔴 **DÖNEM ÇİFT KONTROLÜ** (MU-2 T3): `entry_date` değişiyorsa HEM ESKİ HEM
+    YENİ dönem kilitlenir ve ikisinden biri kapalıysa **409**. Yalnız birine
+    bakmak deliği YARIM kapatır: yalnız yeniye bakılsaydı kapalı aydaki fiş açık
+    aya TAŞINABİLİR (mali iz boşalır), yalnız eskiye bakılsaydı açık aydaki fiş
+    kapalı aya SOKULABİLİRDİ (kapanmış mizan geçmişe dönük değişir).
     """
-    entry = await service.entry_or_404(session, entry_id, for_update=True)
+    ek_donemler = () if data.entry_date is None else (periods_service.period_of(data.entry_date),)
+    entry = await service.entry_for_write(session, entry_id, extra_periods=ek_donemler)
     entry, detail = await service.update_entry(session, entry, data)
     await _audit(request, session, user, AuditAction.update, detail)
     return await service.build_detail(session, entry)
@@ -284,8 +298,11 @@ async def delete_journal_entry_endpoint(
 
     `full` seviyesi (muhasebe) 403 alır — gerekçe modül docstring'indedir.
     Bacaklar açıkça silinir (DB'de CASCADE de vardır). Yanıt gövdesizdir.
+
+    🔴 Kapalı dönemde **409** (MU-2 T3): `admin` bile silemez, çünkü engel YETKİ
+    değil DÖNEMDİR. Silinebilseydi kapalı dönemin mizanı geçmişe dönük değişirdi.
     """
-    entry = await service.entry_or_404(session, entry_id, for_update=True)
+    entry = await service.entry_for_write(session, entry_id)
     detail = await service.delete_entry(session, entry)
     await _audit(request, session, user, AuditAction.delete, detail)
 
@@ -318,8 +335,11 @@ async def replace_journal_lines_endpoint(
     K1 kapısı burada da koşar: boş küme "en az iki satır" engeline takılır ve
     **422** döner. Başlık toplamları aynı kümeden yeniden yazılır — satırlar ile
     başlık ASLA ayrışmaz.
+
+    🔴 Kapalı dönemde **409** (MU-2 T3): satır kümesi fişin TUTARLARINI
+    değiştirir ve kapalı bir dönemin toplamı değişemez.
     """
-    entry = await service.entry_or_404(session, entry_id, for_update=True)
+    entry = await service.entry_for_write(session, entry_id)
     entry, detail = await service.replace_lines(session, entry, data)
     await _audit(request, session, user, AuditAction.update, detail)
     return await service.build_detail(session, entry)
@@ -349,6 +369,9 @@ async def post_journal_entry_endpoint(
     🔴 K1 kapısı burada **YENİDEN** koşar (**422**): fiş taslakken yaprak olan
     bir hesabın altına sonradan çocuk açılmış olabilir ve o fiş artık deftere
     girmemelidir — yoksa MU-2 mizanı üst hesabı ÇİFT SAYARDI.
+
+    🔴 Kapalı dönemde **409** (MU-2 T3): kayıtlaştırma fişi MALİ İZE sokar ve
+    kapalı bir dönemin mali izi tanım gereği DONMUŞTUR.
 
     Denetim satırı `AuditAction.approve` ile yazılır (yeni üye AÇILMADI); ayrım
     metindedir.
@@ -391,6 +414,10 @@ async def reverse_journal_entry_endpoint(
     🔴 K3: orijinal `reversed` olur ama defterden ÇIKMAZ (`POSTING_STATUSES`e
     dahildir) — ikisi birlikte hesabın bakiyesini TAM SIFIRA götürür. Yalnız
     `posted` sayılsaydı net `−orijinal` çıkardı (çift ters kayıt).
+
+    🔴 **İKİ DÖNEM denetlenir** (MU-2 T3): orijinalin dönemi VE stornonun kendi
+    dönemi (`timezone.today()`). İkisinden biri kapalıysa **409, istisna YOK** —
+    yalnız orijinale bakılsaydı KAPALI bir aya taptaze bir `posted` fiş düşerdi.
     """
     sonuc = await state_service.perform_transition(session, user, entry_id, JournalAction.reverse)
     await _audit(request, session, user, sonuc.audit_action, sonuc.detail)

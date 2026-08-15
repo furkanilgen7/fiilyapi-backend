@@ -11,6 +11,7 @@ from app.core.config import Settings, settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.ratelimit import limiter, rate_limit_exceeded_handler
 from app.modules.accounting.accounts_router import router as accounting_accounts_router
+from app.modules.accounting.periods_router import router as accounting_periods_router
 from app.modules.accounting.router import router as accounting_journal_router
 from app.modules.audit.router import router as audit_router
 from app.modules.auth.router import router as auth_router
@@ -99,6 +100,16 @@ app.include_router(accounting_accounts_router)
 # ile aynı şekli taşır — ayrılmış yer orada işaretlidir, bekçi testi
 # `test_rota_sirasi_summary_UUID_SANILMAZ` (MK-2 dersi).
 app.include_router(accounting_journal_router)
+# `accounting_periods_router` (MU-2 T3) `/accounting-periods` kökünü taşır.
+# 🔴 ROTA SIRASI TUZAĞI DEĞERLENDİRİLDİ ve BU KÖKTE YOKTUR — gerekçe grep'le
+# doğrulandı: repoda `/accounting-periods` ile başlayan BAŞKA hiçbir yol yoktur
+# ve tek `prefix=` kullanan öteki router `/equipment`tir. Router'ın KENDİ içinde
+# de çakışma yoktur: liste ucu TEK segmentlidir, ötekiler ÜÇ segmentlidir ve son
+# segmentleri LİTERALDİR (`close`/`reopen`) — `/{year}/{month}` int'tir, UUID
+# sanılabilecek bir yol açılmamıştır (MK-2 dersinin uygulanamadığı hâl).
+# Sıra bu yüzden serbesttir; alfabetik yerine muhasebe router'larının yanında
+# durur, çünkü üçü de aynı izin modülünü (`accounting`) paylaşır.
+app.include_router(accounting_periods_router)
 app.include_router(audit_router)
 app.include_router(auth_router)
 app.include_router(boq_router)

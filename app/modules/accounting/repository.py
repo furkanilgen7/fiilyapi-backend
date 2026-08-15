@@ -37,6 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.accounting import codes
 from app.modules.accounting.balance import select_accounts_with_balance
 from app.modules.accounting.models import (
+    AccountingPeriod,
     ChartAccount,
     ChartAccountType,
     JournalEntry,
@@ -50,13 +51,16 @@ __all__ = [
     "count_accounts",
     "count_entries",
     "count_journal_lines_for_account",
+    "count_periods",
     "delete_lines",
     "get_account",
     "get_account_by_code",
     "get_entry",
     "has_child_accounts",
+    "has_draft_entries",
     "list_accounts_with_balance",
     "list_entries",
+    "list_periods",
     "load_lines",
     "load_lines_with_accounts",
     "reversal_exists",
@@ -390,3 +394,67 @@ async def reversal_exists(session: AsyncSession, entry_id: uuid.UUID) -> bool:
         .where(JournalEntry.reversal_of_id == entry_id)
     )
     return bool((await session.execute(stmt)).scalar_one())
+
+
+# --------------------------------------------------------------------------- #
+# MU-2 T3 — `accounting_periods`
+# --------------------------------------------------------------------------- #
+
+
+async def has_draft_entries(session: AsyncSession, year: int, month: int) -> bool:
+    """Dönemde `draft` fiş VAR MI — kapanışın 3. adımı.
+
+    Süzgeç `(period_year, period_month)`tir, `entry_date` DEĞİL: ikisi
+    `ck_journal_entries_period_matches_date` ile kilitlidir ama dönem kolonları
+    `ix_journal_entries_period` indeksini kullanır ve mizanın (T4) okuyacağı
+    kolonların AYNISIDIR — iki farklı yerden iki farklı dönem tanımı okumak
+    kapanışı ile mizanı ayrıştırırdı.
+
+    🔴 Yalnız `draft` sayılır. `posted`/`reversed` fiş kapanışı ENGELLEMEZ:
+    kapanışın amacı tam olarak onları DONDURMAKTIR (gerekçe `guards.py`).
+    """
+    stmt = (
+        select(func.count())
+        .select_from(JournalEntry)
+        .where(
+            JournalEntry.period_year == year,
+            JournalEntry.period_month == month,
+            JournalEntry.status == JournalEntryStatus.draft,
+        )
+    )
+    return bool((await session.execute(stmt)).scalar_one())
+
+
+def _period_filtered(stmt: Select, *, year: int | None) -> Select:
+    """Dönem listesinin TEK süzgeci — liste ve sayım aynı yardımcıdan geçer
+    (`_entry_filtered` deseni). Kopya açılsaydı `total` ile tablo ayrışırdı."""
+    if year is not None:
+        stmt = stmt.where(AccountingPeriod.year == year)
+    return stmt
+
+
+async def list_periods(
+    session: AsyncSession, *, year: int | None, limit: int, offset: int
+) -> list[AccountingPeriod]:
+    """Dönemler — 🔴 `year DESC, month DESC` (en yeni başta).
+
+    Yön fiş listesinin `entry_date DESC` kanonuyla AYNIDIR: kullanıcının ilgisi
+    daima en son döneme yakındır ve artan sıra, on yıl sonra ekranın ilk
+    sayfasını 2026'da bırakırdı.
+
+    Sıralama BELİRLEYİCİDİR ve son ölçüte ihtiyaç DUYMAZ: `(year, month)`
+    `uq_accounting_periods_year_month` ile TEKİLDİR, dolayısıyla iki satır aynı
+    anahtarı taşıyamaz ve sayfalama satır tekrarlayamaz/atlayamaz.
+    """
+    stmt = _period_filtered(select(AccountingPeriod), year=year)
+    stmt = (
+        stmt.order_by(AccountingPeriod.year.desc(), AccountingPeriod.month.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def count_periods(session: AsyncSession, *, year: int | None) -> int:
+    stmt = _period_filtered(select(func.count()).select_from(AccountingPeriod), year=year)
+    return (await session.execute(stmt)).scalar_one()

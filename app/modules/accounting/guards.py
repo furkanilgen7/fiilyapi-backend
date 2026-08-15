@@ -36,6 +36,11 @@ __all__ = [
     "LINE_ACCOUNT_MISSING",
     "LINE_SINGLE_SIDE",
     "PARENT_HAS_JOURNAL_LINES",
+    "PERIOD_ALREADY_CLOSED",
+    "PERIOD_ALREADY_OPEN",
+    "PERIOD_CLOSED",
+    "PERIOD_HAS_DRAFT_ENTRIES",
+    "PERIOD_MOVED",
     "PERMISSION_MODULE",
     "REVERSAL_NOT_REVERSIBLE",
     "REVERSAL_PREFIX",
@@ -143,3 +148,37 @@ REVERSAL_NOT_REVERSIBLE = "Ters kayıt fişi terslenemez"
 # SAHTE biçimde geçirir, çift dolu satır ise DB CHECK'ine düşüp kullanıcıya
 # ayrımsız bir 409 gösterirdi. DB kısıtı SON savunma olarak yerinde KALIR.
 LINE_SINGLE_SIDE = "Fiş satırı ya borç ya alacak taşır; ikisi birden ya da ikisi de boş olamaz"
+
+# --------------------------------------------------------------------------- #
+# MU-2 T3 (dönem kilidi) metinleri
+# --------------------------------------------------------------------------- #
+
+# 409 — 🔴 KAPALI DÖNEM YAZMAYA KAPALIDIR. Bu cümle ALTI giriş noktasının
+# HEPSİNDE aynı yerden okunur (`periods_service.assert_periods_open`); altıya
+# kopyalansaydı biri bir gün güncellenmez ve o yol kapıyı SESSİZCE atlardı
+# (BC dersi: "alanın TÜM giriş noktaları aynı sabitten okur").
+# 403 DEĞİL: kullanıcının yetkisi VARDIR, engelleyen şey DÖNEMİN durumudur.
+PERIOD_CLOSED = "Bu dönem kapalı; fiş eklenemez, değiştirilemez, silinemez"
+
+# 409 — zaten kapalı bir dönemi kapatmak. Sessizce başarı dönseydi kullanıcı
+# `closed_at` damgasının GÜNCELLENDİĞİNİ sanırdı; damga İLK kapanışındır.
+PERIOD_ALREADY_CLOSED = "Bu dönem zaten kapalı"
+
+# 409 — zaten açık (ya da hiç kaydı olmayan) bir dönemi açmak. Kayıt YOKSA
+# dönem AÇIK sayılır (proaktif 12 ay satırı açılmaz — YAGNI), dolayısıyla
+# "aç" isteği aynı 409'a düşer.
+PERIOD_ALREADY_OPEN = "Bu dönem zaten açık"
+
+# 409 — dönemde `draft` fiş varken kapanış. Dengesiz/eksik kayıt kapanışa
+# GİRMEZ: kapatılırsa taslak ne kayıtlaştırılabilir ne silinebilir hâle gelir
+# (ikisi de yasağın kapsamındadır) ve dönem sonsuza dek yarım kalırdı.
+# 🔴 `posted`/`reversed` fiş ENGEL DEĞİLDİR — kapanışın amacı tam olarak onları
+# DONDURMAKTIR; engel sayılsalardı hiçbir dönem asla kapanamazdı.
+PERIOD_HAS_DRAFT_ENTRIES = "Bu dönemde taslak fiş var; dönem kapatılamaz"
+
+# 409 — yarış emniyet ağı: fişin dönemi, kilitsiz bakış ile kilitli okuma
+# ARASINDA değişti (eşzamanlı bir `PATCH entry_date`). Kilit sırası gereği
+# dönem satırı fişten ÖNCE kilitlenir, dolayısıyla bakıştaki dönem kilitlenmiş
+# olur; buna rağmen fiş başka bir döneme kaymışsa elimizdeki kilit YANLIŞ
+# satırdadır ve karar veremeyiz. Kullanıcı isteği yineler.
+PERIOD_MOVED = "Fişin dönemi değişti; lütfen tekrar deneyin"

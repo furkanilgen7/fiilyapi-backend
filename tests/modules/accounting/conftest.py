@@ -28,7 +28,7 @@ kusur bütün dosyayı kırmızıya çevirirdi (`hesap_fabrikasi` dersi, HZ-1).
 """
 
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
@@ -37,6 +37,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.accounting.models import (
+    AccountingPeriod,
+    AccountingPeriodStatus,
     ChartAccount,
     ChartAccountType,
     JournalEntry,
@@ -123,6 +125,37 @@ async def kullanici_id(seeded_db: AsyncSession, user_factory) -> uuid.UUID:
         email="fis@muhasebe.co", password="parola1234", role_key="system_admin"
     )
     return user.id
+
+
+@pytest.fixture
+def donem_fabrikasi(seeded_db: AsyncSession, kullanici_id: uuid.UUID):
+    """MU-2 — `accounting_periods` satırını DOĞRUDAN kurar (uçtan geçilmez).
+
+    🔴 Damga BÜTÜNDÜR (`ck_accounting_periods_closed_stamp`): `closed` ise
+    `closed_at` + `closed_by_id` birlikte yazılır, `open` ise ikisi de NULL
+    kalır. Fabrika bunu kendisi uygular; testler damgayı elle kurmaya
+    çalışsaydı biri unutulur ve kırmızı, kuralı değil kurulumu gösterirdi.
+    """
+
+    async def _create(
+        year: int,
+        month: int,
+        *,
+        status: AccountingPeriodStatus = AccountingPeriodStatus.closed,
+    ) -> AccountingPeriod:
+        kapali = status is AccountingPeriodStatus.closed
+        period = AccountingPeriod(
+            year=year,
+            month=month,
+            status=status,
+            closed_at=datetime(2026, 8, 1, tzinfo=UTC) if kapali else None,
+            closed_by_id=kullanici_id if kapali else None,
+        )
+        seeded_db.add(period)
+        await seeded_db.flush()
+        return period
+
+    return _create
 
 
 @pytest.fixture
