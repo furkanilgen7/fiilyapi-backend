@@ -52,7 +52,7 @@ Bu dilim **başka bir oturumun P6 (Bölüm Detay) çalışmasıyla AYNI REPODA**
 ### 0.A.1 MIGRATION TUZAĞI — canlı crash'e yol açtı (2026-07-31, P7)
 
 `backend/.env`'deki **`DATABASE_URL` de uzak Railway'i gösteriyor**
-(`tokaido.proxy.rlwy.net`) — bilinen `TEST_DATABASE_URL` tuzağının **ikizi**.
+(Railway'in `*.proxy.rlwy.net` public proxy adresi) — bilinen `TEST_DATABASE_URL` tuzağının **ikizi**.
 `alembic` override'sız çalıştırılırsa **CANLIYA VURUR**; **`alembic heads` bile**
 `env.py` üzerinden bağlanmaya çalışır.
 
