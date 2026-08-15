@@ -13,7 +13,13 @@ olurdu; istemci gönderdiği bakiyenin yazıldığını sanır, ekranda ise form
 Reddedilenler: `balance` (türev) · `id` · `created_at`/`updated_at` (sunucu
 damgaları) · isimsiz her alan.
 
-## Normalizasyon: IBAN
+## Normalizasyon + DOĞRULAMA: IBAN
+
+🔴 Kural artık `app/core/iban.py`dedir ve `personnel` ile PAYLAŞILIR: canlı
+smoke'ta `iban: "BUNUBIRIBANDEGIL!!"` gövdesi **201** aldı — ne uzunluk, ne ülke
+kodu, ne mod-97 sağlaması vardı. Doğrulama iki modüle ayrı ayrı yazılsaydı biri
+güncellenip öteki unutulurdu; bu yüzden dört giriş noktası (iki Create + iki
+Update) TEK fonksiyonu çağırır. Alan **nullable KALIR** — zorunlu yapılmadı.
 
 IBAN'dan TÜM boşluklar atılır ve harfler BÜYÜTÜLÜR. Tekillik kısmi bir UNIQUE
 indeksle kurulduğu için (`uq_bank_accounts_iban`) ham değer saklansaydı
@@ -34,6 +40,11 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# 🔴 `normalize_iban` ARTIK BURADA TANIMLI DEĞİL, `app/core/iban.py`dedir (kural
+# `personnel` ile PAYLAŞILIR). Ad buradan YENİDEN DIŞA AKTARILIR: `service.py`
+# onu bu modülden import eder ve `__all__` listeler — bağ koparsa banka hesabı
+# create/update akışının tamamı çöker.
+from app.core.iban import iban_field_validator, normalize_iban
 from app.core.text import FREE_TEXT_MAX_LENGTH
 from app.modules.treasury.models import BankAccountType, PaymentMethodKind
 
@@ -69,19 +80,6 @@ _IBAN = Field(default=None, min_length=1, max_length=34)
 _OPENING_BALANCE = Field(default=Decimal("0.00"), max_digits=18, decimal_places=2)
 
 
-def normalize_iban(iban: str | None) -> str | None:
-    """Boşluksuz + BÜYÜK harf. `None` ve boşa dönen değer NULL'dır.
-
-    NULL'a dönüş bilinçlidir: Kasa satırında IBAN YOKTUR (E9:83) ve boş metin
-    saklansaydı kısmi indeks onu "dolu" sayar, İKİNCİ boş-IBAN'lı kasa 409
-    alırdı.
-    """
-    if iban is None:
-        return None
-    sikistirilmis = "".join(iban.split()).upper()
-    return sikistirilmis or None
-
-
 class BankAccountCreate(BaseModel):
     """`POST /bank-accounts` (E9:70-84 kartının yazma yolu).
 
@@ -102,6 +100,8 @@ class BankAccountCreate(BaseModel):
     display_name: str | None = _DISPLAY_NAME
     opening_balance: Decimal = _OPENING_BALANCE
     is_active: bool = True
+
+    _iban_dogrula = iban_field_validator()
 
 
 class BankAccountUpdate(BaseModel):
@@ -125,6 +125,8 @@ class BankAccountUpdate(BaseModel):
     display_name: str | None = _DISPLAY_NAME
     opening_balance: Decimal | None = Field(default=None, max_digits=18, decimal_places=2)
     is_active: bool | None = None
+
+    _iban_dogrula = iban_field_validator()
 
 
 class _BankAccountStored(BaseModel):

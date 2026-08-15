@@ -255,7 +255,7 @@ async def test_ayni_IBAN_409(client, muhasebe_headers) -> None:
     govde = {
         "bank_name": "İş Bank",
         "account_type": "checking",
-        "iban": "TR120006400000112345678901",
+        "iban": "TR290006400000112345678901",
     }
     assert (await client.post(_YOL, headers=muhasebe_headers, json=govde)).status_code == 201
     resp = await client.post(_YOL, headers=muhasebe_headers, json=govde)
@@ -264,7 +264,7 @@ async def test_ayni_IBAN_409(client, muhasebe_headers) -> None:
 
 
 async def test_IBAN_bosluk_ve_harf_farki_kapiyi_ATLATAMAZ_409(client, muhasebe_headers) -> None:
-    """Normalize edilmeseydi `TR12 0006…` ile `TR120006…` İKİ AYRI hesap olurdu
+    """Normalize edilmeseydi `TR29 0006…` ile `TR290006…` İKİ AYRI hesap olurdu
     ve tekillik kuralı sessizce anlamsızlaşırdı."""
     assert (
         await client.post(
@@ -273,7 +273,7 @@ async def test_IBAN_bosluk_ve_harf_farki_kapiyi_ATLATAMAZ_409(client, muhasebe_h
             json={
                 "bank_name": "İş Bank",
                 "account_type": "checking",
-                "iban": "TR120006400000112345678901",
+                "iban": "TR290006400000112345678901",
             },
         )
     ).status_code == 201
@@ -283,7 +283,7 @@ async def test_IBAN_bosluk_ve_harf_farki_kapiyi_ATLATAMAZ_409(client, muhasebe_h
         json={
             "bank_name": "İş Bank",
             "account_type": "checking",
-            "iban": "tr12 0006 4000 0011 2345 6789 01",
+            "iban": "tr29 0006 4000 0011 2345 6789 01",
         },
     )
     assert resp.status_code == 409, resp.text
@@ -296,11 +296,11 @@ async def test_IBAN_bosluklu_girilse_de_SIKISTIRILMIS_saklanir(client, muhasebe_
         json={
             "bank_name": "Yapı Kredi",
             "account_type": "checking",
-            "iban": "tr98 0006 4000 0011 2345 6789 02",
+            "iban": "tr02 0006 4000 0011 2345 6789 02",
         },
     )
     assert resp.status_code == 201, resp.text
-    assert resp.json()["iban"] == "TR980006400000112345678902"
+    assert resp.json()["iban"] == "TR020006400000112345678902"
 
 
 async def test_kasa_adsiz_422_ve_kayit_ACILMAZ(client, muhasebe_headers, seeded_db) -> None:
@@ -443,12 +443,12 @@ async def test_patch_kasanin_adini_NULL_yapmak_422(
 
 
 async def test_patch_baska_hesabin_IBANI_409(client, muhasebe_headers, hesap_fabrikasi) -> None:
-    await hesap_fabrikasi(iban="TR120006400000112345678901")
-    hedef = await hesap_fabrikasi(iban="TR120006400000112345678902")
+    await hesap_fabrikasi(iban="TR290006400000112345678901")
+    hedef = await hesap_fabrikasi(iban="TR020006400000112345678902")
     resp = await client.patch(
         f"{_YOL}/{hedef.id}",
         headers=muhasebe_headers,
-        json={"iban": "TR120006400000112345678901"},
+        json={"iban": "TR290006400000112345678901"},
     )
     assert resp.status_code == 409, resp.text
 
@@ -458,11 +458,11 @@ async def test_patch_KENDI_ibanini_yeniden_gondermek_200(
 ) -> None:
     """Tekillik denetimi KAYDIN KENDİSİNİ dışlamalıdır; dışlamasaydı kullanıcı
     yalnızca banka adını düzeltirken 409 alırdı."""
-    hesap = await hesap_fabrikasi(iban="TR120006400000112345678903")
+    hesap = await hesap_fabrikasi(iban="TR720006400000112345678903")
     resp = await client.patch(
         f"{_YOL}/{hesap.id}",
         headers=muhasebe_headers,
-        json={"iban": "TR120006400000112345678903", "bank_name": "Yapı Kredi"},
+        json={"iban": "TR720006400000112345678903", "bank_name": "Yapı Kredi"},
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["bank_name"] == "Yapı Kredi"
@@ -571,3 +571,148 @@ async def test_delete_denetim_satiri_yazar(
         .all()
     )
     assert any("Vadesiz TL" in (k.detail or "") for k in kayitlar), [k.detail for k in kayitlar]
+
+
+# --------------------------------------------------------------------------- #
+# IBAN doğrulaması — `app/core/iban.py` BAĞLI MI? (canlı smoke bulgusu)
+#
+# 🔴 Kusur canlıda bulundu: `POST /bank-accounts` gövdesine `BUNUBIRIBANDEGIL!!`
+# gönderildi ve **201** döndü. Ne uzunluk, ne ülke kodu, ne mod-97 sağlaması
+# vardı; `TR` + 24 sıfır da kabul edildi. Alan bir PARA yüzeyidir.
+#
+# Kuralın KENDİSİ `tests/core/test_iban.py`de sınanır. Buradaki testler yalnız
+# İKİ giriş noktasının (Create · Update) o kurala BAĞLANMIŞ olduğunu kanıtlar:
+# biri bağlanmadan bırakılsaydı kapı o uçtan atlatılırdı.
+# --------------------------------------------------------------------------- #
+
+#: mod-97 sağlaması TUTAN TR IBAN'ları (ISO 13616). Değerler bilerek FARKLIDIR:
+#: kısmi UNIQUE indeksi sınayan testler aynı değere indirgenirse anlamlarını
+#: yitirirdi.
+_GECERLI_IBAN = "TR330006100519786457841326"
+
+
+async def test_post_gecersiz_IBAN_422_ve_kayit_ACILMAZ(client, muhasebe_headers, seeded_db) -> None:
+    """🔴 Canlıda **201** alan gövdenin ta kendisi."""
+    resp = await client.post(
+        _YOL,
+        headers=muhasebe_headers,
+        json={
+            "bank_name": "Ziraat Bank",
+            "account_type": "checking",
+            "iban": "BUNUBIRIBANDEGIL!!",
+        },
+    )
+    assert resp.status_code == 422, resp.text
+    assert (await seeded_db.execute(select(BankAccount))).scalars().all() == []
+
+
+async def test_post_TR_ve_24_sifir_422(client, muhasebe_headers) -> None:
+    """Biçim doğru, SAĞLAMA yanlış — yalnız mod-97 bu değeri yakalar."""
+    resp = await client.post(
+        _YOL,
+        headers=muhasebe_headers,
+        json={
+            "bank_name": "Ziraat Bank",
+            "account_type": "checking",
+            "iban": "TR000000000000000000000000",
+        },
+    )
+    assert resp.status_code == 422, resp.text
+
+
+async def test_post_mod97_bozuk_422(client, muhasebe_headers) -> None:
+    """Geçerli IBAN'ın YALNIZ sağlama hanesi değiştirildi (33→34).
+
+    Uzunluk, ülke kodu ve alfabe AYNIDIR: bu iddia yalnız mod-97 koşuyorsa
+    yeşildir.
+    """
+    resp = await client.post(
+        _YOL,
+        headers=muhasebe_headers,
+        json={
+            "bank_name": "Ziraat Bank",
+            "account_type": "checking",
+            "iban": "TR340006100519786457841326",
+        },
+    )
+    assert resp.status_code == 422, resp.text
+
+
+async def test_post_cok_kisa_IBAN_422(client, muhasebe_headers) -> None:
+    resp = await client.post(
+        _YOL,
+        headers=muhasebe_headers,
+        json={"bank_name": "Ziraat Bank", "account_type": "checking", "iban": "TR00"},
+    )
+    assert resp.status_code == 422, resp.text
+
+
+async def test_post_TR_uzunlugu_26_degilse_422(client, muhasebe_headers) -> None:
+    """27 hane, mod-97 TUTAR — ülkeye özgü uzunluk AYRI kapıdır (TR = 26)."""
+    resp = await client.post(
+        _YOL,
+        headers=muhasebe_headers,
+        json={
+            "bank_name": "Ziraat Bank",
+            "account_type": "checking",
+            "iban": "TR0400061005197864578413260",
+        },
+    )
+    assert resp.status_code == 422, resp.text
+
+
+async def test_post_IBAN_null_gecer_alan_ZORUNLU_DEGIL(client, muhasebe_headers) -> None:
+    """🔴 Düzeltme alanı ZORUNLU YAPMAZ: E9:83'te Kasa satırının IBAN'ı yoktur."""
+    resp = await client.post(
+        _YOL,
+        headers=muhasebe_headers,
+        json={"bank_name": "Merkez", "account_type": "cash", "display_name": "Merkez Kasa"},
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["iban"] is None
+
+
+async def test_patch_gecersiz_IBAN_422_ve_kayit_DEGISMEZ(
+    client, muhasebe_headers, hesap_fabrikasi, seeded_db
+) -> None:
+    """🔴 İKİNCİ giriş noktası. Yalnız POST kapatılsaydı kapı PATCH'ten atlatılırdı."""
+    hesap = await hesap_fabrikasi(iban=_GECERLI_IBAN)
+    resp = await client.patch(
+        f"{_YOL}/{hesap.id}", headers=muhasebe_headers, json={"iban": "BUNUBIRIBANDEGIL!!"}
+    )
+    assert resp.status_code == 422, resp.text
+    await seeded_db.refresh(hesap)
+    assert hesap.iban == _GECERLI_IBAN
+
+
+async def test_patch_mod97_bozuk_422(client, muhasebe_headers, hesap_fabrikasi) -> None:
+    hesap = await hesap_fabrikasi(iban=_GECERLI_IBAN)
+    resp = await client.patch(
+        f"{_YOL}/{hesap.id}",
+        headers=muhasebe_headers,
+        json={"iban": "TR340006100519786457841326"},
+    )
+    assert resp.status_code == 422, resp.text
+
+
+async def test_patch_IBAN_null_gonderilebilir_TEMIZLER(
+    client, muhasebe_headers, hesap_fabrikasi
+) -> None:
+    """`null` göndermek alanı TEMİZLER ve bu meşrudur (nullable KALIR)."""
+    hesap = await hesap_fabrikasi(iban=_GECERLI_IBAN)
+    resp = await client.patch(f"{_YOL}/{hesap.id}", headers=muhasebe_headers, json={"iban": None})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["iban"] is None
+
+
+async def test_patch_bosluklu_kucuk_harfli_gecerli_IBAN_NORMALIZE_edilir(
+    client, muhasebe_headers, hesap_fabrikasi
+) -> None:
+    hesap = await hesap_fabrikasi(iban=None)
+    resp = await client.patch(
+        f"{_YOL}/{hesap.id}",
+        headers=muhasebe_headers,
+        json={"iban": "tr33 0006 1005 1978 6457 8413 26"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["iban"] == _GECERLI_IBAN

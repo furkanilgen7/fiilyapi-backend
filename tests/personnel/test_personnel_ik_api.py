@@ -204,3 +204,114 @@ async def test_project_id_suzgeci_yetki_genisletmez_idor(
     )
     assert yanit.status_code == 200, yanit.text
     assert yanit.json()["total"] == 1
+
+
+# --- IBAN doğrulaması: personel giriş noktaları (canlı smoke bulgusu) --------
+#
+# 🔴 Kusur `bank_accounts`ta bulundu ama personelde DAHA KÖTÜYDÜ: burada
+# normalizasyon bile yoktu, alanın tek koruması `max_length=34`tü. `iban`
+# bordronun ödeme talimatına giden alandır (İK-1 spec §1).
+#
+# Kuralın kendisi `tests/core/test_iban.py`de sınanır; buradaki testler yalnız
+# İKİ giriş noktasının (Create · Update) o kurala BAĞLI olduğunu kanıtlar.
+
+GECERLI_IBAN = "TR330006100519786457841326"
+
+
+@pytest.mark.asyncio
+async def test_post_gecersiz_IBAN_422(client, ik_headers):
+    yanit = await client.post(
+        "/personnel", json={**ISCI, "iban": "BUNUBIRIBANDEGIL!!"}, headers=ik_headers
+    )
+    assert yanit.status_code == 422, yanit.text
+
+
+@pytest.mark.asyncio
+async def test_post_TR_ve_24_sifir_422(client, ik_headers):
+    yanit = await client.post(
+        "/personnel", json={**ISCI, "iban": "TR000000000000000000000000"}, headers=ik_headers
+    )
+    assert yanit.status_code == 422, yanit.text
+
+
+@pytest.mark.asyncio
+async def test_post_mod97_bozuk_422(client, ik_headers):
+    """Yalnız sağlama hanesi değiştirildi (33→34): uzunluk/alfabe AYNI."""
+    yanit = await client.post(
+        "/personnel", json={**ISCI, "iban": "TR340006100519786457841326"}, headers=ik_headers
+    )
+    assert yanit.status_code == 422, yanit.text
+
+
+@pytest.mark.asyncio
+async def test_post_cok_kisa_IBAN_422(client, ik_headers):
+    yanit = await client.post("/personnel", json={**ISCI, "iban": "TR00"}, headers=ik_headers)
+    assert yanit.status_code == 422, yanit.text
+
+
+@pytest.mark.asyncio
+async def test_post_TR_uzunlugu_26_degilse_422(client, ik_headers):
+    """27 hane, mod-97 TUTAR — ülkeye özgü uzunluk AYRI kapıdır."""
+    yanit = await client.post(
+        "/personnel", json={**ISCI, "iban": "TR0400061005197864578413260"}, headers=ik_headers
+    )
+    assert yanit.status_code == 422, yanit.text
+
+
+@pytest.mark.asyncio
+async def test_post_IBAN_null_gecer(client, ik_headers):
+    """🔴 Alan ZORUNLU DEĞİLDİR: elden ödeme meşrudur (`payment_method=cash`)."""
+    yanit = await client.post("/personnel", json=ISCI, headers=ik_headers)
+    assert yanit.status_code == 201, yanit.text
+    assert yanit.json()["iban"] is None
+
+
+@pytest.mark.asyncio
+async def test_post_bosluklu_kucuk_harfli_IBAN_NORMALIZE_edilir(client, ik_headers):
+    """Personelde normalizasyon HİÇ YOKTU: `tr33 0006…` ham hâliyle saklanırdı."""
+    yanit = await client.post(
+        "/personnel",
+        json={**ISCI, "iban": "tr33 0006 1005 1978 6457 8413 26"},
+        headers=ik_headers,
+    )
+    assert yanit.status_code == 201, yanit.text
+    assert yanit.json()["iban"] == GECERLI_IBAN
+
+
+@pytest.mark.asyncio
+async def test_patch_gecersiz_IBAN_422_ve_kayit_DEGISMEZ(client, ik_headers):
+    """🔴 DÖRDÜNCÜ giriş noktası — POST kapatılıp bu açık bırakılsaydı kapı
+    PATCH'ten atlatılırdı."""
+    olusan = await client.post(
+        "/personnel", json={**ISCI, "iban": GECERLI_IBAN}, headers=ik_headers
+    )
+    kimlik = olusan.json()["id"]
+    yanit = await client.patch(
+        f"/personnel/{kimlik}", json={"iban": "BUNUBIRIBANDEGIL!!"}, headers=ik_headers
+    )
+    assert yanit.status_code == 422, yanit.text
+    kalan = await client.get(f"/personnel/{kimlik}", headers=ik_headers)
+    assert kalan.json()["iban"] == GECERLI_IBAN
+
+
+@pytest.mark.asyncio
+async def test_patch_mod97_bozuk_422(client, ik_headers):
+    olusan = await client.post("/personnel", json=ISCI, headers=ik_headers)
+    yanit = await client.patch(
+        f"/personnel/{olusan.json()['id']}",
+        json={"iban": "TR340006100519786457841326"},
+        headers=ik_headers,
+    )
+    assert yanit.status_code == 422, yanit.text
+
+
+@pytest.mark.asyncio
+async def test_patch_gecerli_IBAN_NORMALIZE_edilerek_yazilir(client, ik_headers):
+    olusan = await client.post("/personnel", json=ISCI, headers=ik_headers)
+    yanit = await client.patch(
+        f"/personnel/{olusan.json()['id']}",
+        json={"iban": "tr33 0006 1005 1978 6457 8413 26"},
+        headers=ik_headers,
+    )
+    assert yanit.status_code == 200, yanit.text
+    assert yanit.json()["iban"] == GECERLI_IBAN
