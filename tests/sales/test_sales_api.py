@@ -18,12 +18,13 @@ Mockup `Satış Yönetimi.dc.html` (S) liste kolonları 150-212:
 """
 
 import uuid
-from datetime import date, timedelta
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
 from sqlalchemy import select
 
+from app.core import timezone
 from app.modules.audit.models import AuditLog
 from app.modules.sales.guards import (
     LANDOWNER_UNIT_NOT_SELLABLE,
@@ -343,8 +344,8 @@ async def test_liste_turevleri_taksitlerden_hesaplanir(
     """
     satis = await _olustur(client, admin_headers, proje, unite, musteri)
     sale_id = uuid.UUID(satis["id"])
-    dun = date.today() - timedelta(days=1)
-    yarin = date.today() + timedelta(days=1)
+    dun = timezone.today() - timedelta(days=1)
+    yarin = timezone.today() + timedelta(days=1)
     db_session.add_all(
         [
             SaleInstallment(

@@ -19,6 +19,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import select
 
+from app.core import timezone
 from app.modules.procurement.models import (
     PurchaseOrder,
     PurchaseQuote,
@@ -347,7 +348,6 @@ async def test_select_and_order_atomik_uclusu_yapar(
     teklif_fabrikasi,
 ):
     """Tek işlemde: teklif işaretlenir · sipariş üretilir · talep `ordered` olur."""
-    from datetime import date
 
     secilecek = await teklif_fabrikasi(
         teklif_bekleyen_talep,
@@ -369,7 +369,7 @@ async def test_select_and_order_atomik_uclusu_yapar(
     govde = yanit.json()
     # 1.200 × 10 (talebin toplam miktarı) + 8.000 nakliye.
     assert Decimal(govde["total_amount"]) == Decimal("20000.00")
-    assert govde["order_no"].startswith(f"SP-{date.today().year}-")
+    assert govde["order_no"].startswith(f"SP-{timezone.today().year}-")
     assert govde["request_id"] == str(teklif_bekleyen_talep.id)
     assert govde["quote_id"] == str(secilecek.id)
     assert govde["supplier_id"] == str(secilecek.supplier_id)

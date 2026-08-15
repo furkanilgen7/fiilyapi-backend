@@ -11,6 +11,7 @@ from decimal import Decimal
 
 import pytest
 
+from app.core import timezone
 from app.modules.equipment.models import (
     EquipmentRatePeriod,
     EquipmentStatus,
@@ -25,7 +26,7 @@ MOCKUP_AYLIK_MALIYET = Decimal("124800")
 
 def _ayin_ici(gun: int = 15) -> date:
     """Cari ayın içinde, ay sonu taşmayan bir gün."""
-    bugun = date.today()
+    bugun = timezone.today()
     return bugun.replace(day=min(gun, bugun.day if bugun.day > 1 else 28))
 
 
@@ -126,7 +127,7 @@ async def test_aylik_maliyet_yalniz_cari_ayi_toplar(
         rate_period=EquipmentRatePeriod.hourly,
     )
     await kayit_fabrikasi(vinc, hours="10")
-    gecen_ay = date.today().replace(day=1) - timedelta(days=1)
+    gecen_ay = timezone.today().replace(day=1) - timedelta(days=1)
     await kayit_fabrikasi(vinc, hours="20", work_date=gecen_ay)
 
     yanit = await client.get("/equipment/summary", headers=admin_headers)

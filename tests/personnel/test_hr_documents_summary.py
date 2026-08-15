@@ -20,6 +20,7 @@ import pytest
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import timezone
 from app.modules.personnel import service
 from app.modules.personnel.models import (
     Personnel,
@@ -309,8 +310,8 @@ async def test_endpoint_yetkisiz_403(client, yetkisiz_headers: dict[str, str]) -
 
 
 async def test_endpoint_gercek_veri(client, ik_headers: dict[str, str], seeded_db) -> None:
-    """Endpoint yolu (today=date.today()) gerçek veriyle uçtan uca hesaplar."""
-    bugun = date.today()
+    """Endpoint yolu (today=timezone.today()) gerçek veriyle uçtan uca hesaplar."""
+    bugun = timezone.today()
     tip = await _mk_type(seeded_db, "Sağlık", mandatory=True, validity=12, order=1)
     p = await _mk_personnel(seeded_db, "Canlı")
     await _mk_doc(seeded_db, p, type_id=tip.id, valid_until=bugun - timedelta(days=1))

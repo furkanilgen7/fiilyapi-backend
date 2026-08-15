@@ -21,6 +21,7 @@ import asyncpg
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.core import timezone
 from app.core.config import settings
 from app.core.db import Base
 from app.modules.invoicing import numbering
@@ -39,6 +40,7 @@ from app.modules.procurement.numbering import (
     _ORDER_LOCK_KEY,
     _REQUEST_LOCK_KEY,
 )
+from tests._time import YIL_SINIRI_UTC, sabit_saat
 
 
 def _invoice_values(
@@ -132,10 +134,26 @@ async def test_yil_sinirinda_sira_sifirlanir(numara_ortami):
 
 async def test_yil_verilmezse_bugunun_yili_kullanilir(numara_ortami):
     session, _ = numara_ortami
-    bugun = date.today().year
+    bugun = timezone.today().year
     assert await generate_invoice_number(session, InvoiceDirection.outgoing) == (
         f"FIL{bugun}000001"
     )
+
+
+async def test_yil_sinirinda_TR_yili_kullanilir_utc_yili_degil(numara_ortami, monkeypatch):
+    """TB5 T3 — 1 Ocak 01:00 TSİ'de kesilen fatura YENİ yılın serisindedir.
+
+    O an UTC'de hâlâ 31 Aralık 22:00'dir; sunucu yerel saatiyle (Railway=UTC)
+    okunursa numara BİR ÖNCEKİ yılın serisine düşer. Yıl bazlı seri geriye
+    dönük olarak da çakışır: ertesi gün aynı seriden numara üretilirse
+    `max+1` mantığı iki farklı takvim yılını tek seride toplar.
+
+    Kusur günün yalnız 3 saatinde görünür; saat BEKLENMEZ, enjekte edilir.
+    """
+    session, _ = numara_ortami
+    sabit_saat(monkeypatch, YIL_SINIRI_UTC)  # 2027-12-31 22:00Z = 2028-01-01 01:00 TSİ
+
+    assert await generate_invoice_number(session, InvoiceDirection.outgoing) == "FIL2028000001"
 
 
 # --------------------------------------------------------------------------- #

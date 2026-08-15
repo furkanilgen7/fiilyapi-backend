@@ -16,6 +16,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import select
 
+from app.core import timezone
 from app.modules.procurement.models import PurchaseOrder, PurchaseOrderStatus
 
 _YOL = "/purchase-orders"
@@ -38,7 +39,6 @@ def _govde(project_id, supplier_id, **alanlar) -> dict:
 async def test_dogrudan_siparis_acilir(
     client, satinalma_headers, gorunen_proje, tedarikci_fabrikasi
 ):
-    from datetime import date
 
     tedarikci = await tedarikci_fabrikasi("Demirsan A.Ş.")
 
@@ -48,7 +48,7 @@ async def test_dogrudan_siparis_acilir(
 
     assert yanit.status_code == 201, yanit.text
     govde = yanit.json()
-    assert govde["order_no"].startswith(f"SP-{date.today().year}-")
+    assert govde["order_no"].startswith(f"SP-{timezone.today().year}-")
     assert govde["request_id"] is None, "talepsiz sipariş MEŞRU (§7 S3)"
     assert govde["quote_id"] is None
     assert govde["status"] == "approved"

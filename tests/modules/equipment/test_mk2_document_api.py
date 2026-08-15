@@ -4,12 +4,13 @@ Kapı `equipment` iznidir; okuma `view`, yazma `full`. Görünmeyen ekipmanın
 belgesi 404'tür (K9/K20 — `tests/modules/equipment/conftest.py` fixture'ları).
 """
 
-from datetime import date, timedelta
+from datetime import timedelta
 
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import timezone
 from app.modules.equipment.models import EquipmentDocument, EquipmentDocumentType
 
 PDF = b"%PDF-1.4 sahte muayene raporu"
@@ -356,7 +357,7 @@ async def test_ozet_sinir_gunleri(
     ekipman = await ekipman_fabrikasi("Kule Vinç KV-01")
     types = await _seed_types(seeded_db)
     manual_id = types["manual"].id
-    today = date.today()
+    today = timezone.today()
 
     await _upload(
         client,

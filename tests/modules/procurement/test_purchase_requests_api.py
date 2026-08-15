@@ -33,6 +33,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import func, select
 
+from app.core import timezone
 from app.modules.procurement.models import PurchaseRequest, PurchaseRequestLine
 
 pytestmark = pytest.mark.asyncio
@@ -77,7 +78,7 @@ async def test_taslak_yalniz_projeyle_kaydedilir(client, sef_headers, gorunen_pr
     assert govde["priority"] == "normal"
     assert govde["needed_by"] is None
     assert govde["lines"] == []
-    assert govde["request_date"] == date.today().isoformat()
+    assert govde["request_date"] == timezone.today().isoformat()
 
 
 async def test_talep_fst_alanlariyla_kaydedilir(
@@ -122,7 +123,7 @@ async def test_talep_fst_alanlariyla_kaydedilir(
 
 async def test_talep_numarasi_sunucu_uretir_istemci_gonderemez(client, sef_headers, gorunen_proje):
     """`SAT-YYYY-NNNN` (§7 S6). Gövdedeki `request_no` YOK SAYILIR."""
-    yil = date.today().year
+    yil = timezone.today().year
     ilk = await client.post(
         _YOL, json=_govde(gorunen_proje.id, request_no="SAT-1999-9999"), headers=sef_headers
     )

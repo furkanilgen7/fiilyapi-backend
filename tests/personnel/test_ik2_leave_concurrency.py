@@ -31,6 +31,7 @@ import pytest
 from sqlalchemy import delete, event, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core import timezone
 from app.core.errors import ConflictError
 from app.core.security import hash_password
 from app.modules.personnel import repository, service
@@ -51,7 +52,7 @@ pytestmark = pytest.mark.asyncio
 
 _SessionFactory = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
 
-_BUGUN = date.today()
+_BUGUN = timezone.today()
 _YIL = _BUGUN.year
 # ~2 yıl 2 ay kıdem → 4857 birinci kademe: yıllık hak 14 gün.
 _KIDEMLI_GIRIS = _BUGUN - timedelta(days=800)

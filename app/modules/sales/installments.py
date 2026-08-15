@@ -179,7 +179,13 @@ async def generate_plan(
         first_installment_date=sale.first_installment_date,
         # F119 "Sözleşme imzasında": ayrı bir sözleşme tarihi kolonu YOKTUR
         # (spec §2), kaydın açılış tarihi bu anlamın en yakın karşılığıdır.
-        down_payment_due_date=sale.created_at.date(),
+        #
+        # `created_at` bir `timestamptz`tir ve UTC olarak okunur; ham `.date()`
+        # UTC GÜNÜNÜ verirdi. TR gecesi 00:00-03:00 arasında açılan bir satışın
+        # peşinatı böylece "dün"e vadelenir ve kayıt DOĞDUĞU ANDA gecikmiş
+        # görünürdü (TB5 §1'de kanıtlanan kusur). Gün sınırı görüntüleme saat
+        # diliminde okunur.
+        down_payment_due_date=timezone.to_display(sale.created_at).date(),
     )
 
     # --- Buradan itibaren yazma; doğrulama YOK. ---
