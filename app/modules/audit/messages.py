@@ -8,6 +8,21 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from app.core.access import AccessLevel
+from app.core.timezone import DISPLAY_TIMESTAMP_FORMAT, to_display
+
+BILINMIYOR = "Bilinmiyor"
+
+
+def _damga(value: datetime | None) -> str:
+    """Denetim metnindeki, kullanıcıya görünen tarih-saat damgası.
+
+    `approved_at` bir `timestamptz`tir; ham `strftime` sunucunun UTC saatini
+    basar ve TR gecesi 21:00-24:00 arasında BİR ÖNCEKİ GÜNÜ gösterir (TB5 §1
+    kusur sınıfı — denetim metni onay saatini yanlış anlatırdı). Çeviri TEK
+    kaynaktan (`core.timezone.to_display`) yapılır.
+    """
+    return to_display(value).strftime(DISPLAY_TIMESTAMP_FORMAT) if value else BILINMIYOR
+
 
 LOGIN_DETAIL = "Sisteme giriş yapıldı"
 COMPANY_UPDATED = "Şirket bilgileri güncellendi"
@@ -397,8 +412,8 @@ def progress_payment_unapproved(
     bu değerleri NULL'lamadan ÖNCE okunmalıdır — sonra okunursa `unapprove`
     sessiz bir tarih silme işlemi olur (H6 denetimi O1, 2026-07-31 bulgusu).
     """
-    approver = previous_approver_name or "Bilinmiyor"
-    when = previous_approved_at.strftime("%d.%m.%Y %H:%M") if previous_approved_at else "Bilinmiyor"
+    approver = previous_approver_name or BILINMIYOR
+    when = _damga(previous_approved_at)
     return (
         f"Hakediş onayı geri çekildi: {project_name} · #{sequence_no} · "
         f"Önceki onay: {approver} · {when}"
@@ -514,8 +529,8 @@ def subcontractor_progress_payment_unapproved(
     `transitions._stamp` onları NULL'lamadan ÖNCE okunmalıdır, sonra okunursa
     `unapprove` sessiz bir tarih silme işlemi olur."""
     label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
-    approver = previous_approver_name or "Bilinmiyor"
-    when = previous_approved_at.strftime("%d.%m.%Y %H:%M") if previous_approved_at else "Bilinmiyor"
+    approver = previous_approver_name or BILINMIYOR
+    when = _damga(previous_approved_at)
     return f"Taşeron hakediş onayı geri çekildi: {label} · Önceki onay: {approver} · {when}"
 
 

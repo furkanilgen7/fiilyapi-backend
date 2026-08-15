@@ -20,6 +20,11 @@ from app.core.config import settings
 #: Kullaniciya gosterilen tum zamanlarin saat dilimi.
 DISPLAY_TIMEZONE = ZoneInfo(settings.display_timezone)
 
+#: Kullaniciya gosterilen tarih-saat damgasinin TEK bicimi (TR gun.ay.yil saat:dk).
+#: Ayri ayri yazilirsa bir yuzey `to_display` cagirmayi unutup ham UTC basar —
+#: bicim ve cevirinin ayni modulden okunmasi bunu gorunur kilar (TB5 T4 bulgusu).
+DISPLAY_TIMESTAMP_FORMAT = "%d.%m.%Y %H:%M"
+
 
 def to_display(value: datetime) -> datetime:
     """`timestamptz` degerini goruntuleme saat dilimine cevirir.
