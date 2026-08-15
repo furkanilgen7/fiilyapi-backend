@@ -28,8 +28,16 @@ __all__ = [
     "ACCOUNT_HAS_CHILDREN",
     "ACCOUNT_HAS_JOURNAL_LINES",
     "ACCOUNT_MISSING",
+    "ENTRY_ALREADY_REVERSED",
+    "INVALID_TRANSITION",
+    "JOURNAL_ENTRY_MISSING",
+    "JOURNAL_ENTRY_NOT_DELETABLE",
+    "JOURNAL_ENTRY_NOT_EDITABLE",
+    "LINE_ACCOUNT_MISSING",
+    "LINE_SINGLE_SIDE",
     "PARENT_HAS_JOURNAL_LINES",
     "PERMISSION_MODULE",
+    "REVERSAL_NOT_REVERSIBLE",
     "REVERSAL_PREFIX",
 ]
 
@@ -94,3 +102,44 @@ açıklamasını `f"{REVERSAL_PREFIX}{orijinal.description}"` diye kurar. İki y
 kurulsaydı (ör. bir de arama süzgecinde) ayrışır ve stornolar bir gün ekranda
 tanınamaz hâle gelirdi.
 """
+
+# 404 — var olmayan fiş. Hesap planı gibi yevmiye de ŞİRKET GENELİDİR (spec §3):
+# üç tabloda da `project_id`/`site_id` yoktur, dolayısıyla "görünmeyen fiş" hâli
+# yapısal olarak yoktur; 404 yalnız var OLMAYAN kimlik içindir.
+JOURNAL_ENTRY_MISSING = "Fiş bulunamadı"
+
+# 404 — 🔴 ST kanonu: GÖVDE İÇİ varlık referansı 404'tür, 422 DEĞİL. Satırdaki
+# `account_id` bir biçim hatası değil, var olmayan bir KAYDA işaret eder.
+LINE_ACCOUNT_MISSING = "Fiş satırındaki hesap bulunamadı"
+
+# 409 — K2 matrisinde olmayan her çift. 🔴 403 DEĞİL: kullanıcının yetkisi
+# VARDIR, engelleyen şey kaydın DURUMUDUR. "Tanımlı olanı say, gerisini reddet":
+# ileride yeni bir durum eklenirse varsayılan davranış REDDETMEKTİR.
+INVALID_TRANSITION = "Fiş bu işlem için uygun durumda değil"
+
+# 409 — `posted`/`reversed` fişte PATCH ya da `PUT lines`. Mali iz kanonu:
+# kayıtlaştırılmış fiş DEĞİŞMEZ, yalnız ters kaydıyla nötrlenir.
+# 🔴 R5: "posted fişin satırı UPDATE edilemez" DB'de ZORLANAMAZ (repo hiçbir
+# yerde trigger kullanmıyor); iddia yalnız bu kapı ayakta durduğu sürece doğrudur.
+JOURNAL_ENTRY_NOT_EDITABLE = "Kayıtlı fiş düzenlenemez"
+
+# 409 — silinebilir tek durum `draft`tır. YETKİ kapısı (`admin`) AYRIDIR ve
+# router'dadır: tek yerde toplansalardı "yetkiniz yok" cümlesi bir DURUM
+# engelinden dönerdi.
+JOURNAL_ENTRY_NOT_DELETABLE = "Yalnızca taslak fiş silinebilir"
+
+# 409 — `uq_journal_entries_reversal_of`un SERVİS karşılığı. Kapı UNIQUE'e
+# DÜŞMEDEN önce koşar ki kullanıcı ayrımsız bir "Veri bütünlüğü hatası" yerine
+# ne olduğunu söyleyen bir cümle alsın. UQ yarış durumu emniyet ağı olarak KALIR.
+ENTRY_ALREADY_REVERSED = "Bu fişin ters kaydı zaten var"
+
+# 409 — stornonun stornosu. Sonsuz bir zincir açardı ve mali anlamı yoktur:
+# bir ters kaydı iptal etmenin yolu orijinali yeniden girmektir.
+REVERSAL_NOT_REVERSIBLE = "Ters kayıt fişi terslenemez"
+
+# 422 — `ck_journal_lines_single_side`in ŞEMA karşılığı (`code` deseninin DB
+# CHECK'i ile şemada birlikte durmasının aynısı). E8'in her satırının boş tarafı
+# HEP `—`dir. Şemada yakalanmasaydı `(0,0)` satırı `len(lines) >= 2` engelini
+# SAHTE biçimde geçirir, çift dolu satır ise DB CHECK'ine düşüp kullanıcıya
+# ayrımsız bir 409 gösterirdi. DB kısıtı SON savunma olarak yerinde KALIR.
+LINE_SINGLE_SIDE = "Fiş satırı ya borç ya alacak taşır; ikisi birden ya da ikisi de boş olamaz"

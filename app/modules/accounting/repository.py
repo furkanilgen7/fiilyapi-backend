@@ -28,23 +28,38 @@ Liste ucu hesap sayısından BAĞIMSIZ olarak iki sorgu koşar (satırlar + say�
 """
 
 import uuid
+from collections.abc import Sequence
 from decimal import Decimal
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.accounting import codes
 from app.modules.accounting.balance import select_accounts_with_balance
-from app.modules.accounting.models import ChartAccount, ChartAccountType, JournalLine
+from app.modules.accounting.models import (
+    ChartAccount,
+    ChartAccountType,
+    JournalEntry,
+    JournalEntryStatus,
+    JournalLine,
+)
 
 __all__ = [
+    "accounts_by_ids",
     "code_exists",
     "count_accounts",
+    "count_entries",
     "count_journal_lines_for_account",
+    "delete_lines",
     "get_account",
     "get_account_by_code",
+    "get_entry",
     "has_child_accounts",
     "list_accounts_with_balance",
+    "list_entries",
+    "load_lines",
+    "load_lines_with_accounts",
+    "reversal_exists",
 ]
 
 _LIKE_ESCAPE = "\\"
@@ -210,3 +225,168 @@ async def count_journal_lines_for_account(session: AsyncSession, account_id: uui
     """
     stmt = select(func.count()).select_from(JournalLine).where(JournalLine.account_id == account_id)
     return (await session.execute(stmt)).scalar_one()
+
+
+# --------------------------------------------------------------------------- #
+# T3b — YEVMİYE (spec §7 yolları 6-14)
+#
+# 🔴 Burada da KAPSAM SÜZGECİ YOKTUR ve aynı sebeple (spec §3): `journal_entries`
+# tablosunda `project_id`/`site_id` kolonu yoktur, E8'in altı sütununda hiçbir
+# proje/şantiye alanı çizilmemiştir. Erişimi `accounting` izni denetler.
+#
+# 🔴 KİLİT SIRASI uçtan uca SABİTTİR: **fiş → satırlar → hesap**. Bu dosyadaki
+# sorgular o sırayı bozacak bir kilit almaz; ters sırada kilitleyen bir yol
+# eklenirse karşılıklı kilitlenme (deadlock) doğar.
+# --------------------------------------------------------------------------- #
+
+
+async def get_entry(
+    session: AsyncSession, entry_id: uuid.UUID, *, for_update: bool = False
+) -> JournalEntry | None:
+    """Tekil okuma; `for_update` satırı KİLİTLER (EŞİK = KİLİT'in 1. adımı).
+
+    🔴 `populate_existing` ŞARTTIR: kimlik haritası bayat bir nesne taşıyorsa
+    `session.get` onu SORGUSUZ döndürür ve **kilit HİÇ ALINMAZ** — TOCTOU
+    penceresi sessizce açık kalırdı (`invoicing.get_invoice` dersi). Kilidin
+    kendisi de OKUMADA alınır: `UPDATE`in örtük satır kilidi yazma ANINDA, yani
+    kararın çok geç bir noktasında alınır ve iki eşzamanlı `post` da aynı
+    `draft`ı okurdu.
+    """
+    if not for_update:
+        return await session.get(JournalEntry, entry_id)
+    return await session.get(JournalEntry, entry_id, with_for_update=True, populate_existing=True)
+
+
+def _entry_filtered(
+    stmt: Select,
+    *,
+    status: JournalEntryStatus | None,
+    year: int | None,
+    month: int | None,
+) -> Select:
+    """Fiş listesinin süzgeçleri — liste ve sayım AYNI yardımcıdan geçer.
+
+    Kopya açılsaydı `total` ile gösterilen tablo zamanla ayrışır ve fişler
+    "sayfa dışında kalmış" gibi görünürdü.
+    """
+    if status is not None:
+        stmt = stmt.where(JournalEntry.status == status)
+    if year is not None:
+        stmt = stmt.where(JournalEntry.period_year == year)
+    if month is not None:
+        stmt = stmt.where(JournalEntry.period_month == month)
+    return stmt
+
+
+async def list_entries(
+    session: AsyncSession,
+    *,
+    status: JournalEntryStatus | None,
+    year: int | None,
+    month: int | None,
+    limit: int,
+    offset: int,
+) -> list[JournalEntry]:
+    """Fiş başlıkları — 🔴 sıralamanın son parçası `id`dir.
+
+    `entry_date DESC` tek başına belirleyici DEĞİLDİR: aynı gün girilen iki fiş
+    keyfî sırada dönerdi ve sayfalama satır tekrarlar/atlardı (R8'in liste
+    ucundaki izdüşümü). `created_at` de tek başına yetmez — `func.now()` işlem
+    başına SABİTTİR, aynı işlemde yazılan fişlerin damgası EŞİTTİR.
+    """
+    stmt = _entry_filtered(select(JournalEntry), status=status, year=year, month=month)
+    stmt = (
+        stmt.order_by(
+            JournalEntry.entry_date.desc(),
+            JournalEntry.created_at.desc(),
+            JournalEntry.id.desc(),
+        )
+        .limit(limit)
+        .offset(offset)
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def count_entries(
+    session: AsyncSession,
+    *,
+    status: JournalEntryStatus | None,
+    year: int | None,
+    month: int | None,
+) -> int:
+    stmt = _entry_filtered(
+        select(func.count()).select_from(JournalEntry), status=status, year=year, month=month
+    )
+    return (await session.execute(stmt)).scalar_one()
+
+
+async def load_lines(session: AsyncSession, entry_id: uuid.UUID) -> list[JournalLine]:
+    """Fişin bacakları, `sort_order` ASC — gövdedeki dizinin AYNISI.
+
+    Son ölçüt `id`dir: `sort_order` NOT NULL ve sunucu tarafından yazılıyor olsa
+    da, iki satırın aynı sırayı taşıdığı bir gün gelirse sıra keyfî olmamalıdır.
+    """
+    stmt = (
+        select(JournalLine)
+        .where(JournalLine.entry_id == entry_id)
+        .order_by(JournalLine.sort_order, JournalLine.id)
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def load_lines_with_accounts(
+    session: AsyncSession, entry_id: uuid.UUID
+) -> list[tuple[JournalLine, ChartAccount]]:
+    """Bacak + hesabı **TEK** sorguda (N+1 yasağı).
+
+    Satır başına hesap çekilseydi iki bacaklı bir fişte fark edilmez, elli
+    bacaklı bir bordro fişinde patlardı. `join` INNER'dır ve öyle kalır:
+    `account_id` NOT NULL + RESTRICT FK olduğu için hesapsız satır YAPISAL
+    OLARAK imkânsızdır.
+    """
+    stmt = (
+        select(JournalLine, ChartAccount)
+        .join(ChartAccount, ChartAccount.id == JournalLine.account_id)
+        .where(JournalLine.entry_id == entry_id)
+        .order_by(JournalLine.sort_order, JournalLine.id)
+    )
+    return [(satir, hesap) for satir, hesap in (await session.execute(stmt)).all()]
+
+
+async def delete_lines(session: AsyncSession, entry_id: uuid.UUID) -> None:
+    """Bacakları toptan siler (`PUT lines` ve DELETE'in ilk adımı).
+
+    DB'de CASCADE de vardır; açık silme KİLİT SIRASINI (fiş → satırlar) uçtan
+    uca sabit tutmak içindir.
+    """
+    await session.execute(delete(JournalLine).where(JournalLine.entry_id == entry_id))
+
+
+async def accounts_by_ids(
+    session: AsyncSession, account_ids: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, ChartAccount]:
+    """Gövdedeki hesap referanslarını **TEK** sorguda çözer.
+
+    Bulunamayan kimlik sözlükte YER ALMAZ; çağıran 404'ü kendi verir (🔴 ST
+    kanonu: gövde içi varlık referansı 404'tür). Boş listede hiç sorgu koşmaz.
+    """
+    if not account_ids:
+        return {}
+    stmt = select(ChartAccount).where(ChartAccount.id.in_(set(account_ids)))
+    return {hesap.id: hesap for hesap in (await session.execute(stmt)).scalars().all()}
+
+
+async def reversal_exists(session: AsyncSession, entry_id: uuid.UUID) -> bool:
+    """Fişin stornosu VAR MI — `uq_journal_entries_reversal_of`un ön denetimi.
+
+    Sorgu UNIQUE'e DÜŞMEDEN önce koşar ki kullanıcı ayrımsız bir "Veri bütünlüğü
+    hatası" yerine Türkçe bir sebep alsın (R16 deseninin storno karşılığı). UQ
+    yarış durumu emniyet ağı olarak KALIR; kilit (`get_entry(for_update=True)`)
+    zaten aynı fiş üzerinde iki eşzamanlı stornoyu sıraya sokar.
+    """
+    stmt = (
+        select(func.count())
+        .select_from(JournalEntry)
+        .where(JournalEntry.reversal_of_id == entry_id)
+    )
+    return bool((await session.execute(stmt)).scalar_one())

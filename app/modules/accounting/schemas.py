@@ -29,26 +29,57 @@ kuralıdır, hiçbir form onay kutusu çizmemiştir) · sınıf etiketi (HP:187 
 kendi satırlarıyla çelişir — K15) · para birimi/kur · proje/şantiye/maliyet
 merkezi (üç tabloda da kolonu yok, MU-3). Gövdede gönderilirlerse **422**dir.
 
-⚠️ `app.core.text.FREE_TEXT_MAX_LENGTH` bu dosyada HENÜZ kullanılmaz: T3a'nın
-tek metin alanı `name`dir ve tavanı kolonun kendisidir (`String(200)`), o
-sabite BAĞLANMAZ (`core/text.py` kuralı). Tavan T3b'nin `description` (`Text`)
-alanında devreye girer.
+`app.core.text.FREE_TEXT_MAX_LENGTH` T3b'nin `description` alanında devreye
+girer: kolon `Text`tir (DB'de sınırsız), tavan bu yüzden ŞEMADADIR ve **TÜM
+giriş noktaları** (POST + PATCH) AYNI sabitten okur — ayrışsalardı tavan bir
+uçtan atlatılabilirdi (belge arşivi T4 dersi). `name`/`detail_note` bu sabite
+BAĞLANMAZ: onların tavanı kolonun kendisidir (`String(200)`, `core/text.py`
+kuralı).
+
+## 🔴 T3b — yevmiye gövdesinden GELEMEYEN alanlar
+
+`status` (`INITIAL_STATUS` sunucudadır) · `total_debit`/`total_credit`
+(satırlardan TÜREtilir, `service._apply_totals` TEK yazım) · `reversal_of_id`
+(storno bağını `state_service` kurar) · `period_year`/`period_month`
+(`entry_date`ten türer, `ck_journal_entries_period_matches_date` zorlar) ·
+`running_balance` (defterin TÜREV sütunu). Hepsi `extra="forbid"` sayesinde
+**422**dir.
+
+## 🔴 NULL fail-closed ŞEMADA BAŞLAR
+
+`debit`/`credit` zorunlu `Decimal`dır: NULL, eksik alan ve boş metin **422**dir.
+`| None` bırakılıp serviste `or 0` yazılsaydı `Σ` NULL'ı yutar ve **dengesiz fiş
+dengede sayılırdı** (spec §4). Tek taraflılık da burada kapanır
+(`ck_journal_lines_single_side`in şema karşılığı): `(0,0)` satırı toplama
+katkısız olduğu hâlde "en az iki satır" engelini SAHTE biçimde geçirirdi.
 """
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.modules.accounting import codes
-from app.modules.accounting.models import ChartAccountType
+from app.core.text import FREE_TEXT_MAX_LENGTH
+from app.modules.accounting import codes, guards
+from app.modules.accounting.models import ChartAccountType, JournalEntryStatus
 
 __all__ = [
     "ChartAccountCreate",
     "ChartAccountListResponse",
     "ChartAccountResponse",
     "ChartAccountUpdate",
+    "JournalEntryCreate",
+    "JournalEntryDetailResponse",
+    "JournalEntryListResponse",
+    "JournalEntryResponse",
+    "JournalEntryUpdate",
+    "JournalLineInput",
+    "JournalLineResponse",
+    "JournalLinesReplace",
+    "JournalSummaryResponse",
+    "LedgerResponse",
+    "LedgerRow",
 ]
 
 #: Bilinmeyen alan = 422 (modül docstring'i). TEK sabit: her gövde şeması aynı
@@ -168,3 +199,217 @@ class ChartAccountListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+# --------------------------------------------------------------------------- #
+# T3b — YEVMİYE (E8)
+# --------------------------------------------------------------------------- #
+
+#: Para alanlarının ortak sınırı — `Numeric(18,2)` ile BİREBİR. Şemada da
+#: durması bilinçlidir: üç haneli kuruş gönderen bir istemci sessizce
+#: yuvarlanmak yerine 422 alır ve neyin kabul edildiğini öğrenir.
+_MONEY = Field(ge=0, max_digits=18, decimal_places=2)
+
+#: E8:113'ün ALT satırı — `invoice_lines.detail_note` ile aynı ad/rol/ölçü.
+#: Tavanı kolonun kendisidir (`String(200)`), `FREE_TEXT_MAX_LENGTH`e BAĞLANMAZ.
+_DETAIL_NOTE_MAX = 200
+
+
+class JournalLineInput(BaseModel):
+    """Fişin bir bacağı (E8:102-105) — 🔴 K-Ş1: alan İCAT EDİLMEDİ.
+
+    Gövde yalnızca E8'in ÇİZİLİ sütunlarından türer: `Hesap Kodu` (kimlik olarak
+    `account_id`) · `Borç` · `Alacak`. Satırda `description` ve `sort_order`
+    YOKTUR: ilki bir fişin iki bacağında tekrarlanır ve ayrışırdı (spec §3c),
+    ikincisi gövde DİZİSİNİN İNDEKSİDİR ve sunucu yazar.
+
+    🔴 `debit`/`credit` ZORUNLUDUR (`| None` DEĞİL): NULL/eksik/boş **422**dir.
+    """
+
+    model_config = _SIKI
+
+    account_id: uuid.UUID
+    debit: Decimal = _MONEY
+    credit: Decimal = _MONEY
+
+    @model_validator(mode="after")
+    def _tek_taraf(self) -> "JournalLineInput":
+        """🔴 `ck_journal_lines_single_side`in ŞEMA karşılığı.
+
+        E8'in altı satırının boş tarafı HEP `—`dir. Burada yakalanmasaydı:
+        * `(0,0)` satırı toplama katkısız olduğu hâlde satır SAYISINI şişirir ve
+          "en az iki satır" engelini SAHTE biçimde geçirirdi;
+        * çift dolu satır DB CHECK'ine düşer, kullanıcıya ayrımsız bir 409
+          giderdi.
+        DB kısıtı SON savunma olarak yerinde KALIR.
+        """
+        dolu_borc = self.debit > 0
+        dolu_alacak = self.credit > 0
+        if dolu_borc == dolu_alacak:
+            raise ValueError(guards.LINE_SINGLE_SIDE)
+        return self
+
+
+class JournalEntryCreate(BaseModel):
+    """`POST /journal-entries` (E8:67 `+ Yevmiye Kaydı`).
+
+    🔴 K-Ş1: form mockup'ı YOKTUR ve alan İCAT EDİLMEZ — gövde yalnızca E8'in
+    çizili sütunlarından türer: `Tarih` (E8:101) · `Açıklama` üst satırı
+    (E8:103/113) · `Açıklama` alt satırı (`detail_note`) · satırlar.
+
+    `detail_note` bir FK DEĞİLDİR: E8'in altı örneğinden biri
+    (`48 personel · SGK dahil`) hiçbir varlığa çözülmez — heterojen küme =
+    SERBEST METİN. FK açılsaydı MU-3'ün (entegrasyon) işi buraya sızardı.
+    """
+
+    model_config = _SIKI
+
+    entry_date: date
+    description: str = Field(min_length=1, max_length=FREE_TEXT_MAX_LENGTH)
+    detail_note: str | None = Field(default=None, max_length=_DETAIL_NOTE_MAX)
+    lines: list[JournalLineInput] = Field(default_factory=list)
+
+
+class JournalEntryUpdate(BaseModel):
+    """`PATCH /journal-entries/{id}` — KISMİ gövde, yalnız `draft`ta (409 aksi).
+
+    `entry_date`/`description` için `| None` yalnızca "gönderilmedi" demektir:
+    kolonları NULLABLE DEĞİLDİR, dolayısıyla açıkça `null` göndermek bir
+    TEMİZLEME değildir ve servis onu "değişmedi" sayar.
+
+    🔴 `detail_note` bunun İSTİSNASIDIR ve kolonu NULLABLE'dır: açıkça `null`
+    göndermek onu GERÇEKTEN temizler. Ayrım `exclude_unset` ile korunur —
+    onsuz, yalnız açıklamayı düzelten bir istek dayanağı sessizce silerdi.
+
+    Satırlar buradan DEĞİŞMEZ: kümenin tek yazma yolu `PUT …/lines`tir, çünkü
+    toplamlar (K1) ancak kümenin TAMAMI bilinirken tutarlı yazılabilir.
+    """
+
+    model_config = _SIKI
+
+    entry_date: date | None = None
+    description: str | None = Field(default=None, min_length=1, max_length=FREE_TEXT_MAX_LENGTH)
+    detail_note: str | None = Field(default=None, max_length=_DETAIL_NOTE_MAX)
+
+
+class JournalLinesReplace(BaseModel):
+    """`PUT /journal-entries/{id}/lines` — kümeyi TOPTAN yazar (hakediş emsali).
+
+    Kısmi güncelleme YOKTUR: `sort_order` dizinin indeksidir ve toplamlar
+    kümenin tamamından türer; tek satır güncellenseydi başlık ile satırlar
+    ayrışabilirdi.
+    """
+
+    model_config = _SIKI
+
+    lines: list[JournalLineInput]
+
+
+class JournalLineResponse(BaseModel):
+    """Yanıt satırı — hesabın KODU ve ADI da taşınır (E8:102).
+
+    İstemcinin hesap planını ayrıca çekmesi gerekmez; N+1'i sunucuya taşımak
+    yerine tek `join`de çözülür.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    sort_order: int
+    account_id: uuid.UUID
+    account_code: str
+    account_name: str
+    debit: Decimal
+    credit: Decimal
+
+
+class JournalEntryResponse(BaseModel):
+    """Fiş başlığı — SAKLANAN kolonlar (toplamlar dahil, spec §4 istisnası)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    entry_date: date
+    period_year: int
+    period_month: int
+    description: str
+    detail_note: str | None
+    status: JournalEntryStatus
+    total_debit: Decimal
+    total_credit: Decimal
+    reversal_of_id: uuid.UUID | None
+    created_by_id: uuid.UUID
+    created_at: datetime
+    updated_at: datetime
+
+
+class JournalEntryDetailResponse(JournalEntryResponse):
+    """Başlık + bacaklar. Yedi ucun HEPSİ bu şekli döner (liste hariç): tek
+    yerde kurulmasaydı `POST` ile `PATCH` farklı alan kümeleri basardı."""
+
+    lines: list[JournalLineResponse]
+
+
+class JournalEntryListResponse(BaseModel):
+    """K7 liste zarfı. `items` BAŞLIKTIR, satır taşımaz: liste ekranı fiş
+    seçmek içindir ve her fişin bacaklarını çekmek listeyi N+1'e sokardı."""
+
+    items: list[JournalEntryResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class JournalSummaryResponse(BaseModel):
+    """E8:79-88 KPI şeridi — ÜÇ kart.
+
+    🔴 `net_balance = ALACAK − BORÇ`. Yön mockup'tan KANITLIDIR:
+    `4.120.000 − 3.842.600 = 277.400` (E8:88) tam tutar ve bu, E8'deki tek
+    göstermelik-olmayan aritmetiktir.
+
+    Şerit yalnız DÖNEME bağlıdır; hesap süzgeci ALMAZ (E8:72 — KPI'lar tablonun
+    ve filtre çubuğunun DIŞINDADIR).
+    """
+
+    year: int
+    month: int
+    total_debit: Decimal
+    total_credit: Decimal
+    net_balance: Decimal
+
+
+class LedgerRow(BaseModel):
+    """`GET /journal` satırı (E8:101-106) — 🔴 tablo SATIR bazlıdır, fiş bazlı
+    değil.
+
+    `running_balance` TÜREVDİR ve gövdeden GELEMEZ; tanımı `ledger.py`dedir.
+    `entry_id` + `entry_status` fişe dönüş yolunu açar: defterdeki bir satırdan
+    kaynağına gidilemeseydi kullanıcı düzeltmeyi hiç bulamazdı.
+    """
+
+    entry_id: uuid.UUID
+    entry_date: date
+    entry_status: JournalEntryStatus
+    account_id: uuid.UUID
+    account_code: str
+    account_name: str
+    description: str
+    detail_note: str | None
+    debit: Decimal
+    credit: Decimal
+    running_balance: Decimal
+
+
+class LedgerResponse(BaseModel):
+    """K7 zarfı + 🔴 **`carried_balance`** (pencere ÖNCESİ toplam).
+
+    Ad `bank_accounts.opening_balance`tan bilinçli olarak AYRIDIR: orası
+    SAKLANAN bir kolondur, bu ise TÜREVDİR. Aynı ad kullanılsaydı frontend
+    ikisini ayırt edemez ve türetilmiş bir sayıyı düzenlenebilir sanırdı.
+    """
+
+    items: list[LedgerRow]
+    total: int
+    limit: int
+    offset: int
+    carried_balance: Decimal
