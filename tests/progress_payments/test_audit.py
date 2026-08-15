@@ -24,6 +24,7 @@ from httpx import AsyncClient
 from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.timezone import DISPLAY_TIMESTAMP_FORMAT, to_display
 from app.modules.audit import messages
 from app.modules.audit.models import AuditLog
 from app.modules.progress_payments import service as pp_service
@@ -314,7 +315,11 @@ async def test_unapprove_denetim_kaydi_eski_onay_damgalarini_tasir(
     # YAKALAMAZ — gerçek onaylayan adı ve gerçek eski onay tarihi fonksiyondan
     # BAĞIMSIZ literal'lerle ayrıca doğrulanır (mutasyon kanıtı raporda).
     assert admin.full_name in detay
-    assert eski_dt.strftime("%d.%m.%Y %H:%M") in detay
+    # TB5 T4: damga TR saatiyle basilir. `eski_approved_at` teldeki UTC anidir;
+    # ham `strftime` UTC'yi iddia ederdi ve TR ile UTC 3 saat ayrildigi icin
+    # metinle ASLA eslesmezdi. Iddianin BAGIMSIZLIGI korunuyor — cevirim
+    # `messages` fonksiyonundan degil, `core.timezone`dan geliyor.
+    assert to_display(eski_dt).strftime(DISPLAY_TIMESTAMP_FORMAT) in detay
 
 
 # --- 8. H8'den devredilen: silme özet taşır ---

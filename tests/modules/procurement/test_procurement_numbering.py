@@ -163,6 +163,28 @@ async def test_dolgu_genisligi_asilinca_numara_uzar(numara_ortami):
     assert await generate_request_number(session, year=2026) == "SAT-2026-10000"
 
 
+async def test_metin_siralamasi_tuzagi_dolgu_genisliginin_IKI_YANINDA_olculur(numara_ortami):
+    """🔴 HZ-1 devir borcu (TB5 T5'te kapatildi): tek satirlik genisleme testi
+    `Integer` cast mutasyonunu KACIRIYORDU.
+
+    Sonek METINDIR; `max()` metin siralamasi yapsaydi "9999" > "10000" olurdu.
+    Tek satirla bu gorunmez — `max()` o tek satiri zaten secer. Kusur ancak
+    dolgu genisliginin IKI YANINDA birer kayit varken dogar. FAT-1 T2 ayni
+    zaafi kendi testinde bulup iki satira cikarmisti; `procurement` emsal
+    alinan desendi ve duzeltilmemisti.
+
+    Mutasyon (elle uygulanip geri alindi, kanit raporda): `numbering._next_number`
+    icinde cast `max`in ICINDEN DISINA alininca
+    (`cast(func.max(func.substr(...)), Integer)`) bu test KIRMIZI olur —
+    "SAT-2026-10000" yerine mevcut numarayi tekrar uretir.
+    """
+    session, project, user, _ = numara_ortami
+    for numara in ("SAT-2026-9999", "SAT-2026-10000"):
+        await _add_request(session, request_no=numara, project_id=project.id, user_id=user.id)
+
+    assert await generate_request_number(session, year=2026) == "SAT-2026-10001"
+
+
 async def test_baska_yilin_bes_haneli_numarasi_ayristirilir(numara_ortami):
     session, project, user, _ = numara_ortami
     await _add_request(session, request_no="SAT-2026-10000", project_id=project.id, user_id=user.id)
