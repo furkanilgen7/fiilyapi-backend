@@ -18,11 +18,19 @@ aşamada devreye girmez.
 """
 
 import uuid
+from datetime import date
 from decimal import Decimal
 
 from pydantic import BaseModel
 
-__all__ = ["TrialBalanceResponse", "TrialBalanceRow", "TrialBalanceTotals"]
+__all__ = [
+    "TrialBalanceResponse",
+    "TrialBalanceRow",
+    "TrialBalanceTotals",
+    "VatDeductionRow",
+    "VatReturnResponse",
+    "VatTaxableRow",
+]
 
 
 class TrialBalanceTotals(BaseModel):
@@ -93,3 +101,62 @@ class TrialBalanceResponse(BaseModel):
     is_balanced: bool
     rows: list[TrialBalanceRow]
     totals: TrialBalanceTotals
+
+
+class VatTaxableRow(BaseModel):
+    """`Tablo 1 — Matrah ve Vergi`nin bir ORAN satırı (mockup satır 84-89).
+
+    🔴 `rate = 0` satırları BURAYA GİRMEZ: mockup istisnayı ayrı, italik/gri bir
+    satır olarak çizer (satır 90-95) ve vergisi tanımı gereği `0`dır. Listeye
+    konsaydı `Vergi` kolonu hep `0` olan sahte bir "oran" satırı doğardı.
+    `VatReturnResponse.exempt_base` onun yeridir.
+    """
+
+    rate: Decimal
+    base: Decimal
+    vat: Decimal
+
+
+class VatDeductionRow(BaseModel):
+    """`İndirimler` tablosunun bir satırı (mockup satır 116-125).
+
+    🔴 Mockup İKİ satır çizer (`Mal Alışları` / `Hizmet Alımları`) ama bu ayrımın
+    veri modelinde karşılığı YOKTUR (ölçüldü: `item_type`/`is_service`/
+    `product_type` sıfır eşleşme, kalemin stok bağı yok). Sınıflandırıcı
+    UYDURULMADI; tek satır `Alışlar` döner ve boşluk açık borçtur. Liste tipi
+    olması, sınıflandırma bir gün gerçekten modellendiğinde şemanın KIRILMADAN
+    büyümesi içindir.
+    """
+
+    source: str
+    base: Decimal
+    vat: Decimal
+
+
+class VatReturnResponse(BaseModel):
+    """KDV Beyannamesinin tamamı — 🔴 sayfalama YOKTUR (mizanla aynı gerekçe).
+
+    `year`/`month` yanıtta TEKRARLANIR: istemci hangi dönemi gördüğünü kendi
+    isteğinden değil SUNUCUNUN cevabından okur (mockup satır 45 başlığı).
+
+    🔴 **`payable` ve `carried_forward` AYNI ANDA sıfırdan büyük OLAMAZ.**
+    `fark = calculated_vat − deductible_vat`; `payable = max(fark, 0)` ve
+    `carried_forward = max(−fark, 0)`. Negatif fark "ödenecek" DEĞİL DEVREDEN
+    KDV'dir — tek alan açılıp negatif basılsaydı ekran devlete borç yerine
+    alacak yazardı. Mockup yalnız `Ödenecek` çizer (satır 65-69, 134-143); alan
+    yine de açılır, sunum kararı frontend'indir.
+
+    Para alanlarının hiçbiri `None` OLMAZ; boş dönem her yeri `0` basar ve
+    `due_date` YİNE doludur (vade fatura verisine değil TAKVİME bağlıdır).
+    """
+
+    year: int
+    month: int
+    due_date: date
+    calculated_vat: Decimal
+    deductible_vat: Decimal
+    payable: Decimal
+    carried_forward: Decimal
+    taxable_rows: list[VatTaxableRow]
+    exempt_base: Decimal
+    deductions: list[VatDeductionRow]

@@ -43,8 +43,8 @@ from app.core.db import get_db
 from app.core.deps import get_current_user
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
-from app.modules.accounting import guards, trial_balance
-from app.modules.accounting.reports_schemas import TrialBalanceResponse
+from app.modules.accounting import guards, trial_balance, vat_return
+from app.modules.accounting.reports_schemas import TrialBalanceResponse, VatReturnResponse
 from app.modules.users.models import User
 
 router = APIRouter(tags=["accounting"], responses=COMMON_ERROR_RESPONSES)
@@ -86,3 +86,32 @@ async def trial_balance_endpoint(
     return await trial_balance.build_trial_balance(
         session, year=year, month=month, include_empty=include_empty
     )
+
+
+@router.get("/vat-return", response_model=VatReturnResponse, dependencies=[_VIEW])
+async def vat_return_endpoint(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    year: _YEAR,
+    month: _MONTH,
+) -> VatReturnResponse:
+    """KDV Beyannamesi — hesaplanan · indirilecek · ödenecek/devreden.
+
+    🔴 **Pencere TEK AYDIR** (mockup satır 45 `Haziran 2026`), mizanın birikimli
+    aralığından FARKLI. Faturanın `issue_date`i esas alınır; sınırlar kapalıdır.
+    Sayılan faturalar, oran gruplaması, istisna tanımı ve vade aritmetiği
+    `vat_return.py` modül docstring'indedir.
+
+    🔴 Beyanname faturanın parasını YENİDEN YAZMAZ: her fatura için
+    `invoicing/amounts.py` yeniden çalıştırılır, matrah avans/teminat düşülmüş
+    `tax_base`tir. Aynı formülün ikinci bir kopyası bu uçta yapısal olarak
+    yasaktır (kaynak metni testle denetlenir).
+
+    Mockup'ın `XML İndir` / `GİB'e Gönder` düğmeleri (satır 48-49) KAPSAM
+    DIŞIDIR: e-Fatura/GİB tümüyle ertelenmiştir, uç AÇILMAMIŞTIR.
+
+    🔴 **Sayfalama YOKTUR**: küme oran sayısıyla (bir avuç) sınırlıdır ve
+    `calculated_vat` satırların GENEL toplamıdır — sayfalanmış bir beyanda
+    anlamsızlaşırdı.
+    """
+    return await vat_return.build_vat_return(session, year=year, month=month)
