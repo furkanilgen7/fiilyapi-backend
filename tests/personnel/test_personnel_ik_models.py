@@ -165,7 +165,7 @@ async def test_personel_ik1_alanlariyla_olusturulabilir(db_session: AsyncSession
         wage_type=WageType.daily,
         wage_amount="1500.00",
         payment_method=PaymentMethod.bank,
-        iban="TR000000000000000000000000",
+        iban="TR330006100519786457841326",
         sgk_no="12345",
     )
     assert kayit.tc_no == "12345678901"

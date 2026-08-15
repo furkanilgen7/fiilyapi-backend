@@ -228,6 +228,32 @@ class TreasuryValidationError(DomainError):
     """
 
 
+class AccountingValidationError(DomainError):
+    """Yevmiye fişi gövde kuralı ihlali (MU-1 spec §4, K1) — 422.
+
+    `TreasuryValidationError`/`InvoicingValidationError` deseninin aynısı ve aynı
+    sebeple onlardan AYRI: DB `CHECK` ile zorlanamayan ya da zorlansa bile
+    kullanıcıya Türkçe mesaj veremeyecek kurallar tek yazma yolunda servis
+    korkuluğuyla tutulur. Tek kullanıcısı **K1'in servis katmanıdır**
+    (`accounting/validation.py`):
+
+    * **`Σ debit ≠ Σ credit`** — `ck_journal_entries_posted_balanced` VARDIR ama
+      yalnız BAŞLIK toplamlarına bakar ve ancak `posted`ta ısırır; ihlali
+      ayrımsız bir 409 "Veri bütünlüğü hatası" olarak dönerdi ve kullanıcı hangi
+      kuruşun kaydığını öğrenemezdi.
+    * **`len(lines) < 2`** — bir CHECK BAŞKA SATIRLARIN sayısını GÖREMEZ.
+    * **yaprak olmayan hesaba satır** (§4c) — hiyerarşi kodun içinde taşındığı
+      için (K4) DB'de zorlanacak bir FK yoktur.
+
+    Üç engel TEK gövdede birleşir: çok satırlı bir fişte eksikleri birer birer
+    keşfettirmek kabul edilemez (FAT-1 `_raise_blockers` dersi).
+
+    404 DEĞİL: kayıt vardır ve görünür, ihlal eden şey düzeltilebilir ALAN
+    DEĞERLERİDİR. 409 da DEĞİL: engel kaydın DURUMU değil İÇERİĞİDİR — durum
+    engelleri (`ConflictError`) ayrı bir sınıftır ve `transitions.py`den gelir.
+    """
+
+
 class ConflictError(DomainError):
     """Durum makinesi / iş kuralı çakışması — 409 (P7 hakediş spec §7, §9.2, §9.7).
 

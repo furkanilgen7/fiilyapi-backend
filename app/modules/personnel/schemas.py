@@ -10,6 +10,15 @@ OPSİYONELdir — zorunluluk taslak-farkındalıklıdır (yayında `service` kat
 zorlanır). `is_draft` Create'te varsayılan `True` (mockup "Taslak" ile "Personeli
 Kaydet" iki ayrı buton; yayın akışı `is_draft=false` gönderir). Foto/vergi no
 AÇILMADI (spec §5 K2/K6); belge alt-kaynağı şeması T3'ün işidir.
+
+## 🔴 `iban` — biçim + mod-97 (canlı smoke bulgusu)
+
+Alan bir PARA yüzeyidir (bordronun ödeme talimatı buradan çıkar) ama tek koruması
+`max_length=34`tü: normalizasyon bile YOKTU, yani `tr33 0006…` ile
+`TR330006…` iki ayrı metin olarak saklanabilirdi. Kural `app/core/iban.py`nin
+TEK kaynağındadır ve `treasury` ile PAYLAŞILIR; Create **ve** Update'in ikisine
+de bağlıdır — biri açık kalsaydı kapı o uçtan atlatılırdı. Alan **nullable
+KALIR** (elden ödeme meşrudur); yalnız DOLU geldiğinde sınanır.
 """
 
 import uuid
@@ -18,6 +27,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.core.iban import iban_field_validator
 from app.modules.personnel import guards
 from app.modules.personnel.models import (
     Gender,
@@ -62,6 +72,8 @@ class PersonnelCreate(BaseModel):
     # Taslak varsayılan (mockup "Taslak" butonu); yayın akışı açıkça `false` gönderir.
     is_draft: bool = True
 
+    _iban_dogrula = iban_field_validator()
+
 
 class PersonnelUpdate(BaseModel):
     full_name: str | None = Field(default=None, min_length=1, max_length=200)
@@ -91,6 +103,8 @@ class PersonnelUpdate(BaseModel):
     assigned_project_id: uuid.UUID | None = None
     assigned_section_id: uuid.UUID | None = None
     is_draft: bool | None = None
+
+    _iban_dogrula = iban_field_validator()
 
 
 class PersonnelResponse(BaseModel):

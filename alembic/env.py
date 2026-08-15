@@ -16,6 +16,7 @@ from app.core.db import Base
 # Bu liste `app/modules/*/models.py` ile BIREBIR ayni olmak zorundadir.
 #
 # >>> YENI BIR MODUL ACARSAN models.py'sini BURAYA DA EKLE. <<<
+from app.modules.accounting import models as accounting_models  # noqa: F401
 from app.modules.audit import models as audit_models  # noqa: F401
 from app.modules.boq import models as boq_models  # noqa: F401
 from app.modules.company import models as company_models  # noqa: F401

@@ -43,6 +43,7 @@ from app.modules.invoicing.models import (
 )
 from app.modules.treasury import balance
 from app.modules.treasury.models import BankAccount, BankAccountType, Payment, PaymentMethodKind
+from tests._iban import tr_iban
 from tests.conftest import test_engine
 
 pytestmark = pytest.mark.asyncio
@@ -84,7 +85,7 @@ def hesap_fabrikasi(seeded_db: AsyncSession):
         account = BankAccount(
             bank_name=f"Test Bank {sayac['n']}",
             account_type=BankAccountType.checking,
-            iban=f"TR{sayac['n']:024d}",
+            iban=tr_iban(sayac["n"]),
             opening_balance=Decimal(opening_balance),
         )
         seeded_db.add(account)

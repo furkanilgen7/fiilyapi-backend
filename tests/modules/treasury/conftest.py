@@ -46,6 +46,7 @@ from app.modules.subcontractor_progress_payments.models import (
 )
 from app.modules.treasury.models import BankAccount, BankAccountType, Payment, PaymentMethodKind
 from app.modules.users.models import User, UserProjectAccess
+from tests._iban import tr_iban
 
 
 async def _login(client: AsyncClient, user_factory, role_key: str, email: str) -> str:
@@ -111,7 +112,10 @@ def hesap_fabrikasi(seeded_db: AsyncSession):
         account = BankAccount(
             bank_name=bank_name,
             account_type=account_type,
-            iban=iban if iban is not None else f"TR{sayac['n']:024d}",
+            # 🔴 `f"TR{n:024d}"` mod-97'yi GEÇMEZ: doğrudan model kurulumunda
+            # pydantic koşmadığı için fixture bunu hiç fark etmezdi ve gerçekte
+            # var olamayacak bir IBAN üretirdi (`tests/_iban.py`).
+            iban=iban if iban is not None else tr_iban(sayac["n"]),
             display_name=display_name,
             opening_balance=Decimal(opening_balance),
             is_active=is_active,

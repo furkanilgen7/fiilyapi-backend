@@ -133,7 +133,7 @@ async def _kur(
         account = BankAccount(
             bank_name="Eşzamanlılık Bank",
             account_type=BankAccountType.checking,
-            iban="TR00CONCURRENCY0000000001",
+            iban="TR420001000000000000000001",
             opening_balance=Decimal("0.00"),
         )
         session.add(account)

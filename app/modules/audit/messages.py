@@ -1273,3 +1273,109 @@ def payment_deleted(invoice_no: str, bank_name: str, display_name: str | None) -
     """Metin `session.delete`ten ÖNCE kurulur: sonra kurulsaydı hem hesap hem
     fatura güvenilir okunamaz ve silinenin NE OLDUĞU kaybolurdu."""
     return f"Ödeme kaydı silindi: {payment_label(invoice_no, bank_name, display_name)}"
+
+
+# --- MU-1 T3a: hesap planı kaydı ---
+#
+# Kimlik İKİ parçalıdır: KOD (kaydın gerçek kimliği, HP:58) + AD (HP:59). Hesap
+# UUID'si metne girmez — denetim tablosunda kimse UUID okumaz; kod ile ad
+# birlikte satırı zaten ayırt eder.
+#
+# 🔴 **BAKİYE metne GİRMEZ.** Bakiye SAKLANMAZ, TÜRETİLİR (MU-1 K3); günlüğe
+# donmuş bir kopyası düşseydi ilk fişte ayrışır ve iki sayı yan yana yaşardı
+# (`bank_account_*` kanonunun aynısı). Repoda hiçbir denetim metni para taşımaz.
+#
+# 🔴 YENİ `AuditAction` ÜYESİ AÇILMADI (TB3/T3 kanonu): `create`/`update`/
+# `delete` kullanılır, ayrım METİNDEDİR.
+
+
+def chart_account_label(code: str, name: str) -> str:
+    """Üç denetim metninin TEK kimlik kaynağı.
+
+    Ayrı ayrı kurulsalardı biri kodu unutur ve aynı adı taşıyan iki hesap
+    (`100 Kasa` / `101 Kasa`) günlükte ayırt edilemezdi.
+    """
+    return f"{code} · {name}"
+
+
+def chart_account_created(code: str, name: str) -> str:
+    return f"Hesap oluşturuldu: {chart_account_label(code, name)}"
+
+
+def chart_account_updated(code: str, name: str) -> str:
+    """Metin GÜNCELLENMİŞ değerlerle kurulur: kullanıcı adı ya da kodu
+    düzelttiyse günlükte yeni değer durmalıdır, yoksa satır neyin ne olduğunu
+    anlatmaz."""
+    return f"Hesap güncellendi: {chart_account_label(code, name)}"
+
+
+def chart_account_deleted(code: str, name: str) -> str:
+    """Metin `session.delete`ten ÖNCE kurulur — sonra kurulsaydı kod ve ad
+    güvenilir okunamazdı (`invoice_deleted` dersi)."""
+    return f"Hesap silindi: {chart_account_label(code, name)}"
+
+
+# --- MU-1 T3b: yevmiye fişi ---
+#
+# 🔴 Kimlik TARİH + AÇIKLAMADIR. Fiş NUMARASI YOKTUR (spec §3b): ne HP'de ne
+# E8'de fiş numarası sütunu çizilmiştir, `numbering.py` AÇILMADI. Kimlik teknik
+# olarak `id`dir ama denetim tablosunda kimse UUID okumaz — tarih ile açıklama
+# birlikte satırı ayırt eder.
+#
+# 🔴 **TUTAR METNE GİRMEZ** (HZ-1 kanonu, `bank_account_*`/`chart_account_*` ile
+# aynı gerekçe): fişin toplamı bir satır düzeltmesiyle değişir ve günlüğe donmuş
+# bir kopyası düşseydi iki sayı yan yana yaşardı. Repoda hiçbir denetim metni
+# para taşımaz.
+#
+# 🔴 YENİ `AuditAction` ÜYESİ AÇILMADI (TB3/T3 kanonu): `action` gerçek bir
+# Postgres enum tipidir ve yeni üye MIGRATION ister. `post` mevcut `approve`
+# üyesine oturur (kayıtlaştırma bir ONAYDIR: fişi mali ize sokar ve geri
+# alınamaz), `reverse` `update`e. Ayrım METİNDEDİR.
+
+
+def journal_entry_label(entry_date: date, description: str) -> str:
+    """Beş denetim metninin TEK kimlik kaynağı.
+
+    Ayrı ayrı kurulsalardı biri tarihi unutur ve aynı açıklamayı taşıyan iki fiş
+    (`Kasa tahsilatı`, her ay) günlükte ayırt edilemezdi.
+
+    Tarih `date` nesnesinin kendi ISO gösterimidir (`leave_request_*` emsali):
+    `strftime` çağrılmaz — biçim tek yerde, `DISPLAY_TIMESTAMP_FORMAT`ta durur ve
+    o yalnız `timestamptz` içindir; `entry_date` zaten TAKVİM günüdür, saat
+    dilimi çevirimi GEREKTİRMEZ (K6).
+    """
+    return f"{entry_date} · {description}"
+
+
+def journal_entry_created(entry_date: date, description: str) -> str:
+    return f"Yevmiye fişi oluşturuldu: {journal_entry_label(entry_date, description)}"
+
+
+def journal_entry_updated(entry_date: date, description: str) -> str:
+    """Metin GÜNCELLENMİŞ değerlerle kurulur: kullanıcı tarihi ya da açıklamayı
+    düzelttiyse günlükte yeni değer durmalıdır."""
+    return f"Yevmiye fişi güncellendi: {journal_entry_label(entry_date, description)}"
+
+
+def journal_entry_lines_replaced(entry_date: date, description: str) -> str:
+    """Satır kümesi TOPTAN yazılır; kaç satır olduğu metne GİRMEZ — sayı da
+    tutar gibi kaydın kendisinden okunur ve günlükte bayatlardı."""
+    return f"Yevmiye fişi satırları güncellendi: {journal_entry_label(entry_date, description)}"
+
+
+def journal_entry_deleted(entry_date: date, description: str) -> str:
+    """Metin `session.delete`ten ÖNCE kurulur — sonra kurulsaydı tarih ve
+    açıklama güvenilir okunamaz ve silinenin NE OLDUĞU kaybolurdu."""
+    return f"Yevmiye fişi silindi: {journal_entry_label(entry_date, description)}"
+
+
+def journal_entry_posted(entry_date: date, description: str) -> str:
+    """`AuditAction.approve` ile yazılır; ayrım BU METİNDEDİR."""
+    return f"Yevmiye fişi kayıtlaştırıldı: {journal_entry_label(entry_date, description)}"
+
+
+def journal_entry_reversed(entry_date: date, description: str) -> str:
+    """`AuditAction.update` ile yazılır. Metin ORİJİNAL fişin kimliğinden
+    kurulur: denetim satırı "hangi fişe ne oldu" sorusuna yanıt verir, stornonun
+    kendi doğuşu orijinalin `reversed` olmasıyla zaten anlatılır."""
+    return f"Yevmiye fişi ters kaydedildi: {journal_entry_label(entry_date, description)}"
