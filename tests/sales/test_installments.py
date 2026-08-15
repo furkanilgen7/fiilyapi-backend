@@ -17,12 +17,13 @@ eşittir (satır 143); bu yüzden vade farkı plan TUTARLARINI ŞİŞİRMEZ — 
 """
 
 import uuid
-from datetime import date, timedelta
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
 from sqlalchemy import select
 
+from app.core import timezone
 from app.modules.audit.models import AuditLog
 from app.modules.sales.guards import (
     INSTALLMENT_MISSING,
@@ -92,7 +93,7 @@ async def test_plan_uretimi_mockup_ornegini_birebir_uretir(
     assert satirlar[0]["sequence_no"] == 0
     assert satirlar[0]["label"] == "Peşinat"  # F118
     assert satirlar[0]["amount"] == "440000.00"  # F121
-    assert satirlar[0]["due_date"] == date.today().isoformat()  # F120 "Sözleşme imzasında"
+    assert satirlar[0]["due_date"] == timezone.today().isoformat()  # F120 "Sözleşme imzasında"
     assert satirlar[1]["label"] == "1 / 12"  # F124
     assert satirlar[1]["due_date"] == "2026-09-01"  # F105/F126
     assert satirlar[1]["amount"] == "83333.33"  # F127 (83.333 gösterimi)
@@ -583,7 +584,7 @@ async def test_gecikme_faizi_tahakkuk_kaydi_uretmez(
 ):
     """§8 S5: gecikme faizi YALNIZ gösterim türevidir — vadesi geçmiş taksit için
     ek satır/borç kaydı YAZILMAZ (F163 `late_fee_monthly_pct` yalnız saklanır)."""
-    dun = (date.today() - timedelta(days=40)).isoformat()
+    dun = (timezone.today() - timedelta(days=40)).isoformat()
     satis = await _satis(
         client,
         admin_headers,

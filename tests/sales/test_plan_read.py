@@ -11,10 +11,11 @@ Mockup `Satış Yönetimi.dc.html`: 180 "⚠ 2 taksit gecikmiş" — satır düz
 """
 
 import uuid
-from datetime import date, timedelta
+from datetime import timedelta
 
 import pytest
 
+from app.core import timezone
 from app.modules.sales.guards import SALE_MISSING
 from app.modules.sales.router import get_sale_plan_endpoint, save_sale_installments_endpoint
 
@@ -91,8 +92,8 @@ async def test_gecikmis_turevi_vadesi_gecen_odenmemis_satirda_true(
 ):
     """S180: `due_date` geçmiş VE `paid_amount < amount` → `is_overdue` true."""
     satis = await _satis(client, admin_headers, proje, unite, musteri)
-    dun = str(date.today() - timedelta(days=1))
-    yarin = str(date.today() + timedelta(days=1))
+    dun = str(timezone.today() - timedelta(days=1))
+    yarin = str(timezone.today() + timedelta(days=1))
     kayit = await client.put(
         f"/sales/{satis['id']}/installments",
         json={
@@ -127,7 +128,7 @@ async def test_kismi_tahsilatli_vadesi_gecmis_satir_gecikmistir(
     client, admin_headers, proje, unite, musteri
 ):
     satis = await _satis(client, admin_headers, proje, unite, musteri)
-    dun = str(date.today() - timedelta(days=1))
+    dun = str(timezone.today() - timedelta(days=1))
     kayit = await client.put(
         f"/sales/{satis['id']}/installments",
         json={"items": [_satir(0, "1440000.00", dun)]},

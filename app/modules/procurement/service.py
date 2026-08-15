@@ -28,7 +28,6 @@ mantigi YOKTUR.
 """
 
 import uuid
-from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import Row
@@ -41,6 +40,7 @@ from app.core.errors import (
     NotFoundError,
     ProcurementValidationError,
 )
+from app.core.timezone import today
 from app.modules.audit import messages
 from app.modules.inventory.models import StockItem
 from app.modules.procurement import guards, numbering, repository, transitions
@@ -107,7 +107,7 @@ async def list_suppliers(
     """TED kart izgarasinin veri kaynagi. **Katalogda kapsam suzgeci YOK**
     (modul docstring'i); kapsam yalniz PARA turevine uygulanir."""
     totals = repository.supplier_order_totals(
-        await _visible_project_ids(session, actor), date.today().year
+        await _visible_project_ids(session, actor), today().year
     )
     rows = await repository.list_suppliers(
         session, totals, q=q, category=category, is_active=is_active, limit=limit, offset=offset
@@ -135,7 +135,7 @@ async def get_supplier_card(
 ) -> SupplierCard:
     """Detay ucu liste ile AYNI turetmeyi kullanir (`repository` gerekcesi)."""
     totals = repository.supplier_order_totals(
-        await _visible_project_ids(session, actor), date.today().year
+        await _visible_project_ids(session, actor), today().year
     )
     row = await repository.get_supplier_with_totals(session, totals, supplier_id)
     if row is None:
@@ -329,7 +329,7 @@ async def create_request(
     request_no = await numbering.generate_request_number(session)
     request = PurchaseRequest(
         request_no=request_no,
-        request_date=data.request_date or date.today(),
+        request_date=data.request_date or today(),
         priority=data.priority,
         project_id=data.project_id,
         site_id=data.site_id,

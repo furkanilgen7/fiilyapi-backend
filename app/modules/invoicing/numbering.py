@@ -39,11 +39,10 @@ sessizce ATLANIRDI ve tekillik yön içinde olduğu için hiçbir kısıt bunu
 yakalamazdı.
 """
 
-from datetime import date
-
 from sqlalchemy import Integer, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.timezone import today
 from app.modules.invoicing.models import Invoice, InvoiceDirection
 
 __all__ = ["INVOICE_NUMBER_PREFIX", "SEQUENCE_WIDTH", "generate_invoice_number"]
@@ -72,7 +71,7 @@ async def generate_invoice_number(
     if direction is not InvoiceDirection.outgoing:
         raise ValueError(INCOMING_NUMBER_NOT_GENERATED)
 
-    effective_year = year if year is not None else date.today().year
+    effective_year = year if year is not None else today().year
 
     # Kilit ÖNCE alınır: okuma ile yazma arasına başka bir işlem giremesin.
     # `_xact_` sonekli sürüm transaction sonunda KENDİLİĞİNDEN bırakılır.

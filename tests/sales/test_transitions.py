@@ -13,11 +13,12 @@ tablodan bağımsız yazılmış bir `if` bloğu eklenirse tarama onu YAKALAR.
 
 import inspect
 import uuid
-from datetime import date, timedelta
+from datetime import timedelta
 
 import pytest
 from sqlalchemy import select
 
+from app.core import timezone
 from app.modules.audit.models import AuditAction, AuditLog
 from app.modules.sales import transitions
 from app.modules.sales.guards import INVALID_STATUS_TRANSITION, SALE_MISSING
@@ -368,7 +369,7 @@ async def test_suresi_dolan_rezervasyon_kendiliginden_iptal_OLMAZ(
         musteri,
         sale_type="reservation",
         reservation_deposit="50000.00",
-        reservation_due_date=str(date.today() - timedelta(days=3)),
+        reservation_due_date=str(timezone.today() - timedelta(days=3)),
     )
 
     resp = await client.get(f"/sales/{satis['id']}", headers=admin_headers)

@@ -20,19 +20,20 @@ yüzden "tüm açık satışların satış bedeli toplamı"dır.
 """
 
 import uuid
-from datetime import date, timedelta
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
 from sqlalchemy import func, select
 
+from app.core import timezone
 from app.modules.audit.models import AuditLog
 from app.modules.sales.models import SaleInstallment
 from app.modules.sales.summary import late_fee_amount
 
 pytestmark = pytest.mark.asyncio
 
-BUGUN = date.today()
+BUGUN = timezone.today()
 
 
 def _g(gun: int) -> str:

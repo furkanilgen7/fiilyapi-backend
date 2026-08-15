@@ -80,7 +80,7 @@ def balance_reference_date(year: int, today: date) -> date:
       getireceği üst kademe PEŞİN verilmez),
     * **gelecek yıl** → yine BUGÜN (aynı gerekçe, daha da uzak).
 
-    `today` ENJEKTE EDİLİR (endpoint `date.today()` verir, test sabit tarih):
+    `today` ENJEKTE EDİLİR (servis sınırı `timezone.today()` verir, test sabit tarih):
     kademe sınırları deterministik sınanabilsin.
     """
     return min(today, date(year, 12, 31))

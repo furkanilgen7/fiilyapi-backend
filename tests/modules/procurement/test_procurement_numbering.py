@@ -19,6 +19,7 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
+from app.core import timezone
 from app.core.config import settings
 from app.core.db import Base
 from app.modules.procurement.models import (
@@ -36,6 +37,7 @@ from app.modules.procurement.numbering import (
     generate_order_number,
     generate_request_number,
 )
+from tests._time import YIL_SINIRI_UTC, sabit_saat
 
 
 async def _add_request(
@@ -161,6 +163,28 @@ async def test_dolgu_genisligi_asilinca_numara_uzar(numara_ortami):
     assert await generate_request_number(session, year=2026) == "SAT-2026-10000"
 
 
+async def test_metin_siralamasi_tuzagi_dolgu_genisliginin_IKI_YANINDA_olculur(numara_ortami):
+    """🔴 HZ-1 devir borcu (TB5 T5'te kapatildi): tek satirlik genisleme testi
+    `Integer` cast mutasyonunu KACIRIYORDU.
+
+    Sonek METINDIR; `max()` metin siralamasi yapsaydi "9999" > "10000" olurdu.
+    Tek satirla bu gorunmez — `max()` o tek satiri zaten secer. Kusur ancak
+    dolgu genisliginin IKI YANINDA birer kayit varken dogar. FAT-1 T2 ayni
+    zaafi kendi testinde bulup iki satira cikarmisti; `procurement` emsal
+    alinan desendi ve duzeltilmemisti.
+
+    Mutasyon (elle uygulanip geri alindi, kanit raporda): `numbering._next_number`
+    icinde cast `max`in ICINDEN DISINA alininca
+    (`cast(func.max(func.substr(...)), Integer)`) bu test KIRMIZI olur —
+    "SAT-2026-10000" yerine mevcut numarayi tekrar uretir.
+    """
+    session, project, user, _ = numara_ortami
+    for numara in ("SAT-2026-9999", "SAT-2026-10000"):
+        await _add_request(session, request_no=numara, project_id=project.id, user_id=user.id)
+
+    assert await generate_request_number(session, year=2026) == "SAT-2026-10001"
+
+
 async def test_baska_yilin_bes_haneli_numarasi_ayristirilir(numara_ortami):
     session, project, user, _ = numara_ortami
     await _add_request(session, request_no="SAT-2026-10000", project_id=project.id, user_id=user.id)
@@ -169,8 +193,23 @@ async def test_baska_yilin_bes_haneli_numarasi_ayristirilir(numara_ortami):
 
 async def test_yil_verilmezse_bugunun_yili_kullanilir(numara_ortami):
     session, *_ = numara_ortami
-    bugun = date.today().year
+    bugun = timezone.today().year
     assert await generate_request_number(session) == f"SAT-{bugun}-0001"
+
+
+async def test_yil_sinirinda_TR_yili_kullanilir_utc_yili_degil(numara_ortami, monkeypatch):
+    """TB5 T3 — 1 Ocak 01:00 TSI'de acilan talep YENI yilin serisindedir.
+
+    O an UTC'de hala 31 Aralik 22:00'dir; asil tuzak budur (31 Aralik 22:00
+    TSI degil): sunucu yerel saatiyle okunursa numara BIR ONCEKI yilin
+    serisine duser. Kusur gunun yalniz 3 saatinde gorunur; saat BEKLENMEZ,
+    enjekte edilir.
+    """
+    session, *_ = numara_ortami
+    sabit_saat(monkeypatch, YIL_SINIRI_UTC)  # 2027-12-31 22:00Z = 2028-01-01 01:00 TSI
+
+    assert await generate_request_number(session) == "SAT-2028-0001"
+    assert await generate_order_number(session) == "SP-2028-0001"
 
 
 # --------------------------------------------------------------------------- #

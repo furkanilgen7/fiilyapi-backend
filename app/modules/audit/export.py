@@ -20,7 +20,7 @@ from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
-from app.core.timezone import to_display
+from app.core.timezone import DISPLAY_TIMESTAMP_FORMAT, to_display
 from app.modules.audit.models import AuditAction
 from app.modules.audit.repository import AuditRow
 
@@ -48,8 +48,6 @@ EMPTY_VALUE = "—"
 #: Ad ve rolu tek hucrede birlestiren ayrac (mockup'in detay dilinde de kullanilir).
 _ACTOR_SEPARATOR = " · "
 
-_TIMESTAMP_FORMAT = "%d.%m.%Y %H:%M"
-
 _COLUMN_WIDTHS = (18, 26, 14, 60, 16)
 
 
@@ -66,7 +64,7 @@ def _cells(row: AuditRow) -> tuple[str, ...]:
     entry = row[0]
     return (
         # Ekranla ayni saat: `occurred_at` UTC saklanir, TR'ye cevrilerek yazilir.
-        to_display(entry.occurred_at).strftime(_TIMESTAMP_FORMAT),
+        to_display(entry.occurred_at).strftime(DISPLAY_TIMESTAMP_FORMAT),
         _actor_label(row),
         ACTION_LABELS.get(entry.action, str(entry.action.value)),
         str(entry.detail),

@@ -24,6 +24,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import timezone
 from app.modules.audit.models import AuditLog
 from app.modules.documents.models import Document
 from app.modules.personnel.models import (
@@ -37,7 +38,7 @@ from app.modules.projects.models import Project
 from app.modules.site_diary.models import WorkerSource
 from app.modules.users.models import User
 
-_BUGUN = date.today()
+_BUGUN = timezone.today()
 _YIL = _BUGUN.year
 # ~2 yıl 2 ay kıdem → 4857 birinci kademe (14 gün). Bugüne göre türetilir.
 _KIDEMLI_GIRIS = _BUGUN - timedelta(days=800)

@@ -28,6 +28,7 @@ import pytest
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import timezone
 from app.modules.personnel import service
 from app.modules.personnel.models import (
     LeaveBalance,
@@ -412,7 +413,7 @@ async def test_endpoint_view_yeter_200(client, sef_headers: dict[str, str]) -> N
         "year",
     ):
         assert anahtar in govde
-    assert govde["year"] == date.today().year  # süzgeç verilmezse İÇİNDE BULUNULAN yıl
+    assert govde["year"] == timezone.today().year  # süzgeç verilmezse İÇİNDE BULUNULAN yıl
 
 
 async def test_endpoint_yetkisiz_403(client, yetkisiz_headers: dict[str, str]) -> None:
@@ -447,8 +448,8 @@ async def test_endpoint_year_suzgeci_sinirli(client, ik_headers: dict[str, str])
 async def test_endpoint_gercek_veri(
     client, ik_headers: dict[str, str], seeded_db: AsyncSession
 ) -> None:
-    """Endpoint yolu (today=date.today()) gerçek veriyle uçtan uca hesaplar."""
-    bugun = date.today()
+    """Endpoint yolu (today=timezone.today()) gerçek veriyle uçtan uca hesaplar."""
+    bugun = timezone.today()
     tip = await _mk_type(seeded_db, "Yıllık İzin", deducts=True)
     p = await _mk_personnel(seeded_db, "Canlı", hire_date=date(bugun.year - 3, 1, 10))
     await _mk_request(seeded_db, p, tip, bugun, bugun, LeaveStatus.approved)

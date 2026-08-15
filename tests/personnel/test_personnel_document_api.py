@@ -13,12 +13,13 @@ Yetki (spec §5): okuma `view`, yazma `full`, SİLME `admin`. hr_manager `full`d
 """
 
 import uuid
-from datetime import date, timedelta
+from datetime import timedelta
 
 import pytest
 from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import timezone
 from app.modules.documents.models import Document
 from app.modules.personnel.models import Personnel, PersonnelDocument, PersonnelDocumentType
 from app.modules.site_diary.models import WorkerSource
@@ -91,7 +92,7 @@ async def test_liste_bos_200(client, ik_headers, personel):
 
 @pytest.mark.asyncio
 async def test_post_tip_ile_201_durum_ve_kunye(client, ik_headers, personel, belge_tipi):
-    yakin = (date.today() + timedelta(days=10)).isoformat()
+    yakin = (timezone.today() + timedelta(days=10)).isoformat()
     yanit = await client.post(
         f"/personnel/{personel.id}/documents",
         json={"type_id": str(belge_tipi.id), "valid_until": yakin},
@@ -212,7 +213,7 @@ async def test_patch_kunye_gunceller_200(client, ik_headers, personel):
     doc_id = await _belge_olustur(client, ik_headers, personel.id)
     yanit = await client.patch(
         f"/personnel/documents/{doc_id}",
-        json={"note": "güncel", "valid_until": (date.today() - timedelta(days=1)).isoformat()},
+        json={"note": "güncel", "valid_until": (timezone.today() - timedelta(days=1)).isoformat()},
         headers=ik_headers,
     )
     assert yanit.status_code == 200, yanit.text

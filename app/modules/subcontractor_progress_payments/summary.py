@@ -31,11 +31,12 @@ toplu hesap sorgusu); hakediş başına sorgu KOŞULMAZ.
 """
 
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import timezone
 from app.modules.projects.service import visible_projects
 from app.modules.subcontractor_progress_payments import amounts, repository
 from app.modules.subcontractor_progress_payments.models import (
@@ -60,8 +61,13 @@ def effective_period(
     etiketi "Bu Ay"dır ama ekran dönem süzgeciyle geçmişe bakabilir; süzgeç
     yokken kartın tüm zamanların ödemesini göstermesi etiketi YALAN çıkarırdı.
     Seçilen dönem yanıtta ECHO edilir — ekran hangi ayı gösterdiğini bilmelidir.
+
+    Bu bir İŞ TAKVİMİ penceresidir, olay damgası değil: UTC'den okunsaydı TR
+    gecesi 21:00-24:00 arasında ayın 1'inde kart BİR ÖNCEKİ aya düşerdi. İmza
+    `datetime` olarak KORUNUR (tek çağıran ve testler uyumlu; gereksiz kırıcı
+    değişiklik yapılmaz), yalnız varsayılanın saat dilimi düzeltilir.
     """
-    now = today or datetime.now(UTC)
+    now = today or datetime.now(timezone.DISPLAY_TIMEZONE)
     if period_year is not None and period_month is not None:
         return period_year, period_month
     return now.year, now.month

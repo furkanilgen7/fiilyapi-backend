@@ -19,12 +19,13 @@ Bu dosyanın DONDURDUĞU kararlar:
 """
 
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
 from sqlalchemy import func, select
 
+from app.core import timezone
 from app.modules.procurement.models import PurchaseOrder, Supplier
 
 pytestmark = pytest.mark.asyncio
@@ -201,7 +202,7 @@ async def test_bu_yil_toplam_siparis_turevi(
     """Türev İÇİNDE BULUNULAN YILA aittir: geçen yılın siparişi tutara GİRMEZ."""
     tedarikci = await tedarikci_fabrikasi("Demirsan A.Ş.")
     aktor = await kullanici_kimligi("satinalma@satinalma.co")
-    bu_yil = date.today().year
+    bu_yil = timezone.today().year
     await _siparis(seeded_db, tedarikci, gorunen_proje, aktor, tutar="1500000.00", yil=bu_yil)
     await _siparis(seeded_db, tedarikci, gorunen_proje, aktor, tutar="900000.00", yil=bu_yil)
     await _siparis(seeded_db, tedarikci, gorunen_proje, aktor, tutar="700000.00", yil=bu_yil - 1)
@@ -243,7 +244,7 @@ async def test_gorunmeyen_projenin_siparisi_turebe_girmez(
     """
     tedarikci = await tedarikci_fabrikasi("Demirsan A.Ş.")
     aktor = await kullanici_kimligi("admin@satinalma.co")
-    bu_yil = date.today().year
+    bu_yil = timezone.today().year
     await _siparis(seeded_db, tedarikci, gorunen_proje, aktor, tutar="100000.00", yil=bu_yil)
     await _siparis(seeded_db, tedarikci, gorunmeyen_proje, aktor, tutar="500000.00", yil=bu_yil)
 
@@ -293,7 +294,7 @@ async def test_turev_tek_toplu_sorgudur_n_arti_bir_yok(
         return [i for i in ifadeler if "suppliers" in i or "purchase_orders" in i]
 
     aktor = await kullanici_kimligi("satinalma@satinalma.co")
-    bu_yil = date.today().year
+    bu_yil = timezone.today().year
     tedarikci = await tedarikci_fabrikasi("Demirsan A.Ş.")
     await _siparis(seeded_db, tedarikci, gorunen_proje, aktor, tutar="10.00", yil=bu_yil)
 

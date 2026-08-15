@@ -39,6 +39,7 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import timezone
 from app.core.errors import ConflictError, DuplicateError, SiteValidationError
 from app.modules.audit import messages
 from app.modules.sales import guards, plan, repository
@@ -113,7 +114,7 @@ async def get_plan(session: AsyncSession, actor: User, sale_id: uuid.UUID) -> Sa
     tahsilatları gereksiz yere serileştirirdi.
     """
     sale, _ = await guards.visible_sale(session, actor, sale_id)
-    return await _plan_response(session, sale, date.today())
+    return await _plan_response(session, sale, timezone.today())
 
 
 async def _unit_label(session: AsyncSession, sale: UnitSale) -> str:
@@ -178,7 +179,13 @@ async def generate_plan(
         first_installment_date=sale.first_installment_date,
         # F119 "Sözleşme imzasında": ayrı bir sözleşme tarihi kolonu YOKTUR
         # (spec §2), kaydın açılış tarihi bu anlamın en yakın karşılığıdır.
-        down_payment_due_date=sale.created_at.date(),
+        #
+        # `created_at` bir `timestamptz`tir ve UTC olarak okunur; ham `.date()`
+        # UTC GÜNÜNÜ verirdi. TR gecesi 00:00-03:00 arasında açılan bir satışın
+        # peşinatı böylece "dün"e vadelenir ve kayıt DOĞDUĞU ANDA gecikmiş
+        # görünürdü (TB5 §1'de kanıtlanan kusur). Gün sınırı görüntüleme saat
+        # diliminde okunur.
+        down_payment_due_date=timezone.to_display(sale.created_at).date(),
     )
 
     # --- Buradan itibaren yazma; doğrulama YOK. ---
@@ -198,7 +205,7 @@ async def generate_plan(
         ]
     )
     await session.flush()
-    response = await _plan_response(session, sale, date.today())
+    response = await _plan_response(session, sale, timezone.today())
     detail = messages.sale_plan_generated(
         project.name, await _unit_label(session, sale), len(response.items)
     )
@@ -278,7 +285,7 @@ async def save_installments(
         row.payment_method = entry.payment_method
         _sync_paid_at(row)
     await session.flush()
-    response = await _plan_response(session, sale, date.today())
+    response = await _plan_response(session, sale, timezone.today())
     detail = messages.sale_plan_saved(
         project.name, await _unit_label(session, sale), len(response.items)
     )
@@ -308,4 +315,4 @@ async def pay_installment(
     detail = messages.sale_installment_paid(
         project.name, await _unit_label(session, sale), installment.label, data.amount
     )
-    return _installment_response(installment, date.today()), detail
+    return _installment_response(installment, timezone.today()), detail
