@@ -276,7 +276,14 @@ async def build_cash_flow_statement(
     kodlar: dict[tuple[str, str], list[str]] = {}
     for kayit in (await session.execute(select_cash_flow_lines(year, month))).mappings().all():
         hedef = statement_map.cash_flow_line_for(kayit["code"])
-        if hedef is None:  # pragma: no cover — sorgu grup `10`u zaten eliyor
+        # 🔴 İKİNCİ KATMAN: sorgunun `WHERE`ı grup `10`u zaten eledi, bu dal
+        # bugün ERİŞİLMEZDİR. Yine de duruyor çünkü sorgu bir gün gevşetilirse
+        # (ör. tek sorguya birleştirme) nakit bacakları sessizce "karşı hesap"
+        # sayılırdı. 🔴 T6'da ÖLÇÜLDÜ: iki katman birbirini MASKELER — SQL
+        # süzgeci kaldırılınca HTTP ucundan hiçbir fark görünmüyordu (28/28
+        # yeşil). Bu yüzden SQL katmanının KENDİ bekçisi vardır ve çekirdek
+        # `Select`e iner (`test_SQL_katmani_grup_10u_KENDISI_eler`).
+        if hedef is None:
             continue
         tutarlar[hedef] = tutarlar.get(hedef, ZERO) + kayit["flow"]
         kodlar.setdefault(hedef, []).append(kayit["code"])

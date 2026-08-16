@@ -272,18 +272,71 @@ async def test_KASA_BANKA_transferi_AKIS_URETMEZ(
 async def test_NAKIT_DOKUNMAYAN_fis_hic_sayilmaz(
     client: AsyncClient, muhasebe_headers: dict[str, str], hesap_fabrikasi, fis_fabrikasi
 ) -> None:
-    """Vadeli satış fişi (`120` / `600`) nakit hareketi DEĞİLDİR. Sayılsaydı
-    tahsil edilmemiş bir fatura "Müşterilerden Tahsilat" olarak basılır ve nakit
-    akışı tahakkuk tablosuna dönerdi."""
+    """🔴 T6 MUTASYON TURUNUN BULDUĞU KÖR NOKTA — AYRIŞMA NOKTASI şart.
+
+    Vadeli satış fişi (`120`/`600`) nakit hareketi DEĞİLDİR. Ama ilk yazımda bu
+    testin tek kurulumu O FİŞTİ ve `EXISTS` süzgeci kaldırıldığında **yeşil
+    kaldı**: fişin iki bacağı da (`12` ve `60`) AYNI kaleme düşüyor, biri
+    `−7000` öteki `+7000` katkı veriyor ve toplam DEĞİŞMİYOR. Dengeli bir fişin
+    bacakları aynı kalemde her zaman birbirini götürür.
+
+    Ayrışma ancak iki bacak **FARKLI BÖLÜMLERE** düştüğünde görünür: nakitsiz
+    bir borç transferi (`320` borç / `400` alacak) `A` bölümünü `−5000`,
+    `C` bölümünü `+5000` kaydırır — `net_change` yine `0` kaldığı için
+    yalnız ARA TOPLAMLAR ele verir.
+
+    *"Test var" ≠ "test bekçilik ediyor"nun nakit akışındaki hâli.*"""
     kasa = await _kasa(hesap_fabrikasi)
     alicilar = await hesap_fabrikasi("120", name="Alıcılar", account_type=_T.asset)
     satis = await hesap_fabrikasi("600", name="Yurt İçi Satışlar", account_type=_T.revenue)
+    saticilar = await hesap_fabrikasi("320", name="Satıcılar", account_type=_T.liability)
+    kredi = await hesap_fabrikasi("400", name="Banka Kredileri", account_type=_T.liability)
+
     await fis_fabrikasi([(alicilar, "7000.00", "0"), (satis, "0", "7000.00")])
+    # 🔴 AYRIŞMA NOKTASI: nakitsiz, iki bacağı AYRI BÖLÜMDE olan fiş.
+    await fis_fabrikasi([(saticilar, "5000.00", "0"), (kredi, "0", "5000.00")])
     await fis_fabrikasi([(kasa, "100.00", "0"), (alicilar, "0", "100.00")])
 
     govde = await _tablo(client, muhasebe_headers)
     assert _tutar(govde, "customer_collections") == Decimal("100.00")
+    assert _tutar(govde, "supplier_payments") == Decimal("0")
+    assert _tutar(govde, "loan_repayment") == Decimal("0")
+    assert Decimal(_bolum(govde, "operating")["subtotal"]) == Decimal("100.00")
+    assert Decimal(_bolum(govde, "financing")["subtotal"]) == Decimal("0")
     assert Decimal(govde["net_change"]) == Decimal("100.00")
+
+
+async def test_SQL_katmani_grup_10u_KENDISI_eler(
+    seeded_db: AsyncSession, hesap_fabrikasi, fis_fabrikasi
+) -> None:
+    """🔴 T6 MUTASYON TURUNUN BULDUĞU İKİNCİ KÖR NOKTA — SQL katmanı bekçisi.
+
+    Grup `10`un karşı bacak olamayacağı İKİ katmanda birden korunur:
+    (1) sorgunun `WHERE`ı grup `10` satırlarını ELER,
+    (2) `statement_map.cash_flow_line_for()` grup `10`da `None` döner ve
+        Python döngüsü satırı ATLAR.
+
+    İkisi de tek başına yeterlidir — yani **SQL katmanı kaldırılınca HTTP
+    ucundan HİÇBİR fark görünmez** (mutasyon turunda ölçüldü: 28/28 yeşil
+    kaldı). Bu, MU-1'in "şema katmanı bekçileri suite'e görünmez" dersinin SQL
+    kardeşidir: bir katman ötekini MASKELER.
+
+    Bu yüzden SQL katmanının KENDİ bekçisi vardır ve iddia çekirdek `Select`e
+    doğrudan gider — HTTP ucundan ölçülemez.
+    """
+    kasa = await _kasa(hesap_fabrikasi)
+    banka = await hesap_fabrikasi("102", name="Bankalar", account_type=_T.asset)
+    alicilar = await hesap_fabrikasi("120", name="Alıcılar", account_type=_T.asset)
+    await fis_fabrikasi([(kasa, "300.00", "0"), (alicilar, "0", "300.00")])
+    await fis_fabrikasi([(banka, "500.00", "0"), (kasa, "0", "500.00")])
+
+    kayitlar = (
+        (await seeded_db.execute(cash_flow_statement.select_cash_flow_lines(2026, 7)))
+        .mappings()
+        .all()
+    )
+    kodlar = [k["code"] for k in kayitlar]
+    assert kodlar == ["120"], f"grup 10 satırları SQL'den geçti: {kodlar}"
 
 
 async def test_COK_BACAKLI_fiste_nakit_olmayan_bacaklarin_TOPLAMI_dagitilir(
