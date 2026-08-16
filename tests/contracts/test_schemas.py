@@ -371,8 +371,10 @@ def test_contract_summary_hakedis_toplami_kapsam_disi():
         active_count=1,
         expiring_this_month_count=0,
     )
-    # P7/H9: düz `Decimal | None`. Şema varsayılanı `None` (taşeron listesi);
-    # işveren listesinde servis gerçek toplamı geçirir.
+    # P7/H9: düz `Decimal | None`. Bu test ŞEMA VARSAYILANINI ölçer, servis
+    # dalını değil: alan verilmezse `None` kalır. TH-SUM sonrası liste ucu
+    # İKİ sekmede de gerçek toplamı geçirir (`0.00` dahil) — bu iddia oradaki
+    # davranışa değil, tipin uyumluluğuna bekçilik eder.
     assert ozet.progress_payment_total is None
 
 
