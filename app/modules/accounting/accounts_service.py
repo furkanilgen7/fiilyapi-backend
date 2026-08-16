@@ -204,6 +204,8 @@ async def create_account(
         name=data.name.strip(),
         account_type=data.account_type,
         is_active=data.is_active,
+        # 🔑 MT-1/KK-1 — kontra bayrağı gövdeden gelir; varsayılanı `False`tur.
+        is_contra=data.is_contra,
     )
     session.add(account)
     await session.flush()
@@ -251,6 +253,11 @@ async def update_account(
         account.account_type = verilen["account_type"]
     if verilen.get("is_active") is not None:
         account.is_active = verilen["is_active"]
+    # 🔑 MT-1/KK-1: kontra bayrağı da düzeltilebilir olmalıdır — bir hesap
+    # yanlışlıkla kontra işaretlenirse bilanço kalemi 2× tutar kayar ve geri
+    # dönüş yolu yalnız buradan geçer.
+    if verilen.get("is_contra") is not None:
+        account.is_contra = verilen["is_contra"]
 
     await session.flush()
     await session.refresh(account)

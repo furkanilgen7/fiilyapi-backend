@@ -24,6 +24,14 @@ from decimal import Decimal
 from pydantic import BaseModel
 
 __all__ = [
+    "BalanceSheetLine",
+    "BalanceSheetResponse",
+    "BalanceSheetSection",
+    "BalanceSheetSide",
+    "CashFlowStatementLine",
+    "CashFlowStatementResponse",
+    "CashFlowStatementSection",
+    "MonthlyCashPoint",
     "TrialBalanceResponse",
     "TrialBalanceRow",
     "TrialBalanceTotals",
@@ -160,3 +168,186 @@ class VatReturnResponse(BaseModel):
     taxable_rows: list[VatTaxableRow]
     exempt_base: Decimal
     deductions: list[VatDeductionRow]
+
+
+# --------------------------------------------------------------------------- #
+# MT-1 T4 — Bilanço (mockup `Mali Tablo - Bilanço.dc.html`)
+# --------------------------------------------------------------------------- #
+
+
+class BalanceSheetLine(BaseModel):
+    """Bilançonun bir KALEMİ — mockup'ın tek bir satırı (ör. BL:51).
+
+    `amount` **YUVARLANMAZ** (MT-K2): `Numeric(18,2)` kuruşuyla döner ve
+    yuvarlama bir GÖSTERİM kararıdır. Uç yuvarlasaydı ara toplamlar
+    bileşenlerinden 1 TL sapar ve `is_balanced` sahte biçimde `False` çıkardı.
+
+    İşaret: kalem, ait olduğu tarafta POZİTİF basar (mockup'ın 13 satırının
+    hepsi pozitiftir). `320` Satıcılar `2.184.000` gösterir, `−2.184.000`
+    değil — ham `net` `SIGN[tür]` ile çevrilir. **Kontra hesap ise DÜŞÜLÜR**
+    (`is_contra`, MT-K1: BL:57 `Maddi Duran Varlıklar (net)`). Bir kalem yine de
+    NEGATİF çıkabilir: geçmiş yıl zararı ya da dönem zararı gerçek bir sonuçtur
+    ve `0`a kırpılsaydı `AKTİF ≠ PASİF` olurdu.
+
+    🔴 `account_codes` / `group_codes` mockup'ta BASILMIYOR ama yine de döner:
+    bir kalemin İÇİNE bakmanın (drill-down) tek yolu budur ve asıl işlevi
+    "Diğer …" kalemlerini ŞEFFAF kılmaktır — haritaya girmeyen bir hesabın
+    NEREYE düştüğü kullanıcıya ancak buradan görünür. Alan açmak ucuzdur,
+    sonradan eklemek kırıcıdır. Frontend basmayabilir.
+    """
+
+    key: str
+    label: str
+    amount: Decimal
+    account_codes: list[str]
+    group_codes: list[str]
+
+
+class BalanceSheetSection(BaseModel):
+    """Bölüm bandı + kalemleri + ara toplam (mockup BL:50-55 kalıbı).
+
+    `subtotal` kalemlerinden HESAPLANIR, mockup'tan kopyalanmaz (K15: mockup'ın
+    toplamları satırlarıyla çelişebilir ve o bir SUNUM göstermeliğidir).
+    """
+
+    key: str
+    title: str
+    subtotal_label: str
+    subtotal: Decimal
+    lines: list[BalanceSheetLine]
+
+
+class BalanceSheetSide(BaseModel):
+    """Bilançonun bir TARAFI — AKTİF (BL:44-63) ya da PASİF (BL:66-88).
+
+    İki taraf ayrı nesnelerdir çünkü mockup onları AYRI KARTLARDA çizer (BL:42
+    iki sütunlu ızgara) ve `total` her tarafın kendi genel toplamıdır.
+    """
+
+    key: str
+    title: str
+    total_label: str
+    total: Decimal
+    sections: list[BalanceSheetSection]
+
+
+class BalanceSheetResponse(BaseModel):
+    """Bilançonun tamamı — 🔴 **K7 SAYFALAMA ZARFI YOKTUR** (mizan/KDV emsali).
+
+    Gerekçe: `total` GENEL TOPLAMDIR ve `is_balanced` onun üzerinden kurulur;
+    sayfalanmış bir bilançoda ikisi de anlamsızlaşır. Küme zaten SABİTTİR: 13
+    kalem, iki taraf.
+
+    `as_of` yanıtta TEKRARLANIR: mockup BL:37 seçicisinin başlığı buradan
+    kurulur ve istemci hangi ANI gördüğünü kendi isteğinden değil SUNUCUNUN
+    cevabından okur.
+
+    🔴 **`is_balanced` ÖLÇÜLÜR, `True` VARSAYILMAZ.** Gerekçe ölçüldü:
+    `ck_journal_entries_posted_balanced` (`models.py`) yalnız `posted`ı bağlar,
+    yani **dengesiz bir `reversed` fiş satırı DB'ye GİREBİLİR** (açık borç) ve
+    `POSTING_STATUSES` `reversed`ı deftere alır. Sabit `True` basan bir bilanço
+    SESSİZCE YALAN SÖYLERDİ. Gösterge ayrıca `is_contra` veri hatalarını da
+    yakalar: kontra işaretlenmemiş bir `257` iki katı tutar kaydırır ve burada
+    görünür.
+
+    🔴 **Dönem kilidi rozeti YOKTUR** (MT-K8): bilanço salt-okumadır, kapalı
+    dönemin bilançosu ile açığınki arasında fark yoktur ve mockup rozet
+    çizmemiştir. **Karşılaştırma (önceki dönem) sütunu da YOKTUR** (MT-K6):
+    mockup tabloları 2 sütunludur, BL:37'deki `31 Aralık 2025` seçeneği bir
+    karşılaştırma sütunu DEĞİL ayrı bir sorgudur.
+    """
+
+    as_of: date
+    is_balanced: bool
+    assets: BalanceSheetSide
+    liabilities: BalanceSheetSide
+
+
+# --------------------------------------------------------------------------- #
+# MT-1 T5 — Nakit Akış Tablosu (mockup `Mali Tablo - Nakit Akışı.dc.html`)
+# --------------------------------------------------------------------------- #
+
+
+class CashFlowStatementLine(BaseModel):
+    """Nakit akışının bir KALEMİ (ör. NA:71 `Müşterilerden Tahsilat`).
+
+    🔴 `amount` **İŞARETLİDİR**: giriş `+`, çıkış `−` (mockup NA:71-75 `+`/`−`
+    önekleri). Mutlak değer basıp yönü etikete gömen bir uç, `Ekipman Alımı`
+    satırında bir ekipman SATIŞINI ayırt edemezdi — mockup B bölümünde TEK
+    kalem çizer ve satış da oraya düşer (K15: kalem sayısı bağlayıcı).
+
+    `account_codes` mockup'ta basılmıyor ama döner: bir kalemin İÇİNE bakmanın
+    tek yolu budur ve `Diğer Nakit Çıkışları` kovasını ŞEFFAF kılar.
+    """
+
+    key: str
+    label: str
+    amount: Decimal
+    account_codes: list[str]
+
+
+class CashFlowStatementSection(BaseModel):
+    """`A`/`B`/`C` bölümü + kalemleri + ara toplam (mockup NA:68-79 kalıbı).
+
+    `subtotal` kalemlerinden HESAPLANIR. 🔴 K15: mockup'ın A bölümü satırları
+    `5.842.000` toplarken ara toplam `6.842.000` basıyor (NA:71-78, 1.000.000
+    fark) — SATIRLAR kazanır, tfoot bir SUNUM göstermeliğidir.
+    """
+
+    key: str
+    code: str
+    title: str
+    subtotal_label: str
+    subtotal: Decimal
+    lines: list[CashFlowStatementLine]
+
+
+class MonthlyCashPoint(BaseModel):
+    """`Aylık Nakit Pozisyonu` grafiğinin bir noktası (mockup NA:108-131).
+
+    🔴 **BAKİYE, akış DEĞİL:** grafiğin adı "Pozisyon"dur ve nokta o ayın
+    SONUNDAKİ nakit bakiyesidir (açılış nakdi dâhil). Aylık akış basan bir
+    uygulama aynı veriyle bambaşka bir eğri çizer ve son noktası
+    `closing_cash`e denk GELMEZDİ.
+    """
+
+    year: int
+    month: int
+    closing_cash: Decimal
+
+
+class CashFlowStatementResponse(BaseModel):
+    """Nakit Akış Tablosunun tamamı — yevmiyeden türer (KK-2).
+
+    🔴 **`/treasury/cash-flow` İLE AYNI ŞEY DEĞİLDİR.** O uç
+    `payments`+`invoices`ten türeyen GÜNLÜK giriş/çıkış serisidir (F-HZ ekranı);
+    bu uç yevmiyeden türeyen işletme/yatırım/finansman tablosudur. İkisi farklı
+    sayı basar ve bu bir kusur değildir — ayrım her iki modül docstring'inde de
+    yazılıdır.
+
+    🔴 **DÖRT ALAN BİRDEN DÖNER** ve gerekçesi ölçülmüştür: mockup'ın alt bandı
+    `DÖNEM SONU NAKİT (A+B+C)` **diyor** ama değeri `4.249.500`, yani
+    Bilanço'daki `Kasa ve Bankalar` (BL:51) ile BİREBİR aynı — bu KAPANIŞ
+    NAKDİDİR. A+B+C ise `4.802.000`dir (NA:58). İkisi AYRI ŞEYDİR ve mockup'ta
+    **DÖNEM BAŞI NAKİT satırı EKSİKTİR** (türetilen açılış `−552.500` çıkar,
+    imkânsız). Uç dördünü de döndürür; hangisinin basılacağına frontend kendi
+    diliminde karar verir (MU-2'nin `carried_forward`ı emsal).
+
+    Kimlik: `closing_cash == opening_cash + net_change`.
+
+    `year`/`month` yanıtta TEKRARLANIR: mockup NA:37 (`Ocak–Temmuz 2026`)
+    başlığı buradan kurulur.
+
+    Kapsam dışı: `3 Aylık Projeksiyon` kartı (NA:134-150) — ileriye dönük
+    tahmin, algoritması mockup'ta YOK ve açıklama metinleri (`"Hakediş +
+    bordro"`) serbest metin. İCAT EDİLMEZ; frontend devre-dışı + gerekçeyle
+    basar (F-TH kanonu).
+    """
+
+    year: int
+    month: int
+    sections: list[CashFlowStatementSection]
+    net_change: Decimal
+    opening_cash: Decimal
+    closing_cash: Decimal
+    monthly_cash: list[MonthlyCashPoint]

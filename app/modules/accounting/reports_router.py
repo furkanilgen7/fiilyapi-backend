@@ -33,6 +33,7 @@ olarak imkânsızdır**; frontend dönemi zaten mockup satır 44-46'daki `‹ Oc
 `GET` uçları `record_audit` ÇAĞIRMAZ (WORKFLOW kuralı — okumalar denetlenmez).
 """
 
+from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -43,8 +44,19 @@ from app.core.db import get_db
 from app.core.deps import get_current_user
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
-from app.modules.accounting import guards, trial_balance, vat_return
-from app.modules.accounting.reports_schemas import TrialBalanceResponse, VatReturnResponse
+from app.modules.accounting import (
+    balance_sheet,
+    cash_flow_statement,
+    guards,
+    trial_balance,
+    vat_return,
+)
+from app.modules.accounting.reports_schemas import (
+    BalanceSheetResponse,
+    CashFlowStatementResponse,
+    TrialBalanceResponse,
+    VatReturnResponse,
+)
 from app.modules.users.models import User
 
 router = APIRouter(tags=["accounting"], responses=COMMON_ERROR_RESPONSES)
@@ -56,6 +68,14 @@ _VIEW = require_permission(guards.PERMISSION_MODULE, AccessLevel.view)
 # mizanı görüntülenemez olurdu.
 _YEAR = Annotated[int, Query(ge=2000, le=2100)]
 _MONTH = Annotated[int, Query(ge=1, le=12)]
+
+# 🔴 Bilançonun penceresi bir TARİHTİR (nokta-zaman), yıl+ay çifti DEĞİL —
+# `_YEAR`/`_MONTH` bantları burada YETMEZ. Bant yine de `accounting_periods`in
+# yıl CHECK'iyle (2000-2100) tutarlıdır: takvimin iki uçta farklı aralık kabul
+# etmesi, kapatılabilen ama bilançosu alınamayan bir dönem üretirdi.
+# Sınırlar KAPALIDIR (`ge`/`le`): `lt`/`gt` yazılsaydı `2100` yılının bilançosu
+# hiç alınamazdı.
+_AS_OF = Annotated[date, Query(ge=date(2000, 1, 1), le=date(2100, 12, 31))]
 
 
 @router.get("/trial-balance", response_model=TrialBalanceResponse, dependencies=[_VIEW])
@@ -115,3 +135,73 @@ async def vat_return_endpoint(
     anlamsızlaşırdı.
     """
     return await vat_return.build_vat_return(session, year=year, month=month)
+
+
+@router.get("/balance-sheet", response_model=BalanceSheetResponse, dependencies=[_VIEW])
+async def balance_sheet_endpoint(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    as_of: _AS_OF,
+) -> BalanceSheetResponse:
+    """Bilanço — AKTİF/PASİF, üç seviye (bölüm bandı → kalem → ara toplam).
+
+    🔴 **Dönem modeli NOKTA-ZAMANDIR**, mizanın birikimli aralığından FARKLI:
+    mockup BL:37 üç ayrı **tek gün** sunar (`31 Temmuz 2026` / `30 Haziran 2026`
+    / `31 Aralık 2025`). Gövde `entry_date <= as_of` kümülatif nettir; tek
+    istisna `Dönem Net Kârı` kalemidir ve penceresi `{as_of.year}-01-01` ile
+    `as_of` arasıdır (yılbaşından bugüne). Aritmetik ve kontra netlemesi
+    `balance_sheet.py` modül docstring'indedir.
+
+    🔴 **`is_balanced` ÖLÇÜLÜR, `True` VARSAYILMAZ**: dengesiz bir `reversed`
+    fiş DB'ye girebilir (`ck_journal_entries_posted_balanced` yalnız `posted`ı
+    bağlar) ve sabit `True` basan bir bilanço sessizce yalan söylerdi.
+
+    🔴 **Sayfalama YOKTUR** (K7 zarfı kullanılmaz): `total` GENEL TOPLAMDIR ve
+    `is_balanced` onun üzerinden kurulur — sayfalanmış bir bilançoda ikisi de
+    anlamsızlaşırdı. Küme SABİTTİR: iki taraf, 13 kalem.
+
+    Kapsam dışı (bilinçli): proje/şantiye süzgeci (üç muhasebe tablosunda da
+    `project_id`/`site_id` YOKTUR ve mockup süzgeç çizmiyor) · karşılaştırma
+    sütunu (mockup tabloları 2 sütunlu, BL:48-62) · `PDF` düğmesi (BL:38 — düğme
+    dışında hiçbir şey söylemiyor) · dönem kilidi rozeti (salt-okuma ucu).
+    """
+    return await balance_sheet.build_balance_sheet(session, as_of=as_of)
+
+
+@router.get("/cash-flow-statement", response_model=CashFlowStatementResponse, dependencies=[_VIEW])
+async def cash_flow_statement_endpoint(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    year: _YEAR,
+    month: _MONTH,
+) -> CashFlowStatementResponse:
+    """Nakit Akış Tablosu — `A` işletme · `B` yatırım · `C` finansman.
+
+    🔴 **`/treasury/cash-flow` İLE AYNI ŞEY DEĞİLDİR ve yol adı bilinçli olarak
+    ayrıdır.** O uç `payments`+`invoices`ten türeyen **GÜNLÜK giriş/çıkış
+    serisidir** (F-HZ hazine paneli, E9:90-106); bu uç **yevmiyeden** türeyen
+    işletme/yatırım/finansman tablosudur (KK-2). İkisi farklı sayı basar ve bu
+    bir kusur DEĞİLDİR — ayrım her iki modül docstring'inde de yazılıdır.
+    Bilanço ile bu tablo TEK tabandan gelir, bu yüzden `Kasa ve Bankalar`
+    (BL:51) ile `closing_cash` birebir aynıdır.
+
+    🔴 **Pencere BİRİKİMLİDİR** (mockup NA:37 `Ocak–Temmuz 2026`): yılın Ocak
+    ayından `month`un SON GÜNÜNE kadar — mizanla AYNI semantik. `year`/`month`
+    ZORUNLUDUR; `/treasury/cash-flow`un aksine içinde bulunulan aya DÜŞMEZ
+    (sunucunun "bugün"ü hiç okunmaz).
+
+    🔴 **DÖRT ALAN BİRDEN DÖNER:** `net_change` (A+B+C) · `opening_cash` ·
+    `closing_cash` · bölüm ara toplamları. Mockup'ın alt bandı
+    `DÖNEM SONU NAKİT (A+B+C)` **diyor** ama değeri kapanış nakdidir (NA:100 =
+    BL:51) — ikisi ayrı şeydir ve mockup'ta `DÖNEM BAŞI NAKİT` satırı EKSİKTİR.
+    Hangisinin basılacağına frontend kendi diliminde karar verir.
+
+    `monthly_cash[]` = `Aylık Nakit Pozisyonu` grafiği (NA:108-131): Ocak'tan
+    seçilen aya kadar **ay sonu nakit BAKİYESİ** (akış değil).
+
+    Kapsam dışı (bilinçli): `3 Aylık Projeksiyon` kartı (NA:134-150) — ileriye
+    dönük tahmin, algoritması mockup'ta YOK, açıklama metinleri serbest metin;
+    İCAT EDİLMEZ · `PDF` düğmesi (NA:38) · proje/şantiye süzgeci (üç muhasebe
+    tablosunda da kolon yok, mockup süzgeç çizmiyor).
+    """
+    return await cash_flow_statement.build_cash_flow_statement(session, year=year, month=month)

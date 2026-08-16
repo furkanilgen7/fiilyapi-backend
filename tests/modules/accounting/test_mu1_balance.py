@@ -181,13 +181,20 @@ async def test_storno_ile_orijinal_birlikte_NET_SIFIR_verir(
 
 
 def test_sign_dort_turu_de_kapsar_ve_isaretleri_ayrisir() -> None:
-    """`SIGN` bir SÖZLÜK bekçisidir: beşinci üye açılırsa ya da bir işaret takas
-    edilirse burada ölür."""
+    """`SIGN` bir SÖZLÜK bekçisidir: yeni bir üye açılırsa ya da bir işaret takas
+    edilirse burada ölür.
+
+    🔑 MT-1/KK-1 (kullanıcı kararı, 2026-08-16) beşinci üyeyi (`equity: -1`)
+    ekledi — özkaynak ALACAK bakiyelidir, `liability`/`revenue` ile aynı işaret.
+    🔴 Sözlüğün enum'la BİREBİR olması ayrıca zorunludur: `sign_case()`in
+    `else_` dalı yoktur ve eksik üye **NULL** üretir
+    (`test_mt1_ozkaynak_kontra_migration.py` bunu fiilen kurar)."""
     assert balance.SIGN == {
         ChartAccountType.asset: 1,
         ChartAccountType.expense: 1,
         ChartAccountType.liability: -1,
         ChartAccountType.revenue: -1,
+        ChartAccountType.equity: -1,
     }
 
 

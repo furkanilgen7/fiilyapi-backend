@@ -3,6 +3,22 @@
 `GET /treasury/cash-flow`: seçilen ayın GÜNLÜK giriş/çıkış serisi + iki toplam
 (E9:104-105 `Giriş ₺4,12M` · `Çıkış ₺3,84M`).
 
+## 🔴 `GET /cash-flow-statement` İLE AYNI ŞEY DEĞİLDİR (MT-1, 2026-08-16)
+
+| | `/treasury/cash-flow` (BURASI) | `/cash-flow-statement` |
+|---|---|---|
+| Taban | `payments` + `invoices` | **yevmiye** (`journal_lines`) |
+| Şekil | ayın **GÜNLÜK** giriş/çıkış serisi | **A/B/C** işletme/yatırım/finansman |
+| Pencere | TEK ay, `year`/`month` **opsiyonel** | Ocak→`month`, ikisi de ZORUNLU |
+| Ekran | F-HZ hazine paneli (E9:90-106) | Mali Tablolar → Nakit Akışı |
+
+İkisi FARKLI SAYI basar ve bu bir kusur DEĞİLDİR: bu uç ödeme kayıtlarını,
+öteki muhasebe fişlerini sayar — bir ödeme fişleştirilmemişse yalnız burada,
+nakit etkili bir fiş ödeme kaydı üretmemişse yalnız orada görünür. Ayrım İKİ
+docstring'de de yazılıdır ki "hangisi doğru?" sorusu cevapsız kalmasın
+(`accounting/cash_flow_statement.py` karşılığı; bekçisi
+`test_mt1_cash_flow_statement.py`).
+
 ## 🔴 Yön: `balance.py`den TÜRETİLİR, yeniden yazılmaz
 
 İşaretin tek kaynağı `balance.inflow_condition()`tır (K2/K4): giden faturaya

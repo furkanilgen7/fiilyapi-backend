@@ -42,10 +42,18 @@ Para her yerde `Decimal`dir; kayan nokta hiçbir aşamada devreye girmez
 ## İşaret neden TÜRDEN okunur
 
 `320` Satıcılar (Pasif) ekranda `2.184.000` basar (HP:164) ama ham `net`i
-**−2.184.000**dır: alacak bakiyesi verir. `600` Gelir, `730`/`760` Gider ve
-`100`…`191` Aktif hesapların hepsi ekranda POZİTİFTİR. Tek uymayan `257`nin
-parantezidir ve onun kaynağı `account_type` DEĞİL adın `(-)` son ekidir — bir
-SUNUM kuralıdır, `is_contra` kolonu AÇILMAZ (spec §1c, K-Ş2).
+**−2.184.000**dır: alacak bakiyesi verir. `600` Gelir, `730`/`760` Gider,
+`500` Özkaynak ve `100`…`191` Aktif hesapların hepsi ekranda POZİTİFTİR.
+Tek uymayan `257`nin parantezidir; MU-1 bunu bir SUNUM kuralı sayıp
+`is_contra` kolonunu AÇMAMIŞTI.
+
+🔑 **MT-1/KK-1 (kullanıcı kararı) o kararı geri aldı:** `is_contra` kolonu
+AÇILDI çünkü Bilanço'nun `Maddi Duran Varlıklar (net)` kalemi (BL:57) `257`yi
+FİİLEN düşmek zorunda. 🔴 Bu modül yine de **kontra bilmez**: burada üretilen
+`balance` hâlâ hesabın kendi ekran değeridir (`257` → `620.000`, pozitif).
+Kontra işareti bir **MALİ TABLO** kuralıdır ve `statement_map.py`de yaşar —
+buraya taşınsaydı hesap planı ekranı `257`yi eksi basar, HP:155'in parantezli
+POZİTİF gösterimiyle çelişirdi.
 """
 
 import uuid
@@ -95,13 +103,22 @@ SIGN: dict[ChartAccountType, int] = {
     ChartAccountType.expense: 1,
     ChartAccountType.liability: -1,
     ChartAccountType.revenue: -1,
+    # 🔑 MT-1/KK-1: `equity` beşinci üye olarak açıldı. Özkaynak hesabı ALACAK
+    # bakiyelidir (`500 Sermaye`in ham `net`i negatiftir) ve ekranda POZİTİF
+    # basılmalıdır — `liability`/`revenue` ile AYNI işaret.
+    ChartAccountType.equity: -1,
 }
-"""K3 işaret kuralı — dört türün HEPSİ burada olmak zorundadır.
+"""K3 işaret kuralı — **BEŞ türün HEPSİ** burada olmak zorundadır.
 
 Eksik bir tür `sign_case()`te `else_` dalı OLMADIĞI için **NULL** üretir ve
 yanıt şeması onu okurken GÜRÜLTÜLÜ biçimde patlar. Bilinçlidir: sessizce `0`
 ya da `+1` varsaymak, o türdeki her hesabın bakiyesini yanlış basardı ve hiçbir
 kolon farkı ele vermezdi.
+
+🔴 Bu tuzak MT-1'de FİİLEN kuruldu ve ölçüldü: `SIGN`dan `equity` çıkarılınca
+`balances_for()` sözlüğü `Decimal` yerine `None` döndürüyor
+(`test_sign_case_SIGN_girisi_silininde_NULL_uretir`). Enum'a yeni bir üye
+ekleyen HER dilim aynı satırda bu sözlüğü de büyütür.
 """
 
 

@@ -55,11 +55,22 @@ TABLES = ("chart_of_accounts", "journal_entries", "journal_lines")
 # Spec §3: İKİSİ DE YENİ — downgrade ikisini de düşürmek zorundadır.
 NEW_ENUMS = ("chart_account_type", "journal_entry_status")
 
+#: 🔴 Bu sözlük **MU-1 REVİZYONUNDAKİ DB hâlini** tarif eder, modelin BUGÜNKÜ
+#: hâlini DEĞİL. `d5e6f7a8b9c0`a çıkan bir veritabanında `chart_account_type`
+#: hâlâ DÖRT üyelidir; beşinci üye (`equity`) MT-1'in `c8d9e0f1a2b3`
+#: migration'ıyla gelir. İkisi karıştırılırsa bu test, ölçtüğünü sandığı şeyi
+#: değil sonraki dilimlerin şemasını ölçmeye başlar.
 EXPECTED_ENUM_LABELS = {
-    # HP:60 `Tür` sütununun KAPALI kümesi: Aktif · Pasif · Gelir · Gider.
-    # Beşinci üye İCAT EDİLMEZ (K5).
+    # HP:60 `Tür` sütununun MU-1'deki kümesi: Aktif · Pasif · Gelir · Gider.
     "chart_account_type": ["asset", "liability", "revenue", "expense"],
     # K2: draft → posted → reversed (`reversed` TERMİNAL).
+    "journal_entry_status": ["draft", "posted", "reversed"],
+}
+
+#: 🔑 MODEL katmanının BUGÜNKÜ hâli — MT-1/KK-1 (kullanıcı kararı, 2026-08-16)
+#: `equity` üyesini açtı. Ayrıntı: `test_mt1_ozkaynak_kontra_migration.py`.
+MODEL_ENUM_LABELS = {
+    "chart_account_type": ["asset", "liability", "revenue", "expense", "equity"],
     "journal_entry_status": ["draft", "posted", "reversed"],
 }
 
@@ -261,21 +272,28 @@ async def _insert_line(
 
 
 def test_two_new_enums_match_spec_exactly():
-    """Spec §3 birebir. Değerler DB'ye yazılır: sonradan düzeltmek bir enum
-    TAKASI (migration) gerektirir, bu yüzden burada kilitli."""
+    """Değerler DB'ye yazılır: sonradan düzeltmek bir enum TAKASI (migration)
+    gerektirir, bu yüzden burada kilitli.
+
+    🔑 `chart_account_type` MT-1/KK-1 ile BEŞ üyeli oldu (kullanıcı kararı):
+    Bilanço `III. ÖZKAYNAKLAR` bölümü dört üyeyle ifade edilemiyordu. `equity`
+    modelde vardır ama MU-1 REVİZYONUNDAKİ DB'de YOKTUR — tur dönüşü testi bu
+    yüzden `EXPECTED_ENUM_LABELS`ı, bu test `MODEL_ENUM_LABELS`ı okur."""
     actual = {
         "chart_account_type": [e.value for e in ChartAccountType],
         "journal_entry_status": [e.value for e in JournalEntryStatus],
     }
-    assert actual == EXPECTED_ENUM_LABELS
+    assert actual == MODEL_ENUM_LABELS
 
 
 def test_account_type_has_no_invented_members():
-    """🔴 K5: HP:60 yalnız dört rozet çiziyor (Aktif/Pasif/Gelir/Gider).
-    Özkaynak/nazım/maliyet gibi beşinci bir tür AÇILSAYDI hiçbir ekranda
-    karşılığı olmayan bir kümeyi kalıcı olarak DB'ye yazardık."""
+    """🔴 K5 (MT-1'de DARALTILDI): `equity` artık bir KULLANICI KARARIDIR
+    (KK-1, 2026-08-16) ve yasak listesinden çıkarıldı; gerekçesi
+    `test_mt1_ozkaynak_kontra_migration.py`de. Geri kalan üyeler hâlâ
+    icat edilemez — `contra` bir TÜR değil `is_contra` bayrağıdır, nazım/maliyet
+    hesaplarının ise hiçbir ekranda karşılığı yoktur."""
     values = {e.value for e in ChartAccountType}
-    for yasak in ("equity", "memorandum", "cost", "contra", "other", "class"):
+    for yasak in ("memorandum", "cost", "contra", "other", "class"):
         assert yasak not in values, yasak
 
 
@@ -302,6 +320,9 @@ def test_chart_account_columns_match_spec():
         "name",
         "account_type",
         "is_active",
+        # 🔑 MT-1/KK-1 (kullanıcı kararı, 2026-08-16): kontra bayrağı AÇILDI —
+        # Bilanço `Maddi Duran Varlıklar (net)` kalemi `257`yi FİİLEN düşer.
+        "is_contra",
         "created_at",
         "updated_at",
     }
@@ -312,15 +333,19 @@ def test_chart_account_columns_match_spec():
     assert not columns["account_type"].nullable
     # HP:62 `Durum` — kaldırma bayrağı; varsayılan AÇIK.
     assert not columns["is_active"].nullable
+    assert not columns["is_contra"].nullable
 
 
 def test_chart_account_has_no_parent_or_derived_columns():
     """🔴 K4 + K3 + K-Ş2. Hiyerarşi KODUN içindedir: `parent_id` açılsaydı
     türetilebilir bir şey saklanır ve kod düzeltildiğinde FK bayatlardı.
     Bakiye SAKLANMAZ (`balance.py` TEK KAYNAK) — kolonlaşsaydı kaydığını hiçbir
-    kolon farkı ele vermezdi. `is_contra` da yoktur: `257`in parantezi bir SUNUM
-    kuralıdır (adın `(-)` son eki), hiçbir form onay kutusu çizmemiştir.
-    Proje/şantiye FK'sı YOKTUR: katalog ŞİRKET GENELİDİR (§3 kapsam kararı)."""
+    kolon farkı ele vermezdi.
+    Proje/şantiye FK'sı YOKTUR: katalog ŞİRKET GENELİDİR (§3 kapsam kararı).
+
+    🔑 `is_contra` bu listeden MT-1/KK-1 ile ÇIKARILDI (kullanıcı kararı,
+    2026-08-16): türev DEĞİL, hesabın kendi niteliğidir ve sunucunun bilanço
+    netlemesi ona bağlıdır. Türev alan yasağı aynen sürer."""
     columns = set(ChartAccount.__table__.columns.keys())
     for yasak in (
         "parent_id",
@@ -330,7 +355,6 @@ def test_chart_account_has_no_parent_or_derived_columns():
         "balance",
         "current_balance",
         "opening_balance",
-        "is_contra",
         "project_id",
         "site_id",
         "currency",
