@@ -253,6 +253,7 @@ async def upload_document_endpoint(
     site_id: Annotated[uuid.UUID | None, Form()] = None,
     folder_id: Annotated[uuid.UUID | None, Form()] = None,
     description: Annotated[str | None, Form(max_length=DESCRIPTION_MAX_LENGTH)] = None,
+    filename: Annotated[str | None, Form(min_length=1, max_length=255)] = None,
 ) -> DocumentRead:
     """Multipart yükleme (spec §3/§4).
 
@@ -265,10 +266,20 @@ async def upload_document_endpoint(
     Uzantı kontrolünün okumadan önce olması bilinçlidir: yasak uzantılı 50 MB'lık
     bir gövdeyi sonuna kadar okumanın hiçbir karşılığı yoktur.
 
+    `filename` OPSİYONELDİR (T1). Verilmezse yüklenen dosyanın adı kullanılır
+    (mevcut davranış). Verilirse künyeye YAZILACAK NİHAİ ad odur ve `file.filename`
+    hiç kullanılmaz — kaynak ne olursa olsun (form alanı ya da yüklenen dosyanın
+    adı) aynı iki kapıdan (normalize + beyaz liste) geçer, biri diğerini
+    ATLATAMAZ. `max_length=255` `DocumentUpdate.filename`in (PATCH) aynı
+    kuralıdır — iki giriş noktası ayrı ayrı yazılsaydı biri güncellenip diğeri
+    unutulur, biri diğerinden gevşek kalırdı.
+
     Künye + baytlar TEK transaction'da yazılır; `put` patlarsa künye de yazılmaz.
     """
-    filename = files.normalize_filename(file.filename)
-    files.assert_allowed_extension(filename)
+    kaynak_ad = filename if filename is not None else file.filename
+    nihai_ad = files.normalize_filename(kaynak_ad)
+    files.assert_allowed_extension(nihai_ad)
+    filename = nihai_ad
     content = await _read_within_limit(file)
 
     document, detail = await service.upload_document(
