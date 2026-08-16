@@ -172,6 +172,138 @@ async def test_yukleme_denetime_yazilir(
     assert any("Hakedis_47.pdf" in d and proje.name in d for d in detaylar)
 
 
+# --- `filename` Form alanı (T1) ---
+
+
+async def test_filename_verilmezse_dosya_adi_kullanilir(
+    client: AsyncClient, proje, sef_headers
+) -> None:
+    """VARSAYILAN YOL: alan hiç geçmezse (yalnız `file` gelir), künyeye yüklenen
+    dosyanın adı yazılır — mevcut davranış aynen korunur."""
+    resp = await client.post(
+        "/documents", data=_form(proje.id), files=_multipart("Hakedis_47.pdf"), headers=sef_headers
+    )
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["filename"] == "Hakedis_47.pdf"
+
+
+async def test_filename_verilirse_kunyeye_o_yazilir(
+    client: AsyncClient, proje, sef_headers
+) -> None:
+    resp = await client.post(
+        "/documents",
+        data=_form(proje.id, filename="Sozlesme_Eki.pdf"),
+        files=_multipart("yuklenen_dosya_adi.pdf"),
+        headers=sef_headers,
+    )
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["filename"] == "Sozlesme_Eki.pdf"
+    assert resp.json()["mime_type"] == "application/pdf"
+
+
+async def test_filename_yol_enjeksiyonu_normalize_edilir(
+    client: AsyncClient, proje, sef_headers
+) -> None:
+    resp = await client.post(
+        "/documents",
+        data=_form(proje.id, filename="../../etc/Günlük Rapor.pdf"),
+        files=_multipart("yuklenen.pdf"),
+        headers=sef_headers,
+    )
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["filename"] == "Günlük Rapor.pdf"
+
+
+async def test_filename_yasak_uzanti_422(client: AsyncClient, proje, sef_headers) -> None:
+    """Kullanıcının verdiği ad da beyaz listeden geçer — dosya kendisi meşru
+    (`.pdf`) olsa bile Form'daki `evil.exe` adıyla künye yazılamaz."""
+    resp = await client.post(
+        "/documents",
+        data=_form(proje.id, filename="evil.exe"),
+        files=_multipart("meshru.pdf"),
+        headers=sef_headers,
+    )
+
+    assert resp.status_code == 422, resp.text
+
+
+async def test_yuklenen_dosyanin_uzantisi_yasakken_verilen_ad_meshru_olsa_da_422(
+    client: AsyncClient, proje, sef_headers
+) -> None:
+    """Ters yön: yüklenen dosyanın kendi adı yasak uzantılı olsa da, künyeye
+    yazılacak NİHAİ ad Form'dan gelen `filename`dir ve o beyaz listeden geçtiği
+    için yükleme kabul edilir — sıra `filename` verildiğinde `file.filename`in
+    uzantısı hiç kontrol edilmez."""
+    resp = await client.post(
+        "/documents",
+        data=_form(proje.id, filename="rapor.pdf"),
+        files=_multipart("virus.exe"),
+        headers=sef_headers,
+    )
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["filename"] == "rapor.pdf"
+
+
+async def test_filename_255_karakterde_kabul_256da_422(
+    client: AsyncClient, proje, sef_headers
+) -> None:
+    """T6 MUTASYON TURUNDA açılan boşluk: Form'daki `max_length=255`
+    KİMSE tarafından ölçülmüyordu — kaldırıldığında hiçbir test kırılmıyordu.
+
+    🔴 Kaldırma davranışı değiştirmiyor ÇÜNKÜ `files.normalize_filename` de
+    `MAX_FILENAME_LENGTH = 255`i uyguluyor: MT-1 kanonunun birebiri —
+    "iki katman birbirini maskeler, her biri tek başına yeterliyse birini
+    kaldırmak HTTP ucundan hiçbir fark üretmez". Bu test HTTP'den GÖRÜNEN
+    sözleşmeyi kilitler (`Document.filename` = `String(255)`): tam sınır kabul,
+    bir fazlası 422 — hangi katmanın uyguladığı önemli değil, ama İKİSİ BİRDEN
+    kaybolursa 500 (DB `StringDataRightTruncation`) döner ve bu test kırılır.
+    """
+    tam = await client.post(
+        "/documents",
+        data=_form(proje.id, filename="a" * 251 + ".pdf"),
+        files=_multipart(),
+        headers=sef_headers,
+    )
+    asan = await client.post(
+        "/documents",
+        data=_form(proje.id, filename="a" * 252 + ".pdf"),
+        files=_multipart(),
+        headers=sef_headers,
+    )
+
+    assert tam.status_code == 201, tam.text
+    assert len(tam.json()["filename"]) == 255
+    assert asan.status_code == 422, asan.text
+
+
+async def test_filename_bos_dize_GONDERILMEMIS_sayilir(
+    client: AsyncClient, proje, sef_headers
+) -> None:
+    """🔴 T6'da ÖLÇÜLEN gerçek davranış — beklenenin TERSİ.
+
+    `Form(min_length=1, ...)`e bakıp "boş ad 422 verir" varsaymak YANLIŞTIR:
+    FastAPI, `Form` alanının değeri boş dizeyse alanı HİÇ GÖNDERİLMEMİŞ sayar
+    ve varsayılana (`None`) düşer — `min_length=1` bu yol için ULAŞILMAZ bir
+    doğrulamadır. Sonuç: künyeye yüklenen dosyanın adı yazılır, 201 döner.
+
+    Davranış makuldür (boş bir metin kutusu "ad verilmedi" demektir) ve burada
+    KİLİTLENİR; sessizce 422'ye çevrilirse boş kutulu formlar kırılır.
+    """
+    resp = await client.post(
+        "/documents",
+        data=_form(proje.id, filename=""),
+        files=_multipart("meshru.pdf"),
+        headers=sef_headers,
+    )
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["filename"] == "meshru.pdf"
+
+
 # --- Beyaz liste BYPASS denemeleri (422) ---
 
 

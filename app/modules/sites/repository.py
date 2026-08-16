@@ -2,7 +2,7 @@ import uuid
 from collections import defaultdict
 from collections.abc import Sequence
 
-from sqlalchemy import inspect, or_, select
+from sqlalchemy import func, inspect, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
@@ -13,6 +13,11 @@ from sqlalchemy.orm.attributes import set_committed_value
 from app.modules.boq.models import BoqGroup, BoqItem
 from app.modules.contracts.models import SubcontractorContract
 from app.modules.progress_payments.models import ProgressPaymentLine
+
+# Duz `GET /sites` proje adini JOIN'le okur. Dongusel import YOKTUR: ölçüldü —
+# `projects/models.py` yalniz `app.core.db.Base` ve `contracts.models`a bakar,
+# sites'a geri BAKMAZ.
+from app.modules.projects.models import Project
 from app.modules.sites.models import Section, SectionMilestone, Site
 from app.modules.units.models import Block
 from app.modules.users.models import User, UserStatus
@@ -29,6 +34,38 @@ async def list_sites_for_project(session: AsyncSession, project_id: uuid.UUID) -
         select(Site).where(Site.project_id == project_id).order_by(Site.code)
     )
     return list(result.scalars().all())
+
+
+async def count_site_options(session: AsyncSession, project_ids: Sequence[uuid.UUID]) -> int:
+    """Duz `GET /sites` icin SUZGECTEN GECMIS satir sayisi — SQL COUNT.
+
+    🔴 `total` sayfaya DEGIL, gorunur kumeye aittir; ve suzgec COUNT'un da
+    icindedir. Aksi hâlde kullanici goremedigi santiyeleri sayar (klasik kusur).
+    """
+    stmt = select(func.count()).select_from(Site).where(Site.project_id.in_(project_ids))
+    return int((await session.execute(stmt)).scalar_one())
+
+
+async def list_site_options(
+    session: AsyncSession, project_ids: Sequence[uuid.UUID], limit: int, offset: int
+) -> list[tuple[uuid.UUID, str, str, uuid.UUID, str]]:
+    """Duz `GET /sites` sayfasi: (id, code, name, project_id, project_name).
+
+    Sayfalama SQL duzeyindedir (LIMIT/OFFSET) — tum satirlar Python'a cekilip
+    dilimlenmez. Siralama `code` artan, ESITLIK BOZUCU `id`: santiye kodu
+    yalniz proje icinde tekildir (`uq_sites_project_code`), sirket genelinde
+    tekrar edebilir; ikincil anahtar olmadan sayfa sinirlari kaymaya baglidir
+    ve sayfalama testleri flaky olur.
+    """
+    stmt = (
+        select(Site.id, Site.code, Site.name, Project.id, Project.name)
+        .join(Project, Project.id == Site.project_id)
+        .where(Site.project_id.in_(project_ids))
+        .order_by(Site.code, Site.id)
+        .limit(limit)
+        .offset(offset)
+    )
+    return [tuple(row) for row in (await session.execute(stmt)).all()]
 
 
 async def list_codes_with_prefix(session: AsyncSession, prefix: str) -> list[str]:

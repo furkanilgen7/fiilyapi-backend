@@ -51,11 +51,13 @@ from app.modules.documents import files
 from app.modules.documents.guards import DOCUMENT_TOO_LARGE
 from app.modules.equipment import document_service as service
 from app.modules.equipment.document_schemas import (
+    DOCUMENT_NO_MAX_LENGTH,
     EquipmentDocumentListResponse,
     EquipmentDocumentResponse,
     EquipmentDocumentsSummaryResponse,
     EquipmentDocumentTypeListResponse,
     EquipmentDocumentTypeResponse,
+    EquipmentDocumentUpdate,
 )
 from app.modules.users.models import User
 
@@ -117,8 +119,31 @@ def _to_document_response(row) -> EquipmentDocumentResponse:
         filename=row.filename,
         mime_type=row.mime_type,
         size_bytes=row.size_bytes,
+        document_no=row.document_no,
+        issued_at=row.issued_at,
         valid_until=row.valid_until,
+        note=row.note,
         created_at=row.created_at,
+    )
+
+
+def _document_payload(document, doc_type) -> EquipmentDocumentResponse:
+    """ORM kaydı + tip künyesinden yanıt (POST/PATCH ORTAK) — liste ucunun
+    `Row` yolundan AYRI ama alan kümesi AYNI; iki yerde tekrarlanmaz."""
+    return EquipmentDocumentResponse(
+        id=document.id,
+        equipment_id=document.equipment_id,
+        type_id=document.type_id,
+        type_code=doc_type.code,
+        type_name=doc_type.name,
+        filename=document.filename,
+        mime_type=document.mime_type,
+        size_bytes=document.size_bytes,
+        document_no=document.document_no,
+        issued_at=document.issued_at,
+        valid_until=document.valid_until,
+        note=document.note,
+        created_at=document.created_at,
     )
 
 
@@ -183,8 +208,15 @@ async def create_equipment_document_endpoint(
     file: Annotated[UploadFile, File(...)],
     type_id: Annotated[uuid.UUID, Form()],
     valid_until: Annotated[date | None, Form()] = None,
+    document_no: Annotated[str | None, Form(max_length=DOCUMENT_NO_MAX_LENGTH)] = None,
+    issued_at: Annotated[date | None, Form()] = None,
+    note: Annotated[str | None, Form()] = None,
 ) -> EquipmentDocumentResponse:
-    """Multipart yükleme (M2:134-159). Kapı sırası modül docstring'inde."""
+    """Multipart yükleme (M2:134-159). Kapı sırası modül docstring'inde.
+
+    FRM-1'in üç künye alanı (`document_no`/`issued_at`/`note`) OPSİYONELDİR:
+    hiç gönderilmezse NULL kalır ve önceki davranış birebir korunur.
+    """
     filename = files.normalize_filename(file.filename)
     files.assert_allowed_extension(filename)
     content = await _read_within_limit(file)
@@ -197,20 +229,37 @@ async def create_equipment_document_endpoint(
         filename=filename,
         content=content,
         valid_until=valid_until,
+        document_no=document_no,
+        issued_at=issued_at,
+        note=note,
     )
     await _audit(request, session, user, AuditAction.create, detail)
-    return EquipmentDocumentResponse(
-        id=document.id,
-        equipment_id=document.equipment_id,
-        type_id=document.type_id,
-        type_code=doc_type.code,
-        type_name=doc_type.name,
-        filename=document.filename,
-        mime_type=document.mime_type,
-        size_bytes=document.size_bytes,
-        valid_until=document.valid_until,
-        created_at=document.created_at,
-    )
+    return _document_payload(document, doc_type)
+
+
+@router.patch(
+    "/documents/{document_id}",
+    response_model=EquipmentDocumentResponse,
+    responses={404: {"description": "Belge bulunamadı (görünmeyen ekipmanın belgesi dahil)"}},
+    dependencies=[_FULL],
+)
+async def update_equipment_document_endpoint(
+    request: Request,
+    document_id: uuid.UUID,
+    data: EquipmentDocumentUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> EquipmentDocumentResponse:
+    """Kısmi künye güncellemesi (K2) — DÖRT alan: `document_no` · `issued_at` ·
+    `note` · `valid_until`.
+
+    🔴 Dosyanın kendisi (içerik/ad/mime tipi) ve belge TİPİ bu uçtan
+    DEĞİŞTİRİLEMEZ; yanlış dosya silinip yeniden yüklenir. Yetki DELETE/POST
+    ile aynı (`full`), görünmeyen kayıt 404'tür (403 DEĞİL — varlık sızmaz).
+    """
+    document, doc_type, detail = await service.update_document(session, user, document_id, data)
+    await _audit(request, session, user, AuditAction.update, detail)
+    return _document_payload(document, doc_type)
 
 
 @router.get(

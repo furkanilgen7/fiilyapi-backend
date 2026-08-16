@@ -28,6 +28,7 @@ from app.modules.equipment.router import router as equipment_router
 from app.modules.inventory.router import router as inventory_router
 from app.modules.invoicing.router import router as invoicing_router
 from app.modules.payroll.router import router as payroll_router
+from app.modules.personnel.document_type_router import router as personnel_document_type_router
 from app.modules.personnel.router import router as personnel_router
 from app.modules.procurement.router import router as procurement_router
 from app.modules.progress_payments.router import router as progress_payments_router
@@ -38,6 +39,7 @@ from app.modules.sales.router import router as sales_router
 from app.modules.settings.router import router as settings_router
 from app.modules.site_diary.router import router as site_diary_router
 from app.modules.site_planning.router import router as site_planning_router
+from app.modules.sites.flat_list_router import router as sites_flat_list_router
 from app.modules.sites.router import router as sites_router
 from app.modules.subcontractor_progress_payments.router import (
     router as subcontractor_progress_payments_router,
@@ -148,6 +150,7 @@ app.include_router(inventory_router)
 # `/invoices/{invoice_id}` ile çakışır — ayrılmış yer orada işaretlidir.
 app.include_router(invoicing_router)
 app.include_router(payroll_router)
+app.include_router(personnel_document_type_router)
 app.include_router(personnel_router)
 app.include_router(procurement_router)
 app.include_router(progress_payments_router)
@@ -157,6 +160,11 @@ app.include_router(sales_router)
 app.include_router(settings_router)
 app.include_router(site_diary_router)
 app.include_router(site_planning_router)
+# Düz `GET /sites` (SITE-1a) TEK segmentlidir; `sites_router`ın
+# `/sites/{site_id}` yolu İKİ segmentlidir ve FastAPI segment sayısına göre
+# ayırdığı için çakışma YOKTUR (ölçüldü — `personnel/document-types` tuzağının
+# aksine). Yine de `sites_router`dan ÖNCE kaydedilir: maliyeti sıfır ucuz sigorta.
+app.include_router(sites_flat_list_router)
 app.include_router(sites_router)
 app.include_router(subcontractor_progress_payments_router)
 app.include_router(timesheet_router)

@@ -24,7 +24,10 @@ _DOCUMENT_LIST_COLUMNS = (
     EquipmentDocument.filename,
     EquipmentDocument.mime_type,
     EquipmentDocument.size_bytes,
+    EquipmentDocument.document_no,
+    EquipmentDocument.issued_at,
     EquipmentDocument.valid_until,
+    EquipmentDocument.note,
     EquipmentDocument.created_at,
 )
 

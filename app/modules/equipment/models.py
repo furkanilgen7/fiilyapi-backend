@@ -855,6 +855,15 @@ class EquipmentDocument(Base):
     mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    # FRM-1 — belge künyesi (mockup biçimi `TC-48-MUA-2026`). K1: uzunluk
+    # EMSALLE bağlıdır (`contracts.contract_no` · `equipment.serial_no` ·
+    # `equipment_rental_invoices.invoice_no` hepsi String(100)) — yeni bir
+    # uzunluk İCAT EDİLMEZ. Nullable: eski satırlar ve numarasız belgeler meşru.
+    document_no: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # FRM-1/K6 — adlar personel tarafıyla BİREBİR (`personnel_documents.
+    # issued_at` / `.note`); eşanlamlı yeni ad uydurulmaz.
+    issued_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
     # K7 — onaylı sapma (yukarı bakınız).
     valid_until: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
