@@ -44,9 +44,16 @@ from app.core.db import get_db
 from app.core.deps import get_current_user
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
-from app.modules.accounting import balance_sheet, guards, trial_balance, vat_return
+from app.modules.accounting import (
+    balance_sheet,
+    cash_flow_statement,
+    guards,
+    trial_balance,
+    vat_return,
+)
 from app.modules.accounting.reports_schemas import (
     BalanceSheetResponse,
+    CashFlowStatementResponse,
     TrialBalanceResponse,
     VatReturnResponse,
 )
@@ -159,3 +166,42 @@ async def balance_sheet_endpoint(
     dışında hiçbir şey söylemiyor) · dönem kilidi rozeti (salt-okuma ucu).
     """
     return await balance_sheet.build_balance_sheet(session, as_of=as_of)
+
+
+@router.get("/cash-flow-statement", response_model=CashFlowStatementResponse, dependencies=[_VIEW])
+async def cash_flow_statement_endpoint(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    year: _YEAR,
+    month: _MONTH,
+) -> CashFlowStatementResponse:
+    """Nakit Akış Tablosu — `A` işletme · `B` yatırım · `C` finansman.
+
+    🔴 **`/treasury/cash-flow` İLE AYNI ŞEY DEĞİLDİR ve yol adı bilinçli olarak
+    ayrıdır.** O uç `payments`+`invoices`ten türeyen **GÜNLÜK giriş/çıkış
+    serisidir** (F-HZ hazine paneli, E9:90-106); bu uç **yevmiyeden** türeyen
+    işletme/yatırım/finansman tablosudur (KK-2). İkisi farklı sayı basar ve bu
+    bir kusur DEĞİLDİR — ayrım her iki modül docstring'inde de yazılıdır.
+    Bilanço ile bu tablo TEK tabandan gelir, bu yüzden `Kasa ve Bankalar`
+    (BL:51) ile `closing_cash` birebir aynıdır.
+
+    🔴 **Pencere BİRİKİMLİDİR** (mockup NA:37 `Ocak–Temmuz 2026`): yılın Ocak
+    ayından `month`un SON GÜNÜNE kadar — mizanla AYNI semantik. `year`/`month`
+    ZORUNLUDUR; `/treasury/cash-flow`un aksine içinde bulunulan aya DÜŞMEZ
+    (sunucunun "bugün"ü hiç okunmaz).
+
+    🔴 **DÖRT ALAN BİRDEN DÖNER:** `net_change` (A+B+C) · `opening_cash` ·
+    `closing_cash` · bölüm ara toplamları. Mockup'ın alt bandı
+    `DÖNEM SONU NAKİT (A+B+C)` **diyor** ama değeri kapanış nakdidir (NA:100 =
+    BL:51) — ikisi ayrı şeydir ve mockup'ta `DÖNEM BAŞI NAKİT` satırı EKSİKTİR.
+    Hangisinin basılacağına frontend kendi diliminde karar verir.
+
+    `monthly_cash[]` = `Aylık Nakit Pozisyonu` grafiği (NA:108-131): Ocak'tan
+    seçilen aya kadar **ay sonu nakit BAKİYESİ** (akış değil).
+
+    Kapsam dışı (bilinçli): `3 Aylık Projeksiyon` kartı (NA:134-150) — ileriye
+    dönük tahmin, algoritması mockup'ta YOK, açıklama metinleri serbest metin;
+    İCAT EDİLMEZ · `PDF` düğmesi (NA:38) · proje/şantiye süzgeci (üç muhasebe
+    tablosunda da kolon yok, mockup süzgeç çizmiyor).
+    """
+    return await cash_flow_statement.build_cash_flow_statement(session, year=year, month=month)

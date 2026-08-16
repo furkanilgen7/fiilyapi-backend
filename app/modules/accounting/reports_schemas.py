@@ -28,6 +28,10 @@ __all__ = [
     "BalanceSheetResponse",
     "BalanceSheetSection",
     "BalanceSheetSide",
+    "CashFlowStatementLine",
+    "CashFlowStatementResponse",
+    "CashFlowStatementSection",
+    "MonthlyCashPoint",
     "TrialBalanceResponse",
     "TrialBalanceRow",
     "TrialBalanceTotals",
@@ -257,3 +261,93 @@ class BalanceSheetResponse(BaseModel):
     is_balanced: bool
     assets: BalanceSheetSide
     liabilities: BalanceSheetSide
+
+
+# --------------------------------------------------------------------------- #
+# MT-1 T5 — Nakit Akış Tablosu (mockup `Mali Tablo - Nakit Akışı.dc.html`)
+# --------------------------------------------------------------------------- #
+
+
+class CashFlowStatementLine(BaseModel):
+    """Nakit akışının bir KALEMİ (ör. NA:71 `Müşterilerden Tahsilat`).
+
+    🔴 `amount` **İŞARETLİDİR**: giriş `+`, çıkış `−` (mockup NA:71-75 `+`/`−`
+    önekleri). Mutlak değer basıp yönü etikete gömen bir uç, `Ekipman Alımı`
+    satırında bir ekipman SATIŞINI ayırt edemezdi — mockup B bölümünde TEK
+    kalem çizer ve satış da oraya düşer (K15: kalem sayısı bağlayıcı).
+
+    `account_codes` mockup'ta basılmıyor ama döner: bir kalemin İÇİNE bakmanın
+    tek yolu budur ve `Diğer Nakit Çıkışları` kovasını ŞEFFAF kılar.
+    """
+
+    key: str
+    label: str
+    amount: Decimal
+    account_codes: list[str]
+
+
+class CashFlowStatementSection(BaseModel):
+    """`A`/`B`/`C` bölümü + kalemleri + ara toplam (mockup NA:68-79 kalıbı).
+
+    `subtotal` kalemlerinden HESAPLANIR. 🔴 K15: mockup'ın A bölümü satırları
+    `5.842.000` toplarken ara toplam `6.842.000` basıyor (NA:71-78, 1.000.000
+    fark) — SATIRLAR kazanır, tfoot bir SUNUM göstermeliğidir.
+    """
+
+    key: str
+    code: str
+    title: str
+    subtotal_label: str
+    subtotal: Decimal
+    lines: list[CashFlowStatementLine]
+
+
+class MonthlyCashPoint(BaseModel):
+    """`Aylık Nakit Pozisyonu` grafiğinin bir noktası (mockup NA:108-131).
+
+    🔴 **BAKİYE, akış DEĞİL:** grafiğin adı "Pozisyon"dur ve nokta o ayın
+    SONUNDAKİ nakit bakiyesidir (açılış nakdi dâhil). Aylık akış basan bir
+    uygulama aynı veriyle bambaşka bir eğri çizer ve son noktası
+    `closing_cash`e denk GELMEZDİ.
+    """
+
+    year: int
+    month: int
+    closing_cash: Decimal
+
+
+class CashFlowStatementResponse(BaseModel):
+    """Nakit Akış Tablosunun tamamı — yevmiyeden türer (KK-2).
+
+    🔴 **`/treasury/cash-flow` İLE AYNI ŞEY DEĞİLDİR.** O uç
+    `payments`+`invoices`ten türeyen GÜNLÜK giriş/çıkış serisidir (F-HZ ekranı);
+    bu uç yevmiyeden türeyen işletme/yatırım/finansman tablosudur. İkisi farklı
+    sayı basar ve bu bir kusur değildir — ayrım her iki modül docstring'inde de
+    yazılıdır.
+
+    🔴 **DÖRT ALAN BİRDEN DÖNER** ve gerekçesi ölçülmüştür: mockup'ın alt bandı
+    `DÖNEM SONU NAKİT (A+B+C)` **diyor** ama değeri `4.249.500`, yani
+    Bilanço'daki `Kasa ve Bankalar` (BL:51) ile BİREBİR aynı — bu KAPANIŞ
+    NAKDİDİR. A+B+C ise `4.802.000`dir (NA:58). İkisi AYRI ŞEYDİR ve mockup'ta
+    **DÖNEM BAŞI NAKİT satırı EKSİKTİR** (türetilen açılış `−552.500` çıkar,
+    imkânsız). Uç dördünü de döndürür; hangisinin basılacağına frontend kendi
+    diliminde karar verir (MU-2'nin `carried_forward`ı emsal).
+
+    Kimlik: `closing_cash == opening_cash + net_change`.
+
+    `year`/`month` yanıtta TEKRARLANIR: mockup NA:37 (`Ocak–Temmuz 2026`)
+    başlığı buradan kurulur.
+
+    Kapsam dışı: `3 Aylık Projeksiyon` kartı (NA:134-150) — ileriye dönük
+    tahmin, algoritması mockup'ta YOK ve açıklama metinleri (`"Hakediş +
+    bordro"`) serbest metin. İCAT EDİLMEZ; frontend devre-dışı + gerekçeyle
+    basar (F-TH kanonu).
+    """
+
+    year: int
+    month: int
+    sections: list[CashFlowStatementSection]
+    net_change: Decimal
+    opening_cash: Decimal
+    closing_cash: Decimal
+    monthly_cash: list[MonthlyCashPoint]
