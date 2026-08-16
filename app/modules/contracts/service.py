@@ -200,6 +200,14 @@ async def list_contracts(
     # deseninin aynısı).
     from app.modules.progress_payments import summary as progress_payments_summary
 
+    # Taşeron tarafında dairesel zincir VARSAYIM DEĞİL ÖLÇÜLMÜŞTÜR:
+    # `subcontractor_progress_payments/repository.py` `contracts.models`i,
+    # `…/service.py` + `…/lines.py` ise `contracts.repository`/`contracts.guards`
+    # modüllerini modül düzeyinde import eder. Bu import modül düzeyine
+    # çıkarılırsa `contracts` → `subcontractor_progress_payments` → `contracts`
+    # halkası kapanır; yerel import ŞARTTIR.
+    from app.modules.subcontractor_progress_payments import summary as subcontractor_summary
+
     visible_ids = [p.id for p in await visible_projects(session, actor)]
     progress_payment_total: Decimal | None = None
 
@@ -232,9 +240,24 @@ async def list_contracts(
             q=q,
         )
         items = [_subcontractor_item(contract) for contract in contracts]
+        # Kümülatif brütler TEK toplu sorguda (sözleşme başına ayrı sorgu YOK) —
+        # işveren dalının BİREBİR eşleniği, yalnız anahtar proje değil SÖZLEŞME
+        # kimliğidir (bir projede N taşeron sözleşmesi olabilir).
+        cumulative = await subcontractor_summary.cumulative_gross_by_contracts(
+            session, [contract.id for contract in contracts]
+        )
+        progress_payment_total = _quantize_money(
+            sum(
+                (cumulative.get(contract.id, Decimal("0")) for contract in contracts),
+                Decimal("0"),
+            )
+        )
 
-    # Taşeron listesinde hakediş toplamı `None` KALIR (spec §1.2): taşeron
-    # hakedişi bu dilimde yazılmadı, sahte 0 gösterilmez.
+    # Hakediş toplamı İKİ dalda da doludur: işveren tarafı P7/H9'da, taşeron
+    # tarafı TH dilimiyle açılan `subcontractor_progress_payments` üzerinden
+    # TH-SUM diliminde bağlandı. `None` bir daha DÖNMEZ — hakedişi olmayan
+    # sözleşme de, hiç sözleşme olmaması da `0.00` üretir (bilinmiyor değil,
+    # gerçekten sıfır). Alanın tipi şema uyumluluğu için `Decimal | None` kalır.
     return ContractListResponse(summary=_summary(items, progress_payment_total), items=items)
 
 

@@ -91,10 +91,14 @@ ContractType = Literal["employer", "subcontractor"]
 class ContractSummary(BaseModel):
     """`SZL` 34-38 üst KPI şeridi.
 
-    `progress_payment_total` (P7/H9, spec §9.6): işveren listesinde listelenen
-    sözleşmelerin KÜMÜLATİF BRÜT hakediş toplamı — artık `MetricPlaceholder`
-    DEĞİL düz `Decimal`. Taşeron listesinde `None`'dır: taşeron hakedişi ayrı
-    dilimdir (spec §1.2), sahte bir 0 yerine dürüst boş değer döner.
+    `progress_payment_total` (P7/H9, spec §9.6): listelenen sözleşmelerin
+    KÜMÜLATİF BRÜT (`approved|paid`) hakediş toplamı — artık `MetricPlaceholder`
+    DEĞİL düz `Decimal`. TH-SUM dilimiyle İKİ sekmede de doludur: işveren tarafı
+    `progress_payments`, taşeron tarafı `subcontractor_progress_payments`
+    üzerinden hesaplanır; liste ucu artık iki dalda da değer döner ve hakedişi
+    olmayan küme `0.00`'dır (bilinmiyor değil, gerçekten sıfır). Alan tipi
+    `Decimal | None` KALIR — şema uyumluluğu için (frontend typecheck'i bu
+    dilimde kırılmaz), varsayılanı hâlâ `None`'dır.
 
     ⚠️ **Frontend için kırıcı değişiklik** (spec §10/4): alan artık
     `{available, value, pending_module}` sarmalayıcısı değildir; `gen:api`

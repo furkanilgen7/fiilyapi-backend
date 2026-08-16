@@ -17,12 +17,19 @@ from app.modules.contracts.models import (
     ContractStatus,
     Subcontractor,
     SubcontractorContract,
+    SubcontractorContractItem,
 )
 from app.modules.projects.models import Project
 from app.modules.sites.models import Site
+from app.modules.subcontractor_progress_payments.models import (
+    SubcontractorPaymentStatus,
+    SubcontractorProgressPayment,
+    SubcontractorProgressPaymentLine,
+)
 from app.modules.users.models import User
 
 UC = "/subcontractor-contracts"
+BIRLESIK_UC = "/contracts?type=subcontractor"
 
 
 @pytest.fixture
@@ -420,3 +427,323 @@ async def test_total_filtrelenmis_kumeyi_sayar(
     govde = yanit.json()
     assert govde["total"] == 5
     assert len(govde["items"]) == 1
+
+
+# --- TH-SUM T3: `/contracts?type=subcontractor` KPI şeridi hakediş toplamı ----
+#
+# `summary.progress_payment_total` taşeron sekmesinde `None` DEĞİL: sözleşme
+# başına kümülatif brüt (`approved|paid`) toplanır
+# (`subcontractor_progress_payments.summary.cumulative_gross_by_contracts`).
+# Kurulumdaki tutarlar bilerek BİRBİRİNDEN FARKLIDIR — eşit sayılar toplama,
+# anahtar karışması ve kapsam sızıntısı hatalarını maskeler.
+
+
+async def _hakedis(
+    session,
+    contract: SubcontractorContract,
+    created_by: uuid.UUID,
+    *,
+    sequence_no: int,
+    status: SubcontractorPaymentStatus,
+    unit_price: Decimal,
+    quantity: Decimal,
+) -> SubcontractorProgressPayment:
+    """Tek satırlı hakediş kurar; brüt = `unit_price × 1.000 × quantity`.
+
+    `contract_item_id` NULL bırakılır (model kolonu `nullable`, kısmi tekil
+    indeks yalnız NOT NULL satırları kapsar): bu testlerin ölçtüğü şey satır
+    bağı DEĞİL, KPI şeridine giren brütün kaynağıdır.
+    """
+    payment = SubcontractorProgressPayment(
+        contract_id=contract.id,
+        project_id=contract.project_id,
+        sequence_no=sequence_no,
+        status=status,
+        period_year=2026,
+        period_month=7,
+        vat_pct=Decimal("20"),
+        advance_pct=Decimal("0"),
+        retainage_pct=Decimal("0"),
+        created_by=created_by,
+    )
+    payment.lines = [
+        SubcontractorProgressPaymentLine(
+            code="THS-01",
+            description="KPI test pozu",
+            unit="m³",
+            contract_unit_price=unit_price,
+            coefficient=Decimal("1.000"),
+            quantity=quantity,
+            sort_order=0,
+        )
+    ]
+    session.add(payment)
+    await session.flush()
+    return payment
+
+
+def _toplam(govde: dict) -> Decimal:
+    ham = govde["summary"]["progress_payment_total"]
+    assert ham is not None, "taşeron sekmesinde hakediş toplamı ASLA null olmaz (K4)"
+    return Decimal(ham)
+
+
+@pytest.fixture
+async def hakedisli_sozlesmeler(seeded_db, ornek_proje, kayit_sahibi) -> dict:
+    """Görünür projede iki taşeron sözleşmesi; ikisinin de onaylı hakedişi VAR
+    ve brütleri FARKLI (A = 215.000,00 · B = 5.550,00 → toplam 220.550,00)."""
+    a = await _contract(
+        seeded_db,
+        ornek_proje,
+        kayit_sahibi,
+        contract_no="TSD-SUM-001",
+        subcontractor_name="Toplam A",
+        status=ContractStatus.active,
+        is_draft=False,
+    )
+    b = await _contract(
+        seeded_db,
+        ornek_proje,
+        kayit_sahibi,
+        contract_no="TSD-SUM-002",
+        subcontractor_name="Toplam B",
+        status=ContractStatus.active,
+        is_draft=False,
+    )
+    await _hakedis(
+        seeded_db,
+        a,
+        kayit_sahibi,
+        sequence_no=1,
+        status=SubcontractorPaymentStatus.approved,
+        unit_price=Decimal("21500"),
+        quantity=Decimal("10"),
+    )
+    await _hakedis(
+        seeded_db,
+        b,
+        kayit_sahibi,
+        sequence_no=1,
+        status=SubcontractorPaymentStatus.paid,
+        unit_price=Decimal("1850"),
+        quantity=Decimal("3"),
+    )
+    return {"a": a, "b": b}
+
+
+async def test_birlesik_ozet_iki_sozlesmenin_hakedis_toplamini_verir(
+    client: AsyncClient, admin_headers: dict[str, str], hakedisli_sozlesmeler: dict
+) -> None:
+    yanit = await client.get(BIRLESIK_UC, headers=admin_headers)
+
+    assert yanit.status_code == 200, yanit.text
+    # 215.000,00 + 5.550,00 — tek sözleşmenin brütü tek başına YETMEZ.
+    assert _toplam(yanit.json()) == Decimal("220550.00")
+
+
+async def test_hakedissiz_sozlesmede_toplam_sifir_null_degil(
+    client: AsyncClient, admin_headers: dict[str, str], kayitlar: dict
+) -> None:
+    """K4-a: sözleşme VAR, hiç hakediş YOK → `0.00`. `None` dönerse frontend
+    "modül henüz yazılmadı" tooltip'ini basmaya devam eder."""
+    yanit = await client.get(BIRLESIK_UC, headers=admin_headers)
+
+    assert yanit.status_code == 200, yanit.text
+    govde = yanit.json()
+    assert govde["items"], "kurulum bozuk: sözleşme listesi boş olmamalı"
+    assert govde["summary"]["progress_payment_total"] is not None
+    assert _toplam(govde) == Decimal("0.00")
+
+
+async def test_hic_sozlesme_yokken_toplam_sifir(
+    client: AsyncClient, admin_headers: dict[str, str]
+) -> None:
+    """K4-b: boş liste de `0.00` üretir (işveren dalının boş `rows` davranışı)."""
+    yanit = await client.get(BIRLESIK_UC, headers=admin_headers)
+
+    assert yanit.status_code == 200, yanit.text
+    govde = yanit.json()
+    assert govde["items"] == []
+    assert govde["summary"]["progress_payment_total"] is not None
+    assert _toplam(govde) == Decimal("0.00")
+
+
+async def test_taslak_ve_onay_bekleyen_hakedis_toplama_girmez(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    seeded_db,
+    ornek_proje: Project,
+    kayit_sahibi: uuid.UUID,
+) -> None:
+    """K3: aynı sözleşmede onaylı + taslak + onay bekleyen; üçünün brütü de
+    FARKLI, yalnız onaylının brütü toplama girer."""
+    sozlesme = await _contract(
+        seeded_db,
+        ornek_proje,
+        kayit_sahibi,
+        contract_no="TSD-SUM-010",
+        subcontractor_name="Statü Karışımı",
+        status=ContractStatus.active,
+        is_draft=False,
+    )
+    await _hakedis(  # 10 × 21.500 = 215.000,00 (SAYILIR)
+        seeded_db,
+        sozlesme,
+        kayit_sahibi,
+        sequence_no=1,
+        status=SubcontractorPaymentStatus.approved,
+        unit_price=Decimal("21500"),
+        quantity=Decimal("10"),
+    )
+    await _hakedis(  # 7 × 21.500 = 150.500,00 (SAYILMAZ)
+        seeded_db,
+        sozlesme,
+        kayit_sahibi,
+        sequence_no=2,
+        status=SubcontractorPaymentStatus.draft,
+        unit_price=Decimal("21500"),
+        quantity=Decimal("7"),
+    )
+    await _hakedis(  # 2 × 1.850 = 3.700,00 (SAYILMAZ)
+        seeded_db,
+        sozlesme,
+        kayit_sahibi,
+        sequence_no=3,
+        status=SubcontractorPaymentStatus.pending_approval,
+        unit_price=Decimal("1850"),
+        quantity=Decimal("2"),
+    )
+
+    yanit = await client.get(BIRLESIK_UC, headers=admin_headers)
+
+    assert yanit.status_code == 200, yanit.text
+    assert _toplam(yanit.json()) == Decimal("215000.00")
+
+
+async def test_gorunmeyen_projenin_hakedisi_toplama_sizmaz(
+    client: AsyncClient,
+    kisitli_headers: dict[str, str],
+    seeded_db,
+    ornek_proje: Project,
+    gorunmeyen_proje: Project,
+    kayit_sahibi: uuid.UUID,
+) -> None:
+    """Kapsam: görünmeyen projedeki sözleşmenin onaylı hakedişi (500.000,00 —
+    görünürden BÜYÜK ve FARKLI) KPI şeridine SIZMAMALI."""
+    gorunur = await _contract(
+        seeded_db,
+        ornek_proje,
+        kayit_sahibi,
+        contract_no="TSD-SUM-020",
+        subcontractor_name="Görünür Taşeron",
+        status=ContractStatus.active,
+        is_draft=False,
+    )
+    gizli = await _contract(
+        seeded_db,
+        gorunmeyen_proje,
+        kayit_sahibi,
+        contract_no="TSD-SUM-021",
+        subcontractor_name="Gizli Taşeron",
+        status=ContractStatus.active,
+        is_draft=False,
+    )
+    await _hakedis(  # 3 × 1.850 = 5.550,00
+        seeded_db,
+        gorunur,
+        kayit_sahibi,
+        sequence_no=1,
+        status=SubcontractorPaymentStatus.approved,
+        unit_price=Decimal("1850"),
+        quantity=Decimal("3"),
+    )
+    await _hakedis(  # 20 × 25.000 = 500.000,00
+        seeded_db,
+        gizli,
+        kayit_sahibi,
+        sequence_no=1,
+        status=SubcontractorPaymentStatus.approved,
+        unit_price=Decimal("25000"),
+        quantity=Decimal("20"),
+    )
+
+    yanit = await client.get(BIRLESIK_UC, headers=kisitli_headers)
+
+    assert yanit.status_code == 200, yanit.text
+    govde = yanit.json()
+    assert all(k["id"] != str(gizli.id) for k in govde["items"])
+    assert any(k["id"] == str(gorunur.id) for k in govde["items"])
+    assert _toplam(govde) == Decimal("5550.00")
+
+
+async def test_project_id_suzgeci_toplami_da_daraltir(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    seeded_db,
+    ornek_proje: Project,
+    gorunmeyen_proje: Project,
+    kayit_sahibi: uuid.UUID,
+) -> None:
+    """İKİ SAYAÇ AYRI ŞEYLERDİR: `total_amount` sözleşme KALEMLERİNDEN,
+    `progress_payment_total` HAKEDİŞLERDEN gelir. Kurulum ikisini bilerek
+    ayrıştırır (5.000,00 ↔ 215.000,00) — eşit olsalardı test hiçbir şey
+    kanıtlamazdı."""
+    icerideki = await _contract(
+        seeded_db,
+        ornek_proje,
+        kayit_sahibi,
+        contract_no="TSD-SUM-030",
+        subcontractor_name="Süzgeç İçi",
+        status=ContractStatus.active,
+        is_draft=False,
+    )
+    disaridaki = await _contract(
+        seeded_db,
+        gorunmeyen_proje,
+        kayit_sahibi,
+        contract_no="TSD-SUM-031",
+        subcontractor_name="Süzgeç Dışı",
+        status=ContractStatus.active,
+        is_draft=False,
+    )
+    seeded_db.add(
+        SubcontractorContractItem(
+            contract_id=icerideki.id,
+            code="01.001",
+            description="Kazı",
+            unit="m3",
+            quantity=Decimal("100"),
+            unit_price=Decimal("50.00"),
+        )
+    )
+    await seeded_db.flush()
+    await _hakedis(  # 10 × 21.500 = 215.000,00
+        seeded_db,
+        icerideki,
+        kayit_sahibi,
+        sequence_no=1,
+        status=SubcontractorPaymentStatus.approved,
+        unit_price=Decimal("21500"),
+        quantity=Decimal("10"),
+    )
+    await _hakedis(  # 8 × 1.850 = 14.800,00 — süzgeç dışı, toplama GİRMEZ
+        seeded_db,
+        disaridaki,
+        kayit_sahibi,
+        sequence_no=1,
+        status=SubcontractorPaymentStatus.approved,
+        unit_price=Decimal("1850"),
+        quantity=Decimal("8"),
+    )
+
+    suzgecsiz = await client.get(BIRLESIK_UC, headers=admin_headers)
+    assert suzgecsiz.status_code == 200, suzgecsiz.text
+    assert _toplam(suzgecsiz.json()) == Decimal("229800.00")
+
+    yanit = await client.get(f"{BIRLESIK_UC}&project_id={ornek_proje.id}", headers=admin_headers)
+
+    assert yanit.status_code == 200, yanit.text
+    govde = yanit.json()
+    assert [k["id"] for k in govde["items"]] == [str(icerideki.id)]
+    assert Decimal(govde["summary"]["total_amount"]) == Decimal("5000.00")
+    assert _toplam(govde) == Decimal("215000.00")
