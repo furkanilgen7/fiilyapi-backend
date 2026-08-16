@@ -131,6 +131,10 @@ def test_document_columns_match_spec():
         "mime_type",
         "size_bytes",
         "content",
+        # FRM-1 (BOR-TEMIZ T2) — üç künye alanı, hepsi nullable.
+        "document_no",
+        "issued_at",
+        "note",
         "valid_until",
         "created_at",
         "updated_at",

@@ -30,6 +30,7 @@ from app.modules.documents import files
 from app.modules.equipment import document_repository as repository
 from app.modules.equipment.document_schemas import (
     EquipmentDocumentsSummaryResponse,
+    EquipmentDocumentUpdate,
     EquipmentExpiredDocument,
     EquipmentExpiringDocument,
 )
@@ -75,6 +76,9 @@ async def create_document(
     filename: str,
     content: bytes,
     valid_until: date | None,
+    document_no: str | None = None,
+    issued_at: date | None = None,
+    note: str | None = None,
 ) -> tuple[EquipmentDocument, EquipmentDocumentType, str]:
     """Multipart yükleme — kapı SIRASI SABİTTİR (`documents` T3 deseni):
 
@@ -93,10 +97,40 @@ async def create_document(
         mime_type=files.mime_for_filename(filename),
         size_bytes=len(content),
         content=content,
+        document_no=document_no,
+        issued_at=issued_at,
+        note=note,
         valid_until=valid_until,
     )
     document = await repository.create_document(session, document)
     detail = f"Ekipman belgesi yüklendi: {equipment.name} · {doc_type.name}"
+    return document, doc_type, detail
+
+
+async def update_document(
+    session: AsyncSession,
+    actor: User,
+    document_id: uuid.UUID,
+    data: EquipmentDocumentUpdate,
+) -> tuple[EquipmentDocument, EquipmentDocumentType, str]:
+    """Kısmi künye güncellemesi (K2) — KAPSAM DÖRT ALAN.
+
+    Görünmeyen/var olmayan belge → 404 (AYNI cümle, `_visible_document` kapısı;
+    403 DEĞİL: kaydın VARLIĞI sızdırılmaz). Dosya baytlarına, adına, mime
+    tipine ve belge tipine DOKUNULMAZ — şema zaten o alanları taşımaz.
+
+    `exclude_unset`: gönderilmeyen alan atlanır, açıkça `null` gönderilen alan
+    temizlenir (`update_personnel_document` emsalinin birebiri).
+    """
+    document, equipment = await _visible_document(session, actor, document_id)
+
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(document, field, value)
+    await session.flush()
+    await session.refresh(document)
+
+    doc_type = await _resolve_type(session, document.type_id)
+    detail = f"Ekipman belgesi güncellendi: {equipment.name} · {doc_type.name}"
     return document, doc_type, detail
 
 

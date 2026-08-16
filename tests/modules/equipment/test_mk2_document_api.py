@@ -436,3 +436,275 @@ async def test_ozet_zorunlu_tip_yuklenince_eksik_dusuyor(
 
     resp = await client.get("/equipment/documents/summary", headers=admin_headers)
     assert resp.json()["missing"] == 0
+
+
+# --- FRM-1: document_no / issued_at / note + PATCH ----------------------------
+#
+# 🔴 Bu bloğun TAMAMI API ucundan geçer (POST = multipart Form, PATCH = JSON
+# gövde). Modeli doğrudan kuran bir test şema katmanını ASLA sınamaz — bu
+# dilimin bilinen ana riski.
+
+
+async def test_post_uc_yeni_alani_kaydeder(
+    client: AsyncClient, seeded_db: AsyncSession, ekipman_fabrikasi, admin_headers
+) -> None:
+    """POST multipart Form alanları: `document_no` · `issued_at` · `note`."""
+    ekipman = await ekipman_fabrikasi("Kule Vinç KV-01")
+    types = await _seed_types(seeded_db)
+
+    resp = await client.post(
+        f"/equipment/{ekipman.id}/documents",
+        data={
+            "type_id": str(types["periodic_inspection"].id),
+            "document_no": "TC-48-MUA-2026",
+            "issued_at": "2026-01-15",
+            "note": "Yıllık periyodik muayene.",
+            "valid_until": "2027-01-01",
+        },
+        files=_multipart(),
+        headers=admin_headers,
+    )
+
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["document_no"] == "TC-48-MUA-2026"
+    assert body["issued_at"] == "2026-01-15"
+    assert body["note"] == "Yıllık periyodik muayene."
+    assert body["valid_until"] == "2027-01-01"
+
+    liste = await client.get(f"/equipment/{ekipman.id}/documents", headers=admin_headers)
+    (satir,) = liste.json()["items"]
+    assert satir["document_no"] == "TC-48-MUA-2026"
+    assert satir["issued_at"] == "2026-01-15"
+    assert satir["note"] == "Yıllık periyodik muayene."
+
+
+async def test_post_yeni_alanlar_hic_gecilmezse_null_kalir(
+    client: AsyncClient, seeded_db: AsyncSession, ekipman_fabrikasi, admin_headers
+) -> None:
+    """🔴 VARSAYILAN YOL: üç alan HİÇ gönderilmez — mevcut davranış bozulmaz."""
+    ekipman = await ekipman_fabrikasi("Kule Vinç KV-01")
+    types = await _seed_types(seeded_db)
+
+    resp = await client.post(
+        f"/equipment/{ekipman.id}/documents",
+        data={"type_id": str(types["manual"].id)},
+        files=_multipart(),
+        headers=admin_headers,
+    )
+
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["document_no"] is None
+    assert body["issued_at"] is None
+    assert body["note"] is None
+    assert body["valid_until"] is None
+
+    seeded_db.expire_all()
+    stored = await seeded_db.get(EquipmentDocument, body["id"])
+    assert stored.document_no is None
+    assert stored.issued_at is None
+    assert stored.note is None
+
+
+async def _upload_for_patch(client, seeded_db, ekipman_fabrikasi, headers, **form) -> tuple:
+    ekipman = await ekipman_fabrikasi("Kule Vinç KV-01")
+    types = await _seed_types(seeded_db)
+    data = {"type_id": str(types["periodic_inspection"].id), **form}
+    resp = await client.post(
+        f"/equipment/{ekipman.id}/documents",
+        data=data,
+        files=_multipart(),
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+    return ekipman, resp.json()["id"]
+
+
+async def test_patch_dort_alani_gunceller(
+    client: AsyncClient, seeded_db: AsyncSession, ekipman_fabrikasi, admin_headers
+) -> None:
+    _ekipman, doc_id = await _upload_for_patch(client, seeded_db, ekipman_fabrikasi, admin_headers)
+
+    resp = await client.patch(
+        f"/equipment/documents/{doc_id}",
+        json={
+            "document_no": "TC-48-MUA-2026",
+            "issued_at": "2026-02-01",
+            "note": "Düzeltildi.",
+            "valid_until": "2027-02-01",
+        },
+        headers=admin_headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["document_no"] == "TC-48-MUA-2026"
+    assert body["issued_at"] == "2026-02-01"
+    assert body["note"] == "Düzeltildi."
+    assert body["valid_until"] == "2027-02-01"
+    # Künye alanları PATCH kapsamı DIŞINDA — değişmemiş olmalı.
+    assert body["filename"] == "muayene.pdf"
+    assert body["type_code"] == "periodic_inspection"
+
+
+async def test_patch_gonderilmeyen_alana_DOKUNULMAZ(
+    client: AsyncClient, seeded_db: AsyncSession, ekipman_fabrikasi, admin_headers
+) -> None:
+    """`exclude_unset`: "gönderilmedi" ≠ "null gönderildi" (birinci yarı)."""
+    _ekipman, doc_id = await _upload_for_patch(
+        client,
+        seeded_db,
+        ekipman_fabrikasi,
+        admin_headers,
+        document_no="ESKI-NO",
+        issued_at="2026-01-01",
+        note="eski not",
+        valid_until="2027-01-01",
+    )
+
+    resp = await client.patch(
+        f"/equipment/documents/{doc_id}",
+        json={"note": "yeni not"},
+        headers=admin_headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["note"] == "yeni not"
+    assert body["document_no"] == "ESKI-NO"
+    assert body["issued_at"] == "2026-01-01"
+    assert body["valid_until"] == "2027-01-01"
+
+
+async def test_patch_null_gonderilen_alan_TEMIZLENIR(
+    client: AsyncClient, seeded_db: AsyncSession, ekipman_fabrikasi, admin_headers
+) -> None:
+    """`exclude_unset`: açıkça `null` göndermek alanı temizler (ikinci yarı)."""
+    _ekipman, doc_id = await _upload_for_patch(
+        client,
+        seeded_db,
+        ekipman_fabrikasi,
+        admin_headers,
+        document_no="ESKI-NO",
+        issued_at="2026-01-01",
+        note="eski not",
+        valid_until="2027-01-01",
+    )
+
+    resp = await client.patch(
+        f"/equipment/documents/{doc_id}",
+        json={"document_no": None, "issued_at": None, "note": None, "valid_until": None},
+        headers=admin_headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["document_no"] is None
+    assert body["issued_at"] is None
+    assert body["note"] is None
+    assert body["valid_until"] is None
+
+
+async def test_patch_dosya_kunyesi_DEGISTIRILEMEZ(
+    client: AsyncClient, seeded_db: AsyncSession, ekipman_fabrikasi, admin_headers
+) -> None:
+    """🔴 KAPSAM DAR: dosya adı/mime/tip gövdede gönderilse bile YOK SAYILIR."""
+    _ekipman, doc_id = await _upload_for_patch(client, seeded_db, ekipman_fabrikasi, admin_headers)
+    types = await _seed_types(seeded_db)
+
+    resp = await client.patch(
+        f"/equipment/documents/{doc_id}",
+        json={
+            "filename": "sahte.exe",
+            "mime_type": "application/x-msdownload",
+            "type_id": str(types["manual"].id),
+            "size_bytes": 1,
+            "note": "kapsam denemesi",
+        },
+        headers=admin_headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["note"] == "kapsam denemesi"
+    assert body["filename"] == "muayene.pdf"
+    assert body["mime_type"] == "application/pdf"
+    assert body["type_code"] == "periodic_inspection"
+    assert body["size_bytes"] == len(PDF)
+
+    seeded_db.expire_all()
+    stored = await seeded_db.get(EquipmentDocument, doc_id)
+    assert stored.content == PDF
+
+
+async def test_patch_var_olmayan_belge_404(
+    client: AsyncClient, seeded_db: AsyncSession, admin_headers
+) -> None:
+    resp = await client.patch(
+        "/equipment/documents/00000000-0000-0000-0000-000000000000",
+        json={"note": "x"},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 404, resp.text
+
+
+async def test_patch_gorunmeyen_ekipmanin_belgesi_404(
+    client: AsyncClient,
+    seeded_db: AsyncSession,
+    ekipman_fabrikasi,
+    gorunmeyen_santiye,
+    admin_headers,
+    sef_headers,
+) -> None:
+    """IDOR korkuluğu mevcut uçlarla AYNI: 403 değil 404 (varlık sızdırılmaz)."""
+    ekipman = await ekipman_fabrikasi("Marina Vinç", site=gorunmeyen_santiye)
+    types = await _seed_types(seeded_db)
+    create_resp = await client.post(
+        f"/equipment/{ekipman.id}/documents",
+        data={"type_id": str(types["manual"].id)},
+        files=_multipart(),
+        headers=admin_headers,
+    )
+    doc_id = create_resp.json()["id"]
+
+    resp = await client.patch(
+        f"/equipment/documents/{doc_id}",
+        json={"note": "x"},
+        headers=sef_headers,
+    )
+    assert resp.status_code == 404, resp.text
+
+
+async def test_patch_okuma_yetkisi_yazamaz_403(
+    client: AsyncClient, seeded_db: AsyncSession, ekipman_fabrikasi, admin_headers, muhendis_headers
+) -> None:
+    _ekipman, doc_id = await _upload_for_patch(client, seeded_db, ekipman_fabrikasi, admin_headers)
+
+    resp = await client.patch(
+        f"/equipment/documents/{doc_id}",
+        json={"note": "x"},
+        headers=muhendis_headers,
+    )
+    assert resp.status_code == 403, resp.text
+
+
+async def test_patch_denetim_gunlugu_yazar(
+    client: AsyncClient, seeded_db: AsyncSession, ekipman_fabrikasi, admin_headers
+) -> None:
+    from app.modules.audit.models import AuditAction, AuditLog
+
+    _ekipman, doc_id = await _upload_for_patch(client, seeded_db, ekipman_fabrikasi, admin_headers)
+
+    resp = await client.patch(
+        f"/equipment/documents/{doc_id}",
+        json={"note": "denetim"},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    seeded_db.expire_all()
+    rows = (
+        await seeded_db.scalars(select(AuditLog).where(AuditLog.action == AuditAction.update))
+    ).all()
+    assert any("Ekipman belgesi" in r.detail for r in rows), [r.detail for r in rows]

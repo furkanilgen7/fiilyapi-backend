@@ -8,7 +8,11 @@ künyeyi taşır, baytlara erişim indirme ucunun `StreamingResponse`'udur
 import uuid
 from datetime import date, datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+DOCUMENT_NO_MAX_LENGTH = 100
+"""K1 — `equipment_documents.document_no` kolonuyla AYNI tavan (emsal:
+`contract_no` / `serial_no` / `invoice_no`). Tek yerde tanımlıdır."""
 
 
 class EquipmentDocumentTypeResponse(BaseModel):
@@ -40,12 +44,35 @@ class EquipmentDocumentResponse(BaseModel):
     filename: str
     mime_type: str
     size_bytes: int
+    document_no: str | None
+    issued_at: date | None
     valid_until: date | None
+    note: str | None
     created_at: datetime
 
 
 class EquipmentDocumentListResponse(BaseModel):
     items: list[EquipmentDocumentResponse]
+
+
+class EquipmentDocumentUpdate(BaseModel):
+    """`PATCH /equipment/documents/{id}` — KAPSAM DAR (K2).
+
+    Yalnız DÖRT künye alanı güncellenir: `document_no` · `issued_at` · `note` ·
+    `valid_until`. Dosyanın kendisi (`content`/`filename`/`mime_type`/
+    `size_bytes`) ve belgenin KİMLİĞİ (`type_id`) DEĞİŞMEZ — yanlış tiple ya da
+    yanlış dosyayla açılan kayıt silinip yeniden yüklenir
+    (`PersonnelDocumentUpdate` emsalinin birebiri). Gövdeye bu alanlar
+    gönderilse bile Pydantic onları YOK SAYAR.
+
+    `exclude_unset` ile "gönderilmedi" ≠ "null gönderildi" ayrımı korunur:
+    gönderilmeyen alana DOKUNULMAZ, açıkça `null` gönderilen alan TEMİZLENİR.
+    """
+
+    document_no: str | None = Field(default=None, max_length=DOCUMENT_NO_MAX_LENGTH)
+    issued_at: date | None = None
+    note: str | None = None
+    valid_until: date | None = None
 
 
 class EquipmentExpiringDocument(BaseModel):
