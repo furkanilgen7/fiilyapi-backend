@@ -82,8 +82,17 @@ from app.modules.accounting.trial_balance import year_start
 __all__ = ["build_balance_sheet", "select_balance_sheet_rows"]
 
 
+def _net() -> ColumnElement[Decimal]:
+    """`SUM(debit − credit)` — dış `WHERE`ın penceresi (kümülatif `<= as_of`).
+
+    `COALESCE` ŞARTTIR: `SUM()` satırsız kümede NULL döner (`balance.py`nin NULL
+    yutması tuzağı).
+    """
+    return func.coalesce(func.sum(JournalLine.debit - JournalLine.credit), literal(ZERO))
+
+
 def _kosullu_net(kosul: ColumnElement[bool]) -> ColumnElement[Decimal]:
-    """`SUM(CASE WHEN kosul THEN debit − credit ELSE 0 END)` — TEK yazım.
+    """`SUM(CASE WHEN kosul THEN debit − credit ELSE 0 END)` — İÇ pencere.
 
     `else_` AÇIKTIR: bırakılsaydı pencereye hiç satır düşmeyen bir hesapta
     `SUM()` NULL döner ve dıştaki `COALESCE`a bağımlılık artardı. İki katman da
@@ -117,7 +126,7 @@ def select_balance_sheet_rows(as_of: date) -> Select:
             ChartAccount.code.label("code"),
             ChartAccount.account_type.label("account_type"),
             ChartAccount.is_contra.label("is_contra"),
-            _kosullu_net(literal(True)).label("net"),
+            _net().label("net"),
             _kosullu_net(JournalEntry.entry_date >= yil_basi).label("ytd_net"),
         )
         .select_from(JournalLine)

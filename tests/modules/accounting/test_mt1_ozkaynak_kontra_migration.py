@@ -310,10 +310,17 @@ async def test_is_contra_UCTAN_yazilir_ve_okunur(
 
 
 def test_alembic_has_single_head():
-    """İki head = canlıda deploy kilitlenmesi (`alembic upgrade head` patlar)."""
+    """İki head = canlıda deploy kilitlenmesi (`alembic upgrade head` patlar).
+
+    🔴 `DATABASE_URL` override'ı BURADA DA verilir. `heads` komutu bugün bir
+    bağlantı açmıyor ama `.env` UZAK Railway'i gösteriyor ve alembic'in bir
+    alt komutunun ileride motor kurması hiçbir uyarı vermeden canlıya bağlanmak
+    demektir (MU-1'de bir kez yaşandı). Kural tek cümledir: **hiçbir alembic
+    komutu override'sız koşmaz.**"""
     result = subprocess.run(
         [*ALEMBIC_CMD, "heads"],
         cwd=BACKEND_DIR,
+        env={**os.environ, "DATABASE_URL": _asyncpg_dsn("postgres")},
         capture_output=True,
         text=True,
         timeout=120,

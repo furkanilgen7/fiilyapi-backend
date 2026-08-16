@@ -199,7 +199,9 @@ def select_cash_flow_lines(year: int, month: int) -> Select:
     )
 
 
-def _nakit_serisi(kovalar: Sequence, month: int) -> tuple[Decimal, list[MonthlyCashPoint], Decimal]:
+def _nakit_serisi(
+    kovalar: Sequence, year: int, month: int
+) -> tuple[Decimal, list[MonthlyCashPoint], Decimal]:
     """Açılış · aylık KAPANIŞ BAKİYELERİ · kapanış — kümülatif toplamla.
 
     🔴 Seri AKIŞ DEĞİL BAKİYEDİR (grafiğin adı `Aylık Nakit Pozisyonu`, NA:109):
@@ -214,7 +216,7 @@ def _nakit_serisi(kovalar: Sequence, month: int) -> tuple[Decimal, list[MonthlyC
     yuruyen = acilis
     for ay in range(1, month + 1):
         yuruyen += aylik_hareket.get(ay, ZERO)
-        seri.append(MonthlyCashPoint(year=0, month=ay, closing_cash=yuruyen))
+        seri.append(MonthlyCashPoint(year=year, month=ay, closing_cash=yuruyen))
     return acilis, seri, yuruyen
 
 
@@ -270,7 +272,7 @@ async def build_cash_flow_statement(
     kusur).
     """
     kovalar = (await session.execute(select_cash_windows(year, month))).mappings().all()
-    acilis, seri, kapanis = _nakit_serisi(kovalar, month)
+    acilis, seri, kapanis = _nakit_serisi(kovalar, year, month)
 
     tutarlar: dict[tuple[str, str], Decimal] = {}
     kodlar: dict[tuple[str, str], list[str]] = {}
@@ -297,8 +299,5 @@ async def build_cash_flow_statement(
         net_change=net_degisim,
         opening_cash=acilis,
         closing_cash=kapanis,
-        monthly_cash=[
-            MonthlyCashPoint(year=year, month=nokta.month, closing_cash=nokta.closing_cash)
-            for nokta in seri
-        ],
+        monthly_cash=seri,
     )
