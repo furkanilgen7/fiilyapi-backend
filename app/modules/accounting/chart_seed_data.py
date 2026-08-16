@@ -20,6 +20,12 @@ Bu yüzden şunlar **TOHUMLANMAZ**:
 
 * **`59`** — `EXCLUDED_BALANCE_SHEET_GROUPS`. Kapanış hesabıdır; üründe kapanış
   akışı yoktur ve `Dönem Net Kârı` zaten `6xx`/`7xx`ten türer (çift sayım).
+* 🔴 **`69`** — aynı ailenin GELİR TABLOSU tarafı (şef kararı, T2). Haritada
+  açık anahtarı vardır (`CASH_FLOW_GROUPS["69"]`) ama `690`/`692` bir KAPANIŞ
+  AKTARIM hesabıdır: `period_profit()` sınıf 6/7'yi `Σ(alacak − borç)` ile
+  sayar, bu hesaplara fiş atılırsa dönem kârı İKİ KEZ sayılır. Kapanış akışı
+  olmayan bir üründe zaten kullanılamazlar → kazanç yok, sessiz para hatası
+  riski var.
 * **Sınıf 8 ve 9** — haritada hiç yoktur, `_UNMAPPED_LINES` yedeğine düşerlerdi.
 * **`14`, `16`, `20`, `21`, `31`, `41`, `45`, `46`, `51`, `53`, `55`, `56`** —
   `GROUP_SOURCE_NOTES` bunlar için *"TDHP'de kullanılmayan grup"* diyor. Harita
@@ -69,11 +75,15 @@ Fonlar`, `760 Pazarlama Giderleri` …). Kalanında standart TDHP adları.
 `(-)` ADIN parçasıdır ve korunur.
 """
 
+import uuid
 from dataclasses import dataclass
 
-from app.modules.accounting.models import ChartAccountType
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.ext.asyncio import AsyncSession
 
-__all__ = ["CHART_ACCOUNTS", "ChartSeedAccount"]
+from app.modules.accounting.models import ChartAccount, ChartAccountType
+
+__all__ = ["CHART_ACCOUNTS", "ChartSeedAccount", "seed_chart_of_accounts"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -434,15 +444,13 @@ CHART_ACCOUNTS: tuple[ChartSeedAccount, ...] = (
     _A("680", "Çalışmayan Kısım Gider ve Zararları (-)", _T.expense),
     _A("681", "Önceki Dönem Gider ve Zararları (-)", _T.expense),
     _A("689", "Diğer Olağandışı Gider ve Zararlar (-)", _T.expense),
-    # ⚠️ Grup `69` gerçek bir TDHP grubudur ve `CASH_FLOW_GROUPS`ta AÇIK
-    # anahtarı vardır, bu yüzden tohumlanır. Ama üründe KAPANIŞ AKIŞI YOKTUR:
-    # bu hesaplara fiş atılırsa `period_profit()` onları da sayar ve kâr İKİ KEZ
-    # görünür (`59`un dışlanma gerekçesinin gelir tablosu tarafı). Kart açık,
-    # kullanım açık borçtur.
-    _A("69", "Dönem Net Kârı veya Zararı", _T.revenue),
-    _A("690", "Dönem Kârı veya Zararı", _T.revenue),
-    _A("691", "Dönem Kârı Vergi ve Diğer Yasal Yükümlülük Karşılıkları (-)", _T.expense),
-    _A("692", "Dönem Net Kârı veya Zararı", _T.revenue),
+    # 🔴 ŞEF KARARI (T2) — GRUP `69` TOHUMLANMAZ (`690`/`691`/`692` dâhil).
+    # `59`un dışlanma gerekçesinin GELİR TABLOSU tarafıdır: `period_profit()`
+    # sınıf 6/7'yi `Σ(alacak − borç)` ile sayar ve `690`/`692` bir KAPANIŞ
+    # AKTARIM hesabıdır — fiş atılırsa dönem kârı İKİ KEZ sayılır. Üründe
+    # kapanış akışı YOKTUR (`statement_map.py:222`), dolayısıyla bu hesaplar
+    # zaten kullanılamaz: dâhil etmenin kazancı yok, sessiz para hatası riski
+    # var. Kullanıcı gerçekten kapanış yapacaksa kartı UI'dan kendi açar.
     # ===================================================================== #
     # SINIF 7 — MALİYET HESAPLARI (7/A + 7/B)
     # 🔴 K4: tamamı `is_contra=False`. Tür = DOĞAL BAKİYE YÖNÜ; yansıtma
@@ -499,3 +507,49 @@ CHART_ACCOUNTS: tuple[ChartSeedAccount, ...] = (
     _A("798", "Gider Çeşitleri Yansıtma Hesabı", _T.revenue),
     _A("799", "Üretim Maliyet Hesabı", _T.expense),
 )
+
+
+async def seed_chart_of_accounts(session: AsyncSession) -> None:
+    """`CHART_ACCOUNTS`u `chart_of_accounts` tablosuna yükler — idempotent.
+
+    🔴 **BU FONKSİYON HİÇBİR YERDEN ÇAĞRILMAZ ve bu bir eksiklik DEĞİL.**
+    Tohumun canlıdaki mekanizması MIGRATION'dır (`Dockerfile:22` açılışta
+    `alembic upgrade head` koşar). Bu katman migration verisinin **ölçülebilir
+    İKİZİDİR**: `tests/conftest.py:57-61` şemayı `Base.metadata.create_all` ile
+    kurar ve **`alembic upgrade` KOŞMAZ** — tek katmanlı bir migration normal
+    suite'te tamamen bekçisiz kalırdı. T5 iki katmanın birebir aynı olduğunu
+    iddia eder.
+
+    🔴 **Kimse bunu `lifespan`a bağlamasın.** `lifespan` testlerde HİÇ koşmaz
+    (`conftest.py:106` `ASGITransport(app=app)`) ve hataları yutulur
+    (`main.py:61-66`) → tohum sessizce hiç yazılmamış olabilir ve bunu hiçbir
+    test göremezdi.
+
+    🔴 **K6 — İDEMPOTENS: `ON CONFLICT (code) DO NOTHING`.** Çakışma hedefi
+    `uq_chart_of_accounts_code`. `DO UPDATE` yazılsaydı, kullanıcının kendi
+    açtığı `100` kartının adı/türü/kontrası her tohum koşusunda TDHP
+    varsayılanına geri döner, kullanıcı emeği yok olurdu. Emsal:
+    `periods_service.lock_period` (UPSERT-SONRA-KİLİTLE).
+
+    Tek toplu INSERT'tir: satır başına bir gidiş-dönüş 316 tur ederdi.
+    `id` burada ÜRETİLİR — Core INSERT'te ORM örneği yoktur, kolon
+    varsayılanına güvenmek yerine açıkça yazmak migration kopyasıyla (T3, ham
+    SQL) aynı biçimi korur.
+    """
+    await session.execute(
+        pg_insert(ChartAccount)
+        .values(
+            [
+                {
+                    "id": uuid.uuid4(),
+                    "code": row.code,
+                    "name": row.name,
+                    "account_type": row.account_type,
+                    "is_contra": row.is_contra,
+                }
+                for row in CHART_ACCOUNTS
+            ]
+        )
+        .on_conflict_do_nothing(index_elements=["code"])
+    )
+    await session.flush()
