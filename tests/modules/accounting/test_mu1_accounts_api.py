@@ -413,9 +413,11 @@ async def test_fis_satiri_OLMAYAN_hesabin_altina_cocuk_acilabilir(
 
 
 async def test_ebeveyni_HIC_OLMAYAN_kod_acilabilir(client, muhasebe_headers) -> None:
-    """Ebeveyn kaydı ZORUNLU DEĞİLDİR: hesap planı boş açılır (R14) ve kullanıcı
-    doğrudan `120.01` girebilir. Zorunlu kılınsaydı hiçbir mockup'ın istemediği
-    bir sıralama dayatılırdı."""
+    """Ebeveyn kaydı ZORUNLU DEĞİLDİR: `NNN.NN` alt hesap `e5f6a7b8c9d0`
+    tohumunda hiç yazılmaz (K2) ve test ortamı migration koşturmadığı için
+    (`conftest.py` yalnız `create_all` yapar) `120` ana hesabı da yoktur —
+    kullanıcı doğrudan `120.01` girebilir (R14). Zorunlu kılınsaydı hiçbir
+    mockup'ın istemediği bir sıralama dayatılırdı."""
     resp = await client.post(_YOL, json=_govde(code="120.01"), headers=muhasebe_headers)
     assert resp.status_code == 201, resp.text
 

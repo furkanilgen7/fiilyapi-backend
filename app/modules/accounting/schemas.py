@@ -126,9 +126,11 @@ class ChartAccountCreate(BaseModel):
     `is_active` gövdeden gelebilir çünkü kullanımdan kaldırma yolu odur (repo
     kanonu: DELETE değil `is_active=false`).
 
-    Ebeveyn kaydı ZORUNLU DEĞİLDİR: hesap planı boş açılır (R14) ve kullanıcı
-    doğrudan `120.01` girebilir. Zorunlu kılınsaydı hiçbir mockup'ın istemediği
-    bir giriş sırası dayatılırdı.
+    Ebeveyn kaydı ZORUNLU DEĞİLDİR: `NNN.NN` alt hesap `e5f6a7b8c9d0`
+    tohumunda hiç YAZILMAZ (K2) ve kullanıcı doğrudan `120.01` girebilir; ayrıca
+    `120` gibi tohumlanmış bir ana hesabı silmiş ya da hiç migrate etmemiş
+    olabilir (R14). Zorunlu kılınsaydı hiçbir mockup'ın istemediği bir giriş
+    sırası dayatılırdı.
     """
 
     model_config = _SIKI
