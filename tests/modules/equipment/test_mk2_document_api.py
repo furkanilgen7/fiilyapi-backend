@@ -638,6 +638,63 @@ async def test_patch_dosya_kunyesi_DEGISTIRILEMEZ(
     assert stored.content == PDF
 
 
+async def test_post_document_no_100_karakterde_kabul_101de_422(
+    client: AsyncClient, seeded_db: AsyncSession, ekipman_fabrikasi, admin_headers
+) -> None:
+    """T6 MUTASYON TURUNDA açılan boşluk: POST'un `max_length=100` kapısı
+    KÖRDÜ — kaldırıldığında hiçbir test kırılmıyordu.
+
+    🔴 Burada `documents.filename`in aksine İKİNCİ BİR KATMAN YOKTUR: doğrulama
+    düşerse 101 karakter doğrudan `varchar(100)` kolonuna gider ve kullanıcı
+    düzeltilebilir bir 422 yerine 500 (`StringDataRightTruncation`) görür.
+    Sınır `equipment_documents.document_no` kolonuyla AYNI olmalıdır.
+    """
+    ekipman = await ekipman_fabrikasi("Kule Vinç KV-01")
+    types = await _seed_types(seeded_db)
+    ortak = {"type_id": str(types["periodic_inspection"].id)}
+
+    tam = await client.post(
+        f"/equipment/{ekipman.id}/documents",
+        data={**ortak, "document_no": "N" * 100},
+        files=_multipart(),
+        headers=admin_headers,
+    )
+    asan = await client.post(
+        f"/equipment/{ekipman.id}/documents",
+        data={**ortak, "document_no": "N" * 101},
+        files=_multipart(),
+        headers=admin_headers,
+    )
+
+    assert tam.status_code == 201, tam.text
+    assert tam.json()["document_no"] == "N" * 100
+    assert asan.status_code == 422, asan.text
+
+
+async def test_patch_document_no_100_karakterde_kabul_101de_422(
+    client: AsyncClient, seeded_db: AsyncSession, ekipman_fabrikasi, admin_headers
+) -> None:
+    """POST'taki ikizin PATCH yarısı. İKİSİ BİRDEN gerekli: tek giriş noktasına
+    konan sınır, öteki uçtan girilen sınırsız değeri engellemez (`documents`
+    modülünün `description` tavanı emsalinin birebiri)."""
+    _ekipman, doc_id = await _upload_for_patch(client, seeded_db, ekipman_fabrikasi, admin_headers)
+
+    tam = await client.patch(
+        f"/equipment/documents/{doc_id}",
+        json={"document_no": "N" * 100},
+        headers=admin_headers,
+    )
+    asan = await client.patch(
+        f"/equipment/documents/{doc_id}",
+        json={"document_no": "N" * 101},
+        headers=admin_headers,
+    )
+
+    assert tam.status_code == 200, tam.text
+    assert tam.json()["document_no"] == "N" * 100
+    assert asan.status_code == 422, asan.text
+
+
 async def test_patch_var_olmayan_belge_404(
     client: AsyncClient, seeded_db: AsyncSession, admin_headers
 ) -> None:

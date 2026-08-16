@@ -248,6 +248,62 @@ async def test_yuklenen_dosyanin_uzantisi_yasakken_verilen_ad_meshru_olsa_da_422
     assert resp.json()["filename"] == "rapor.pdf"
 
 
+async def test_filename_255_karakterde_kabul_256da_422(
+    client: AsyncClient, proje, sef_headers
+) -> None:
+    """T6 MUTASYON TURUNDA açılan boşluk: Form'daki `max_length=255`
+    KİMSE tarafından ölçülmüyordu — kaldırıldığında hiçbir test kırılmıyordu.
+
+    🔴 Kaldırma davranışı değiştirmiyor ÇÜNKÜ `files.normalize_filename` de
+    `MAX_FILENAME_LENGTH = 255`i uyguluyor: MT-1 kanonunun birebiri —
+    "iki katman birbirini maskeler, her biri tek başına yeterliyse birini
+    kaldırmak HTTP ucundan hiçbir fark üretmez". Bu test HTTP'den GÖRÜNEN
+    sözleşmeyi kilitler (`Document.filename` = `String(255)`): tam sınır kabul,
+    bir fazlası 422 — hangi katmanın uyguladığı önemli değil, ama İKİSİ BİRDEN
+    kaybolursa 500 (DB `StringDataRightTruncation`) döner ve bu test kırılır.
+    """
+    tam = await client.post(
+        "/documents",
+        data=_form(proje.id, filename="a" * 251 + ".pdf"),
+        files=_multipart(),
+        headers=sef_headers,
+    )
+    asan = await client.post(
+        "/documents",
+        data=_form(proje.id, filename="a" * 252 + ".pdf"),
+        files=_multipart(),
+        headers=sef_headers,
+    )
+
+    assert tam.status_code == 201, tam.text
+    assert len(tam.json()["filename"]) == 255
+    assert asan.status_code == 422, asan.text
+
+
+async def test_filename_bos_dize_GONDERILMEMIS_sayilir(
+    client: AsyncClient, proje, sef_headers
+) -> None:
+    """🔴 T6'da ÖLÇÜLEN gerçek davranış — beklenenin TERSİ.
+
+    `Form(min_length=1, ...)`e bakıp "boş ad 422 verir" varsaymak YANLIŞTIR:
+    FastAPI, `Form` alanının değeri boş dizeyse alanı HİÇ GÖNDERİLMEMİŞ sayar
+    ve varsayılana (`None`) düşer — `min_length=1` bu yol için ULAŞILMAZ bir
+    doğrulamadır. Sonuç: künyeye yüklenen dosyanın adı yazılır, 201 döner.
+
+    Davranış makuldür (boş bir metin kutusu "ad verilmedi" demektir) ve burada
+    KİLİTLENİR; sessizce 422'ye çevrilirse boş kutulu formlar kırılır.
+    """
+    resp = await client.post(
+        "/documents",
+        data=_form(proje.id, filename=""),
+        files=_multipart("meshru.pdf"),
+        headers=sef_headers,
+    )
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["filename"] == "meshru.pdf"
+
+
 # --- Beyaz liste BYPASS denemeleri (422) ---
 
 

@@ -274,6 +274,87 @@ async def test_suzgec_projects_id_sites_ucuyla_ayni(
     assert {s["id"] for s in duz.json()["items"]} == {s["id"] for s in kapsamli.json()["items"]}
 
 
+async def test_ayni_KODLU_santiyelerde_sayfa_sinirlari_KAYMAZ(
+    client, db_session, user_factory, project_factory
+):
+    """T6 MUTASYON TURUNDA açılan boşluk: `order_by(Site.code, Site.id)`deki
+    EŞİTLİK BOZUCU `Site.id` kaldırıldığında hiçbir test kırılmıyordu.
+
+    🔴 Neden kördü: mevcut sıralama testi (`test_siralama_code_artan_...`) ÜÇ
+    FARKLI kod kullanır — eşitlik hiç OLUŞMAZ, dolayısıyla eşitlik bozucuyu hiç
+    sınamaz. Oysa `uq_sites_project_code` kodu YALNIZ PROJE İÇİNDE tekil kılar;
+    iki ayrı projede AYNI kod meşrudur. İkincil anahtar olmadan ORDER BY
+    kararsızdır: `LIMIT/OFFSET` ile art arda çekilen sayfalar aynı satırı iki
+    kez verebilir ya da bir satırı hiç vermeyebilir.
+
+    Test bu yüzden İKİ kod × İKİ proje kurar ve sayfaları tek tek gezip
+    "her satır TAM BİR KEZ" iddiasını ölçer.
+    """
+    kuzey = await project_factory(f"P1-{uuid.uuid4().hex[:6]}", name="Kuzey Konut")
+    guney = await project_factory(f"P2-{uuid.uuid4().hex[:6]}", name="Güney Konut")
+    beklenen = {
+        str((await _site(db_session, proje, kod)).id)
+        for proje in (kuzey, guney)
+        for kod in ("A-BLOK", "B-BLOK")
+    }
+    token = await _login(client, user_factory, "system_admin")
+
+    toplanan: list[str] = []
+    for offset in range(4):
+        resp = await client.get(f"/sites?limit=1&offset={offset}", headers=_auth(token))
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["total"] == 4
+        toplanan.extend(satir["id"] for satir in resp.json()["items"])
+
+    assert len(toplanan) == 4, toplanan
+    assert sorted(toplanan) == sorted(beklenen), (
+        "sayfa sınırı kaydı — aynı `code` taşıyan satırlar için sıralama "
+        "kararsız; `order_by`da eşitlik bozucu ikincil anahtar yok."
+    )
+
+
+async def test_siralama_ESITLIK_BOZUCU_ikincil_anahtar_TASIR():
+    """Yukarıdaki uçtan-uca ikizin DETERMİNİSTİK tamamlayıcısı.
+
+    🔴 Niçin uçtan-uca test YETMİYOR (T6'da ölçüldü): eşitlik bozucu
+    kaldırıldığında PostgreSQL küçük kümeleri yine de aynı sırada döndürebilir —
+    davranış testi ŞANSA bağlı YEŞİL kalır ve bekçilik ETMEZ. Kararsızlık
+    plan/veri hacmi değiştiğinde CANLIDA ortaya çıkar.
+
+    Bu yüzden karar SORGU BİÇİMİ düzeyinde kilitlenir: `ORDER BY` hem `code`
+    hem `id` taşımalıdır. Modül docstring'indeki "şema katmanı testi uçtan-uca
+    testin YERİNE GEÇMEZ" kanonuyla çelişmez — buradaki test onun YERİNE değil,
+    YANINA konur.
+    """
+
+    class _YakalayanSession:
+        """`session.execute`e verilen SELECT'i yakalar, DB'ye hiç gitmez."""
+
+        def __init__(self) -> None:
+            self.stmt = None
+
+        async def execute(self, stmt):
+            self.stmt = stmt
+            return _BosSonuc()
+
+    class _BosSonuc:
+        def all(self):
+            return []
+
+    from app.modules.sites import repository
+
+    session = _YakalayanSession()
+    await repository.list_site_options(session, [uuid.uuid4()], 50, 0)
+
+    sql = str(session.stmt)
+    order_by = sql.split("ORDER BY", 1)[1]
+    assert "sites.code" in order_by, sql
+    assert "sites.id" in order_by, (
+        "ORDER BY eşitlik bozucu ikincil anahtar taşımıyor: `code` yalnız proje "
+        "içinde tekildir, iki projede aynı kod meşrudur ve sıralama kararsız kalır."
+    )
+
+
 async def test_projects_admin_rolu_tum_santiyeleri_gorur(
     client, db_session, user_factory, project_factory
 ):
