@@ -81,7 +81,7 @@ Para her yerde `Decimal`dir; uç **YUVARLAMAZ** (MT-K2).
 from collections.abc import Sequence
 from decimal import Decimal
 
-from sqlalchemy import ColumnElement, Select, and_, case, exists, func, literal, select
+from sqlalchemy import ColumnElement, Select, case, exists, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -190,7 +190,8 @@ def select_cash_flow_lines(year: int, month: int) -> Select:
         .join(ChartAccount, ChartAccount.id == JournalLine.account_id)
         .where(
             posting_filter(),
-            and_(JournalEntry.entry_date >= yil_basi, JournalEntry.entry_date <= bitis),
+            JournalEntry.entry_date >= yil_basi,
+            JournalEntry.entry_date <= bitis,
             _grup(ChartAccount.code) != statement_map.CASH_GROUP,
             fis_nakde_dokunuyor,
         )
@@ -231,7 +232,7 @@ def _bolumler(
     """
     bolumler: list[CashFlowStatementSection] = []
     net_degisim = ZERO
-    for sira, bolum in enumerate(statement_map.CASH_FLOW_SECTIONS):
+    for bolum in statement_map.CASH_FLOW_SECTIONS:
         satirlar: list[CashFlowStatementLine] = []
         ara_toplam = ZERO
         for kalem in bolum.lines:
@@ -249,7 +250,7 @@ def _bolumler(
         bolumler.append(
             CashFlowStatementSection(
                 key=bolum.key,
-                code="ABC"[sira],
+                code=bolum.code,
                 title=bolum.title,
                 subtotal_label=bolum.subtotal_label,
                 subtotal=ara_toplam,

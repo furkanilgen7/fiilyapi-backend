@@ -97,9 +97,22 @@ _NAME = Field(min_length=1, max_length=200)
 #: modele eklemek, `257`yi kontra işaretlemenin HİÇBİR yolunu bırakmaz ve
 #: bilanço netlemesi ölü kod kalırdı (MU-1 §3 "şema katmanı kör noktası"nın
 #: ters yönü). Varsayılan `False`tur — hiçbir mevcut istemci gövdesi KIRILMAZ.
+#: 🔴 AÇIKLAMA `(-)` SON EKİNE BAKMAZ ve bu bir ayrıntı değil, kuralın
+#: KENDİSİDİR (T7 final review bulgusu): `(-)` son ekine göre işaretlemek `257`
+#: dışındaki her kontra hesapta işareti TERS çevirir. `501 Ödenmemiş Sermaye
+#: (-)` `equity` türündedir ve `SIGN[equity] = −1` onu ZATEN negatife çevirir;
+#: kontra işaretlenirse iki kez çevrilir ve sermayeyi düşürecek yerde ARTIRIR
+#: (ölçüldü: `Sermaye` 6.000 yerine 14.000 basar, `is_balanced` FALSE olur).
 _IS_CONTRA = Field(
     default=False,
-    description="Hesabın bakiyesi mali tablo kaleminden DÜŞÜLÜR (257 gibi `(-)` hesaplar).",
+    description=(
+        "Hesabın doğal bakiye yönü, düştüğü mali tablo kaleminin tarafının "
+        "TERSİ ise işaretlenir; bakiyesi o kalemden DÜŞÜLÜR. Örnek: "
+        "`257 Birikmiş Amortismanlar (-)` Pasif türdedir ama Aktif tarafta "
+        "`Maddi Duran Varlıklar (net)` kalemine düşer → işaretlenir. "
+        "`501 Ödenmemiş Sermaye (-)` ise Özkaynak türdedir ve Pasif tarafta "
+        "kalır → İŞARETLENMEZ (borç bakiyesi zaten düşürür)."
+    ),
 )
 
 

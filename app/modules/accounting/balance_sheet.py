@@ -10,10 +10,21 @@ aşardı. Kalem→hesap eşlemesi `statement_map.py`dedir (TEK KOPYA).
 Mockup BL:37 üç ayrı **tek gün** sunuyor (`31 Temmuz 2026` / `30 Haziran 2026` /
 `31 Aralık 2025`). Bilanço bir ANLIK GÖRÜNTÜDÜR:
 
-    gövde        : entry_date <= as_of                       → KÜMÜLATİF NET
-    Dönem Net Kârı: {as_of.year}-01-01 <= entry_date <= as_of → YILBAŞINDAN BUGÜNE
+    gövde          : entry_date <= as_of                       → KÜMÜLATİF NET
+    Dönem Net Kârı : {as_of.year}-01-01 <= entry_date <= as_of → YILBAŞINDAN BUGÜNE
+    Geçmiş Yıl K/Z : entry_date <  {as_of.year}-01-01          → ÖNCEKİ DÖNEMLER
 
-🔴 **İKİ PENCERE VARDIR ve sınırları AYRI AYRI testlidir.** MU-2'nin T6 dersi
+🔴 **ÜÇÜNCÜ PENCERE ZORUNLUDUR ve ilk yazımda YOKTU (T7 final review bulgusu).**
+Gövde `6xx`/`7xx`i dışlar, `Dönem Net Kârı` yalnız bu yılı alır; aradaki küme —
+önceki yılların gelir/gider bakiyeleri — bir yere konulmazsa **sessizce
+buharlaşır**. Üründe kapanış akışı YOKTUR (`models.py` "AÇILMAYANLAR"), yani
+`6xx`/`7xx` hiçbir zaman `570`e kapanmaz ve bakiyeleri yıllar boyunca defterde
+durur. Kusur bir uç durum değil TAKVİMİN KENDİSİDİR: 2026'da defter tutan bir
+şirketin **2027'de çekilen HER bilançosu** geçen yılın kârı kadar dengesiz
+çıkardı. Doğru yer `Geçmiş Yıllar Kârları`dır (BL:82) ve `57` grubunun GERÇEK
+bakiyesini EZMEZ, ona EKLENİR.
+
+🔴 **ÜÇ PENCERENİN de sınırları AYRI AYRI testlidir.** MU-2'nin T6 dersi
 (`<` → `<=` mutasyonunu 31 testin hiçbiri görmemişti, çünkü hiçbiri SINIR
 GÜNÜNÜ kullanmıyordu) bu dilimde iki kez ısırabilirdi. Bu yüzden
 `trial_balance.py`ye EKLEME YAPILMADI: mizanın penceresi ÜÇLÜdür ve
@@ -23,18 +34,25 @@ GÜNÜNÜ kullanmıyordu) bu dilimde iki kez ısırabilirdi. Bu yüzden
 
 ## İşaret ve kontra
 
-    katkı = (is_contra ? −1 : +1) × SIGN[account_type] × net
+    etkin yön = (is_contra ? −1 : +1) × SIGN[account_type]
+    katkı     = etkin yön × net
 
-`SIGN` `balance.py`den İTHAL EDİLİR, yeniden yazılmaz. Sonuç kalemin kendi
-tarafında POZİTİF çıkar (mockup'ın 13 satırının hepsi pozitiftir): `320`
-Satıcılar `net = −2.184.000` iken `2.184.000` basar.
+`SIGN` `balance.py`den İTHAL EDİLİR, yeniden yazılmaz. Doğru işaretlenmiş bir
+defterde etkin yön, kalemin TARAFINA eşittir (aktif `+1`, pasif `−1`) ve sonuç
+kalemin kendi tarafında POZİTİF çıkar (mockup'ın 13 satırının hepsi pozitiftir):
+`320` Satıcılar `net = −2.184.000` iken `2.184.000` basar.
 
-🔴 **`is_contra` çarpanı `SIGN`ı ÇEVİRİR, onun yerine geçmez.** `257 Birikmiş
-Amortismanlar (-)` hesap planında `Pasif` işaretlidir (HP:154 — alacak
-bakiyelidir) ve o hâliyle `+620.000` verir; kontra bayrağı onu `−620.000`e
-çevirir ve `Maddi Duran Varlıklar (net)` = 2.400.000 + 1.840.000 − 620.000 =
-**3.620.000** olur (BL:57). Bayrak kaldırılırsa kalem **iki katı amortisman**
-kadar kayar ve `is_balanced` FALSE olur — kusur GÖRÜNÜR kalır.
+🔴 **`is_contra`nın kuralı `(-)` SON EKİ DEĞİLDİR** (T7 final review bulgusu):
+bayrak, hesabın doğal bakiye yönü düştüğü kalemin tarafının TERSİ olduğunda
+işaretlenir. `257 Birikmiş Amortismanlar (-)` `Pasif` türdedir (HP:154 — alacak
+bakiyelidir) ama AKTİF tarafta bir kaleme düşer → **işaretlenir** ve
+`Maddi Duran Varlıklar (net)` = 2.400.000 + 1.840.000 − 620.000 = **3.620.000**
+olur (BL:57). Buna karşılık `501 Ödenmemiş Sermaye (-)` `equity` türdedir ve
+PASİF tarafta kalır → **işaretlenmez**; borç bakiyesini `SIGN[equity] = −1`
+zaten düşürür, kontra işaretlenirse iki kez çevrilir ve sermayeyi ARTIRIR.
+
+Bayrak `257`de kaldırılırsa kalem **iki katı amortisman** kadar kayar ve
+`is_balanced` FALSE olur — kusur GÖRÜNÜR kalır, sessizce yutulmaz.
 
 ## 🔴 `is_balanced` ÖLÇÜLÜR, `True` VARSAYILMAZ
 
@@ -138,16 +156,40 @@ def select_balance_sheet_rows(as_of: date) -> Select:
     )
 
 
-def _katki(kayit) -> Decimal:  # noqa: ANN001
-    """Hesabın kalemine yaptığı KATKI — işaret ve kontra burada uygulanır.
+def _etkin_yon(kayit) -> int:  # noqa: ANN001
+    """Hesabın ETKİN yönü: `(is_contra ? −1 : +1) × SIGN[account_type]`.
+
+    🔴 **Kural tek cümledir:** `is_contra = True` ⟺ hesabın doğal bakiye yönü,
+    düştüğü **kalemin tarafının TERSİDİR.** `(-)` son ekine bakan bir kural
+    YANLIŞTIR ve `257` dışındaki her kontra hesapta işareti ters çevirir:
+
+    | Hesap | Tür | Kalem tarafı | `is_contra` |
+    |---|---|---|---|
+    | `257 Birikmiş Amortismanlar (-)` | `liability` (alacak) | AKTİF | **True** |
+    | `501 Ödenmemiş Sermaye (-)`      | `equity` (alacak)    | PASİF | **False** |
+    | `580 Geçmiş Yıllar Zararları (-)`| `equity` (alacak)    | PASİF | **False** |
+
+    `501`/`580` borç bakiyelidir ve `SIGN[equity] = −1` onları ZATEN negatife
+    çevirir; kontra işaretlenirlerse iki kez çevrilir ve sermayeyi düşürecek
+    yerde ARTIRIRLAR (T7 final review'de ölçüldü: `Sermaye` 6.000 yerine 14.000).
 
     🔴 `SIGN` `balance.py`den gelir ve orada BEŞ türün hepsi vardır; eksik bir
     tür `KeyError` ile GÜRÜLTÜLÜ patlar (SQL tarafındaki `sign_case()` NULL
     üretmesinin Python karşılığı — ikisi de sessiz `0` varsaymaz).
     """
-    isaret = SIGN[kayit["account_type"]]
-    kontra = -1 if kayit["is_contra"] else 1
-    return kontra * isaret * kayit["net"]
+    return (-1 if kayit["is_contra"] else 1) * SIGN[kayit["account_type"]]
+
+
+def _katki(kayit) -> Decimal:  # noqa: ANN001
+    """Hesabın kalemine yaptığı KATKI = etkin yön × ham `net`.
+
+    Doğru işaretlenmiş bir defterde etkin yön, kalemin TARAFINA eşittir
+    (aktif `+1`, pasif `−1`) ve `AKTİF TOPLAM − PASİF TOPLAM = Σ net` olur —
+    dengeli defterde SIFIR. Yanlış işaretlenmiş bir hesap dengeyi kaydırır ve
+    `is_balanced` bunu GÖRÜNÜR kılar (kusuru gizlemek yerine bildirmek
+    bilinçli bir karardır).
+    """
+    return _etkin_yon(kayit) * kayit["net"]
 
 
 def _bos_kalem(kalem: statement_map.StatementLine) -> BalanceSheetLine:
@@ -223,8 +265,12 @@ def _dagit(kayitlar: Sequence) -> tuple[dict[str, Decimal], dict[str, list[str]]
     tutarlar: dict[str, Decimal] = {}
     kodlar: dict[str, list[str]] = {}
     for kayit in kayitlar:
+        # 🔴 Yedek kalemin TARAFI ETKİN yönden okunur (`is_contra` DÂHİL), ham
+        # `SIGN`dan DEĞİL: kontra işaretli bir nazım hesap yalnız `SIGN`a
+        # bakılsaydı PASİF kaleme düşer ama katkısı `+net` olurdu ve denge iki
+        # katı tutar kayardı — sebebi hiçbir kalemde görünmeden.
         kalem = statement_map.balance_sheet_line_for(
-            kayit["code"], credit_natured=SIGN[kayit["account_type"]] < 0
+            kayit["code"], credit_natured=_etkin_yon(kayit) < 0
         )
         if kalem is None:
             continue
@@ -249,6 +295,22 @@ async def build_balance_sheet(session: AsyncSession, *, as_of: date) -> BalanceS
     kayitlar = (await session.execute(select_balance_sheet_rows(as_of))).mappings().all()
 
     tutarlar, kodlar = _dagit(kayitlar)
+
+    # 🔴 ÜÇÜNCÜ PENCERE — `entry_date < {as_of.year}-01-01` gelir/gider hareketleri.
+    # Gövde `6xx`/`7xx`i dışlar, `Dönem Net Kârı` yalnız BU YILI alır; aradaki
+    # küme bir yere KONULMAZSA sessizce buharlaşır ve `AKTİF ≠ PASİF` olur.
+    # Kusur bir uç durum DEĞİL takvimin kendisidir: kapanış akışı olmadığı için
+    # `6xx`/`7xx` yıllar boyunca defterde durur ve 2027'de çekilen HER bilanço
+    # 2026'nın kârı kadar dengesiz çıkardı (T7 final review'de bulundu).
+    # Doğru yer `Geçmiş Yıllar Kârları`dır (BL:82) — kapanış fişi atılmış olsaydı
+    # `59` üzerinden zaten oraya taşınacaktı. `57` grubunun GERÇEK bakiyesini
+    # EZMEZ, ona EKLENİR: kapanış yapan da yapmayan da aynı sayıyı görsün.
+    tutarlar[statement_map.RETAINED_EARNINGS_LINE] = tutarlar.get(
+        statement_map.RETAINED_EARNINGS_LINE, ZERO
+    ) + statement_map.period_profit(
+        {kayit["code"]: kayit["net"] - kayit["ytd_net"] for kayit in kayitlar}
+    )
+
     tutarlar[statement_map.PERIOD_PROFIT_LINE] = statement_map.period_profit(
         {kayit["code"]: kayit["ytd_net"] for kayit in kayitlar}
     )

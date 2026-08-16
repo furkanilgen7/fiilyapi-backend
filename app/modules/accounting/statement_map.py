@@ -64,6 +64,8 @@ __all__ = [
     "EXCLUDED_BALANCE_SHEET_GROUPS",
     "GROUP_SOURCE_NOTES",
     "INCOME_STATEMENT_CLASSES",
+    "PERIOD_PROFIT_LINE",
+    "RETAINED_EARNINGS_LINE",
     "StatementLine",
     "StatementSection",
     "StatementSide",
@@ -116,12 +118,19 @@ class StatementLine:
 
 @dataclass(frozen=True)
 class StatementSection:
-    """Bölüm bandı + kalemleri + ara toplam (mockup BL:50 / NA:69 bantları)."""
+    """Bölüm bandı + kalemleri + ara toplam (mockup BL:50 / NA:69 bantları).
+
+    `code` yalnız nakit akışında doludur (`A`/`B`/`C`, NA:69/82/91); bilançonun
+    bölüm harfleri `title`ın içindedir (`I. DÖNEN VARLIKLAR`). Harf BURADA
+    durur, çağıranda `"ABC"[sıra]` gibi bir dizinle üretilmez — dördüncü bir
+    bölüm eklenirse o yazım `IndexError` verirdi.
+    """
 
     key: str
     title: str
     subtotal_label: str
     lines: tuple[StatementLine, ...]
+    code: str = ""
 
 
 @dataclass(frozen=True)
@@ -206,6 +215,14 @@ BALANCE_SHEET_SIDES: tuple[StatementSide, StatementSide] = (_ASSETS, _LIABILITIE
 #: 🔴 `Dönem Net Kârı` kaleminin anahtarı — hiçbir GRUP buraya haritalanmaz,
 #: değeri `period_profit()`ten TÜRETİLİR (MT-K3).
 PERIOD_PROFIT_LINE = "period_profit"
+
+#: 🔴 `Geçmiş Yıllar Kârları` kaleminin anahtarı — İKİ kaynağı vardır ve ikisi
+#: TOPLANIR: (a) `53`-`58` gruplarının GERÇEK bakiyesi, (b) ÖNCEKİ DÖNEMLERİN
+#: `6xx`/`7xx` sonucu. (b) şarttır çünkü üründe kapanış akışı yoktur — gelir
+#: tablosu hesapları `570`e hiç kapanmaz, bakiyeleri yıllar boyunca defterde
+#: durur ve bir yere konulmazsa bilanço her yıl dönümünde dengesizleşir
+#: (T7 final review bulgusu).
+RETAINED_EARNINGS_LINE = "retained_earnings"
 
 
 # --------------------------------------------------------------------------- #
@@ -335,7 +352,8 @@ GROUP_SOURCE_NOTES: dict[str, str] = {
     "48": "TDHP 48 Gelecek Yıllara Ait Gelirler ve Gider Tahakkukları — BL:78",
     "49": "TDHP 49 Diğer UV Yabancı Kaynaklar — BL:78",
     # --- SINIF 5 ---
-    "50": "TDHP 50 Ödenmiş Sermaye (501 Ödenmemiş Sermaye (-) kontra) — BL:81 Sermaye",
+    "50": "TDHP 50 Ödenmiş Sermaye — BL:81 Sermaye. ⚠️ `501 Ödenmemiş Sermaye (-)` KONTRA "
+    "İŞARETLENMEZ: `equity` türü PASİF tarafta kalır, borç bakiyesi zaten düşer",
     "51": "TDHP'de kullanılmayan grup — sermaye ailesi → BL:81",
     "52": "TDHP 52 Sermaye Yedekleri — BL:81 Sermaye (mockup tek `Sermaye` kalemi çiziyor)",
     "53": "TDHP'de kullanılmayan grup — birikmiş sonuçlar ailesi → BL:82",
@@ -416,6 +434,7 @@ def period_profit(nets: Mapping[str, Decimal]) -> Decimal:
 CASH_FLOW_SECTIONS: tuple[StatementSection, ...] = (
     StatementSection(
         key="operating",
+        code="A",
         title="A. İŞLETME FAALİYETLERİNDEN NAKİTLER",  # NA:69
         subtotal_label="İşletme Faaliyetleri Net Nakit",  # NA:77
         lines=(
@@ -428,12 +447,14 @@ CASH_FLOW_SECTIONS: tuple[StatementSection, ...] = (
     ),
     StatementSection(
         key="investing",
+        code="B",
         title="B. YATIRIM FAALİYETLERİNDEN NAKİTLER",  # NA:82
         subtotal_label="Yatırım Faaliyetleri Net Nakit",  # NA:86
         lines=(StatementLine("equipment_purchase", "Ekipman Alımı"),),  # NA:84
     ),
     StatementSection(
         key="financing",
+        code="C",
         title="C. FİNANSMAN FAALİYETLERİNDEN NAKİTLER",  # NA:91
         subtotal_label="Finansman Faaliyetleri Net Nakit",  # NA:95
         lines=(StatementLine("loan_repayment", "Kredi Geri Ödemesi"),),  # NA:93
@@ -475,7 +496,6 @@ CASH_FLOW_GROUPS: dict[str, tuple[str, str]] = {
     "36": ("operating", "tax_payments"),  # 360 Ödenecek Vergi ve Fonlar
     "39": ("operating", "tax_payments"),  # 391 Hesaplanan KDV
     # --- Diğer Nakit Çıkışları: işletmenin kalan her şeyi ---
-    "11": ("investing", "equipment_purchase"),
     "13": ("operating", "other_operating"),
     "14": ("operating", "other_operating"),
     "16": ("operating", "other_operating"),
@@ -500,6 +520,7 @@ CASH_FLOW_GROUPS: dict[str, tuple[str, str]] = {
     "78": ("operating", "other_operating"),
     "79": ("operating", "other_operating"),
     # --- Yatırım: duran varlık hareketleri ---
+    "11": ("investing", "equipment_purchase"),  # Menkul Kıymetler = yatırım
     "20": ("investing", "equipment_purchase"),
     "21": ("investing", "equipment_purchase"),
     "24": ("investing", "equipment_purchase"),

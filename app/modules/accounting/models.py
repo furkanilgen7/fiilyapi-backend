@@ -349,10 +349,16 @@ class ChartAccount(Base):
     # sayip kolonu acmamisti (adin `(-)` son eki); MT-1'de sunucu netlemeyi
     # YAPMAK ZORUNDA oldugu icin karar geri alindi.
     #
-    # Anlam: hesabin **isaretli bakiyesi** (`SIGN[tur] * net`) ait oldugu mali
-    # tablo kalemine EKLENMEZ, o kalemden **DUSULUR**. `account_type` hesabin
-    # DOGAL bakiye tarafini soyler (HP:154 `257`yi `Pasif` isaretler cunku alacak
-    # bakiyelidir), `is_contra` ise hangi kaleme HANGI YONDE girdigini.
+    # 🔴 KURAL TEK CUMLEDIR: `is_contra = True` <=> hesabin DOGAL BAKIYE YONU
+    # (`SIGN[account_type]`), dustugu KALEMIN TARAFININ TERSIDIR. Bakiyesi o
+    # kalemden DUSULUR.
+    #   * `257 Birikmis Amortismanlar (-)` -> `liability` (alacak) ama AKTIF
+    #     tarafta `Maddi Duran Varliklar (net)` kalemine duser -> **True**
+    #   * `501 Odenmemis Sermaye (-)` -> `equity` (alacak), PASIF tarafta kalir
+    #     -> **False** (borc bakiyesi `SIGN[equity] = -1` ile zaten duser)
+    # 🔴 `(-)` SON EKINE bakan bir kural YANLISTIR ve `257` disindaki her kontra
+    # hesapta isareti TERS cevirir (T7 final review'de olculdu: `501` kontra
+    # isaretlenince `Sermaye` 6.000 yerine 14.000 basiyor).
     #
     # 🔴 NOT NULL + `server_default`: nullable olsaydi `NULL` bir ucuncu hal
     # uretir, Python'da "yanlis" sayilirken SQL ifadelerinde NULL yayardi.

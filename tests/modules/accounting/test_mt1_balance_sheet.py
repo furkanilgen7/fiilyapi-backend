@@ -40,6 +40,7 @@ MU-2'nin T6 dersi (`<` → `<=` mutasyonunu hiçbir test görmemişti) bu dilimd
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -225,8 +226,6 @@ async def test_as_of_GUNU_DAHILDIR_sinir_gunu(
 
     `<` yazılsaydı 31 Temmuz'da kesilen bir fiş 31 Temmuz bilançosunda
     görünmez, ertesi gün belirir — ve kullanıcı sebebini asla anlayamazdı."""
-    from datetime import date
-
     kasa = await hesap_fabrikasi("100", name="Kasa", account_type=_T.asset)
     sermaye = await hesap_fabrikasi("500", name="Sermaye", account_type=_T.equity)
     await fis_fabrikasi(
@@ -243,8 +242,6 @@ async def test_as_of_SONRASI_fis_HARICTIR(
     client: AsyncClient, muhasebe_headers: dict[str, str], hesap_fabrikasi, fis_fabrikasi
 ) -> None:
     """Ertesi günün fişi DIŞARIDADIR — sınırın öteki yüzü."""
-    from datetime import date
-
     kasa = await hesap_fabrikasi("100", name="Kasa", account_type=_T.asset)
     sermaye = await hesap_fabrikasi("500", name="Sermaye", account_type=_T.equity)
     await fis_fabrikasi(
@@ -263,8 +260,6 @@ async def test_pencere_KUMULATIFTIR_onceki_yillar_da_sayilir(
 
     Mizanın `year_start` açılış penceresi buraya uygulansaydı geçmiş yılların
     bütün varlıkları sıfırlanır ve `AKTİF ≠ PASİF` olurdu."""
-    from datetime import date
-
     kasa = await hesap_fabrikasi("100", name="Kasa", account_type=_T.asset)
     sermaye = await hesap_fabrikasi("500", name="Sermaye", account_type=_T.equity)
     await fis_fabrikasi(
@@ -402,6 +397,79 @@ async def test_KONTRA_isaretlenmemis_hesap_DENGEYI_bozar_ve_GORUNUR(
     assert govde["is_balanced"] is False
 
 
+async def test_KONTRA_KURALI_hesabin_DOGAL_YONU_ile_kalemin_TARAFI_karsilastirilir(
+    client: AsyncClient, muhasebe_headers: dict[str, str], hesap_fabrikasi, fis_fabrikasi
+) -> None:
+    """🔴 T7 FINAL REVIEW BULGUSU — `is_contra`nın kuralı `(-)` SON EKİ DEĞİLDİR.
+
+    Doğru kural tek cümledir:
+
+    > `is_contra = True` ⟺ hesabın **doğal bakiye yönü** (`SIGN[account_type]`),
+    > düştüğü **kalemin tarafının TERSİDİR**.
+
+    `(-)` son ekine bakan bir kural YANLIŞTIR ve `257` dışındaki her kontra
+    hesapta işareti ters çevirir:
+
+    | Hesap | Tür | Kalem tarafı | Doğru `is_contra` |
+    |---|---|---|---|
+    | `257 Birikmiş Amortismanlar (-)` | `liability` (alacak) | AKTİF | **True** |
+    | `501 Ödenmemiş Sermaye (-)` | `equity` (alacak) | PASİF | **False** |
+    | `580 Geçmiş Yıllar Zararları (-)` | `equity` (alacak) | PASİF | **False** |
+
+    `501`/`580` borç bakiyelidir ve `SIGN[equity] = −1` onları ZATEN negatife
+    çevirir — kontra işaretlenirlerse iki kez çevrilir ve sermayeyi DÜŞÜRECEK
+    yerde ARTIRIRLAR. Bu kurulumda ölçüldü: yanlış işaretleme `Sermaye`yi
+    6.000 yerine 14.000 basar ve `is_balanced` FALSE olur.
+
+    Bu test o iki hesabı DOĞRU (kontrasız) hâlleriyle kurar ve dengenin
+    korunduğunu kanıtlar — `257`nin testi ayrıdır."""
+    kasa = await hesap_fabrikasi("100", name="Kasa", account_type=_T.asset)
+    sermaye = await hesap_fabrikasi("500", name="Ödenmiş Sermaye", account_type=_T.equity)
+    odenmemis = await hesap_fabrikasi(
+        "501", name="Ödenmemiş Sermaye (-)", account_type=_T.equity, is_contra=False
+    )
+    zarar = await hesap_fabrikasi(
+        "580", name="Geçmiş Yıllar Zararları (-)", account_type=_T.equity, is_contra=False
+    )
+
+    await fis_fabrikasi(
+        [(kasa, "6000.00", "0"), (odenmemis, "4000.00", "0"), (sermaye, "0", "10000.00")]
+    )
+    await fis_fabrikasi([(zarar, "1500.00", "0"), (kasa, "0", "1500.00")])
+
+    govde = await _bilanco(client, muhasebe_headers)
+    assert _tutar(govde, "cash") == Decimal("4500.00")  # 6000 − 1500
+    assert _tutar(govde, "paid_in_capital") == Decimal("6000.00")  # 10000 − 4000
+    assert _tutar(govde, "retained_earnings") == Decimal("-1500.00")  # zarar DÜŞER
+    assert govde["is_balanced"] is True
+
+
+async def test_KONTRA_kurali_HARITASIZ_hesabin_TARAFINI_da_belirler(
+    client: AsyncClient, muhasebe_headers: dict[str, str], hesap_fabrikasi, fis_fabrikasi
+) -> None:
+    """🔴 T7 FINAL REVIEW BULGUSU (M3) — yedek kalemin TARAFI `is_contra`yı da
+    okumak zorundadır.
+
+    Haritasız (`8x`/`9x`) bir hesabın hangi `Diğer …` kalemine düşeceği, ETKİN
+    yönünden (`is_contra × SIGN`) okunur. Yalnız `SIGN`a bakılsaydı kontra
+    işaretli bir nazım hesap PASİF kaleme düşer ama katkısı `+net` olurdu —
+    denge iki katı tutar kayardı ve sebebi hiçbir kalemde görünmezdi.
+
+    Kurulum: `901` `liability` + kontra → etkin yön BORÇ → AKTİF yedeğine
+    düşer ve `+net` katkı verir."""
+    kasa = await hesap_fabrikasi("100", name="Kasa", account_type=_T.asset)
+    nazim = await hesap_fabrikasi(
+        "901", name="Nazım (kontra)", account_type=_T.liability, is_contra=True
+    )
+    await fis_fabrikasi([(nazim, "800.00", "0"), (kasa, "0", "800.00")])
+
+    govde = await _bilanco(client, muhasebe_headers)
+    assert _tutar(govde, "cash") == Decimal("-800.00")
+    assert _tutar(govde, "other_current_assets") == Decimal("800.00")
+    assert _kalem(govde, "other_short_term_liabilities")["account_codes"] == []
+    assert govde["is_balanced"] is True
+
+
 async def test_HARITASIZ_grup_DIGER_kalemine_duser_ve_kodu_GORUNUR(
     client: AsyncClient, muhasebe_headers: dict[str, str], hesap_fabrikasi, fis_fabrikasi
 ) -> None:
@@ -478,8 +546,6 @@ async def test_donem_kari_penceresi_YILBASINDA_baslar_sinir_gunu(
 
     Üç fiş: 2025-12-31 (önceki yıl) · 2026-01-01 (SINIR GÜNÜ) · 2026-06-15.
     """
-    from datetime import date
-
     kasa = await hesap_fabrikasi("100", name="Kasa", account_type=_T.asset)
     satis = await hesap_fabrikasi("600", name="Yurt İçi Satışlar", account_type=_T.revenue)
 
@@ -498,6 +564,83 @@ async def test_donem_kari_penceresi_YILBASINDA_baslar_sinir_gunu(
     assert _tutar(govde, "period_profit") == Decimal("800.00")
     # Gövde KÜMÜLATİFTİR: kasa üç fişi de taşır.
     assert _tutar(govde, "cash") == Decimal("1500.00")
+    # 🔴 T7 FINAL REVIEW'ÜN BULDUĞU KUSUR: 2025'in 700'ü `Dönem Net Kârı`ndan
+    # ÇIKARILDI ama BİR YERE KONULMADI — ilk yazımda hiçbir kaleme girmiyordu ve
+    # bu test onu GÖRMÜYORDU çünkü `is_balanced`i hiç okumuyordu.
+    # Bkz. bir alttaki test: kural ÜÇ pencereye çıkar.
+    assert _tutar(govde, "retained_earnings") == Decimal("700.00")
+    assert govde["is_balanced"] is True
+
+
+async def test_ONCEKI_YILLARIN_kar_zarari_GECMIS_YILLAR_KARLARINA_gider(
+    client: AsyncClient, muhasebe_headers: dict[str, str], hesap_fabrikasi, fis_fabrikasi
+) -> None:
+    """🔴 T7 FINAL REVIEW BULGUSU — bilançonun ÜÇ penceresi vardır, iki değil.
+
+    Ürünte **KAPANIŞ AKIŞI YOKTUR** (`models.py` "AÇILMAYANLAR"): `6xx`/`7xx`
+    hesapları hiçbir zaman `570`e kapatılmaz, bakiyeleri yıllar boyunca DEFTERDE
+    KALIR. Bilanço gövdesi onları dışlar (`Dönem Net Kârı` ile çift sayılmasınlar
+    diye) ve `Dönem Net Kârı` **yalnız bu yılın** penceresinden türer. Aradaki
+    üçüncü küme — `entry_date < {as_of.year}-01-01` tarihli gelir/gider
+    hareketleri — ilk yazımda **HİÇBİR KALEME girmiyordu**.
+
+    🔴 Bu bir uç durum DEĞİL, takvimin kendisidir: 2026'da defter tutan bir
+    şirketin **2027'de çekilen HER bilançosu** geçen yılın kârı kadar
+    dengesizdir. Kusur canlıda kod değişmeden, yalnız yıl dönerken doğardı.
+
+    Doğru yer `Geçmiş Yıllar Kârları`dır (BL:82) — kapanış fişi atılmış olsaydı
+    `59` üzerinden zaten oraya taşınacaktı. Aynı pencere ayrımı `59` grubunun
+    dışlanmasıyla da tutarlıdır (MT-K1/2).
+
+    Kurulum: 2024 kârı 400 · 2025 zararı −150 · 2026 kârı 900."""
+    kasa = await hesap_fabrikasi("100", name="Kasa", account_type=_T.asset)
+    satis = await hesap_fabrikasi("600", name="Yurt İçi Satışlar", account_type=_T.revenue)
+    gider = await hesap_fabrikasi("730", name="Genel Üretim Gid.", account_type=_T.expense)
+
+    await fis_fabrikasi(
+        [(kasa, "400.00", "0"), (satis, "0", "400.00")], entry_date=date(2024, 6, 1)
+    )
+    await fis_fabrikasi(
+        [(gider, "150.00", "0"), (kasa, "0", "150.00")], entry_date=date(2025, 9, 9)
+    )
+    await fis_fabrikasi(
+        [(kasa, "900.00", "0"), (satis, "0", "900.00")], entry_date=date(2026, 4, 4)
+    )
+
+    govde = await _bilanco(client, muhasebe_headers)
+    assert _tutar(govde, "cash") == Decimal("1150.00")  # 400 − 150 + 900
+    assert _tutar(govde, "period_profit") == Decimal("900.00")  # yalnız 2026
+    assert _tutar(govde, "retained_earnings") == Decimal("250.00")  # 400 − 150
+    assert Decimal(govde["assets"]["total"]) == Decimal("1150.00")
+    assert Decimal(govde["liabilities"]["total"]) == Decimal("1150.00")
+    assert govde["is_balanced"] is True
+
+
+async def test_GECMIS_YILLAR_KARLARI_57_HESABIYLA_TOPLANIR(
+    client: AsyncClient, muhasebe_headers: dict[str, str], hesap_fabrikasi, fis_fabrikasi
+) -> None:
+    """Türetilen geçmiş dönem sonucu, `57` grubunun GERÇEK bakiyesinin YERİNE
+    geçmez, ona EKLENİR.
+
+    Kapanış fişi atmış bir şirkette `570` dolu olur ve `6xx`/`7xx` boşalır;
+    atmamışta tersi. İkisi TOPLANIR ki her iki hâlde de aynı sayı çıksın —
+    biri ötekini ezseydi kapanış yapan şirketin bilançosu geçmiş kârını
+    kaybederdi."""
+    kasa = await hesap_fabrikasi("100", name="Kasa", account_type=_T.asset)
+    gecmis = await hesap_fabrikasi("570", name="Geçmiş Yıllar Kârları", account_type=_T.equity)
+    satis = await hesap_fabrikasi("600", name="Yurt İçi Satışlar", account_type=_T.revenue)
+
+    await fis_fabrikasi(
+        [(kasa, "1000.00", "0"), (gecmis, "0", "1000.00")], entry_date=date(2025, 1, 5)
+    )
+    await fis_fabrikasi(
+        [(kasa, "200.00", "0"), (satis, "0", "200.00")], entry_date=date(2025, 8, 8)
+    )
+
+    govde = await _bilanco(client, muhasebe_headers)
+    assert _tutar(govde, "retained_earnings") == Decimal("1200.00")  # 1000 kayıtlı + 200 türetilen
+    assert _tutar(govde, "period_profit") == Decimal("0")
+    assert govde["is_balanced"] is True
 
 
 async def test_59_grubu_CIFT_SAYILMAZ(
@@ -718,8 +861,6 @@ async def test_sorgu_sayisi_HESAP_SAYISINDAN_bagimsizdir(
 
     İki hesapla ve on hesapla AYNI sayıda sorgu koşmalıdır; hesap başına sorgu
     koşan bir uygulama tekdüzen hesap planında (~200 satır) patlardı."""
-    from datetime import date
-
     kasa = await hesap_fabrikasi("100", name="Kasa", account_type=_T.asset)
     sermaye = await hesap_fabrikasi("500", name="Sermaye", account_type=_T.equity)
     await fis_fabrikasi([(kasa, "100.00", "0"), (sermaye, "0", "100.00")])
