@@ -28,6 +28,8 @@ __all__ = [
     "SiteFacilitiesInput",
     "SiteListResponse",
     "SiteListTotals",
+    "SiteOptionListResponse",
+    "SiteOptionResponse",
     "SiteProjectSummary",
     "SiteSectionInput",
     "SiteUpdate",
@@ -238,6 +240,42 @@ class SiteListResponse(BaseModel):
     counts: SiteCounts
     items: list[SiteCard]
     totals: SiteListTotals
+
+
+# --- Duz `GET /sites` (SITE-1a) ---
+#
+# 🔴 KARAR K3: bu semalar `SiteCard`tan TUREMEZ ve `SiteCard`a alan EKLENMEZ.
+# Gerekce (WORKFLOW §4 ortak kanonu): "'additive' sanilan alan devri
+# typecheck'i kirar" — `openapi-typescript`, sunucunun her zaman doldurdugu
+# alani `required` listesinde olmasa bile ZORUNLU uretir; `SiteCard`a
+# `project_id` eklemek `/projects/{id}/sites`i tuketen her frontend fikstürünü
+# kirardi (MT-1'de bu fiilen 10 typecheck hatasi verdi). Ayri yalin sema =
+# sifir blast radius.
+
+
+class SiteOptionResponse(BaseModel):
+    """Proje secmeden santiye secmek icin YALIN satir (mockup "santiye sec"
+    dropdown'lari). Secenek metni *santiye · proje* basildigi icin proje
+    kimligi ve adi buradadir — `SiteCard`ta ikisi de YOKTUR."""
+
+    id: uuid.UUID
+    code: str
+    name: str
+    project_id: uuid.UUID
+    project_name: str
+
+
+class SiteOptionListResponse(BaseModel):
+    """K7 sayfalama zarfi (`PersonnelListResponse` ile birebir).
+
+    ⚠️ `SiteListResponse.totals` ile KARISTIRILMAZ: o bir KPI seridi, bu
+    sayfalama. `total` SUZGECTEN GECMIS kumeyi sayar (SQL COUNT), sayfayi degil.
+    """
+
+    items: list[SiteOptionResponse]
+    total: int
+    limit: int
+    offset: int
 
 
 # --- Giris semalari ---

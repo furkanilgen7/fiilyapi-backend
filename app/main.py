@@ -39,6 +39,7 @@ from app.modules.sales.router import router as sales_router
 from app.modules.settings.router import router as settings_router
 from app.modules.site_diary.router import router as site_diary_router
 from app.modules.site_planning.router import router as site_planning_router
+from app.modules.sites.flat_list_router import router as sites_flat_list_router
 from app.modules.sites.router import router as sites_router
 from app.modules.subcontractor_progress_payments.router import (
     router as subcontractor_progress_payments_router,
@@ -159,6 +160,11 @@ app.include_router(sales_router)
 app.include_router(settings_router)
 app.include_router(site_diary_router)
 app.include_router(site_planning_router)
+# Düz `GET /sites` (SITE-1a) TEK segmentlidir; `sites_router`ın
+# `/sites/{site_id}` yolu İKİ segmentlidir ve FastAPI segment sayısına göre
+# ayırdığı için çakışma YOKTUR (ölçüldü — `personnel/document-types` tuzağının
+# aksine). Yine de `sites_router`dan ÖNCE kaydedilir: maliyeti sıfır ucuz sigorta.
+app.include_router(sites_flat_list_router)
 app.include_router(sites_router)
 app.include_router(subcontractor_progress_payments_router)
 app.include_router(timesheet_router)
