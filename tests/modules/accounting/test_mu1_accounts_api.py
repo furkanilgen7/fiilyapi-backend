@@ -342,10 +342,25 @@ async def test_olustur_gecersiz_kod_422(client, muhasebe_headers) -> None:
         assert resp.status_code == 422, f"{kod} kabul edildi: {resp.text}"
 
 
-async def test_olustur_bes_inci_tur_reddedilir(client, muhasebe_headers) -> None:
-    """K5: enum KAPALI kümedir (Aktif/Pasif/Gelir/Gider)."""
-    resp = await client.post(_YOL, json=_govde(account_type="equity"), headers=muhasebe_headers)
-    assert resp.status_code == 422
+async def test_olustur_ALTINCI_tur_reddedilir(client, muhasebe_headers) -> None:
+    """K5 (MT-1'de DARALTILDI): enum hâlâ KAPALI bir kümedir.
+
+    🔑 `equity` MT-1/KK-1 ile AÇILDI (kullanıcı kararı, 2026-08-16) — Bilanço
+    `III. ÖZKAYNAKLAR` bölümü dört üyeyle ifade edilemiyordu; bugün **201**
+    döner (aşağıdaki iddia). Küme yine de kapalıdır: `contra` bir TÜR değil
+    `is_contra` bayrağıdır, nazım/maliyet hesaplarının hiçbir ekranda karşılığı
+    yoktur."""
+    kabul = await client.post(
+        _YOL, json=_govde(code="500", account_type="equity"), headers=muhasebe_headers
+    )
+    assert kabul.status_code == 201, kabul.text
+    assert kabul.json()["account_type"] == "equity"
+
+    for yasak in ("memorandum", "cost", "contra", "other", "Aktif"):
+        resp = await client.post(
+            _YOL, json=_govde(code="501", account_type=yasak), headers=muhasebe_headers
+        )
+        assert resp.status_code == 422, f"{yasak} kabul edildi: {resp.text}"
 
 
 async def test_olustur_TUREV_alan_govdede_422(client, muhasebe_headers) -> None:

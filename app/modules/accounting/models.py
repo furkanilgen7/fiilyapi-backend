@@ -69,15 +69,21 @@ katalogtur (`suppliers`/`stock_items`/`bank_accounts` sinifi) ve erisim
 tamamen `accounting` izniyle denetlenir. IDOR unutulmus DEGIL, YAPISAL OLARAK
 YOKTUR; maliyet merkezi/proje kirilimi MU-3'un isidir.
 
-ACILMAYANLAR (spec §9, kasitli — "eksik" diye geri acilmaz): mizan · KDV
-beyani · banka mutabakati · e-Fatura · mali tablolar (hepsi MU-2+) · donem
-kapanisi / `accounting_periods` (yapi hazir: `period_year/month` + indeks) ·
-fatura/hazine/bordro → otomatik fis (MU-3) · `entry_no` + `numbering.py`
-(hicbir mockup sutununda fis numarasi yok; kimlik `id`dir) · `parent_id` FK ·
-sinif KAYDI · `is_contra` kolonu (`257`in parantezi bir SUNUM kuralidir,
-adin `(-)` son ekinden gelir; hicbir form onay kutusu cizmemis) · Excel/disa
-aktarim · para birimi/kur (`₺` metne gomulu sabit) · fise belge eki · toplu
-ice aktarim / tekduzen hesap plani seed'i · `draft` icin onay akisi.
+ACILMAYANLAR (spec §9, kasitli — "eksik" diye geri acilmaz): banka
+mutabakati · e-Fatura · fatura/hazine/bordro → otomatik fis (MU-3) ·
+`entry_no` + `numbering.py` (hicbir mockup sutununda fis numarasi yok; kimlik
+`id`dir) · `parent_id` FK · sinif KAYDI · Excel/disa aktarim · para birimi/kur
+(`₺` metne gomulu sabit) · fise belge eki · toplu ice aktarim / tekduzen hesap
+plani seed'i · `draft` icin onay akisi.
+
+SONRADAN ACILANLAR (tarih sirasiyla — bu liste bilerek TUTULUR ki bir kararin
+geri alindigi gorunur olsun): mizan + KDV beyani + donem kapanisi /
+`accounting_periods` (MU-2) · mali tablolar: Bilanco + Nakit Akis Tablosu
+(MT-1) · 🔑 **`is_contra` kolonu (MT-1/KK-1, kullanici karari 2026-08-16)** —
+MU-1 `257`in parantezini bir SUNUM kurali sayip kolonu acmamisti; MT-1'de
+sunucunun `Maddi Duran Varliklar (net)` kalemini FIILEN netlemesi gerektigi
+icin karar geri alindi · 🔑 **`ChartAccountType.equity` (ayni karar)** —
+Bilanco `III. OZKAYNAKLAR` bolumu dort uyeli kumeyle ifade edilemiyordu.
 
 Serbest metin tavani: `description` kolonu `Text`tir (DB'de sinirsiz); 2000
 karakter tavani TB4/B4 standardi geregi SEMA katmanindadir
@@ -146,24 +152,38 @@ CLOSED_STAMP_CHECK = (
 
 
 class ChartAccountType(str, enum.Enum):
-    """Hesap turu — HP:60 `Tur` sutununun KAPALI kumesi birebir.
+    """Hesap turu — HP:60 `Tur` sutunu + MT-1'in `equity` uyesi.
 
-    Dort rozet cizilidir: `Aktif` (HP:78) · `Pasif` (HP:154) · `Gelir` (HP:192)
-    · `Gider` (HP:199). **Besinci uye ICAT EDILMEZ** — ozkaynak/nazim gibi bir
-    tur eklenseydi hicbir ekranda karsiligi olmayan bir kumeyi kalici olarak
-    DB'ye yazardik.
+    HP dort rozet cizer: `Aktif` (HP:78) · `Pasif` (HP:154) · `Gelir` (HP:192)
+    · `Gider` (HP:199).
+
+    🔑 **KULLANICI KARARI (2026-08-16, MT-1/KK-1 — TAM TDHP UYUMU): `equity`
+    BESINCI UYE OLARAK ACILDI.** Bu, MU-1'in *"Besinci uye ICAT EDILMEZ"*
+    kanonunun **bilincli iptalidir** ve gerekcesi olculmustur: Bilanco'nun
+    `III. OZKAYNAKLAR` bolumu (BL:80-84 — `Sermaye` · `Gecmis Yillar Karlari` ·
+    `Donem Net Kari`) dort uyeli kumeyle ifade edilemiyor. `500 Sermaye`
+    `liability` sayilsaydi hesap plani ekraninda `Pasif` rozeti basar ve
+    bilanco bu satirlari `I. KISA VADELI YUKUMLULUKLER` bolumunden ayiramazdi.
+    Iptal `equity` ILE SINIRLIDIR: `memorandum`/`cost`/`contra` gibi bir ALTINCI
+    uye hala acilmaz (kontra bir TUR degil, `is_contra` bayragidir).
 
     🔴 Bu enum HP:62 `Durum` sutunu DEGILDIR (bkz. modul docstring'i R3):
     Durum `is_active` boolean'idir, Tur budur.
 
     K3 isaret kurali bu turden okunur: `asset`/`expense` → `+1`,
-    `liability`/`revenue` → `−1` (`balance.py` TEK KAYNAK).
+    `liability`/`revenue`/**`equity`** → `−1` (`balance.py` TEK KAYNAK).
+    🔴 `balance.SIGN` sozlugune `equity` girisi ZORUNLUDUR: `sign_case()`in
+    `else_` dali BILEREK yoktur ve eksik uye **NULL** uretir.
+
+    Uye SIRASI kilitlidir: Postgres'te `ALTER TYPE … ADD VALUE` uyeyi SONA
+    ekler, `enum_range` da o sirayi doner (migration testi bunu olcer).
     """
 
     asset = "asset"  # Aktif
     liability = "liability"  # Pasif
     revenue = "revenue"  # Gelir
     expense = "expense"  # Gider
+    equity = "equity"  # Ozkaynak (MT-1/KK-1)
 
 
 class JournalEntryStatus(str, enum.Enum):
@@ -322,6 +342,24 @@ class ChartAccount(Base):
     )
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("true")
+    )
+    # 🔑 MT-1/KK-1 — KONTRA BAYRAGI. `257 Birikmis Amortismanlar (-)` kendi mali
+    # tablo kaleminden CIKARILIR: BL:57 `Maddi Duran Varliklar (net)` =
+    # 2.400.000 + 1.840.000 − 620.000 = 3.620.000. MU-1 bunu bir SUNUM kurali
+    # sayip kolonu acmamisti (adin `(-)` son eki); MT-1'de sunucu netlemeyi
+    # YAPMAK ZORUNDA oldugu icin karar geri alindi.
+    #
+    # Anlam: hesabin **isaretli bakiyesi** (`SIGN[tur] * net`) ait oldugu mali
+    # tablo kalemine EKLENMEZ, o kalemden **DUSULUR**. `account_type` hesabin
+    # DOGAL bakiye tarafini soyler (HP:154 `257`yi `Pasif` isaretler cunku alacak
+    # bakiyelidir), `is_contra` ise hangi kaleme HANGI YONDE girdigini.
+    #
+    # 🔴 NOT NULL + `server_default`: nullable olsaydi `NULL` bir ucuncu hal
+    # uretir, Python'da "yanlis" sayilirken SQL ifadelerinde NULL yayardi.
+    # Sunucu varsayilani ORM disi her yazma yolu (migration data-fix, elle SQL)
+    # icin sarttir.
+    is_contra: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
