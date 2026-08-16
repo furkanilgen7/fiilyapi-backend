@@ -28,6 +28,7 @@ from app.modules.equipment.router import router as equipment_router
 from app.modules.inventory.router import router as inventory_router
 from app.modules.invoicing.router import router as invoicing_router
 from app.modules.payroll.router import router as payroll_router
+from app.modules.personnel.document_type_router import router as personnel_document_type_router
 from app.modules.personnel.router import router as personnel_router
 from app.modules.procurement.router import router as procurement_router
 from app.modules.progress_payments.router import router as progress_payments_router
@@ -148,6 +149,7 @@ app.include_router(inventory_router)
 # `/invoices/{invoice_id}` ile çakışır — ayrılmış yer orada işaretlidir.
 app.include_router(invoicing_router)
 app.include_router(payroll_router)
+app.include_router(personnel_document_type_router)
 app.include_router(personnel_router)
 app.include_router(procurement_router)
 app.include_router(progress_payments_router)

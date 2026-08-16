@@ -517,3 +517,28 @@ class HrLeavesSummaryResponse(BaseModel):
     carryover_risk_personnel: int
     unknown_entitlement_personnel: int
     balances: list[LeaveBalanceResponse]
+
+
+# --- BOR-TEMIZ T3: belge tipi katalogu (Boşluk #4) --------------------------
+#
+# `PersonnelDocumentType` modeli + `repository.list_document_types` ZATEN
+# VARDI; eksik olan yalnız HTTP ucuydu (`equipment/document_schemas.py`
+# `EquipmentDocumentTypeResponse` emsalinin birebiri). CRUD ucu YOK — yönetimi
+# ayarlar dilimine ertelenmiştir (İK-1/MK-2 kararının aynısı).
+
+
+class PersonnelDocumentTypeResponse(BaseModel):
+    """`GET /personnel/document-types` satırı — katalog künyesi."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    is_mandatory: bool
+    validity_months: int | None
+    sort_order: int
+    is_active: bool
+
+
+class PersonnelDocumentTypeListResponse(BaseModel):
+    items: list[PersonnelDocumentTypeResponse]
