@@ -377,9 +377,13 @@ def balance_sheet_line_for(code: str, *, credit_natured: bool) -> str | None:
     * **`59`** — kapanış hesabı (MT-K1/2 çift sayım yasağı).
 
     `credit_natured` YALNIZ haritada karşılığı olmayan gruplar (`8x`/`9x`) için
-    okunur ve hesabın DOĞAL BAKİYE yönünü söyler (`balance.SIGN[tür] == -1`).
+    okunur ve hesabın **ETKİN** bakiye yönünü söyler — yani `is_contra` DÂHİL
+    (`(is_contra ? −1 : +1) × SIGN[tür] < 0`). Ham `SIGN` verilseydi kontra
+    işaretli bir nazım hesap PASİF kaleme düşer ama katkısı `+net` olurdu ve
+    denge iki katı tutar kayardı (T7 final review bulgusu, M3).
+
     Enum'u burada ithal etmek modülün saflığını bozardı; çağıran bu tek biti
-    hesaplar.
+    hesaplar (`balance_sheet._etkin_yon`).
     """
     grup = group_of(code)
     if grup[0] in INCOME_STATEMENT_CLASSES or grup in EXCLUDED_BALANCE_SHEET_GROUPS:
