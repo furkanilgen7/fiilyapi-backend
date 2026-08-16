@@ -98,9 +98,28 @@ def test_uc_yeni_kolon_modelde_nullable():
 
 
 def test_alembic_tek_head():
+    """İki head = canlıda deploy kilitlenmesi (`alembic upgrade head` patlar).
+
+    🔴 `DATABASE_URL` override'ı ŞARTTIR: `.env` UZAK Railway'i gösterir ve
+    alembic'in bir alt komutunun motor kurması hiçbir uyarı vermeden canlıya
+    bağlanmak demektir. Kural tek cümledir: **hiçbir alembic komutu
+    override'sız koşmaz** (emsal `test_mt1_ozkaynak_kontra_migration.py`).
+
+    🔴 **BURADA `FRM1_REVISION`in HEAD OLDUĞU İDDİA EDİLMEZ** (MU-SEED T7
+    bulgusu). Eskiden `assert FRM1_REVISION in heads[0]` yazıyordu; bu, "FRM-1
+    en yeni migration'dır" demekti ve **kendisinden sonra gelen İLK dilimde
+    kaçınılmaz olarak kırmızıya döndü** (MU-SEED `e5f6a7b8c9d0` head'i aldı).
+    Repodaki 18 migration testinin diğer 17'si yalnız `len(heads) == 1` iddia
+    eder; kimlik iddiası bu dosyaya özgü bir tuzaktı.
+
+    Korunması GEREKEN asıl özellik zincirden düşmemektir: kötü bir re-parent
+    FRM-1'i öksüz bırakırsa kolonları canlıda HİÇ oluşmaz. Bu yüzden iddia
+    **atalık** iddiasına çevrildi — FRM-1 head'in atalarının arasında OLMALI.
+    """
     result = subprocess.run(
         [*ALEMBIC_CMD, "heads"],
         cwd=BACKEND_DIR,
+        env={**os.environ, "DATABASE_URL": _asyncpg_dsn("postgres")},
         capture_output=True,
         text=True,
         timeout=120,
@@ -108,7 +127,16 @@ def test_alembic_tek_head():
     assert result.returncode == 0, result.stderr
     heads = [line for line in result.stdout.splitlines() if line.strip()]
     assert len(heads) == 1, f"tek head bekleniyordu, çıktı:\n{result.stdout}"
-    assert FRM1_REVISION in heads[0], result.stdout
+
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    script = ScriptDirectory.from_config(Config(str(BACKEND_DIR / "alembic.ini")))
+    atalar = {rev.revision for rev in script.iterate_revisions(heads[0].split()[0], "base")}
+    assert FRM1_REVISION in atalar, (
+        f"{FRM1_REVISION} head'in zincirinde DEĞİL — re-parent onu öksüz bırakmış olabilir; "
+        f"head: {heads[0]}"
+    )
 
 
 async def test_upgrade_downgrade_upgrade_round_trip():
