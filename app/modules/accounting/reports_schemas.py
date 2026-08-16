@@ -24,6 +24,10 @@ from decimal import Decimal
 from pydantic import BaseModel
 
 __all__ = [
+    "BalanceSheetLine",
+    "BalanceSheetResponse",
+    "BalanceSheetSection",
+    "BalanceSheetSide",
     "TrialBalanceResponse",
     "TrialBalanceRow",
     "TrialBalanceTotals",
@@ -160,3 +164,96 @@ class VatReturnResponse(BaseModel):
     taxable_rows: list[VatTaxableRow]
     exempt_base: Decimal
     deductions: list[VatDeductionRow]
+
+
+# --------------------------------------------------------------------------- #
+# MT-1 T4 — Bilanço (mockup `Mali Tablo - Bilanço.dc.html`)
+# --------------------------------------------------------------------------- #
+
+
+class BalanceSheetLine(BaseModel):
+    """Bilançonun bir KALEMİ — mockup'ın tek bir satırı (ör. BL:51).
+
+    `amount` **YUVARLANMAZ** (MT-K2): `Numeric(18,2)` kuruşuyla döner ve
+    yuvarlama bir GÖSTERİM kararıdır. Uç yuvarlasaydı ara toplamlar
+    bileşenlerinden 1 TL sapar ve `is_balanced` sahte biçimde `False` çıkardı.
+
+    İşaret: kalem, ait olduğu tarafta POZİTİF basar (mockup'ın 13 satırının
+    hepsi pozitiftir). `320` Satıcılar `2.184.000` gösterir, `−2.184.000`
+    değil — ham `net` `SIGN[tür]` ile çevrilir. **Kontra hesap ise DÜŞÜLÜR**
+    (`is_contra`, MT-K1: BL:57 `Maddi Duran Varlıklar (net)`). Bir kalem yine de
+    NEGATİF çıkabilir: geçmiş yıl zararı ya da dönem zararı gerçek bir sonuçtur
+    ve `0`a kırpılsaydı `AKTİF ≠ PASİF` olurdu.
+
+    🔴 `account_codes` / `group_codes` mockup'ta BASILMIYOR ama yine de döner:
+    bir kalemin İÇİNE bakmanın (drill-down) tek yolu budur ve asıl işlevi
+    "Diğer …" kalemlerini ŞEFFAF kılmaktır — haritaya girmeyen bir hesabın
+    NEREYE düştüğü kullanıcıya ancak buradan görünür. Alan açmak ucuzdur,
+    sonradan eklemek kırıcıdır. Frontend basmayabilir.
+    """
+
+    key: str
+    label: str
+    amount: Decimal
+    account_codes: list[str]
+    group_codes: list[str]
+
+
+class BalanceSheetSection(BaseModel):
+    """Bölüm bandı + kalemleri + ara toplam (mockup BL:50-55 kalıbı).
+
+    `subtotal` kalemlerinden HESAPLANIR, mockup'tan kopyalanmaz (K15: mockup'ın
+    toplamları satırlarıyla çelişebilir ve o bir SUNUM göstermeliğidir).
+    """
+
+    key: str
+    title: str
+    subtotal_label: str
+    subtotal: Decimal
+    lines: list[BalanceSheetLine]
+
+
+class BalanceSheetSide(BaseModel):
+    """Bilançonun bir TARAFI — AKTİF (BL:44-63) ya da PASİF (BL:66-88).
+
+    İki taraf ayrı nesnelerdir çünkü mockup onları AYRI KARTLARDA çizer (BL:42
+    iki sütunlu ızgara) ve `total` her tarafın kendi genel toplamıdır.
+    """
+
+    key: str
+    title: str
+    total_label: str
+    total: Decimal
+    sections: list[BalanceSheetSection]
+
+
+class BalanceSheetResponse(BaseModel):
+    """Bilançonun tamamı — 🔴 **K7 SAYFALAMA ZARFI YOKTUR** (mizan/KDV emsali).
+
+    Gerekçe: `total` GENEL TOPLAMDIR ve `is_balanced` onun üzerinden kurulur;
+    sayfalanmış bir bilançoda ikisi de anlamsızlaşır. Küme zaten SABİTTİR: 13
+    kalem, iki taraf.
+
+    `as_of` yanıtta TEKRARLANIR: mockup BL:37 seçicisinin başlığı buradan
+    kurulur ve istemci hangi ANI gördüğünü kendi isteğinden değil SUNUCUNUN
+    cevabından okur.
+
+    🔴 **`is_balanced` ÖLÇÜLÜR, `True` VARSAYILMAZ.** Gerekçe ölçüldü:
+    `ck_journal_entries_posted_balanced` (`models.py`) yalnız `posted`ı bağlar,
+    yani **dengesiz bir `reversed` fiş satırı DB'ye GİREBİLİR** (açık borç) ve
+    `POSTING_STATUSES` `reversed`ı deftere alır. Sabit `True` basan bir bilanço
+    SESSİZCE YALAN SÖYLERDİ. Gösterge ayrıca `is_contra` veri hatalarını da
+    yakalar: kontra işaretlenmemiş bir `257` iki katı tutar kaydırır ve burada
+    görünür.
+
+    🔴 **Dönem kilidi rozeti YOKTUR** (MT-K8): bilanço salt-okumadır, kapalı
+    dönemin bilançosu ile açığınki arasında fark yoktur ve mockup rozet
+    çizmemiştir. **Karşılaştırma (önceki dönem) sütunu da YOKTUR** (MT-K6):
+    mockup tabloları 2 sütunludur, BL:37'deki `31 Aralık 2025` seçeneği bir
+    karşılaştırma sütunu DEĞİL ayrı bir sorgudur.
+    """
+
+    as_of: date
+    is_balanced: bool
+    assets: BalanceSheetSide
+    liabilities: BalanceSheetSide

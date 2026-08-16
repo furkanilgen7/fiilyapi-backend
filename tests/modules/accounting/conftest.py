@@ -99,12 +99,17 @@ def hesap_fabrikasi(seeded_db: AsyncSession):
         name: str | None = None,
         account_type: ChartAccountType = ChartAccountType.asset,
         is_active: bool = True,
+        is_contra: bool = False,
     ) -> ChartAccount:
+        # 🔑 MT-1/KK-1: `is_contra` PARAMETREDİR çünkü bilanço netlemesinin
+        # ayrışma noktası tam olarak budur — sabitlenmiş bir fabrika
+        # `Maddi Duran Varlıklar (net)` kaleminin kontra mutasyonunu göremezdi.
         account = ChartAccount(
             code=code,
             name=name if name is not None else f"Hesap {code}",
             account_type=account_type,
             is_active=is_active,
+            is_contra=is_contra,
         )
         seeded_db.add(account)
         await seeded_db.flush()
