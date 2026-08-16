@@ -285,8 +285,29 @@ async def list_projects_overview(
     actor: User,
     type_filter: ProjectType | str | None,
     status_filter: ProjectStatus | str | None,
+    limit: int = 50,
+    offset: int = 0,
 ) -> ProjectListResponse:
-    """Sayaclar filtreden ETKILENMEZ — mockup sekmeleri hep tum kumeyi sayar (spec §5.1)."""
+    """Proje listesi — süzgeç + sayfalama (SITE-1b / K4).
+
+    🔴 ÜÇ AYRI KÜME, KARIŞTIRMA:
+      1. `visible`  — görünür projelerin TAMAMI. `counts` YALNIZ bundan çıkar;
+         süzgeçten de sayfalamadan da ETKİLENMEZ (spec §5.1: mockup sekmeleri
+         hep tüm kümeyi sayar).
+      2. `selected` — `type`/`status` uygulanmış küme. `total` bunun boyutudur;
+         sayfa çubuğunun sayfa sayısı buradan çıkar.
+      3. `page`     — `selected`ın `offset`/`limit` dilimi. `items` budur.
+
+    🔴 PERFORMANS: pahalı toplu türev okumaları (`timesheet_counts.by_project`,
+    `cost_cards.by_projects`) YALNIZ `page` için koşar. `selected` için
+    koşsalardı sayfalama hiçbir maliyeti düşürmez, yalnız yanıt gövdesini
+    kısaltırdı. `_counts(visible)` bundan etkilenmez — o zaten bellekteki ucuz
+    bir sayımdır, ek sorgu açmaz.
+
+    SIRALAMA: `visible_projects` her iki yolda da `code` artan döner ve
+    `projects.code` KÜRESEL TEKİLdir (`unique=True`) — eşitlik bozucu ikincil
+    anahtara gerek yoktur, sayfa sınırları kaymaz. Sıra DEĞİŞTİRİLMEDİ.
+    """
     visible = await visible_projects(session, actor)
     selected = visible
     if type_filter is not None:
@@ -295,16 +316,20 @@ async def list_projects_overview(
     if status_filter is not None:
         wanted_status = ProjectStatus(status_filter)
         selected = [p for p in selected if p.status is wanted_status]
-    worker_counts = await timesheet_counts.by_project(session, [p.id for p in selected])
+    page = selected[offset : offset + limit]
+    worker_counts = await timesheet_counts.by_project(session, [p.id for p in page])
     # P10 T3: kart maliyet/kâr türevleri TEK toplu okumadan gelir — proje başına
     # sorgu YASAK (spec §4, `timesheet_counts.by_project` ile aynı desen).
-    card_costs = await cost_cards.by_projects(session, selected)
+    card_costs = await cost_cards.by_projects(session, page)
     return ProjectListResponse(
         counts=_counts(visible),
         items=[
             _to_item(p, worker_counts.get(p.id, 0), card_costs.get(p.id, cost_cards.EMPTY))
-            for p in selected
+            for p in page
         ],
+        total=len(selected),
+        limit=limit,
+        offset=offset,
     )
 
 

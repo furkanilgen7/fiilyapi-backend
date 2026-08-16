@@ -30,6 +30,11 @@ from app.modules.users.models import User
 
 router = APIRouter(prefix="/projects", tags=["projects"], responses=COMMON_ERROR_RESPONSES)
 
+# K7 sayfalama standardi (`accounting`/`invoicing`/duz `GET /sites` ile birebir):
+# varsayilan 50, tavan 200; tavan asimi SESSIZCE KIRPILMAZ → 422.
+_LIMIT = Annotated[int, Query(ge=1, le=200)]
+_OFFSET = Annotated[int, Query(ge=0)]
+
 # İşveren kartoteksi YENİ İZİN MODÜLÜ AÇMAZ (spec §2.5/§7.6): `projects`
 # view/admin ile korunur. Ayrı bir router yalnız yol farkı içindir (/employers).
 employers_router = APIRouter(
@@ -84,8 +89,16 @@ async def list_projects_endpoint(
     session: Annotated[AsyncSession, Depends(get_db)],
     type: ProjectType | None = None,
     status_filter: Annotated[ProjectStatus | None, Query(alias="status")] = None,
+    limit: _LIMIT = 50,
+    offset: _OFFSET = 0,
 ) -> ProjectListResponse:
-    return await service.list_projects_overview(session, user, type, status_filter)
+    """Proje listesi (SITE-1b sonrası sayfalı).
+
+    `counts` süzgeçten de sayfadan da ETKİLENMEZ (sekme rakamları);
+    `total` SÜZGEÇLENMİŞ kümenin boyutudur (sayfa çubuğu). Ayrıntı:
+    `ProjectListResponse` docstring'i.
+    """
+    return await service.list_projects_overview(session, user, type, status_filter, limit, offset)
 
 
 # DIKKAT — ROTA SIRASI: bu STATIK yol, `/{project_id}` parametreli yolundan

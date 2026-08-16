@@ -449,8 +449,25 @@ class ProjectCounts(BaseModel):
 
 
 class ProjectListResponse(BaseModel):
+    """🔴 İKİ SAYAÇ FARKLI ŞEYLERİ SAYAR — karıştırma.
+
+    * `counts` — SÜZGEÇTEN DE SAYFALAMADAN DA ETKİLENMEZ; hep tüm görünür
+      kümeyi sayar (spec §5.1). Mockup'ın "Tümü / Taahhüt / Kat Karşılığı /
+      Tamamlanan / Taslak" sekme rakamları buradan basılır; sekme rakamının
+      seçili sekmeye göre değişmesi anlamsız olurdu.
+    * `total` — SÜZGEÇLENMİŞ kümenin boyutu (`type`/`status` uygulandıktan
+      SONRA, sayfalamadan ÖNCE). Sayfa çubuğunun sayfa sayısı buradan çıkar;
+      `counts.all` kullanılsaydı süzgeçli listede yanlış sayfa sayısı görünürdü.
+
+    K4 (BOR-TEMIZ T5): `counts` ve `items` AYNEN korundu — kaldırma/yeniden
+    adlandırma geriye dönük kırıcı olurdu; zarfa yalnız üç alan EKLENDİ.
+    """
+
     counts: ProjectCounts
     items: list[ProjectListItem]
+    total: int
+    limit: int
+    offset: int
 
 
 # --- Giris semalari ---
