@@ -37,6 +37,7 @@ from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import timezone
+from app.modules.progress_payments import calculations
 from app.modules.projects.service import visible_projects
 from app.modules.subcontractor_progress_payments import amounts, repository
 from app.modules.subcontractor_progress_payments.models import (
@@ -132,3 +133,41 @@ async def get_summary(
         period_year=year,
         period_month=month,
     )
+
+
+async def cumulative_gross_by_contracts(
+    session: AsyncSession, contract_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, Decimal]:
+    """Taşeron sözleşmesi listesinin (SZL) sözleşme başına kümülatif brütü —
+    işveren `progress_payments.summary.cumulative_gross_by_projects`in BİREBİR
+    eşleniği: **TEK** toplu sorgu, sözleşme başına ayrı sorgu KOŞULMAZ.
+
+    ## Anahtar neden `contract_id`?
+
+    İşveren ucunda proje ile sözleşme 1:1'dir, orada proje kimliğiyle anahtarlamak
+    yeterlidir. Taşeron ucunda bir projede N taşeron sözleşmesi olabilir; proje
+    kimliğiyle anahtarlansaydı aynı projenin sözleşmeleri tek kutuda toplanır ve
+    liste her satırda AYNI sayıyı gösterirdi.
+
+    Yalnız `approved|paid` (`repository.COMPLETED_STATUSES`) sayılır: taslak ve
+    onaya sunulmuş evrak henüz gerçekleşmiş iş değildir.
+
+    Toplam SQL'de değil BELLEKTE alınır çünkü `line_total` kuruş yuvarlaması
+    (`quantize2`) satır düzeyindedir (spec §3): SQL'de `SUM` almak para
+    matematiğinin ikinci bir kopyasını (ve zamanla ikinci bir doğruluk tanımını)
+    doğururdu. Kapsam süzgeci yine SQL'dedir (`contract_id IN (…)`) — istenmeyen
+    sözleşmenin satırı hiç ÇEKİLMEZ.
+
+    Hakedişi olmayan sözleşmenin anahtarı sonuçta YOKTUR (işverendeki davranış):
+    çağıran katman `.get(id, Decimal("0.00"))` ile sıfırlar.
+
+    🔴 Bu fonksiyon, bu dosyadaki `get_summary`in `total_gross` KPI'ı DEĞİLDİR ve
+    onunla karıştırılmamalıdır: `total_gross` süzgeçteki TÜM statüleri (taslak
+    dahil) sayar ve `/hakedisler/taseron` ekranının kartıdır; buradaki toplam
+    yalnız gerçekleşmişi sayar ve sözleşme LİSTESİ kartı içindir.
+    """
+    grouped = await repository.list_completed_payments_by_contracts(session, contract_ids)
+    return {
+        contract_id: calculations.cumulative_state(payments, None).gross
+        for contract_id, payments in grouped.items()
+    }
