@@ -8,7 +8,15 @@ kişi için farklı sayı gösterir ve hangisinin doğru olduğu anlaşılamazd�
 
 ## Zincir
 
-    gün (puantaj) → brüt (ücret tipi) → kesinti (oran seti) → net → bölüşüm
+    gün (puantaj) → brüt (ücret tipi) → kesinti (oran seti + TARİFE) → net → bölüşüm
+
+🔴 **IK3-GV (2026-08-17) zinciri AYRIŞTIRDI.** Önceden dört işçi oranı tek
+yüzdede toplanıp (%25,759) tek çarpım yapılıyordu ve **gelir vergisi hesabın
+hiçbir yerinde ayrı bir `Decimal` olarak var olmuyordu.** GVK m.103 artan
+oranlıdır ve KÜMÜLATİF matraha göre işler; dilimli vergi brütün sabit bir
+yüzdesi olmadığı için "tek toplam yüzde" yaklaşımı YAPISAL OLARAK kullanılamaz
+hâle geldi. Kesinti artık dört ayrı kalemdir (`Deductions`) ve gelir vergisi
+`income_tax.py`den, satırın YIL-İÇİ konumuyla (`TaxContext`) birlikte gelir.
 
 Her halka bir öncekine bağlıdır ve **her halka fail-closed'dur**: hesaplanamayan
 bir değer `null` kalır, UYDURMA 0 BASILMAZ (S4 · NULL-EŞİK kanonu, WORKFLOW §4).
@@ -63,6 +71,7 @@ hesaplansaydı `banka + elden` netten bir kuruş kayar ve T3'teki S3 kapısı
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 
+from app.modules.payroll import income_tax as income_tax_engine
 from app.modules.payroll.models import PayrollLineStatus, PayrollRate
 from app.modules.personnel.models import PaymentMethod, WageType
 from app.modules.site_diary.models import WorkerSource
@@ -109,13 +118,25 @@ def quantize_money(value: Decimal) -> Decimal:
     return value.quantize(MONEY_QUANTUM, rounding=ROUND_HALF_UP)
 
 
-def employee_deduction_pct(rate: PayrollRate) -> Decimal:
-    """İşçiden kesilen toplam yüzde — SGK 70-73'ün toplamı (4a'da %25,759).
+def employee_deduction_pct(rate: PayrollRate) -> Decimal | None:
+    """İşçiden kesilen toplam yüzde — SGK 70-73'ün toplamı.
+
+    🔴 **IK3-GV: BU FONKSİYON ARTIK NETİ HESAPLAMAZ.** Dilimli vergi brütün
+    sabit bir yüzdesi DEĞİLDİR (aynı brüt, yılın hangi ayında olduğuna göre
+    farklı vergi üretir) — "tek toplam yüzde" yaklaşımı yapısal olarak
+    kullanılamaz hâle geldi ve zincir `employee_deductions`ta AYRIŞTIRILDI.
+    Burası yalnız oran setinin KENDİSİNİ tarif eden bir görünüm olarak kalır
+    (şema doğrulaması, oran ekranı) ve dilimli rejimde **`None`** döner:
+    "toplam yüzde" o rejimde TANIMSIZDIR ve 0 dönmek "kesinti yok" yalanı
+    olurdu (NULL-EŞİK kanonu).
 
     İşveren sütunları KASTEN dışarıdadır (`EMPLOYER_RATE_FIELDS`): onlar
     maliyettir, kesinti değildir (spec §7).
     """
-    return sum((getattr(rate, alan) for alan in EMPLOYEE_RATE_FIELDS), Decimal("0"))
+    degerler = [getattr(rate, alan) for alan in EMPLOYEE_RATE_FIELDS]
+    if any(deger is None for deger in degerler):
+        return None
+    return sum(degerler, Decimal("0"))
 
 
 def employer_burden_pct(rate: PayrollRate) -> Decimal:
@@ -164,18 +185,163 @@ def rate_share(gross_amount: Decimal | None, rate_pct: Decimal | None) -> Decima
     return quantize_money(gross_amount * rate_pct / PERCENT_DIVISOR)
 
 
-def deduction_and_net(gross_amount: Decimal, rate: PayrollRate) -> tuple[Decimal, Decimal]:
-    """Kesinti ve net — zincirin ORTASI, tek tanım.
+@dataclass(frozen=True)
+class TaxContext:
+    """Dilimli vergi için satırın YIL-İÇİ konumu — `compute_line`ın vergi girdisi.
+
+    Saflığın sınırıdır: `compute.py` DB'ye dokunmaz, bu yüzden "önceki
+    kümülatif", "o yılın tarifesi" ve "o yılın asgari ücreti" DIŞARIDAN verilir
+    (`service.compute_period` toplu okumalarından ya da tek satır için
+    `service._tax_context_for_line`ten). Hesap DB'ye kendi gitseydi tarife
+    aritmetiği router'dan ve veritabanından bağımsız sınanamazdı.
+
+    `brackets`/`minimum_wage_gross` **`None` olabilir** ve bu bir eksiklik değil
+    bir OLGUDUR: o yıl için tarife ya da asgari ücret satırı yoktur. Dilimli
+    rejimde bu, satırı `uncomputed`a düşürür (K3 fail-closed).
+    """
+
+    #: Dönemin AYI (1-12) — istisna takviminin girdisi (KK-7).
+    month: int
+    #: Yıl başından ÖNCEKİ aya kadar biriken matrah (devir dâhil, K7).
+    prior_cumulative_base: Decimal
+    brackets: tuple[income_tax_engine.TaxBracket, ...] | None
+    minimum_wage_gross: Decimal | None
+
+
+@dataclass(frozen=True)
+class Deductions:
+    """İşçi kesintisinin DÖRT kalemi + vergi snapshot'ı. DONMUŞTUR.
+
+    🔴 **IK3-GV'nin yapısal değişimi burada.** Önceden dört oran tek yüzdede
+    toplanıp (%25,759) tek çarpım yapılıyordu; gelir vergisi hesabın hiçbir
+    yerinde ayrı bir `Decimal` olarak VAR OLMUYORDU. Dilimli vergi bunu
+    imkânsız kıldı — kalemler artık AYRI AYRI hesaplanır ve ayrı ayrı yuvarlanır.
+
+    ⚠️ Kuruş sonucu: dört kalemin ayrı yuvarlanması, tek seferde yuvarlanmış
+    toplamdan bir kuruş ayrışabilir. Bu KASITLIDIR ve `sgk.py`nin zaten
+    uyguladığı kuralla hizalanır ("kullanıcı bu ekranda dört kalemi gözüyle
+    toplar"): artık `deduction_amount` da dört kalemin TOPLAMIDIR, yani bordro
+    ekranı ile SGK ekranı kuruşuna kadar mutabıktır (K6).
+    """
+
+    sgk_employee: Decimal
+    unemployment_employee: Decimal
+    income_tax: Decimal
+    stamp_tax: Decimal
+    #: KK-7 adım 1: `brüt − SGK işçi − işsizlik işçi`. İstisna tutarı bu
+    #: matrahta KALIR (indirim değil KREDİdir) ve dilim belirlenirken sayılır.
+    tax_base: Decimal
+    #: Bu ay DAHİL biriken matrah — satıra SNAPSHOT olarak yazılır (K1).
+    cumulative_tax_base: Decimal
+
+    @property
+    def total(self) -> Decimal:
+        return self.sgk_employee + self.unemployment_employee + self.income_tax + self.stamp_tax
+
+
+def employee_deductions(
+    gross_amount: Decimal, rate: PayrollRate, tax: TaxContext
+) -> Deductions | None:
+    """Dört kesinti kalemi + vergi snapshot'ı — hesaplanamıyorsa **`None`**.
+
+    ## İki rejim, tek karar noktası (K3)
+
+    * `rate.income_tax_pct` **dolu** → DÜZ ORAN (`freelance` %20 · `intern` 0).
+      Asgari ücret istisnası UYGULANMAZ: istisna ÜCRET gelirine aittir
+      (GV GT 319), serbest meslek stopajına değil.
+    * `rate.income_tax_pct` **`NULL`** → DİLİMLİ MOTOR (`company`,
+      `subcontractor`) + asgari ücret istisnası (gelir **ve** damga).
+
+    🔴 **`NULL` sessizce "vergi yok" demek DEĞİLDİR.** Tarife ya da asgari ücret
+    satırı yoksa (ör. 2027) **`None`** döner ve çağıran satırı `uncomputed`a
+    düşürür — **0 vergi ASLA yazılmaz**. Bu, K3'ün karşı-riskinin bekçisidir ve
+    VARSAYILAN YOLDUR: testsiz kalsaydı "vergi yok" yalanı üretirdi.
+
+    ## Asgari ücret istisnası KREDİdir, indirim değil (KK-7)
+
+    1. matrah = `brüt − SGK − işsizlik` (istisna MATRAHTA KALIR);
+    2. kümülatife eklenir → tarifeden o ayın vergisi;
+    3. AYRICA asgari ücretin KENDİ kümülatifinden o ayın vergisi;
+    4. `ödenecek = (2) − (3)`, **taban 0** — negatif vergi ÜRETİLMEZ.
+
+    (3) aylık SABİT DEĞİLDİR: 2026'da Temmuz'da asgari ücretin kümülatifi
+    190.000'i keser ve istisna 4.211,33 değil **4.537,75** olur.
+
+    Damga vergisinde de aynı mantık: brüt asgari ücrete isabet eden kısım
+    müstesnadır (DVK (II) IV/34 — 2026'da 250,70 TL/ay), taban 0.
+    """
+    sgk = quantize_money(gross_amount * rate.sgk_employee_pct / PERCENT_DIVISOR)
+    issizlik = quantize_money(gross_amount * rate.unemployment_employee_pct / PERCENT_DIVISOR)
+    tax_base = gross_amount - sgk - issizlik
+    if tax_base < ZERO_MONEY:
+        # Oran seti bozuk (işçi payları brütü aşıyor). Fail-closed: eksi matrah
+        # `ck_payroll_lines_tax_base_positive`e çarpar ve kullanıcı hatası 500
+        # gibi görünürdü.
+        return None
+    cumulative = tax.prior_cumulative_base + tax_base
+
+    if rate.income_tax_pct is not None:
+        return Deductions(
+            sgk_employee=sgk,
+            unemployment_employee=issizlik,
+            income_tax=quantize_money(gross_amount * rate.income_tax_pct / PERCENT_DIVISOR),
+            stamp_tax=quantize_money(gross_amount * rate.stamp_tax_pct / PERCENT_DIVISOR),
+            tax_base=tax_base,
+            cumulative_tax_base=cumulative,
+        )
+
+    if tax.brackets is None or tax.minimum_wage_gross is None:
+        return None
+    try:
+        ham_vergi = income_tax_engine.monthly_income_tax(
+            tax.prior_cumulative_base, tax_base, tax.brackets
+        )
+        asgari_matrah = income_tax_engine.minimum_wage_tax_base(
+            tax.minimum_wage_gross,
+            rate.sgk_employee_pct,
+            rate.unemployment_employee_pct,
+            quantize_money,
+        )
+        kredi = income_tax_engine.minimum_wage_income_tax_credit(
+            tax.month, asgari_matrah, tax.brackets
+        )
+    except income_tax_engine.TaxBracketSetError:
+        # Bozuk/eksik/sırasız dilim seti — sessiz 0 YOK (K3 fail-closed).
+        return None
+
+    ham_damga = gross_amount * rate.stamp_tax_pct / PERCENT_DIVISOR
+    damga_istisnasi = income_tax_engine.stamp_tax_exemption(
+        tax.minimum_wage_gross, rate.stamp_tax_pct
+    )
+    return Deductions(
+        sgk_employee=sgk,
+        unemployment_employee=issizlik,
+        # Taban 0: istisna hesaplanan vergiyi AŞAMAZ, negatif vergi üretilmez.
+        income_tax=quantize_money(max(ZERO_MONEY, ham_vergi - kredi)),
+        stamp_tax=quantize_money(max(ZERO_MONEY, ham_damga - damga_istisnasi)),
+        tax_base=tax_base,
+        cumulative_tax_base=cumulative,
+    )
+
+
+def deduction_and_net(
+    gross_amount: Decimal, rate: PayrollRate, tax: TaxContext
+) -> tuple[Deductions, Decimal] | None:
+    """Kesinti kalemleri ve net — zincirin ORTASI, tek tanım.
 
     `compute_line` (puantajdan otomatik hesap) ve T3'ün brüt override yolu (K3)
-    AYNI fonksiyonu çağırır. Override kendi aritmetiğini yazsaydı elle
-    düzeltilmiş satırlar zamanla otomatik satırlardan farklı bir kurala tabi
-    olurdu.
+    AYNI fonksiyonu çağırır — 🔴 **İKİ çağıran vardır** (`service.compute_line`
+    ve `service._apply_gross_override`) ve ikisi de aynı `TaxContext`i kurar.
+    Override kendi aritmetiğini yazsaydı elle düzeltilmiş satırlar zamanla
+    otomatik satırlardan farklı bir vergiye tabi olurdu.
 
     Net BAĞIMSIZ YUVARLANMAZ: kesintinin farkıdır (modül docstring'i, "Kuruş").
+    Hesaplanamıyorsa **`None`** — 0 kesinti üretmek "vergi yok" yalanı olurdu.
     """
-    deduction = quantize_money(gross_amount * employee_deduction_pct(rate) / PERCENT_DIVISOR)
-    return deduction, gross_amount - deduction
+    kesintiler = employee_deductions(gross_amount, rate, tax)
+    if kesintiler is None:
+        return None
+    return kesintiler, gross_amount - kesintiler.total
 
 
 def computed_days(personnel_source: WorkerSource, man_days: int) -> int | None:
@@ -243,6 +409,12 @@ class ComputedLine:
     net_amount: Decimal | None
     bank_amount: Decimal | None
     cash_amount: Decimal | None
+    #: IK3-GV K1 vergi SNAPSHOT'ı — üçü BİRLİKTE dolar ya da BİRLİKTE `null`dur.
+    #: Ayrı ayrı dolabilseydi "matrahı var ama vergisi yok" gibi kendi içinde
+    #: çelişik bir satır DB'ye yazılabilirdi.
+    tax_base_amount: Decimal | None
+    cumulative_tax_base: Decimal | None
+    income_tax_amount: Decimal | None
     status: PayrollLineStatus
     excluded_reason: str | None
 
@@ -275,6 +447,9 @@ def _uncomputed(personnel_source: WorkerSource, days: int | None) -> ComputedLin
         net_amount=None,
         bank_amount=None,
         cash_amount=None,
+        tax_base_amount=None,
+        cumulative_tax_base=None,
+        income_tax_amount=None,
         status=_status(personnel_source, computed=False),
         excluded_reason=_excluded_reason(personnel_source),
     )
@@ -295,6 +470,7 @@ def compute_line(
     man_days: int,
     has_timesheet_records: bool,
     rate: PayrollRate | None,
+    tax: TaxContext,
 ) -> ComputedLine:
     """Bir satırın TAM hesabı. Saf: aynı girdiye her zaman aynı çıktı.
 
@@ -312,6 +488,10 @@ def compute_line(
     `rate` `None` ise brüt hesaplanabilse bile satır `uncomputed` kalır
     (ŞEF KARARI 2): kesintisi bilinmeyen bir brütten net türetmek, kesintiyi 0
     saymak demektir.
+
+    🔴 **IK3-GV — AYNI KAPI VERGİ İÇİN DE AÇIKTIR (K3).** `tax` bağlamı satırın
+    yıl-içi konumunu taşır; dilimli rejimde tarife ya da asgari ücret satırı
+    yoksa (ör. 2027) satır yine `uncomputed` kalır ve **0 vergi YAZILMAZ**.
     """
     if not has_timesheet_records:
         return _uncomputed(personnel_source, days=None)
@@ -322,15 +502,22 @@ def compute_line(
         return _uncomputed(personnel_source, days)
 
     # Net TÜREVDİR — bağımsız yuvarlanmaz; bölüşüm de netten türer (S3).
-    deduction, net = deduction_and_net(gross, rate)
+    sonuc = deduction_and_net(gross, rate, tax)
+    if sonuc is None:
+        # K3 fail-closed: vergi rejimi tanımlı ama HESAPLANAMIYOR.
+        return _uncomputed(personnel_source, days)
+    kesintiler, net = sonuc
     bank, cash = split_payment(net, payment_method)
     return ComputedLine(
         days=days,
         gross_amount=gross,
-        deduction_amount=deduction,
+        deduction_amount=kesintiler.total,
         net_amount=net,
         bank_amount=bank,
         cash_amount=cash,
+        tax_base_amount=kesintiler.tax_base,
+        cumulative_tax_base=kesintiler.cumulative_tax_base,
+        income_tax_amount=kesintiler.income_tax,
         status=_status(personnel_source, computed=True),
         excluded_reason=_excluded_reason(personnel_source),
     )

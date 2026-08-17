@@ -41,14 +41,49 @@ değil. T3'te iki tabanın ayrı tutulmuş olması tam olarak bunu mümkün kıl
   sayılsaydı SGK'ya eksik bildirim olurdu. Satır tabandan düşer ve
   `unknown_rate_count`ta görünür.
 
+## 🔴🔴 K6 — İKİ KATMAN MUTABAKATI (IK3-GV'nin en değerli parçası)
+
+**Ölçülmüş kusur:** bu modül `income_tax_total`u **`income_tax_pct × brüt`** ile
+YENİDEN TÜRETİYORDU. Dilimli motor gelip satıra doğru vergiyi yazsa bile SGK
+ekranı düz yüzdeyi basmaya devam ederdi → bordro ekranı ile SGK ekranı **aynı
+kişi için iki farklı vergi** gösterirdi.
+
+🔴 **Ve bugünkü test bunu YAKALAYAMIYORDU:** `test_payroll_sgk.py`nin işçi payı
+testi yalnız SGK ekranının **kendi içinde** toplanabilirliğini iddia ediyordu →
+düz oranla kendi kendisiyle tutarlı kalır ve **YEŞİL kalırdı**. Bu, *"iki katman
+birbirini maskeler — alt katmanın KENDİ bekçisi olur"* kanonunun canlı,
+ölçülmüş örneğidir.
+
+**Düzeltme:** gelir vergisi ve damga artık ORANDAN TÜRETİLMEZ, **satırın
+kendisinden** okunur:
+
+* `income_tax_total` ← `SUM(payroll_lines.income_tax_amount)`;
+* `stamp_tax_total` ← satırın `deduction_amount`ından öteki üç kalem düşülerek
+  (böylece asgari ücret damga istisnasını KENDİLİĞİNDEN görür — ayrı bir kolon
+  açmadan, çünkü `compute` kesintiyi tam olarak bu dört kalemin toplamı olarak
+  kurar);
+* SGK/işsizlik/işveren kalemleri ORANDAN türemeye devam eder — onlar brütün
+  sabit bir yüzdesidir ve satırda ayrı ayrı saklanmazlar.
+
+### 🔴 Vergisi BİLİNMEYEN satır: taban DIŞLANMAZ, sayaçta görünür
+
+IK3-GV öncesinde hesaplanmış satırların `income_tax_amount`ı `NULL`dur (kolon
+o gün yoktu). Böyle bir satırı SGK tabanından TAMAMEN düşürmek cazip ama
+YANLIŞTIR: SGK ekranının birincil işi PRİM bildirimidir ve prim, gelir
+vergisinden bağımsız olarak brütten türetilebilir. Satırı düşürmek, ilgisiz bir
+eksik yüzünden ekranın asıl sayısını yok ederdi — *"bir korkuluk, koruduğu
+şeyden büyük hasar üretemez"* (IK3-RATE-FIX kanonu). Bu yüzden satır matrahta
+ve prim kalemlerinde KALIR, yalnız vergi/damga kalemlerine GİRMEZ ve
+`unknown_tax_count`ta GÖRÜNÜR (sessiz atlama yok).
+
 ## Kuruş
 
-Kalemler AYRI AYRI yuvarlanır (`rate_share`) ve toplamları kalemlerin
-TOPLAMIDIR — böylece ekranda basılan dört kalem kendi toplamına eşittir.
-Bu, satırdaki `deduction_amount` ile (tek seferde yuvarlanmış toplam yüzde,
-`compute.deduction_and_net`) uç durumlarda bir kuruş ayrışabilir; SGK tablosunun
-KENDİ İÇİNDE toplanabilir olması tercih edilmiştir, çünkü kullanıcı bu ekranda
-dört kalemi gözüyle toplar.
+Prim kalemleri AYRI AYRI yuvarlanır (`rate_share`) ve toplamları kalemlerin
+TOPLAMIDIR — ekranda basılan dört kalem kendi toplamına eşittir. IK3-GV ile
+satırdaki `deduction_amount` da tam olarak bu dört kalemin toplamı hâline geldi
+(`compute.Deductions.total`), yani bordro ekranı ile SGK ekranı artık kuruşuna
+kadar mutabıktır — eskiden tek seferde yuvarlanmış toplam yüzde yüzünden bir
+kuruş ayrışabiliyordu.
 """
 
 from dataclasses import dataclass
@@ -91,18 +126,41 @@ class SgkSummary:
     #: --- görünür sayaçlar: sessiz atlama yok ---
     uncomputed_count: int
     unknown_rate_count: int
+    #: 🔴 K6 — brütü BİLİNEN ama `income_tax_amount`ı `NULL` olan satır sayısı
+    #: (IK3-GV öncesinde hesaplanmış satırlar). Satır matrahta ve prim
+    #: kalemlerinde KALIR; yalnız gelir vergisi ve damga toplamlarına GİRMEZ.
+    unknown_tax_count: int
 
 
-#: Toplanacak yedi oran sütunu → `SgkSummary` alan adı. Tek yerde durur ki yeni
-#: bir oran sütunu eklendiğinde hangi kaleme gireceği aranmasın.
+#: 🔴 ORANDAN türetilen kalemler — **gelir vergisi ve damga BURADA YOKTUR** (K6).
+#: Bunlar brütün sabit bir yüzdesidir ve satırda ayrı ayrı saklanmazlar. Gelir
+#: vergisi dilimli olduğu için orandan türetilemez; damga da asgari ücret
+#: istisnasını görmek zorundadır. İkisi de SATIRDAN okunur.
 _RATE_FIELDS: tuple[tuple[str, str], ...] = (
     ("sgk_employee_pct", "sgk_employee_total"),
     ("unemployment_employee_pct", "unemployment_employee_total"),
-    ("income_tax_pct", "income_tax_total"),
-    ("stamp_tax_pct", "stamp_tax_total"),
     ("sgk_employer_pct", "sgk_employer_total"),
     ("unemployment_employer_pct", "unemployment_employer_total"),
     ("short_work_pct", "short_work_total"),
+)
+
+#: SATIRDAN okunan kalemler (K6). Ayrı bir demet olarak durur ki yeni bir kalem
+#: eklendiğinde hangi katmandan geleceği aranmasın.
+_LINE_FIELDS: tuple[str, ...] = ("income_tax_total", "stamp_tax_total")
+
+#: İşçi kesintisinin dört kalemi — SGK 69-73 sırasıyla.
+_EMPLOYEE_TOTAL_FIELDS: tuple[str, ...] = (
+    "sgk_employee_total",
+    "unemployment_employee_total",
+    "income_tax_total",
+    "stamp_tax_total",
+)
+
+#: İşveren yükünün üç kalemi — SGK 79-82.
+_EMPLOYER_TOTAL_FIELDS: tuple[str, ...] = (
+    "sgk_employer_total",
+    "unemployment_employer_total",
+    "short_work_total",
 )
 
 #: 🔴 SGK 89 etiketi AÇIKÇA sayar: **"İşçi + İşveren SGK + İşsizlik"**. Gelir
@@ -127,9 +185,9 @@ def build_sgk_summary(
     bugünün yılı değil (S2): geçmiş bir bildirimin primi bu yılın oranıyla
     yeniden yazılamaz.
     """
-    toplamlar = dict.fromkeys((alan for _, alan in _RATE_FIELDS), ZERO_MONEY)
+    toplamlar = dict.fromkeys((*(alan for _, alan in _RATE_FIELDS), *_LINE_FIELDS), ZERO_MONEY)
     matrah = ZERO_MONEY
-    bildirilen = uncomputed_count = unknown_rate_count = 0
+    bildirilen = uncomputed_count = unknown_rate_count = unknown_tax_count = 0
 
     for line in lines:
         if line.status is PayrollLineStatus.uncomputed:
@@ -151,14 +209,26 @@ def build_sgk_summary(
                 line.gross_amount, getattr(rate, oran_alani)
             )
 
-    isci_kesinti = sum(
-        (toplamlar[alan] for _, alan in _RATE_FIELDS[:4]),
-        ZERO_MONEY,
-    )
-    isveren_yuku = sum(
-        (toplamlar[alan] for _, alan in _RATE_FIELDS[4:]),
-        ZERO_MONEY,
-    )
+        # 🔴 K6 — vergi ve damga SATIRDAN gelir, orandan TÜRETİLMEZ.
+        if line.income_tax_amount is None or line.deduction_amount is None:
+            # IK3-GV öncesi satır: vergisi BİLİNMİYOR. Matrahta ve prim
+            # kalemlerinde KALIR (prim brütten türer), yalnız vergi/damga
+            # toplamlarına girmez ve sayaçta GÖRÜNÜR.
+            unknown_tax_count += 1
+            continue
+        toplamlar["income_tax_total"] += line.income_tax_amount
+        # Damga = kesintinin geri kalanı. `compute` kesintiyi tam olarak bu dört
+        # kalemin toplamı olarak kurar (`compute.Deductions.total`), bu yüzden
+        # fark KURUŞUNA KADAR damgadır ve asgari ücret istisnasını görür.
+        toplamlar["stamp_tax_total"] += (
+            line.deduction_amount
+            - compute.rate_share(line.gross_amount, rate.sgk_employee_pct)
+            - compute.rate_share(line.gross_amount, rate.unemployment_employee_pct)
+            - line.income_tax_amount
+        )
+
+    isci_kesinti = sum((toplamlar[alan] for alan in _EMPLOYEE_TOTAL_FIELDS), ZERO_MONEY)
+    isveren_yuku = sum((toplamlar[alan] for alan in _EMPLOYER_TOTAL_FIELDS), ZERO_MONEY)
     return SgkSummary(
         declared_personnel_count=bildirilen,
         sgk_base_total=matrah,
@@ -175,5 +245,6 @@ def build_sgk_summary(
         sgk_payable_total=sum((toplamlar[alan] for alan in _PAYABLE_FIELDS), ZERO_MONEY),
         uncomputed_count=uncomputed_count,
         unknown_rate_count=unknown_rate_count,
+        unknown_tax_count=unknown_tax_count,
         **toplamlar,
     )

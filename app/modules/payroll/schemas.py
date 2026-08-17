@@ -54,6 +54,21 @@ class PayrollComputeResult(BaseModel):
     skipped_approved: int = Field(
         description="Onaylı/ödenmiş olduğu için KORUNAN satır sayısı (S5)",
     )
+    #: 🔴 IK3-GV K4 — SIRASIZ DÖNEM sayacı. Aynı yılın daha erken bir ayı hiç
+    #: açılmamışsa ya da hâlâ `draft` ise o ayın matrahı kümülatife GİRMEMİŞTİR
+    #: ve bu dönemin gelir vergisi olması gerekenden DÜŞÜK çıkar.
+    #:
+    #: 409 ile REDDEDİLMEZ (yıl ortasında sisteme geçişi imkânsız kılardı) ama
+    #: SESSİZ DE GEÇİLMEZ: doğru sırayla hesaplanmış bir dönem ile sırasız
+    #: hesaplanmış bir dönem ayırt edilebilir olmalıdır ("aynı yeşil iki anlam
+    #: taşır" kanonu). İK-2'nin `unknown_entitlement_personnel` emsali.
+    missing_prior_period_count: int = Field(
+        default=0,
+        description=(
+            "Aynı yılda bu aydan ÖNCE gelen ve henüz açılmamış ya da taslak olan "
+            "dönem sayısı: kümülatif vergi matrahı EKSİK olabilir (K4)"
+        ),
+    )
 
 
 class PayrollPeriodApproveResult(BaseModel):
@@ -208,6 +223,14 @@ class PayrollLineResponse(BaseModel):
     net_amount: Decimal | None
     bank_amount: Decimal | None
     cash_amount: Decimal | None
+    #: --- IK3-GV K1: vergi SNAPSHOT'ı (üçü birlikte dolar ya da birlikte `null`) ---
+    #: `tax_base_amount` = brüt − SGK işçi − işsizlik işçi (asgari ücret
+    #: istisnası bu matrahta KALIR — indirim değil KREDİdir, KK-7);
+    #: `cumulative_tax_base` = yıl başından bu ay DAHİL biriken matrah;
+    #: `income_tax_amount` = o ayın gelir vergisi, istisna DÜŞÜLMÜŞ (taban 0).
+    tax_base_amount: Decimal | None
+    cumulative_tax_base: Decimal | None
+    income_tax_amount: Decimal | None
     status: PayrollLineStatus
     #: K2 — satırın niçin ödemeye girmediği YAZILI (sessiz atlama yok).
     excluded_reason: str | None
@@ -356,6 +379,13 @@ class PayrollSgkSummaryResponse(BaseModel):
     sgk_payable_total: Decimal
     uncomputed_count: int
     unknown_rate_count: int
+    #: 🔴 IK3-GV K6 — gelir vergisi ve damga artık ORANDAN değil SATIRDAN gelir
+    #: (`payroll_lines.income_tax_amount`). IK3-GV öncesinde hesaplanmış
+    #: satırlarda o kolon `NULL`dur: satır matrahta ve PRİM kalemlerinde KALIR
+    #: (prim brütten türer, vergiden bağımsızdır) ama vergi/damga toplamlarına
+    #: GİRMEZ ve burada GÖRÜNÜR. Satırı tamamen düşürmek, ilgisiz bir eksik
+    #: yüzünden ekranın asıl sayısını yok ederdi.
+    unknown_tax_count: int
 
 
 class PayrollSgkSubmitResult(BaseModel):
@@ -404,7 +434,11 @@ class PayrollRateUpdate(BaseModel):
 
     sgk_employee_pct: Rate
     unemployment_employee_pct: Rate
-    income_tax_pct: Rate
+    #: 🔴 IK3-GV K3 — `null` = DİLİMLİ MOTOR, dolu = DÜZ ORAN. Alan ZORUNLUDUR
+    #: (varsayılanı YOKTUR): `null`ın atlanarak da elde edilebilmesi, kısmi
+    #: gönderimin "sessizce 0" olmasıyla aynı sınıf bir yalan üretirdi —
+    #: kullanıcı rejim seçimini AÇIKÇA yapar.
+    income_tax_pct: Rate | None
     stamp_tax_pct: Rate
     sgk_employer_pct: Rate
     unemployment_employer_pct: Rate
@@ -420,8 +454,16 @@ class PayrollRateUpdate(BaseModel):
         Tek tek geçerli (her biri ≤ %100) ama toplamı %101 olan bir set, brütü
         tanımlı HER personelin netini negatife çevirir ve DB CHECK'ine çarpardı.
         Sınır kalem başına değil TOPLAM üzerinde de durmalıdır.
+
+        🔴 `income_tax_pct` `None` ise (dilimli rejim, K3) toplamdan DÜŞER, 0
+        SAYILMAZ: dilimli verginin oranı bir sabit değildir ve onu 0 gibi
+        toplamak sınırı gerçekte olduğundan gevşek gösterirdi. Dilimli rejimde
+        neti negatife düşüren asıl koruma matrahtadır
+        (`compute.employee_deductions` eksi matrahta fail-closed'dur).
         """
-        toplam = sum(getattr(self, alan) for alan in _EMPLOYEE_RATE_FIELDS)
+        toplam = sum(
+            deger for alan in _EMPLOYEE_RATE_FIELDS if (deger := getattr(self, alan)) is not None
+        )
         if toplam > MAX_TOTAL_PCT:
             raise ValueError(
                 f"İşçi kesinti oranlarının toplamı %100'ü aşamaz (gönderilen: %{toplam})"
@@ -439,7 +481,8 @@ class PayrollRateResponse(BaseModel):
     personnel_source: WorkerSource
     sgk_employee_pct: Decimal
     unemployment_employee_pct: Decimal
-    income_tax_pct: Decimal
+    #: 🔴 K3 — `null` = dilimli motor (`payroll_tax_brackets`), dolu = düz oran.
+    income_tax_pct: Decimal | None
     stamp_tax_pct: Decimal
     sgk_employer_pct: Decimal
     unemployment_employer_pct: Decimal

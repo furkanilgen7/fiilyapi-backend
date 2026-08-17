@@ -42,13 +42,24 @@ from app.core.errors import (
     PayrollValidationError,
 )
 from app.modules.audit import messages
-from app.modules.payroll import compute, guards, schemas, sgk, summary, transitions
+from app.modules.payroll import (
+    compute,
+    guards,
+    income_tax,
+    schemas,
+    sgk,
+    summary,
+    transitions,
+)
 from app.modules.payroll.models import (
+    IncomeKind,
     PayrollLine,
     PayrollLineStatus,
+    PayrollMinimumWage,
     PayrollPeriod,
     PayrollPeriodStatus,
     PayrollRate,
+    PayrollTaxBracket,
 )
 from app.modules.payroll.schemas import PayrollComputeResult
 from app.modules.personnel.models import Personnel
@@ -123,6 +134,165 @@ async def rates_by_source(session: AsyncSession, year: int) -> dict[WorkerSource
         .all()
     )
     return {row.personnel_source: row for row in rows}
+
+
+# --- IK3-GV: dilimli vergi bağlamı ----------------------------------------
+#
+# 🔴 KÜMÜLATİF MATRAH SNAPSHOT'TIR, `SUM` DEĞİLDİR (K1). Gerekçe modelde
+# (`models.py` `PayrollLine`) yazılıdır ve ÖLÇÜLMÜŞTÜR: `create_period` ay
+# sırasını hiç zorlamaz, onaylanan dönem geri alınamaz (`transitions.py` tek
+# yönlü, DELETE ucu yok) → `SUM` yolu ödenmiş bir dönemin vergisini kalıcı ve
+# SESSİZ biçimde yanlış bırakırdı.
+#
+# Zincir şöyle kurulur: bir ayın tabanı, **daha erken bir ayın satırına
+# YAZILMIŞ** `cumulative_tax_base`tir. Böylece Temmuz onaylandıktan sonra Mart
+# açılıp hesaplansa bile Temmuz'un vergisi DEĞİŞMEZ (KK-8: geçmiş dönemler
+# donmuş kalır) ve Mart kendi doğru tabanından hesaplanır.
+
+
+async def _tax_brackets(
+    session: AsyncSession, year: int
+) -> tuple[income_tax.TaxBracket, ...] | None:
+    """Yılın ÜCRET tarifesi — satırı yoksa **`None`** (fail-closed, K3).
+
+    Yalnız `is_active` satırlar okunur (`payroll_rates` kuralıyla aynı: eski
+    yılın tarifesi silinmez, pasifleştirilir).
+
+    🔴 Set BURADA doğrulanmaz; doğrulama `income_tax.normalize_brackets`tadır ve
+    `compute` onu bir istisnayla karşılayıp satırı `uncomputed`a düşürür. Burada
+    doğrulansaydı bozuk bir set TÜM dönemi 500'e düşürür, tek bir tipin satırı
+    yüzünden bordronun tamamı hesaplanamaz olurdu.
+    """
+    rows = (
+        (
+            await session.execute(
+                select(PayrollTaxBracket).where(
+                    PayrollTaxBracket.year == year,
+                    PayrollTaxBracket.income_kind == IncomeKind.wage,
+                    PayrollTaxBracket.is_active.is_(True),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not rows:
+        return None
+    return tuple(
+        income_tax.TaxBracket(
+            ordinal=row.ordinal, upper_bound=row.upper_bound, rate_pct=row.rate_pct
+        )
+        for row in rows
+    )
+
+
+async def _minimum_wage_gross(session: AsyncSession, year: int) -> Decimal | None:
+    """Yılın BRÜT asgari ücreti — satırı yoksa **`None`** (fail-closed, KK-7).
+
+    İstisnayı 0 saymak asgari ücretliden ayda ~4.500 TL fazla kesmek olurdu.
+    """
+    return (
+        await session.execute(
+            select(PayrollMinimumWage.gross_amount).where(
+                PayrollMinimumWage.year == year, PayrollMinimumWage.is_active.is_(True)
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def _prior_cumulative_bases(
+    session: AsyncSession, year: int, month: int
+) -> dict[uuid.UUID, Decimal]:
+    """Personel başına, AYNI YILIN daha erken bir ayına YAZILMIŞ son kümülatif.
+
+    🔴 `SUM(tax_base_amount)` DEĞİL: en yakın önceki ayın **snapshot**ı okunur
+    (K1). Aradaki bir ay eksikse ya da hesaplanmamışsa taban o eksikliği
+    sessizce yutmaz — eksik ay `missing_prior_period_count` sayacında GÖRÜNÜR
+    (K4). Fark ölçüldü: `SUM` yolunda sonradan açılan bir ay, ÖNCEDEN ONAYLANMIŞ
+    sonraki ayların tabanını geriye dönük değiştirirdi ve o aylar
+    düzeltilemezdi.
+
+    `DISTINCT ON (personnel_id) … ORDER BY personnel_id, month DESC` PostgreSQL
+    özelliğidir ve N+1'i önler: 48 kişilik bir dönemde tek sorgu koşar.
+    """
+    rows = await session.execute(
+        select(PayrollLine.personnel_id, PayrollLine.cumulative_tax_base)
+        .join(PayrollPeriod, PayrollPeriod.id == PayrollLine.payroll_period_id)
+        .where(
+            PayrollPeriod.year == year,
+            PayrollPeriod.month < month,
+            PayrollLine.cumulative_tax_base.is_not(None),
+        )
+        .distinct(PayrollLine.personnel_id)
+        .order_by(PayrollLine.personnel_id, PayrollPeriod.month.desc())
+    )
+    return {personnel_id: taban for personnel_id, taban in rows.all()}
+
+
+def _opening_tax_base(person: Personnel, year: int) -> Decimal:
+    """K7 devir matrahı — YALNIZ yılı tutuyorsa kullanılır (fail-closed).
+
+    Kolon AÇIKTIR ama hiçbir uç onu DOLDURMAZ (GV GT 311 md.21/5: devir
+    çalışanın talebine bağlıdır, otomatik değildir), varsayılan 0'dır ve
+    bugünkü davranış değişmez. Yıl niteleyicisi `NULL` ya da farklıysa devir
+    YOK sayılır: aksi hâlde 2026'da girilen bir devir 2027'de de uygulanır ve
+    "31 Aralık → 1 Ocak sıfırlanır" kuralını sessizce bozardı.
+    """
+    if person.opening_tax_base_year != year:
+        return Decimal("0.00")
+    return person.opening_tax_base
+
+
+async def _missing_prior_period_count(session: AsyncSession, year: int, month: int) -> int:
+    """🔴 K4 — SIRASIZ DÖNEM: fail-closed SAYAÇ, sessiz geçiş YOK.
+
+    Aynı yılın daha erken bir ayı `payroll_periods`ta YOKSA ya da hâlâ `draft`
+    ise, o ayın matrahı kümülatife GİRMEMİŞTİR ve bu dönemin vergisi olması
+    gerekenden DÜŞÜK çıkar. Sayaç bunu görünür kılar (İK-2'nin
+    `unknown_entitlement_personnel` emsali).
+
+    🔴 **409 ile REDDEDİLMEZ:** yıl ortasında sisteme geçişi imkânsız kılardı
+    (Ağustos'ta başlayan bir şirket Ocak-Temmuz'u açmak zorunda kalırdı).
+    🔴 **SESSİZ DE GEÇİLMEZ:** "aynı yeşil iki anlam taşır" — doğru sırayla
+    hesaplanmış bir dönem ile sırasız hesaplanmış bir dönem AYIRT EDİLEBİLİR
+    olmalıdır.
+    """
+    if month <= 1:
+        return 0
+    hazir = set(
+        (
+            await session.execute(
+                select(PayrollPeriod.month).where(
+                    PayrollPeriod.year == year,
+                    PayrollPeriod.month < month,
+                    PayrollPeriod.status != PayrollPeriodStatus.draft,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return len([ay for ay in range(1, month) if ay not in hazir])
+
+
+async def _tax_context_for_line(
+    session: AsyncSession, period: PayrollPeriod, person: Personnel
+) -> compute.TaxContext:
+    """TEK bir satır için vergi bağlamı — override yolunun (K3) girdisi.
+
+    `compute_period`in toplu okumalarının tek kişilik eşidir ve AYNI
+    kaynaklardan besleneceği için iki yol aynı girdide aynı sayıyı üretir
+    (T4 kabul şartı). Toplu yolla tek fonksiyonda birleştirilmedi çünkü toplu
+    yol N+1'den kaçınmak için `DISTINCT ON` kullanır; burada tek kişi vardır ve
+    aynı sorgunun sözlüğünden okunur.
+    """
+    prior = await _prior_cumulative_bases(session, period.year, period.month)
+    return compute.TaxContext(
+        month=period.month,
+        prior_cumulative_base=prior.get(person.id, _opening_tax_base(person, period.year)),
+        brackets=await _tax_brackets(session, period.year),
+        minimum_wage_gross=await _minimum_wage_gross(session, period.year),
+    )
 
 
 async def _payroll_personnel(session: AsyncSession) -> list[Personnel]:
@@ -223,6 +393,11 @@ def _apply(line: PayrollLine, source: WorkerSource, hesap: compute.ComputedLine)
     line.net_amount = hesap.net_amount
     line.bank_amount = hesap.bank_amount
     line.cash_amount = hesap.cash_amount
+    # IK3-GV K1 — vergi snapshot'ı satırla BİRLİKTE yazılır: ayrı yazılsaydı
+    # yarım dolu bir satır ("matrahı var, vergisi yok") DB'ye düşebilirdi.
+    line.tax_base_amount = hesap.tax_base_amount
+    line.cumulative_tax_base = hesap.cumulative_tax_base
+    line.income_tax_amount = hesap.income_tax_amount
     line.status = hesap.status
     line.excluded_reason = hesap.excluded_reason
 
@@ -278,6 +453,15 @@ async def compute_period(session: AsyncSession, period_id: uuid.UUID) -> Payroll
     man_days = await _man_day_counts(session, period.year, period.month)
     kayitli = await _personnel_with_timesheet_records(session, period.year, period.month)
     existing = await _existing_lines(session, period.id)
+    # IK3-GV: tarife/asgari ücret DÖNEM BAŞINA BİR KEZ, kümülatif tabanlar TEK
+    # sorguda okunur — kişi başına sorgu açılsaydı 48 kişilik bir dönem N+1
+    # üretirdi. Hepsi `_lock_period`in `FOR UPDATE` penceresinin İÇİNDEDİR
+    # (EŞİK = KİLİT): eşzamanlı bir `compute` aynı tabanı okuyup iki kez
+    # yazamaz.
+    brackets = await _tax_brackets(session, period.year)
+    minimum_wage = await _minimum_wage_gross(session, period.year)
+    prior_bases = await _prior_cumulative_bases(session, period.year, period.month)
+    missing_prior = await _missing_prior_period_count(session, period.year, period.month)
 
     created = updated = skipped_overridden = skipped_approved = 0
     #: Bu koşuda ÜRETİLEN ya da KORUNAN satırlar — dönem ilerletmesinin tabanı.
@@ -304,6 +488,14 @@ async def compute_period(session: AsyncSession, period_id: uuid.UUID) -> Payroll
             man_days=man_days.get(person.id, 0),
             has_timesheet_records=person.id in kayitli,
             rate=rates.get(person.source),
+            tax=compute.TaxContext(
+                month=period.month,
+                prior_cumulative_base=prior_bases.get(
+                    person.id, _opening_tax_base(person, period.year)
+                ),
+                brackets=brackets,
+                minimum_wage_gross=minimum_wage,
+            ),
         )
         if line is None:
             line = PayrollLine(payroll_period_id=period.id, personnel_id=person.id)
@@ -322,6 +514,7 @@ async def compute_period(session: AsyncSession, period_id: uuid.UUID) -> Payroll
         updated=updated,
         skipped_overridden=skipped_overridden,
         skipped_approved=skipped_approved,
+        missing_prior_period_count=missing_prior,
     )
 
 
@@ -458,6 +651,9 @@ def _line_response(line: PayrollLine, full_name: str) -> schemas.PayrollLineResp
         net_amount=line.net_amount,
         bank_amount=line.bank_amount,
         cash_amount=line.cash_amount,
+        tax_base_amount=line.tax_base_amount,
+        cumulative_tax_base=line.cumulative_tax_base,
+        income_tax_amount=line.income_tax_amount,
         status=line.status,
         excluded_reason=line.excluded_reason,
         is_overridden=line.is_overridden,
@@ -654,6 +850,16 @@ async def _apply_gross_override(
 
     Oran seti yoksa **422** (ŞEF KARARI 2, T2): kesintisi bilinmeyen bir brütten
     net türetmek, kesintiyi 0 saymak demektir.
+
+    🔴 **IK3-GV — `deduction_and_net`in İKİNCİ ÇAĞIRANI BURASIDIR.** Vergi
+    bağlamı (`TaxContext`) otomatik yolla AYNI yardımcıdan kurulur
+    (`_tax_context_for_line`): kümülatif taban aynı snapshot zincirinden, tarife
+    ve asgari ücret aynı yıldan gelir. İkinci bir bağlam kurulsaydı elle
+    düzeltilen satır ile otomatik satır aynı girdide FARKLI vergi üretirdi.
+
+    Dilimli rejimde tarife/asgari ücret satırı yoksa yine **422**dir (K3
+    fail-closed): 0 vergiyle "düzeltilmiş" bir satır yazmak, kullanıcının elle
+    girdiği brütü vergisiz ödemek olurdu.
     """
     rate = (await rates_by_source(session, period.year)).get(line.personnel_source)
     if rate is None:
@@ -663,15 +869,23 @@ async def _apply_gross_override(
         await session.execute(select(Personnel).where(Personnel.id == line.personnel_id))
     ).scalar_one()
 
+    tax = await _tax_context_for_line(session, period, person)
+    sonuc = compute.deduction_and_net(gross_amount, rate, tax)
+    if sonuc is None:
+        raise PayrollValidationError(guards.TAX_BRACKETS_MISSING)
+
     line.previous_gross_amount = line.gross_amount
     line.is_overridden = True
     line.overridden_by_id = actor_id
     line.overridden_at = datetime.now(UTC)
 
-    deduction, net = compute.deduction_and_net(gross_amount, rate)
+    kesintiler, net = sonuc
     line.gross_amount = gross_amount
-    line.deduction_amount = deduction
+    line.deduction_amount = kesintiler.total
     line.net_amount = net
+    line.tax_base_amount = kesintiler.tax_base
+    line.cumulative_tax_base = kesintiler.cumulative_tax_base
+    line.income_tax_amount = kesintiler.income_tax
     line.bank_amount, line.cash_amount = compute.split_payment(net, person.payment_method)
 
     if line.status is PayrollLineStatus.uncomputed:

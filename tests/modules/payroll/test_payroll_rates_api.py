@@ -34,7 +34,15 @@ pytestmark = pytest.mark.asyncio
 
 
 def _govde(**degisiklik) -> dict:
-    return {**{alan: str(deger) for alan, deger in SGK_4A.items()}, **degisiklik}
+    """🔴 `None` STRINGE ÇEVRİLMEZ — o bir DEĞER, "yok" değil (IK3-GV K3).
+
+    `income_tax_pct = None` "dilimli gelir vergisi motoru" demektir; `"None"`
+    diye gönderilseydi şema 422 verir ve rejim seçimi HİÇ test edilemezdi.
+    """
+    return {
+        **{alan: (None if deger is None else str(deger)) for alan, deger in SGK_4A.items()},
+        **degisiklik,
+    }
 
 
 async def _put(client, headers, year, source, **degisiklik):

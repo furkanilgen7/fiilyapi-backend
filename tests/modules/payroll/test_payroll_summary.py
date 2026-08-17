@@ -52,9 +52,9 @@ async def test_odeme_kartlari_taseron_netini_ICERMEZ(db_session, donem, dort_tip
     """
     ozet = await _ozet(db_session, donem)
 
-    assert ozet.net_total == Decimal("24181.69")
+    assert ozet.net_total == Decimal("25150.00")
     assert ozet.net_personnel_count == 3
-    assert ozet.bank_total == Decimal("24181.69")
+    assert ozet.bank_total == Decimal("25150.00")
     assert ozet.cash_total == Decimal("0.00")
 
 

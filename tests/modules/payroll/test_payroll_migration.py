@@ -240,6 +240,10 @@ def test_payroll_line_columns_and_delete_semantics():
         "net_amount",
         "bank_amount",
         "cash_amount",
+        # IK3-GV K1 — vergi SNAPSHOT'ı (üçü de nullable, sunucu varsayılansız).
+        "tax_base_amount",
+        "cumulative_tax_base",
+        "income_tax_amount",
         "is_overridden",
         "overridden_by_id",
         "overridden_at",
@@ -297,6 +301,14 @@ def test_payroll_rate_columns_match_spec():
         # yuvarlar ve damga vergisini sessizce şişirirdi.
         assert columns[oran].type.scale == 3, f"{oran} %0,759'u taşıyamaz"
         assert columns[oran].type.precision == 6
+        if oran == "income_tax_pct":
+            # 🔴 IK3-GV K3 — TEK nullable oran: `NULL` = DİLİMLİ MOTOR
+            # (`payroll_tax_brackets`), dolu = düz oran. Rejim seçimi de
+            # VERİDİR; koda gömülü bir `if source in (...)` K1 ile çelişirdi.
+            # `NULL` "vergi yok" DEMEK DEĞİLDİR: dilim seti bulunamazsa satır
+            # `uncomputed`a düşer, 0 vergi ASLA yazılmaz.
+            assert columns[oran].nullable
+            continue
         assert not columns[oran].nullable
     assert any(
         set(c.name for c in uq.columns) == {"year", "personnel_source"}

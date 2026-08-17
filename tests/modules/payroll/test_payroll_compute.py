@@ -13,16 +13,44 @@ from decimal import Decimal
 
 import pytest
 
-from app.modules.payroll import compute
+from app.modules.payroll import compute, income_tax
 from app.modules.payroll.models import PayrollLineStatus, PayrollRate
+from app.modules.payroll.tax_bracket_seed_data import (
+    MINIMUM_WAGE_GROSS_2026,
+    TAX_BRACKETS_2026_WAGE,
+)
 from app.modules.personnel.models import PaymentMethod, WageType
 from app.modules.site_diary.models import WorkerSource
 
-# SGK 70-73 işçi payları (S1): 14 + 1 + 10 + 0,759 = **%25,759**.
+#: 2026 ÜCRET tarifesi — `tax_bracket_seed_data`dan gelir, elle KOPYALANMAZ.
+BRACKETS = tuple(
+    income_tax.TaxBracket(ordinal=o, upper_bound=u, rate_pct=r)
+    for o, u, r in TAX_BRACKETS_2026_WAGE
+)
+
+
+#: Varsayılan vergi bağlamı: yılın İLK ayı, devir yok. Ayrışma noktaları
+#: (Temmuz istisnası, kümülatif taşma, dilim sınırları) kendi testlerinde
+#: bağlamı AÇIKÇA değiştirir.
+def tax_context(**degisiklikler) -> compute.TaxContext:
+    varsayilan = {
+        "month": 1,
+        "prior_cumulative_base": Decimal("0.00"),
+        "brackets": BRACKETS,
+        "minimum_wage_gross": MINIMUM_WAGE_GROSS_2026,
+    }
+    return compute.TaxContext(**{**varsayilan, **degisiklikler})
+
+
+# SGK 70-73 işçi payları (S1). 🔴 IK3-GV: `income_tax_pct` artık **`None`**dır ve
+# bu "vergi yok" DEMEK DEĞİLDİR — `payroll_tax_brackets` üzerinden DİLİMLİ motor
+# demektir (K3). Dört kalemi tek yüzdede toplayan eski %25,759 sabiti KALKTI:
+# dilimli vergi brütün sabit bir yüzdesi değildir, aynı brüt yılın hangi ayında
+# olduğuna göre farklı vergi üretir.
 SGK_4A = {
     "sgk_employee_pct": Decimal("14.000"),
     "unemployment_employee_pct": Decimal("1.000"),
-    "income_tax_pct": Decimal("10.000"),
+    "income_tax_pct": None,
     "stamp_tax_pct": Decimal("0.759"),
     "sgk_employer_pct": Decimal("20.500"),
     "unemployment_employer_pct": Decimal("2.000"),
@@ -47,8 +75,6 @@ ZERO = dict.fromkeys(SGK_4A, Decimal("0.000"))
 # BY 243 "Serbest Makbuz · %20 Stopaj" — SGK payı YOK.
 SERBEST = {**ZERO, "income_tax_pct": Decimal("20.000")}
 
-TOPLAM_ISCI_ORANI = Decimal("25.759")
-
 
 def rate(**oranlar: Decimal) -> PayrollRate:
     """Oturumsuz `PayrollRate` — hesap saf olduğu için DB'ye ihtiyaç yok."""
@@ -65,6 +91,7 @@ def hesapla(**kwargs) -> compute.ComputedLine:
         "man_days": 21,
         "has_timesheet_records": True,
         "rate": rate(),
+        "tax": tax_context(),
     }
     return compute.compute_line(**{**varsayilan, **kwargs})
 
@@ -72,25 +99,40 @@ def hesapla(**kwargs) -> compute.ComputedLine:
 # --- Oran toplamı: işçi tarafı / işveren tarafı ayrımı ----------------------
 
 
-def test_isci_orani_dort_kalemin_toplamidir():
-    """SGK 70-73: 14 + 1 + 10 + 0,759. Damga ÜÇ ONDALIKLI kalmalı (0,76 DEĞİL)."""
-    assert compute.employee_deduction_pct(rate()) == TOPLAM_ISCI_ORANI
+def test_dilimli_rejimde_toplam_isci_orani_TANIMSIZDIR():
+    """🔴 IK3-GV — `income_tax_pct IS NULL` iken "toplam yüzde" YOKTUR.
+
+    `employee_deduction_pct` bu durumda **`None`** döner, 0 DEĞİL: 0 dönmek
+    "kesinti yok" yalanı olurdu (NULL-EŞİK kanonu) ve dilimli vergiyi hesabın
+    dışına düşürürdü. Eski %25,759 sabiti tam olarak bu yüzden kaldırıldı.
+    """
+    assert compute.employee_deduction_pct(rate()) is None
+
+
+def test_duz_oranli_rejimde_isci_orani_dort_kalemin_toplamidir():
+    """Düz oran rejiminde (serbest meslek) toplam yine tanımlıdır: 0+0+20+0."""
+    assert compute.employee_deduction_pct(rate(**SERBEST)) == Decimal("20.000")
 
 
 def test_isveren_oranlari_kesintiye_GIRMEZ():
     """İşveren payları maliyettir, işçinin kesintisi değildir (spec §7).
 
-    İşveren sütunları uçuk değerlere çekilir; kesinti oranı KIMILDAMAMALIDIR.
-    Aynı kural mutasyon denetimidir: `employee_deduction_pct` yanlışlıkla yedi
-    sütunu toplarsa bu test kırmızıya döner.
+    İşveren sütunları uçuk değerlere çekilir; kesinti KIMILDAMAMALIDIR.
+    Mutasyon denetimidir: kesinti yanlışlıkla yedi sütunu toplarsa kırmızıya
+    döner. 🔴 IK3-GV ile oran TOPLAMI üzerinden değil, hesaplanan KESİNTİ
+    üzerinden ölçülür — dilimli rejimde "toplam yüzde" diye bir sayı yoktur.
     """
-    sisirilmis = rate(
-        sgk_employer_pct=Decimal("99.000"),
-        unemployment_employer_pct=Decimal("88.000"),
-        short_work_pct=Decimal("77.000"),
+    sisirilmis = hesapla(
+        rate=rate(
+            sgk_employer_pct=Decimal("99.000"),
+            unemployment_employer_pct=Decimal("88.000"),
+            short_work_pct=Decimal("77.000"),
+        )
     )
+    normal = hesapla()
 
-    assert compute.employee_deduction_pct(sisirilmis) == TOPLAM_ISCI_ORANI
+    assert sisirilmis.deduction_amount == normal.deduction_amount
+    assert sisirilmis.net_amount == normal.net_amount
 
 
 def test_yedi_oran_sutunu_iki_kumeye_TAM_bolunur():
@@ -237,12 +279,28 @@ def test_oran_seti_YOKSA_fail_closed():
 
 
 def test_sirket_kadrosu_tam_hesap():
-    """BY 127 bölümü. 37.800 brüt × %25,759 = 9.736,90 kesinti."""
+    """BY 127 bölümü — 🔴 IK3-GV sonrası DÖRT KALEM, tek yüzde DEĞİL.
+
+    37.800,00 brüt · OCAK (kümülatif 0):
+      SGK işçi   %14      → 5.292,00
+      işsizlik   %1       →   378,00
+      matrah = 37.800 − 5.670 = **32.130,00** (istisna matrahta KALIR)
+      gelir vergisi: 32.130 × %15 = 4.819,50 − istisna 4.211,325 = **608,18**
+      damga: 37.800 × %0,759 = 286,902 − istisna 250,6977 = **36,20**
+      kesinti = 6.314,38 · net = 31.485,62
+
+    Eski sayı (9.736,90 = 37.800 × %25,759) MEVZUATA DAYANMIYORDU: içindeki
+    düz %10 gelir vergisi mockup etiketinden (SGK 72) gelmişti ve GVK m.103'ün
+    hiçbir dilimine karşılık gelmiyordu.
+    """
     satir = hesapla(wage_amount=Decimal("1800.00"), man_days=21)
 
     assert satir.gross_amount == Decimal("37800.00")
-    assert satir.deduction_amount == Decimal("9736.90")
-    assert satir.net_amount == Decimal("28063.10")
+    assert satir.tax_base_amount == Decimal("32130.00")
+    assert satir.cumulative_tax_base == Decimal("32130.00")
+    assert satir.income_tax_amount == Decimal("608.18")
+    assert satir.deduction_amount == Decimal("6314.38")
+    assert satir.net_amount == Decimal("31485.62")
     assert satir.status is PayrollLineStatus.pending
 
 
@@ -372,16 +430,21 @@ def test_varsayilan_bolusum(payment_method, banka_dolu: bool):
 def test_kurus_kaymasi_bolusumu_BOZMAZ():
     """S3 kuruşu kuruşuna: `banka + elden = net`, yuvarlama artığı olmadan.
 
-    Tek sayılı bir brüt × %25,759 kasten seçildi: 12.345,67 × 0,25759 =
-    3.180,1211... → yuvarlanır. Kesinti ayrı, net ayrı yuvarlansaydı toplam
-    netten bir kuruş kayabilirdi ve T3'te S3 kapısı 422'ye düşerdi.
+    Tek sayılı bir brüt kasten seçildi (12.345,67): SGK %14 → 1.728,3938 ve
+    işsizlik %1 → 123,4567 ikisi de yuvarlanır. Kesinti dört kalemin toplamıdır
+    (IK3-GV) ve net onun FARKIDIR; net bağımsız yuvarlansaydı `banka + elden`
+    netten bir kuruş kayar, T3'te S3 kapısı 422'ye düşerdi.
+
+    Gelir vergisi ve damga **0,00**dır: 12.345,67 brüt, 2026 asgari ücretinin
+    (33.030,00) ALTINDADIR → KK-7 istisnası ikisini de tamamen karşılar.
     """
     satir = hesapla(wage_type=WageType.monthly, wage_amount=Decimal("12345.67"))
 
     assert satir.gross_amount == Decimal("12345.67")
-    assert satir.deduction_amount == Decimal("3180.12")
+    assert satir.income_tax_amount == Decimal("0.00")
+    assert satir.deduction_amount == Decimal("1851.85")  # 1.728,39 + 123,46
     # Net TÜREVDİR: brütten kesinti düşülür, bağımsız yuvarlanmaz.
-    assert satir.net_amount == Decimal("9165.55")
+    assert satir.net_amount == Decimal("10493.82")
     assert satir.bank_amount + satir.cash_amount == satir.net_amount
 
 

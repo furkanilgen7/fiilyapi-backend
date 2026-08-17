@@ -144,9 +144,12 @@ async def test_sirket_satiri_dokuz_sutun(client, ik_headers, hesaplanmis):
         "Şirket",
         "5",
         "9000.00",
-        "2318.31",
-        "6681.69",
-        "6681.69",
+        # 🔴 IK3-GV: kesinti artık DÖRT kalemdir ve 9.000 brüt asgari
+        # ücretin ALTINDA olduğu için gelir vergisi + damga 0,00'dır (KK-7
+        # istisnası ikisini de tamamen karşılar) → SGK %14 + işsizlik %1.
+        "1350.00",
+        "7650.00",
+        "7650.00",
         "0.00",
         STATUS_LABELS[PayrollLineStatus.pending],
     ]
@@ -187,7 +190,7 @@ async def test_toplam_satiri_BY_298_301(client, ik_headers, hesaplanmis):
     toplam = _satir(sheet, sheet.max_row)
 
     assert toplam[0] == f"{TOTAL_LABEL_PREFIX} (5 çalışan)"
-    odenebilir = Decimal("6681.69") + Decimal("10000.00") + Decimal("7500.00")
+    odenebilir = Decimal("7650.00") + Decimal("10000.00") + Decimal("7500.00")
     assert toplam[5] == str(odenebilir)
     assert toplam[6] == str(odenebilir)  # üçü de banka (ŞEF KARARI 3)
     assert toplam[7] == "0.00"

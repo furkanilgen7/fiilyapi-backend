@@ -48,6 +48,23 @@ SKIP_LOG_PREFIX = "IK3-RATE-FIX ATLANDI"
 SEEDED_SHORT_WORK = Decimal("1.000")
 CORRECTED_SHORT_WORK = Decimal("0.000")
 
+#: 🔴 IK3-GV (`b3c4d5e6f7a8`) `income_tax_pct`i SONRAKİ bir revizyonda
+#: `company`/`subcontractor` için `10`dan `NULL`a çeker (düz oran → dilimli
+#: motor). `PAYROLL_RATES_2026` zincirin SONUNU tarif eder; bu dosya ise
+#: `f6a7b8c9d0e1` revizyonunda durur, yani ARA durumu ölçer. Bu sütun burada
+#: sabitle karşılaştırılmaz — ara durumu ayrıca ve AÇIKÇA iddia edilir
+#: (`_ARA_INCOME_TAX_PCT`), son durumun bekçisi IK3-GV'nin kendi (B) katmanıdır
+#: (`test_ik3_gv_migration.py`). Sessizce atlanmaz: iki iddia da yazılıdır.
+_SONRAKI_REVIZYONUN_DEGISTIRDIGI = ("income_tax_pct",)
+_ARA_INCOME_TAX_PCT = {
+    "company": Decimal("10.000"),
+    "subcontractor": Decimal("10.000"),
+    # 🔴 Bu ikisi IK3-GV'de DE değişmez: düz oran rejiminde KALIRLAR
+    # (`freelance` GVK m.94 %20 stopaj · `intern` "kesinti yok" kararı).
+    "freelance": Decimal("20.000"),
+    "intern": Decimal("0.000"),
+}
+
 
 def _asyncpg_dsn(database: str) -> str:
     base = settings.test_database_url.replace("postgresql+asyncpg://", "postgresql://")
@@ -167,9 +184,13 @@ async def test_kk5_duzeltmesi_uygulanir_ve_zincir_sabitle_ortusur():
                 row = sonra[source]
                 assert row["is_active"] is True, source
                 for alan in RATE_COLUMNS:
+                    if alan in _SONRAKI_REVIZYONUN_DEGISTIRDIGI:
+                        continue
                     assert row[alan] == beklenen[alan], (
                         f"{source}.{alan}: DB {row[alan]} != sabit {beklenen[alan]}"
                     )
+                # Ara durum AÇIKÇA iddia edilir (yukarıdaki not).
+                assert row["income_tax_pct"] == _ARA_INCOME_TAX_PCT[source], source
         finally:
             await conn.close()
     finally:
@@ -357,6 +378,8 @@ async def test_upgrade_downgrade_upgrade_turu():
             assert await conn.fetchval("SELECT count(*) FROM payroll_rates") == 4
             for source, beklenen in PAYROLL_RATES_2026.items():
                 for alan in RATE_COLUMNS:
+                    if alan in _SONRAKI_REVIZYONUN_DEGISTIRDIGI:
+                        continue
                     assert sonra[source][alan] == beklenen[alan], f"{source}.{alan}"
         finally:
             await conn.close()
