@@ -347,6 +347,25 @@ def test_period_profit_AYRISMA_NOKTASI_sinif_6_giderleri():
     assert kar == Decimal("4000")
 
 
+def test_K6_period_profit_69_KAPANIS_grubunu_SAYMAZ():
+    """🔴 MT-2/K6: `690`/`692` bir KAPANIŞ AKTARIM hesabıdır. Kapanış fişi
+    atılmış bir dönemde kâr hem kaynak `6xx`/`7xx` hesaplarından hem `69`dan
+    sayılır ve İKİ KATINA çıkardı — bilançodaki `59` kuralının kardeşi.
+
+    🔴 Kural `period_profit()`te yaşadığı için BİLANÇONUN `Dönem Net Kârı` ve
+    `Geçmiş Yıllar Kârları` kalemlerini de kapsar. Ayrışma noktası: `69`
+    TEK BAŞINA verildiğinde sonuç `0` olmalıdır — `6x` sınıfına bakan bir
+    yazım `10000` döndürürdü.
+
+    Mutasyon: `EXCLUDED_INCOME_STATEMENT_GROUPS` kontrolü kaldırılırsa KIRMIZI.
+    """
+    assert statement_map.period_profit({"690": Decimal("-10000.00")}) == Decimal("0")
+    assert statement_map.period_profit({"692": Decimal("10000.00")}) == Decimal("0")
+    # Kapanış fişi: `600` bakiyesi `690`a aktarılır. Kâr YALNIZ `600`den sayılır.
+    kapanis = {"600": Decimal("-10000.00"), "690": Decimal("10000.00")}
+    assert statement_map.period_profit(kapanis) == Decimal("10000.00")
+
+
 def test_period_profit_KURUS_hassasiyetini_korur():
     """Kuruş ayrışma noktası: kayan nokta devreye girseydi `0.1 + 0.2` kusuru
     kârı 1 kuruş kaydırır ve bilanço dengesi kırılırdı (MT-K2 — uç YUVARLAMAZ)."""
@@ -476,3 +495,238 @@ def test_nakit_akis_haritasi_gercek_kalemlere_isaret_eder():
     for grup in range(11, 100):
         hedef = statement_map.cash_flow_line_for(f"{grup}0")
         assert hedef in gecerli, f"{grup} → {hedef} diye bir kalem yok"
+
+
+# --------------------------------------------------------------------------- #
+# 8. MT-2 T3 — GELIR TABLOSU haritasi (DB'siz, UCTAN BAGIMSIZ)
+# --------------------------------------------------------------------------- #
+#
+# 🔴 Bu bolum bilinerek HTTP ucundan GECMEZ. Olculmus kanon (MT-1 T6):
+# **iki katman birbirini maskeler** — harita dogru ama sorgu eksikse uc testi
+# YINE YESIL kalir ve haritanin kendi kusuru gorunmez. Alt katmanin KENDI
+# bekcisi burada durur.
+
+
+def test_gelir_tablosu_IKI_bolum_ve_ALTI_kalem_mockup_ile_birebir():
+    """🔴 K1: **2 bölüm · 6 kalem · 2 ara toplam · 1 genel toplam.**
+
+    TDHP'nin `Brüt Satış Kârı` / `Faaliyet Kârı` basamakları YAZILMAZ — mockup
+    (GT:93-143) onları çizmiyor ve icat edilmiş bir kalem tasarım otoritesini
+    aşar (bilanço 13 kalemde durdu).
+    """
+    bolumler = statement_map.INCOME_STATEMENT_SECTIONS
+    assert [b.key for b in bolumler] == ["revenue", "expenses"]
+    assert [b.title for b in bolumler] == ["GELİRLER", "GİDERLER"]
+    assert [b.subtotal_label for b in bolumler] == ["Toplam Gelir", "Toplam Gider"]
+    assert [(k.key, k.label) for k in bolumler[0].lines] == [
+        ("construction_revenue", "İş Hasılatı"),  # GT:98
+        ("other_revenue", "Diğer Gelirler"),  # GT:103
+    ]
+    assert [(k.key, k.label) for k in bolumler[1].lines] == [
+        ("material_costs", "Malzeme Giderleri"),  # GT:116
+        ("labor_costs", "İşçilik Giderleri"),  # GT:121
+        ("subcontractor_costs", "Taşeron Ödemeleri"),  # GT:126
+        ("general_expenses", "Genel Giderler"),  # GT:131
+    ]
+    assert statement_map.INCOME_STATEMENT_PROFIT_LABEL == "DÖNEM KARI"  # GT:141
+    assert statement_map.INCOME_STATEMENT_EXPENSE_SECTION == bolumler[1].key
+
+
+def test_gelir_tablosu_kalem_anahtarlari_TEKILDIR():
+    """İki bölüm aynı anahtarı taşısaydı tutar sözlüğü onları birleştirir ve
+    para yanlış satıra düşerdi (bilanço emsali)."""
+    anahtarlar = [k.key for b in statement_map.INCOME_STATEMENT_SECTIONS for k in b.lines]
+    assert len(anahtarlar) == len(set(anahtarlar)) == 6
+
+
+@pytest.mark.parametrize(
+    ("grup", "kalem"),
+    [
+        ("60", "construction_revenue"),
+        ("61", "construction_revenue"),
+        ("62", "general_expenses"),
+        ("63", "general_expenses"),
+        ("64", "other_revenue"),
+        ("65", "general_expenses"),
+        ("66", "general_expenses"),
+        ("67", "other_revenue"),
+        ("68", "general_expenses"),
+        ("70", "general_expenses"),
+        ("71", "material_costs"),
+        ("72", "labor_costs"),
+        ("73", "labor_costs"),
+        ("74", "subcontractor_costs"),
+        ("75", "general_expenses"),
+        ("76", "general_expenses"),
+        ("77", "general_expenses"),
+        ("78", "general_expenses"),
+        ("79", "material_costs"),
+    ],
+)
+def test_K2_her_grup_AYRI_AYRI_dogru_kaleme_duser(grup: str, kalem: str):
+    """🔴 K2 eşlemesinin TAMAMI — grup başına AYRI iddia.
+
+    Toplu bir "hepsi haritalı" iddiası, `72`yi `general_expenses`e bağlayan bir
+    yazım hatasını GÖREMEZDİ: harita yine tam olurdu. Üç kod biçimi de aynı
+    kaleme düşer (`NN` · `NNN` · `NNN.NN`).
+    """
+    assert statement_map.INCOME_STATEMENT_GROUPS[grup] == kalem
+    assert statement_map.income_statement_line_for(grup) == kalem
+    assert statement_map.income_statement_line_for(f"{grup}0") == kalem
+    assert statement_map.income_statement_line_for(f"{grup}0.01") == kalem
+
+
+@pytest.mark.parametrize("hane", ["6", "7"])
+def test_gelir_tablosu_siniflarinin_HER_grubu_ACIKCA_haritalidir(hane: str):
+    """🔴 Görünmezlik yasağı: `6x`/`7x` her grup AÇIK bir girdi taşır, yedeğe
+    düşmez. Yedeğe düşen bir grup `Genel Giderler`e sızar ve etiketi sessizce
+    yanlış olur. `69` tek istisnadır ve AÇIKÇA dışlanmıştır."""
+    for birim in range(10):
+        grup = f"{hane}{birim}"
+        if grup in statement_map.EXCLUDED_INCOME_STATEMENT_GROUPS:
+            continue
+        assert grup in statement_map.INCOME_STATEMENT_GROUPS, f"{grup} haritada yok"
+
+
+def test_gelir_tablosu_haritasi_gercek_kalemlere_isaret_eder():
+    """Yazım hatası var olmayan bir kaleme işaret etseydi o gruptaki bütün para
+    sessizce kaybolurdu."""
+    gecerli = {k.key for b in statement_map.INCOME_STATEMENT_SECTIONS for k in b.lines}
+    for grup, kalem in statement_map.INCOME_STATEMENT_GROUPS.items():
+        assert kalem in gecerli, f"{grup} → {kalem} diye bir kalem yok"
+    assert statement_map._INCOME_STATEMENT_FALLBACK in gecerli
+
+
+def test_gelir_tablosu_HER_grubun_bir_KAYNAK_NOTU_vardir():
+    """Notsuz girdi yasaktır: "bu neden burada?" cevapsız kalırsa harita gözden
+    geçirilemez. `69` da notludur — DIŞLANDIĞI oraya yazılıdır."""
+    for grup in list(statement_map.INCOME_STATEMENT_GROUPS) + sorted(
+        statement_map.EXCLUDED_INCOME_STATEMENT_GROUPS
+    ):
+        not_metni = statement_map.INCOME_STATEMENT_SOURCE_NOTES.get(grup)
+        assert not_metni and len(not_metni) > 5, f"{grup} kaynak notsuz"
+
+
+@pytest.mark.parametrize("kod", ["100", "12", "191", "320", "500", "590", "580.01"])
+def test_bilanco_hesaplari_gelir_tablosuna_GIRMEZ(kod: str):
+    """🔴 `balance_sheet_line_for`ün AYNADAKİ karşılığı: orada `6x`/`7x` `None`
+    döner, burada `1x`-`5x`. İki fonksiyon birlikte tüm kod uzayını tam olarak
+    BİR KEZ kaplar; biri gevşerse aynı para iki tabloda birden sayılır."""
+    assert statement_map.income_statement_line_for(kod) is None
+
+
+def test_K6_69_grubu_gelir_tablosuna_GIRMEZ():
+    """🔴 K6: `690`/`692` bir KAPANIŞ AKTARIM hesabıdır. Yedeğe düşseydi
+    `Genel Giderler` kapanış fişini gider sayar ve dönem kârı İKİ KEZ
+    hesaplanırdı — `59`un bilanço tarafındaki kuralının KARDEŞİ.
+
+    Mutasyon: `EXCLUDED_INCOME_STATEMENT_GROUPS`tan `69` çıkarılırsa bu test
+    KIRMIZI olur (`general_expenses` döner)."""
+    for kod in ("69", "690", "692", "690.01"):
+        assert statement_map.income_statement_line_for(kod) is None
+    assert "69" not in statement_map.INCOME_STATEMENT_GROUPS
+
+
+def test_K6_69_hesap_planina_TOHUMLANMAZ_degisim_pratikte_NO_OP():
+    """🔴 K6(c): dışlama canlıdaki bilançonun formülünü değiştirir ama pratikte
+    NO-OP'tur — `69` grubu hesap planına HİÇ tohumlanmaz, dolayısıyla bugünkü
+    hiçbir defterde `69` bakiyesi olamaz.
+
+    Kanıt tohumun KENDİSİNDEN okunur, docstring'den değil."""
+    from app.modules.accounting import chart_seed_data
+
+    kodlar = [h.code for h in chart_seed_data.CHART_ACCOUNTS]
+    assert kodlar, "tohum listesi boş — bekçi kör kalırdı"
+    assert [k for k in kodlar if k.startswith("69")] == []
+    # Kardeşi de yok: `59` aynı gerekçeyle tohumlanmaz.
+    assert [k for k in kodlar if k.startswith("59")] == []
+
+
+@pytest.mark.parametrize(
+    "kod",
+    [
+        # çiftin ALACAK bacağı (K7)
+        "701",
+        "711",
+        "721",
+        "731",
+        "741",
+        "751",
+        "761",
+        "771",
+        "781",
+        "798",
+        # 🔴 çiftin BORÇ bacağı (K7-b, final review CRITICAL-1)
+        "700",
+        "799",
+    ],
+)
+def test_K7_MALIYET_AKTARIM_hesaplari_ISARETLENIR(kod: str):
+    """🔴 K7: 7/A yansıtma hesapları `revenue` türündedir (ALACAK yönlü) ve
+    KENDİ gider grubundadır. Gider kalemi grup olarak toplansaydı `710`+`711`
+    birbirini götürür ve satır `0` basardı — sekiz grupta birden.
+
+    Alt hesap da işaretlenir: eşleme `code[:3]` üzerinden yapılır."""
+    assert statement_map.is_cost_reflection(kod) is True
+    assert statement_map.is_cost_reflection(f"{kod}.01") is True
+
+
+@pytest.mark.parametrize("kod", ["710", "712", "720", "730", "740", "790", "600", "71", "79"])
+def test_K7_yansitma_OLMAYAN_hesaplar_isaretlenmez(kod: str):
+    """Ayrışma noktası: `710` ile `711` YAN YANA durur ve yalnız ikincisi
+    yansıtmadır. Grup düzeyinde bakan bir kural ikisini de eler ve satırı
+    tümüyle boşaltırdı."""
+    assert statement_map.is_cost_reflection(kod) is False
+
+
+def test_K7_yansitma_kumesi_hesap_planindaki_REVENUE_tipli_sinif_7_ile_BIREBIR():
+    """🔴 Küme uydurulmadı: tohumlanan hesap planında SINIF 7'nin `revenue`
+    türündeki hesaplarının TAMAMI budur. Tohuma yeni bir yansıtma eklenirse bu
+    test kırmızı olur ve küme güncellenir — sessizce sıfırlanan bir gider
+    kalemi yerine."""
+    from app.modules.accounting import chart_seed_data
+    from app.modules.accounting.models import ChartAccountType
+
+    tohumdaki = {
+        h.code
+        for h in chart_seed_data.CHART_ACCOUNTS
+        if h.code[0] == "7" and h.account_type is ChartAccountType.revenue
+    }
+    assert tohumdaki == statement_map.COST_REFLECTION_ACCOUNTS
+
+
+def test_gecersiz_kod_gelir_tablosu_yolunda_da_REDDEDILIR():
+    """Sessizce `None` dönseydi geçersiz bir kod "bilanço hesabı" sayılır ve
+    parası hiçbir tabloda görünmezdi (`group_of` kanonu)."""
+    for kod in ("", "7", "abc", "0700"):
+        with pytest.raises(ValueError):
+            statement_map.income_statement_line_for(kod)
+        with pytest.raises(ValueError):
+            statement_map.is_cost_reflection(kod)
+
+
+def test_K7_HICBIR_yansitma_hesabi_GELIR_kalemine_dusmez():
+    """🔴 K7 dışlaması `_dagit`te KOŞULSUZ uygulanır (`is_cost_reflection` her
+    hesap için sorulur, bölüm sorulmaz). Bu bugün DOĞRUDUR çünkü on yansıtma
+    hesabının ONU DA bir GİDER kalemine düşer — ölçüldü.
+
+    Ama bu bir İNVARYANTTIR, tesadüf değil: haritada `70`ı (ya da `79`u) bir
+    gelir kalemine taşıyan bir değişiklik, koşulsuz dışlamayı sessizce bir
+    GELİR SİLİCİSİNE çevirirdi ve hasılat hiçbir satırda görünmeden düşerdi
+    (görünmezlik yasağının en sinsi hâli).
+
+    Bekçi haritayla birlikte kırılır ve düzeltmeyi ZORLAR: ya kod bölüm-duyarlı
+    yapılır ya harita geri alınır.
+    """
+    gider_kalemleri = {
+        k.key
+        for b in statement_map.INCOME_STATEMENT_SECTIONS
+        if b.key == statement_map.INCOME_STATEMENT_EXPENSE_SECTION
+        for k in b.lines
+    }
+    for kod in sorted(statement_map.COST_REFLECTION_ACCOUNTS):
+        kalem = statement_map.income_statement_line_for(kod)
+        assert kalem in gider_kalemleri, (
+            f"{kod} yansıtma hesabı `{kalem}` GELİR kalemine düşüyor — koşulsuz K7 "
+            "dışlaması burada hasılatı sessizce siler"
+        )
