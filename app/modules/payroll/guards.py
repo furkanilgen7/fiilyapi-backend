@@ -48,6 +48,15 @@ SPLIT_WITHOUT_NET = "Hesaplanamamış satırda ödeme bölüşümü yapılamaz; 
 #: 422 — ŞEF KARARI 2 (T2): kesintisi bilinmeyen brütten net türetilmez.
 RATE_MISSING = "Bu personel tipi için dönemin yılına ait aktif kesinti oranı tanımlı değil"
 
+#: 🔴 422 — IK3-GV K3 fail-closed: `income_tax_pct IS NULL` (dilimli rejim) ama
+#: o yılın gelir vergisi tarifesi ya da brüt asgari ücreti tanımlı değil.
+#: `NULL` sessizce "vergi yok" DEMEK DEĞİLDİR (NULL-EŞİK kanonu): 0 vergiyle
+#: hesaplanmış bir satır, kullanıcının elle girdiği brütü vergisiz ödetirdi.
+TAX_BRACKETS_MISSING = (
+    "Dönemin yılına ait gelir vergisi tarifesi veya brüt asgari ücret tanımlı değil: "
+    "dilimli gelir vergisi hesaplanamaz"
+)
+
 
 # --- T4: onay + ödeme yolu -------------------------------------------------
 

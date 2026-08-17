@@ -3,7 +3,9 @@
 
 🔴 **NEDEN BU DOSYA VAR.** 2026 oran tohumu iki migration'ın BİLEŞKESİDİR:
 `c5d6e7f8a9b0` (İK-3 çekirdeği) dört satırı basar, `f6a7b8c9d0e1`
-(IK3-RATE-FIX) `short_work_pct`i KK-5 gereği `1`den `0`a çeker. Uygulama
+(IK3-RATE-FIX) `short_work_pct`i KK-5 gereği `1`den `0`a çeker, `b3c4d5e6f7a8`
+(IK3-GV) `income_tax_pct`i `company`/`subcontractor` için `10`dan `NULL`a
+çeker (düz oran → dilimli motor, K3). Uygulama
 katmanının doğruluk kaynağı (`rate_seed_data.PAYROLL_RATES_2026`) bu bileşkenin
 sonucunu iddia eder. İki katman sessizce ayrışırsa canlıdaki oran ile ekibin
 "doğru" sandığı oran farklı olur ve **hiçbir mevcut test bunu görmez**:
@@ -78,6 +80,10 @@ from app.modules.payroll.rate_seed_data import (
 _VERSIONS_DIR = Path(__file__).parents[3] / "alembic" / "versions"
 _SEED_MIGRATION = _VERSIONS_DIR / "c5d6e7f8a9b0_ik3_bordro_cekirdegi.py"
 _FIX_MIGRATION = _VERSIONS_DIR / "f6a7b8c9d0e1_ik3_rate_fix_kisa_calisma_sifir.py"
+#: 🔴 IK3-GV zincire ÜÇÜNCÜ halkayı ekledi: `income_tax_pct` 10 → `NULL`
+#: (düz oran → dilimli motor, K3). Bileşke bu halkayı da içermelidir, yoksa
+#: `rate_seed_data` ile migration zinciri AYRIŞMIŞ görünürdü.
+_GV_MIGRATION = _VERSIONS_DIR / "b3c4d5e6f7a8_ik3gv_dilimli_gelir_vergisi.py"
 
 
 def _load(path: Path, adi: str) -> ModuleType:
@@ -90,7 +96,7 @@ def _load(path: Path, adi: str) -> ModuleType:
     return module
 
 
-def _zincirin_sonucu() -> dict[str, dict[str, Decimal]]:
+def _zincirin_sonucu() -> dict[str, dict[str, Decimal | None]]:
     """İki migration'ı SEMBOLİK olarak bileştirir: tohum + KK-5 düzeltmesi.
 
     Gerçek `UPDATE`in aynısını Python'da yapar — `= SEEDED` koşulu DÂHİL, ki
@@ -99,17 +105,28 @@ def _zincirin_sonucu() -> dict[str, dict[str, Decimal]]:
     """
     seed = _load(_SEED_MIGRATION, "ik3_seed_migration")
     fix = _load(_FIX_MIGRATION, "ik3_rate_fix_migration")
+    gv = _load(_GV_MIGRATION, "ik3gv_migration")
 
     assert fix.TARGET_YEAR == seed.RATE_SEED_YEAR, (
         f"düzeltme {fix.TARGET_YEAR} yılını hedefliyor ama tohum "
         f"{seed.RATE_SEED_YEAR} yılını basıyor — düzeltme boşa düşer"
     )
+    assert gv.TARGET_YEAR == seed.RATE_SEED_YEAR, (
+        f"IK3-GV {gv.TARGET_YEAR} yılını hedefliyor ama tohum "
+        f"{seed.RATE_SEED_YEAR} yılını basıyor — rejim geçişi boşa düşer"
+    )
 
-    sonuc: dict[str, dict[str, Decimal]] = {}
+    sonuc: dict[str, dict[str, Decimal | None]] = {}
     for source, oranlar in seed.RATE_SEED_2026.items():
-        satir = {alan: Decimal(deger) for alan, deger in oranlar.items()}
+        satir: dict[str, Decimal | None] = {alan: Decimal(deger) for alan, deger in oranlar.items()}
         if satir["short_work_pct"] == fix.SEEDED_SHORT_WORK_PCT:
             satir["short_work_pct"] = fix.CORRECTED_SHORT_WORK_PCT
+        # IK3-GV: yalnız dilimli rejime geçen tipler ve yalnız TOHUMUN bastığı
+        # değer (`= 10`) — kullanıcının elle girdiği bir oran EZİLMEZ.
+        if source in gv.BRACKET_REGIME_SOURCES and satir["income_tax_pct"] == (
+            gv.SEEDED_INCOME_TAX_PCT
+        ):
+            satir["income_tax_pct"] = None
         sonuc[source] = satir
     return sonuc
 

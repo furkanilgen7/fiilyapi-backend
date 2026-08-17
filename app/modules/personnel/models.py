@@ -174,6 +174,24 @@ class Personnel(Base):
         Boolean, nullable=False, default=False, server_default=text("false")
     )
 
+    # --- IK3-GV K7: DEVİR MATRAHI — kolon AÇILIR, DOLDURULMAZ ----------------
+    #
+    # GV GT 311 md.21/5: işveren değişiminde kümülatif matrahın devri ÇALIŞANIN
+    # TALEBİNE bağlıdır, otomatik değildir. Bu yüzden formu/ekranı YOKTUR ve
+    # hiçbir uç bu alanları yazmaz; varsayılan 0'dır ve bugünkü davranış
+    # DEĞİŞMEZ. Kolonu şimdi açmak ikinci bir migration'ı önler.
+    #
+    # 🔴 YIL NİTELEYİCİSİ ZORUNLUDUR (`opening_tax_base_year`). Devir matrahı
+    # BİR YILA aittir: yıl niteleyicisi olmasaydı 2026'da girilen bir devir
+    # 2027'de de uygulanır ve o yılın vergisini SESSİZCE eksik hesaplardı —
+    # "31 Aralık → 1 Ocak sıfırlanır" kuralının tam tersi. `service.py` devri
+    # YALNIZ `opening_tax_base_year == dönemin yılı` iken kullanır (fail-closed:
+    # yıl `NULL` ise devir YOK sayılır).
+    opening_tax_base: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), nullable=False, default=Decimal("0.00"), server_default=text("0")
+    )
+    opening_tax_base_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -57,7 +57,7 @@ _EPOSTALAR = ("ik3-onay1@conc.co", "ik3-onay2@conc.co")
 #: KENDİ AYINI kullanır ki testler birbirinin dönemini görmesin.
 _YIL = 2099
 
-SIRKET_NET = Decimal("6681.69")
+SIRKET_NET = Decimal("7650.00")
 TASERON_NET = Decimal("5000.00")
 
 
@@ -121,7 +121,7 @@ async def _kur(
             personnel_source=WorkerSource.company,
             days=5,
             gross_amount=Decimal("9000.00"),
-            deduction_amount=Decimal("2318.31"),
+            deduction_amount=Decimal("1350.00"),
             net_amount=SIRKET_NET,
             bank_amount=SIRKET_NET,
             cash_amount=Decimal("0.00"),

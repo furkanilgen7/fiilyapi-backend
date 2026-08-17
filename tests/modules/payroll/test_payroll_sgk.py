@@ -48,9 +48,16 @@ MATRAH = Decimal("38000.00")  # 9.000 + 9.000 + 12.500 + 7.500
 
 SGK_ISCI = Decimal("2520.00")  # 2 × 9.000 × %14
 ISSIZLIK_ISCI = Decimal("180.00")  # 2 × 9.000 × %1
-GELIR_VERGISI = Decimal("4300.00")  # 2 × 900 + 12.500 × %20
-DAMGA = Decimal("136.62")  # 2 × 9.000 × %0,759
-ISCI_KESINTI = Decimal("7136.62")
+# 🔴 IK3-GV: gelir vergisi ve damga artık ORANDAN DEĞİL SATIRDAN gelir (K6).
+#   şirket + taşeron → 0,00: 9.000 brüt, 2026 brüt asgari ücretinin (33.030,00)
+#     ALTINDADIR, KK-7 istisnası hesaplanan verginin tamamını karşılar;
+#   serbest → 12.500 × %20 = 2.500,00 (düz oran rejimi, GVK m.94);
+#   stajyer → 0 (tüm oranları 0).
+# Eski 4.300,00 içindeki 2 × 900, mevzuata dayanmayan düz %10'dan geliyordu.
+GELIR_VERGISI = Decimal("2500.00")
+# Damga da istisnayı GÖRÜR: 9.000 × %0,759 = 68,31 < istisna 250,70 → 0,00.
+DAMGA = Decimal("0.00")
+ISCI_KESINTI = Decimal("5200.00")
 
 SGK_ISVEREN = Decimal("3690.00")  # 2 × 9.000 × %20,5
 ISSIZLIK_ISVEREN = Decimal("360.00")  # 2 × 9.000 × %2

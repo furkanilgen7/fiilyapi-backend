@@ -253,6 +253,11 @@ async def test_compute_satirlari_uretir(client, ik_headers, donem, dort_tip):
         "updated": 0,
         "skipped_overridden": 0,
         "skipped_approved": 0,
+        # 🔴 IK3-GV K4 — Temmuz dönemi hesaplanıyor ama Ocak-Haziran HİÇ
+        #    açılmamış: kümülatif vergi matrahı EKSİK olabilir. 409 ile
+        #    reddedilmez (yıl ortasında sisteme geçiş imkânsız olurdu) ama
+        #    SESSİZ de geçilmez.
+        "missing_prior_period_count": 6,
     }
 
 
@@ -286,8 +291,8 @@ async def test_detay_dort_karti_ve_bolumleri_dondurur(client, ik_headers, donem,
     govde = resp.json()
 
     ozet = govde["summary"]
-    assert Decimal(ozet["net_total"]) == Decimal("24181.69")  # 1. kart (BY 69-71)
-    assert Decimal(ozet["bank_total"]) == Decimal("24181.69")  # 2. kart (BY 76-79)
+    assert Decimal(ozet["net_total"]) == Decimal("25150.00")  # 1. kart (BY 69-71)
+    assert Decimal(ozet["bank_total"]) == Decimal("25150.00")  # 2. kart (BY 76-79)
     assert Decimal(ozet["cash_total"]) == Decimal("0.00")  # 3. kart (BY 84-87)
     assert Decimal(ozet["total_employer_cost"]) == Decimal("42230.00")  # 4. kart (BY 90-92)
     assert ozet["uncomputed_count"] == 1
@@ -338,7 +343,7 @@ async def test_liste_BG_sutunlarini_dondurur(client, ik_headers, donem, dort_tip
     assert satir["personnel_count"] == 5
     assert Decimal(satir["gross_total"]) == Decimal("38000.00")
     assert Decimal(satir["sgk_employer_total"]) == Decimal("3690.00")
-    assert Decimal(satir["net_total"]) == Decimal("24181.69")
+    assert Decimal(satir["net_total"]) == Decimal("25150.00")
     assert Decimal(satir["total_cost"]) == Decimal("42230.00")
 
 

@@ -32,7 +32,17 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.payroll.models import PayrollPeriod, PayrollRate
+from app.modules.payroll.models import (
+    IncomeKind,
+    PayrollMinimumWage,
+    PayrollPeriod,
+    PayrollRate,
+    PayrollTaxBracket,
+)
+from app.modules.payroll.tax_bracket_seed_data import (
+    MINIMUM_WAGE_GROSS_2026,
+    TAX_BRACKETS_2026_WAGE,
+)
 from app.modules.personnel.models import PaymentMethod, Personnel, WageType
 from app.modules.projects.models import Project
 from app.modules.site_diary.models import WorkerSource
@@ -46,16 +56,24 @@ AY = 7
 
 
 # SGK 70-73 / 79-81 (S1) — `test_payroll_compute.py` ile AYNI sayılar.
+#
+# 🔴 **IK3-GV K3 — `income_tax_pct = None` DİLİMLİ MOTOR demektir.** `company` ve
+# `subcontractor` 2026 tohumunda (migration `b3c4d5e6f7a8`) `NULL`a çekildi:
+# gelir vergisi artık `payroll_tax_brackets`ten, kümülatif matrah üzerinden
+# hesaplanır. Buraya `10` yazmak, kaldırılmış olan düz oran rejimini fixture
+# düzeyinde geri getirir ve dilimli motoru TÜM servis testlerinde devre dışı
+# bırakırdı (sahte yeşil).
 SGK_4A = {
     "sgk_employee_pct": Decimal("14.000"),
     "unemployment_employee_pct": Decimal("1.000"),
-    "income_tax_pct": Decimal("10.000"),
+    "income_tax_pct": None,
     "stamp_tax_pct": Decimal("0.759"),
     "sgk_employer_pct": Decimal("20.500"),
     "unemployment_employer_pct": Decimal("2.000"),
     "short_work_pct": Decimal("1.000"),
 }
 ZERO = dict.fromkeys(SGK_4A, Decimal("0.000"))
+#: BY 243 "Serbest Makbuz · %20 Stopaj" — DÜZ oran rejiminde KALIR (GVK m.94).
 SERBEST = {**ZERO, "income_tax_pct": Decimal("20.000")}
 
 #: `general` KASTEN YOKTUR (spec §4): bordro tipi değildir, oran satırı da yoktur.
@@ -68,7 +86,34 @@ SEED_2026 = {
 
 
 @pytest.fixture
-async def oranlar(db_session: AsyncSession) -> list[PayrollRate]:
+async def dilimler(db_session: AsyncSession) -> list[PayrollTaxBracket]:
+    """IK3-GV — 2026 ÜCRET tarifesi + brüt asgari ücret.
+
+    🔴 `oranlar` fixture'ının AYRILMAZ eşidir: `income_tax_pct = None` (dilimli
+    rejim) iken tarife ya da asgari ücret satırı YOKSA `compute` satırı
+    `uncomputed`a düşürür (K3 fail-closed) — yani bu fixture olmadan hiçbir
+    şirket satırı hesaplanmaz. Değerler `tax_bracket_seed_data`dan gelir, elle
+    KOPYALANMAZ: fixture ile tohum ayrışırsa servis testleri üretimde olmayan
+    bir tarifeyi doğrularmış olurdu.
+    """
+    rows = [
+        PayrollTaxBracket(
+            year=YIL,
+            income_kind=IncomeKind.wage,
+            ordinal=ordinal,
+            upper_bound=upper_bound,
+            rate_pct=rate_pct,
+        )
+        for ordinal, upper_bound, rate_pct in TAX_BRACKETS_2026_WAGE
+    ]
+    db_session.add_all(rows)
+    db_session.add(PayrollMinimumWage(year=YIL, gross_amount=MINIMUM_WAGE_GROSS_2026))
+    await db_session.flush()
+    return rows
+
+
+@pytest.fixture
+async def oranlar(db_session: AsyncSession, dilimler) -> list[PayrollRate]:
     rows = [
         PayrollRate(year=YIL, personnel_source=source, **pct) for source, pct in SEED_2026.items()
     ]
@@ -204,11 +249,19 @@ async def yetkisiz_headers(client: AsyncClient, user_factory) -> dict[str, str]:
 # BY'nin dört bölümünü (124/172/240/268) + S4'ün "hesaplanamadı" durumunu tek
 # fixture'da toplar. Sayılar ORANLARDAN türer, BY/BG tutarlarından DEĞİL (S1):
 #
-#   şirket   · 5 gün × 1.800 = brüt  9.000,00 · kesinti %25,759 → 2.318,31 · net 6.681,69
-#   taşeron  · 5 gün × 1.800 = brüt  9.000,00 · aynı hesap        · net 6.681,69 (EXCLUDED)
-#   serbest  · aylık          brüt 12.500,00 · %20 stopaj        · net 10.000,00
+#   şirket   · 5 gün × 1.800 = brüt  9.000,00 · DİLİMLİ          · net 7.650,00
+#   taşeron  · 5 gün × 1.800 = brüt  9.000,00 · aynı hesap        · net 7.650,00 (EXCLUDED)
+#   serbest  · aylık          brüt 12.500,00 · %20 DÜZ stopaj    · net 10.000,00
 #   stajyer  · aylık          brüt  7.500,00 · kesinti YOK       · net  7.500,00
 #   ücretsiz · ücret tanımsız → brüt/net `null`, satır UNCOMPUTED (S4)
+#
+# 🔴 IK3-GV: şirket/taşeron satırının GELİR VERGİSİ ve DAMGASI **0,00**dır ve bu
+# DOĞRUDUR — 9.000 TL brüt, 2026 brüt asgari ücretinin (33.030,00) ALTINDADIR,
+# yani KK-7 istisnası hesaplanan verginin TAMAMINI karşılar (taban 0, negatif
+# vergi üretilmez). Kesinti yalnız SGK işçi (%14 → 1.260,00) + işsizlik işçi
+# (%1 → 90,00) = 1.350,00'dir. IK3-GV öncesinde bu satırlar düz %10 gelir
+# vergisi + %0,759 damga ile 2.318,31 kesinti üretiyordu — o sayı MEVZUATA
+# DAYANMIYORDU (mockup etiketi SGK 72).
 
 
 @pytest.fixture

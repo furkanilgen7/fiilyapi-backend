@@ -28,7 +28,7 @@ bu yüzden iki AYRI şekilde ölçer; gerekçesi orada yazılıdır.
 |---|---|---|
 | `sgk_employee_pct` | 14 | 5510 s.K. — işçi payı %14 (SGK 70) |
 | `unemployment_employee_pct` | 1 | 4447 s.K. m.49 — işçi %1 (SGK 71) |
-| `income_tax_pct` | 10 | 🔴 **AÇIK BORÇ**, aşağı bak (SGK 72) |
+| `income_tax_pct` | **`None`** | 🔑 **IK3-GV** — dilimli motor, aşağı bak (GVK m.103) |
 | `stamp_tax_pct` | 0.759 | 488 s.K. — ücrette binde 7,59 (SGK 73) |
 | `sgk_employer_pct` | 20.5 | 5510 s.K. — işveren payı %20,5, teşvik öncesi (SGK 79) |
 | `unemployment_employer_pct` | 2 | 4447 s.K. m.49 — işveren %2 (SGK 80) |
@@ -44,14 +44,19 @@ Doğru çözüm oranın **`0`** olmasıdır; `models.py:276` `short_work_pct >= 
 CHECK'i `0`ı açıkça yasal kılar.
 🔴 **BURAYA 1 YAZMA.** "Eksik veri" değildir, karardır.
 
-🔴 **AÇIK BORÇ — `income_tax_pct` = 10 mevzuata DAYANMIYOR.** Tek kaynağı
-mockup etiketidir (SGK 72 "Gelir Vergisi Stopajı (%10)"). Türkiye'de ücret
-geliri vergisi GVK m.103 uyarınca **artan oranlıdır** (ilk dilim %15, sonra
-20/27/35/40) ve %10 hiçbir dilime karşılık gelmez; model tek `Decimal` taşır
-(`models.py:293`) ve `compute.deduction_and_net` bunu DÜZ oran olarak kullanır
-(`models.py:9`: "Dilimli/kümülatif gelir vergisi motoru YOK"). Karar
-KULLANICIDA, cevap beklemektedir → bu turda **DEĞİŞTİRİLMEDİ**. Değer
-geldiğinde burası ve `c5d6e7f8a9b0`in düzeltmesi AYRI bir dilimde ele alınır.
+✅ **KAPANDI (IK3-GV, 2026-08-17) — `income_tax_pct` artık `None`dır.**
+Eski `10` değerinin tek kaynağı mockup etiketiydi (SGK 72 "Gelir Vergisi
+Stopajı (%10)") ve GVK m.103'ün hiçbir dilimine karşılık gelmiyordu. Ücret
+geliri vergisi **artan oranlıdır** ve **kümülatif matraha** göre işler; dilimler
+`payroll_tax_brackets`ta, brüt asgari ücret `payroll_minimum_wages`ta durur
+(migration `b3c4d5e6f7a8`).
+
+🔴 **`None` "vergi yok" DEMEK DEĞİLDİR — DİLİMLİ MOTOR demektir (K3).** Rejim
+seçimi de VERİDİR: koda gömülü bir `if source in (...)` K1 ile çelişirdi.
+`None` iken o yılın tarifesi ya da asgari ücreti bulunamazsa satır
+`uncomputed`a düşer (fail-closed) ve **0 vergi ASLA yazılmaz**.
+🔴 **BURAYA 10 YAZMA.** IK3-RATE-FIX'in `short_work_pct` notuyla aynı sınıf:
+değer bir eksiklik değil, bir karardır.
 
 `freelance` = 20 doğrudur (GVK m.94 serbest meslek stopajı %20).
 `general` ("genel işçi") KASTEN yoktur — bordro tipi değildir (şef kararı 2,
@@ -77,21 +82,22 @@ RATE_COLUMNS: tuple[str, ...] = (
 )
 
 #: SGK 4a rejimi — `company` ve `subcontractor`. `short_work_pct` KK-5 gereği 0.
-_SGK_4A: dict[str, Decimal] = {
+_SGK_4A: dict[str, Decimal | None] = {
     "sgk_employee_pct": Decimal("14.000"),
     "unemployment_employee_pct": Decimal("1.000"),
-    "income_tax_pct": Decimal("10.000"),
+    # 🔑 IK3-GV: `None` = DİLİMLİ MOTOR (`payroll_tax_brackets`), "vergi yok" DEĞİL.
+    "income_tax_pct": None,
     "stamp_tax_pct": Decimal("0.759"),
     "sgk_employer_pct": Decimal("20.500"),
     "unemployment_employer_pct": Decimal("2.000"),
     "short_work_pct": Decimal("0.000"),
 }
 
-_ZERO: dict[str, Decimal] = dict.fromkeys(RATE_COLUMNS, Decimal("0.000"))
+_ZERO: dict[str, Decimal | None] = dict.fromkeys(RATE_COLUMNS, Decimal("0.000"))
 
 #: 🔴 Migration zincirinin (`c5d6e7f8a9b0` tohumu + `f6a7b8c9d0e1` KK-5
 #: düzeltmesi) SONUNDA `payroll_rates` tablosunda durması BEKLENEN tam durum.
-PAYROLL_RATES_2026: dict[str, dict[str, Decimal]] = {
+PAYROLL_RATES_2026: dict[str, dict[str, Decimal | None]] = {
     # BY 127 "ŞİRKET KADROSU — SGK 4a".
     "company": _SGK_4A,
     # BY 175 "TAŞERON İŞÇİSİ": kesinti sütunu "—" DEĞİLDİR (BY 186), yani

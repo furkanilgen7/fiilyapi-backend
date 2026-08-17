@@ -26,7 +26,7 @@ from app.modules.payroll.models import PayrollLine, PayrollLineStatus, PayrollPe
 
 pytestmark = pytest.mark.asyncio
 
-SIRKET_NET = Decimal("6681.69")
+SIRKET_NET = Decimal("7650.00")  # IK3-GV: 9.000 − SGK 1.260 − işsizlik 90
 SERBEST_NET = Decimal("10000.00")
 STAJYER_NET = Decimal("7500.00")
 #: `dort_tip`in ödenebilir üç satırının neti — taşeron (K2) ve ücretsiz (S4) HARİÇ.
