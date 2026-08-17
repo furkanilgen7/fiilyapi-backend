@@ -381,8 +381,10 @@ class IncomeStatementLine(BaseModel):
 
     `account_codes` mockup'ta basılmıyor ama **ZORUNLUDUR**: bir kalemin
     hangi hesaplardan geldiğinin tek kanıtı budur ve `Genel Giderler` kovasını
-    (on grup) ŞEFFAF kılar. 🔴 Gider kalemlerinde 7/A YANSITMA hesapları
-    (`711`, `741`, …) listede YOKTUR çünkü tutara da girmezler (K7).
+    (on grup) ŞEFFAF kılar. 🔴 Gider kalemlerinde MALİYET AKTARIM hesapları
+    listede YOKTUR çünkü tutara da girmezler — çiftin **alacak** bacağı
+    (`711`, `741`, …, K7) **ve borç** bacağı (`700`, `799`, K7-b) birlikte
+    dışlanır; satır böylece BRÜT gideri gösterir.
     """
 
     key: str
@@ -419,9 +421,10 @@ class IncomeStatementResponse(BaseModel):
     kalemi (BL:83) ile **BİREBİR AYNI** fonksiyondur — iki uç ayrışamaz.
     `total_revenue − total_expense` ise KALEMLERDEN toplanır.
 
-    🔴 **İkisi AYRIŞABİLİR ve bu bilinçlidir (K7):** gider kalemleri 7/A
-    yansıtma hesaplarını dışlar (satır BRÜT gideri gösterir), `period_profit()`
-    ise onları sayar. Yansıtma fişi ATILMIŞ bir defterde
+    🔴 **İkisi AYRIŞABİLİR ve bu bilinçlidir (K7 + K7-b):** gider kalemleri
+    maliyet aktarım hesaplarının İKİ bacağını da dışlar (satır BRÜT gideri
+    gösterir), `period_profit()` ise ikisini de sayar — orada birbirlerini
+    götürürler. Aktarım fişi ATILMIŞ bir defterde
     `total_revenue − total_expense ≠ period_profit` olur. Üç alanın da
     dönmesinin sebebi budur: fark GÖRÜNÜR kalsın, sessizce bir tarafa
     yazılmasın (`CashFlowStatementResponse`un dört alanı emsal).

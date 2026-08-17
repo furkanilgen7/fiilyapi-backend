@@ -50,8 +50,20 @@ yönlü) ve kendi grubundadır (`71`). Kalem grup olarak toplansaydı `710` (bor
 ile `711` (alacak) BİRBİRİNİ GÖTÜRÜR ve `Malzeme Giderleri` **`0` basardı** —
 kullanıcı 12.480.000 beklerken. Sekiz grupta birden olurdu.
 
-Karar: gider kalemleri yansıtmaları dışlar → satır **BRÜT** gideri gösterir.
-Netleşme `DÖNEM KARI`da, `period_profit()` içinde olur ve o formül DEĞİŞMEZ.
+🔴 **K7-b — ÇİFTİN BORÇ BACAĞI DA DIŞLANIR** (final review CRITICAL-1).
+`700 Maliyet Muhasebesi Bağlantı Hesabı` ve `799 Üretim Maliyet Hesabı`
+`expense` TÜRÜNDEDİR (borç yönlü) ve bir gider hesabı gibi GÖRÜNÜR — ama ikisi
+de bir aktarım bacağıdır:
+
+* `790` (gerçek gider) + `799` (transfer) **ikisi de grup `79`dadır** →
+  `Malzeme Giderleri` aynı parayı **İKİ KAT** basardı;
+* `700`/`701` çiftinde **iki bacak da sınıf 7'dedir** → `701` dışlanıp `700`
+  sayılınca `Genel Giderler` **hiç var olmayan** bir gider basardı.
+
+Karar: gider kalemleri aktarım çiftinin **HER İKİ** bacağını da dışlar → satır
+**BRÜT** gideri gösterir. Netleşme `DÖNEM KARI`da, `period_profit()` içinde
+olur ve o formül DEĞİŞMEZ — orada iki bacak zaten birbirini götürür, yani bu
+bir **SATIR** kusuruydu, kâr kusuru değil.
 
 🔴 **Sonucu bilinçli bir AYRIŞMADIR:** yansıtma fişi atılmış bir defterde
 `total_revenue − total_expense ≠ period_profit`. Uç üçünü de döndürür ki fark
@@ -152,14 +164,22 @@ def _dagit(
     for kayit in kayitlar:
         kod = kayit["code"]
         kalem = statement_map.income_statement_line_for(kod)
-        # 🔴 İKİNCİ KATMAN: sorgunun `WHERE`ı sınıf 1-5'i zaten eledi; bu dal
-        # bugün yalnız `69` için (K6) çalışır. Sınıf süzgeci bir gün gevşerse
-        # bilanço hesapları sessizce `Genel Giderler`e sızardı.
+        # 🔴 Bu dal bugün yalnız `69` için (K6) çalışır: sorgunun `WHERE`ı
+        # sınıf 1-5'i zaten eledi.
+        # 🔴 ÖLÇÜLDÜ — iki katman burada ANLAMSAL OLARAK DENKTİR: SQL sınıf
+        # süzgeci kaldırıldığında hiçbir test kırmızı olmadı (163/163 yeşil),
+        # çünkü `income_statement_line_for` bilanço hesaplarına `None` döner ve
+        # sonuç DEĞİŞMEZ. Yani bu dal bir DOĞRULUK bekçisi değildir; SQL
+        # süzgecinin değeri PERFORMANSTIR (~200 hesap yerine yalnız 6x/7x).
+        # Bekçisi de bu yüzden sonucu değil ÇEKİLEN SATIRLARI ölçer
+        # (`test_SQL_katmani_YALNIZ_sinif_6_ve_7yi_CEKER`).
         if kalem is None:
             continue
-        # 🔴 K7: yansıtma hesabı GİDER kaleminde ne tutara ne kod listesine
-        # girer — girseydi `710`+`711` birbirini götürür ve satır `0` basardı.
-        # `period_profit()` onları YİNE sayar; netleşmenin yeri orasıdır.
+        # 🔴 K7 + K7-b: maliyet AKTARIM hesabı (çiftin alacak bacağı `711` ya
+        # da borç bacağı `700`/`799`) GİDER kaleminde ne tutara ne kod
+        # listesine girer — girseydi satır ya `0` basar (`710`+`711`) ya İKİ
+        # KAT basardı (`790`+`799`). `period_profit()` onları YİNE sayar ve
+        # orada iki bacak birbirini götürür; netleşmenin yeri orasıdır.
         if statement_map.is_cost_reflection(kod):
             continue
         tutarlar[kalem] = tutarlar.get(kalem, ZERO) - kayit["net"]

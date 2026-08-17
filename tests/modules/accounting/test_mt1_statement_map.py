@@ -643,9 +643,25 @@ def test_K6_69_hesap_planina_TOHUMLANMAZ_degisim_pratikte_NO_OP():
 
 
 @pytest.mark.parametrize(
-    "kod", ["701", "711", "721", "731", "741", "751", "761", "771", "781", "798"]
+    "kod",
+    [
+        # çiftin ALACAK bacağı (K7)
+        "701",
+        "711",
+        "721",
+        "731",
+        "741",
+        "751",
+        "761",
+        "771",
+        "781",
+        "798",
+        # 🔴 çiftin BORÇ bacağı (K7-b, final review CRITICAL-1)
+        "700",
+        "799",
+    ],
 )
-def test_K7_YANSITMA_hesaplari_ISARETLENIR(kod: str):
+def test_K7_MALIYET_AKTARIM_hesaplari_ISARETLENIR(kod: str):
     """🔴 K7: 7/A yansıtma hesapları `revenue` türündedir (ALACAK yönlü) ve
     KENDİ gider grubundadır. Gider kalemi grup olarak toplansaydı `710`+`711`
     birbirini götürür ve satır `0` basardı — sekiz grupta birden.
@@ -655,7 +671,7 @@ def test_K7_YANSITMA_hesaplari_ISARETLENIR(kod: str):
     assert statement_map.is_cost_reflection(f"{kod}.01") is True
 
 
-@pytest.mark.parametrize("kod", ["700", "710", "712", "720", "730", "740", "790", "799", "600"])
+@pytest.mark.parametrize("kod", ["710", "712", "720", "730", "740", "790", "600", "71", "79"])
 def test_K7_yansitma_OLMAYAN_hesaplar_isaretlenmez(kod: str):
     """Ayrışma noktası: `710` ile `711` YAN YANA durur ve yalnız ikincisi
     yansıtmadır. Grup düzeyinde bakan bir kural ikisini de eler ve satırı

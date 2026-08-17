@@ -63,6 +63,7 @@ __all__ = [
     "CASH_FLOW_SECTIONS",
     "CASH_GROUP",
     "COST_REFLECTION_ACCOUNTS",
+    "COST_TRANSFER_ACCOUNTS",
     "EXCLUDED_BALANCE_SHEET_GROUPS",
     "EXCLUDED_INCOME_STATEMENT_GROUPS",
     "GROUP_SOURCE_NOTES",
@@ -705,6 +706,28 @@ COST_REFLECTION_ACCOUNTS: frozenset[str] = frozenset(
     {"701", "711", "721", "731", "741", "751", "761", "771", "781", "798"}
 )
 
+#: 🔴 **K7-b — transfer çiftinin BORÇ bacağı** (final review CRITICAL-1).
+#:
+#: `COST_REFLECTION_ACCOUNTS` yalnız çiftin ALACAK bacağını taşıyordu. Ama iki
+#: transfer hesabı `expense` TÜRÜNDEDİR (borç yönlü) ve kendi gider kalemine
+#: düşüyordu — ölçüldü, `chart_seed_data.py:460` ve `:508`:
+#:
+#: * **`799 Üretim Maliyet Hesabı`** — 7/B tam çevriminde `790` GERÇEK gideri,
+#:   `799` aynı tutarın TRANSFERİNİ taşır ve **ikisi de grup `79`dadır** →
+#:   `Malzeme Giderleri` aynı parayı **İKİ KAT** basardı.
+#: * **`700 Maliyet Muhasebesi Bağlantı Hesabı`** — `700`/`701` çiftinde
+#:   **iki bacak da sınıf 7'dedir**; `701` dışlanıp `700` sayılınca
+#:   `Genel Giderler` HİÇ VAR OLMAYAN bir gider basardı.
+#:
+#: Kusur sinsidir çünkü ikisi de bir GİDER hesabı gibi görünür; onları ayıran
+#: şey TÜRLERİ değil, bir MALİYET AKTARIM çifti olmalarıdır — `690`/`692`nin
+#: (K6) sınıf 7'deki kardeşi.
+#:
+#: 🔴 `period_profit()`e GİRMEZLER: orada `700`+`701` ve `790`+`799` çiftleri
+#: zaten birbirini götürür ve kâr DOĞRU çıkar. Bu bir **SATIR** kusurudur, kâr
+#: kusuru değil — düzeltme tek noktada, `is_cost_reflection()`ta durur.
+COST_TRANSFER_ACCOUNTS: frozenset[str] = frozenset({"700", "799"})
+
 INCOME_STATEMENT_SOURCE_NOTES: dict[str, str] = {
     # --- SINIF 6 ---
     "60": "TDHP 60 Brüt Satışlar — GT:98 İş Hasılatı (mockup 24.870.500)",
@@ -720,9 +743,11 @@ INCOME_STATEMENT_SOURCE_NOTES: dict[str, str] = {
     "69": "TDHP 69 Dönem Net Kârı/Zararı — 🔴 HİÇBİR kaleme girmez ve `period_profit()`e de "
     "girmez (K6): kapanış AKTARIM hesabı, çift sayım yasağı. `59`un kardeşi",
     # --- SINIF 7 ---
-    "70": "TDHP 70 Maliyet Muhasebesi Bağlantı Hesapları — GT:131; `701` yansıtma DIŞLANIR",
+    "70": "TDHP 70 Maliyet Muhasebesi Bağlantı Hesapları — GT:131; ÇİFTİN İKİ BACAĞI DA DIŞLANIR "
+    "(`701` alacak + `700` borç, K7-b): ikisi de sınıf 7'de, sayılsalardı var olmayan "
+    "gider doğardı",
     "71": "TDHP 71 Direkt İlk Madde ve Malzeme Giderleri — GT:116 Malzeme Giderleri "
-    "(mockup 12.480.000); `711` yansıtma DIŞLANIR (K7)",
+    "(mockup 12.480.000); `711` yansıtma DIŞLANIR (K7). 7/A'da transfer bacağı `700`tadır",
     "72": "TDHP 72 Direkt İşçilik Giderleri — GT:121 İşçilik Giderleri; `721` DIŞLANIR",
     "73": "TDHP 73 Genel Üretim Giderleri — GT:121 İşçilik Giderleri; `731` DIŞLANIR",
     "74": "TDHP 74 Hizmet Üretim Maliyeti — GT:126 Taşeron Ödemeleri. 🔴 TDHP'de 'taşeron' "
@@ -734,19 +759,33 @@ INCOME_STATEMENT_SOURCE_NOTES: dict[str, str] = {
     "77": "TDHP 77 Genel Yönetim Giderleri — GT:131 Genel Giderler; `771` DIŞLANIR",
     "78": "TDHP 78 Finansman Giderleri (7/B) — GT:131; `781` DIŞLANIR",
     "79": "TDHP 79 Gider Çeşitleri (7/B) — GT:116 Malzeme Giderleri; 7/B'nin `790 İlk Madde "
-    "ve Malzeme Giderleri` karşılığı 7/A'nın `710`udur. `798` yansıtma DIŞLANIR",
+    "ve Malzeme Giderleri` karşılığı 7/A'nın `710`udur. `798` (alacak) VE `799` (borç) DIŞLANIR "
+    "(K7-b): `790`+`799` aynı grupta, sayılsalardı satır İKİ KAT basardı",
 }
 
 
 def is_cost_reflection(code: str) -> bool:
-    """Hesap bir 7/A YANSITMA hesabı mı? — gider kalemleri bunları DIŞLAR (K7).
+    """Hesap bir MALİYET AKTARIM hesabı mı? — gider kalemleri bunları DIŞLAR.
 
-    🔴 Kural GİDER kalemlerine özgüdür, `period_profit()`e DEĞİL: yansıtma
-    hesabı gerçek bir alacak bakiyesidir ve dönem kârının netleşmesinde
-    SAYILMAK zorundadır. İki yerde birden dışlansaydı maliyet iki kez düşerdi.
+    İki küme birden okunur ve ikisi de aynı ailenin bacaklarıdır:
+
+    * `COST_REFLECTION_ACCOUNTS` — çiftin **ALACAK** bacağı (`711`, `741`, …).
+      Dışlanmasaydı `710`+`711` birbirini götürür, satır **`0`** basardı (K7).
+    * `COST_TRANSFER_ACCOUNTS` — çiftin **BORÇ** bacağı (`700`, `799`).
+      Dışlanmasaydı `790`+`799` aynı parayı **İKİ KAT** basar, `700` ise HİÇ
+      VAR OLMAYAN bir gider yaratırdı (K7-b, final review CRITICAL-1).
+
+    🔴 İkisi de TEK noktada birleşir. Ayrı ayrı sorulsaydı çağıran hangi
+    bacağın hangi kümede olduğunu bilmek zorunda kalır ve bir sonraki dilim
+    birini sormayı unuturdu.
+
+    🔴 Kural GİDER kalemlerine özgüdür, `period_profit()`e DEĞİL: her iki bacak
+    da gerçek bakiyelerdir ve dönem kârının netleşmesinde SAYILMAK zorundadır —
+    orada zaten birbirlerini götürürler. İki yerde birden dışlansalardı maliyet
+    iki kez düşerdi.
     """
     group_of(code)  # geçersiz kod GÜRÜLTÜLÜ patlar (`balance_sheet_line_for` deseni)
-    return code[:3] in COST_REFLECTION_ACCOUNTS
+    return code[:3] in COST_REFLECTION_ACCOUNTS or code[:3] in COST_TRANSFER_ACCOUNTS
 
 
 def income_statement_line_for(code: str) -> str | None:

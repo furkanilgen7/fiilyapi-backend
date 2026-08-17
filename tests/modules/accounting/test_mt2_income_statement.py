@@ -710,3 +710,68 @@ async def test_hic_yevmiye_satiri_OLMAYAN_hesap_sorguya_GIRMEZ(
     assert (
         await seeded_db.execute(select(ChartAccount).where(ChartAccount.code == "600"))
     ).scalar_one_or_none() is not None
+
+
+# --------------------------------------------------------------------------- #
+# 4b. 🔴 K7-b — AKTARIM ÇİFTİNİN BORÇ BACAĞI (final review CRITICAL-1)
+# --------------------------------------------------------------------------- #
+
+
+async def test_K7b_7B_TAM_CEVRIM_790_arti_799_satiri_IKI_KAT_basmaz(
+    client: AsyncClient,
+    muhasebe_headers: dict[str, str],
+    hesap_fabrikasi,
+    fis_fabrikasi,
+) -> None:
+    """🔴 **FINAL REVIEW CRITICAL-1 — kapsam bir doğruluk kanıtı DEĞİLDİR.**
+
+    `799 Üretim Maliyet Hesabı` `expense` TÜRÜNDEDİR (borç yönlü) ve bir gider
+    hesabı gibi GÖRÜNÜR — ama 7/B tam çevriminde `790` GERÇEK gideri, `799`
+    aynı tutarın TRANSFERİNİ taşır ve **ikisi de grup `79`dadır**.
+
+    Yalnız alacak bacağı (`798`) dışlansaydı `Malzeme Giderleri` aynı 1.200'ü
+    **İKİ KAT** (2.400) basardı. Kusurun geçtiği satırlar %100 kaplıydı ve yine
+    de yanlış sayı basıyorlardı.
+
+    Mutasyon: `COST_TRANSFER_ACCOUNTS` boşaltılırsa bu test KIRMIZI olur.
+    """
+    karsi = await _karsi(hesap_fabrikasi)
+    gider = await hesap_fabrikasi("790", account_type=_T.expense)
+    transfer = await hesap_fabrikasi("799", account_type=_T.expense)
+    yansitma = await hesap_fabrikasi("798", account_type=_T.revenue)
+    # 7/B tam çevrimi: (1) gider oluşur, (2) `799`a aktarılır (`798` yansıtma).
+    await fis_fabrikasi([(gider, "1200.00", "0"), (karsi, "0", "1200.00")])
+    await fis_fabrikasi([(transfer, "1200.00", "0"), (yansitma, "0", "1200.00")])
+
+    govde = await _tablo(client, muhasebe_headers)
+    assert _tutar(govde, "material_costs") == Decimal("1200.00"), "satır İKİ KAT bastı"
+    assert _kalem(govde, "material_costs")["account_codes"] == ["790"]
+    # `period_profit()` üçünü de sayar: `799` borç + `798` alacak götürür,
+    # geriye yalnız `790` kalır. Kâr BAŞTAN BERİ doğruydu — bu bir SATIR kusuru.
+    assert Decimal(govde["period_profit"]) == Decimal("-1200.00")
+
+
+async def test_K7b_7A_BAGLANTI_700_arti_701_var_olmayan_gider_URETMEZ(
+    client: AsyncClient,
+    muhasebe_headers: dict[str, str],
+    hesap_fabrikasi,
+    fis_fabrikasi,
+) -> None:
+    """🔴 `700 Maliyet Muhasebesi Bağlantı Hesabı` (borç) ile `701 Yansıtma`
+    (alacak) çiftinde **İKİ BACAK DA SINIF 7'dedir** ve ikisi de grup `70`tadır.
+
+    `701` dışlanıp `700` sayılsaydı `Genel Giderler` **hiç var olmayan** bir
+    gider basardı: defterde net bir maliyet YOKTUR, yalnız bir bağlantı kaydı
+    vardır. Ayrışma noktası bu: fişin iki bacağı da gelir tablosundadır, yani
+    bilanço bacaklı bir kurulum kusuru GÖREMEZDİ.
+    """
+    baglanti = await hesap_fabrikasi("700", account_type=_T.expense)
+    yansitma = await hesap_fabrikasi("701", account_type=_T.revenue)
+    await fis_fabrikasi([(baglanti, "5000.00", "0"), (yansitma, "0", "5000.00")])
+
+    govde = await _tablo(client, muhasebe_headers)
+    for anahtar in _tum_kalemler():
+        assert _tutar(govde, anahtar) == Decimal("0"), f"{anahtar} hayalet gider bastı"
+        assert _kalem(govde, anahtar)["account_codes"] == []
+    assert Decimal(govde["total_expense"]) == Decimal("0")
+    assert Decimal(govde["period_profit"]) == Decimal("0")
