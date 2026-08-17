@@ -39,6 +39,12 @@ RATE_FIX_REVISION = "f6a7b8c9d0e1"
 # Düzeltmenin ATASI. Kimlik değil ATALIK iddia edilir (modül docstring'i).
 RATE_FIX_PARENT = "e5f6a7b8c9d0"
 
+#: 🔴 KASTEN LİTERAL, migration'dan import EDİLMEZ. Bu imza operatörün Railway
+#: deploy günlüğünde gözle/grep ile aradığı SÖZLEŞMEDİR; migration'dan import
+#: edilseydi yeniden adlandırma testi yeşil bırakır ve sözleşme sessizce
+#: kopardı. Değişirse bu satır da bilinçli olarak güncellenmelidir.
+SKIP_LOG_PREFIX = "IK3-RATE-FIX ATLANDI"
+
 SEEDED_SHORT_WORK = Decimal("1.000")
 CORRECTED_SHORT_WORK = Decimal("0.000")
 
@@ -61,18 +67,6 @@ def _run_alembic(*args: str, database: str) -> subprocess.CompletedProcess[str]:
     if result.returncode != 0:
         pytest.fail(f"alembic {' '.join(args)} basarisiz:\n{result.stdout}\n{result.stderr}")
     return result
-
-
-def _run_alembic_expect_failure(*args: str, database: str) -> subprocess.CompletedProcess[str]:
-    env = {**os.environ, "DATABASE_URL": _asyncpg_dsn(database)}
-    return subprocess.run(
-        [*ALEMBIC_CMD, *args],
-        cwd=BACKEND_DIR,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
 
 
 async def _create_scratch_database() -> str:
@@ -215,47 +209,87 @@ async def test_kullanicinin_kendi_degeri_EZILMEZ():
         await _drop_scratch_database(database)
 
 
-async def test_kilitli_donem_kapisi_fail_loud():
-    """🔴 Kilitli dönem kapısı — mutasyon (b).
+async def _kilitli_yil_kur(database: str) -> None:
+    """2026'ya `approved` bir dönem koyar — atlama yolunun ön koşulu."""
+    conn = await asyncpg.connect(_asyncpg_dsn(database))
+    try:
+        await conn.execute(
+            "INSERT INTO payroll_periods (id, year, month, status) "
+            "VALUES ($1, 2026, 3, 'approved')",
+            uuid.uuid4(),
+        )
+    finally:
+        await conn.close()
 
-    O yılda `approved`/`paid` dönem varsa migration DURUR ve şemayı BOZMADAN
-    bırakır. Sessizce atlamak yasaktır: `service.upsert_rate` aynı durumda 409
-    verir, migration o korkuluğu arkadan dolanmaz.
+
+async def test_kilitli_donem_UPDATE_ATLANIR_migration_PATLAMAZ():
+    """🔴 YÖNETİM KARARI — kilitli yılda düzeltme ATLANIR, migration DURMAZ.
+
+    Gerekçe (migration docstring'i): migration'ın durması `alembic upgrade
+    head`i patlatır ve **uygulama hiç açılmaz** — bir korkuluk, koruduğu
+    şeyden büyük hasar üretemez. KK-8 ("geçmiş dönemler donmuş kalır") ile de
+    tutarlı olan davranış ATLAMAKTIR.
+
+    Üç şey birden iddia edilir: migration BAŞARILI · revizyon İLERLER ·
+    `short_work_pct` **1'de KALIR**.
+
+    🔴 Bu test `SKIP_LOG_PREFIX` sinyaline BAKMAZ — o AYRI bir kusur sınıfıdır
+    ve `test_kilitli_donem_atlamasi_BAGIRIR` ile ayrıca çakılıdır. Tek testle
+    kapatılsaydı, "atlamayı kaldır" ile "sinyali sustur" mutasyonları
+    birbirinden ayırt edilemezdi.
     """
     database = await _create_scratch_database()
     try:
         _run_alembic("upgrade", RATE_FIX_PARENT, database=database)
+        await _kilitli_yil_kur(database)
+
+        # `_run_alembic` sifir olmayan cikista `pytest.fail` eder — yani bu
+        # cagrinin kendisi "migration PATLAMADI" iddiasidir.
+        _run_alembic("upgrade", RATE_FIX_REVISION, database=database)
+
         conn = await asyncpg.connect(_asyncpg_dsn(database))
         try:
-            await conn.execute(
-                "INSERT INTO payroll_periods (id, year, month, status) "
-                "VALUES ($1, 2026, 3, 'approved')",
-                uuid.uuid4(),
+            # Revizyon ILERLEDI: uygulama acilir.
+            assert await _current_revision(conn) == RATE_FIX_REVISION
+            # Ama duzeltme UYGULANMADI: kilitli yilin orani KORUNDU.
+            oranlar = await _rates(conn)
+            assert oranlar["company"]["short_work_pct"] == SEEDED_SHORT_WORK, (
+                "kilitli yılda `short_work_pct` DEĞİŞTİ — atlama koşulu kayıp; "
+                "onaylanmış dönemin raporlanmış işveren yükü geriye dönük değişirdi"
             )
+            assert oranlar["subcontractor"]["short_work_pct"] == SEEDED_SHORT_WORK
         finally:
             await conn.close()
+    finally:
+        await _drop_scratch_database(database)
 
-        result = _run_alembic_expect_failure("upgrade", RATE_FIX_REVISION, database=database)
-        assert result.returncode != 0, (
-            "kilitli dönem varken migration GEÇTİ — servis korkuluğu arkadan dolanıldı:\n"
-            f"{result.stdout}"
-        )
+
+async def test_kilitli_donem_atlamasi_BAGIRIR():
+    """🔴 SESSİZ ATLAMA YASAK — atlama ERROR düzeyinde iz bırakır.
+
+    "Aynı yeşil iki anlam taşır" kanonu: atlanmış bir düzeltme ile hiç gerek
+    duyulmamış bir düzeltme, günlükte AYIRT EDİLEBİLİR olmalıdır. Operatör
+    Railway deploy günlüğünde bu satırı gözle bulabilmelidir.
+
+    🔴 Bu test atlamanın KENDİSİNE bakmaz (o `..._UPDATE_ATLANIR_...`
+    testinde) — yalnız SİNYALE bakar. İkisi ayrı mutasyon sınıfıdır.
+    """
+    database = await _create_scratch_database()
+    try:
+        _run_alembic("upgrade", RATE_FIX_PARENT, database=database)
+        await _kilitli_yil_kur(database)
+
+        result = _run_alembic("upgrade", RATE_FIX_REVISION, database=database)
         ciktilar = result.stdout + result.stderr
-        assert "IK3-RATE-FIX durduruldu" in ciktilar, ciktilar
-        assert "2026-03 (approved)" in ciktilar, ciktilar
 
-        conn = await asyncpg.connect(_asyncpg_dsn(database))
-        try:
-            # 🔴 Sema BOZULMADAN kaldi: revizyon DUZELTMEYE ILERLEMEDI,
-            #    atasinda durdu ve oran degismedi.
-            #    (`transaction_per_migration=True` her migration'i AYRI commit
-            #    eder; bu yuzden beklenen deger atadir, kurulum revizyonu
-            #    degil — ikisi ayni olmasaydi bu satir yanlis seyi olcerdi.)
-            assert await _current_revision(conn) == RATE_FIX_PARENT
-            assert await _current_revision(conn) != RATE_FIX_REVISION
-            assert (await _rates(conn))["company"]["short_work_pct"] == SEEDED_SHORT_WORK
-        finally:
-            await conn.close()
+        assert SKIP_LOG_PREFIX in ciktilar, (
+            f"atlama SESSİZ geçti — `{SKIP_LOG_PREFIX}` imzası günlükte yok:\n{ciktilar}"
+        )
+        # Satir operatore YETERLI bilgi vermeli: hangi yil, hangi donem,
+        # hangi deger korundu ve duzeltmenin bir daha kosmayacagi.
+        assert "2026" in ciktilar, ciktilar
+        assert "2026-03 (approved)" in ciktilar, ciktilar
+        assert "BIR DAHA CALISMAYACAK" in ciktilar, ciktilar
     finally:
         await _drop_scratch_database(database)
 

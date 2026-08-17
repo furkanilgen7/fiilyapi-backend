@@ -28,26 +28,46 @@ her deger kullanicinin iradesidir ve dokunulmaz. (MU-SEED'in
 `ON CONFLICT DO NOTHING` kararinin buradaki karsiligi budur.)
 
 --------------------------------------------------------------------------
-🔴 KILITLI DONEM KAPISI — SERVIS KORKULUGU ARKADAN DOLANILMAZ
+🔴 KILITLI DONEM KAPISI — DURDURMAZ, **ATLAR ve BAGIRIR** (yonetim karari)
 --------------------------------------------------------------------------
 `service.upsert_rate` o yilda `approved`/`paid` bir donem varsa oran yazisini
 **409** ile reddeder (`guards.RATES_LOCKED_BY_PERIOD`). Gerekcesi K1'dir: oran
 satira KOPYALANMAZ (tek gercek kaynak `payroll_rates`) ve `summary.py`/`sgk.py`
 isveren tarafini donemin yilina ait CANLI setten turetir — oran degisince
 ONAYLANMIS donemin raporlanmis toplamlari ve SGK bildiriminin TAMAMI geriye
-donuk degisir. Bir migration'in bu korkulugu arkadan dolanmasi PARA SINIFI bir
-kusurdur, o yuzden ayni kapi burada da vardir ve `RuntimeError` ile DURUR.
-Sessizce atlamak YASAKTIR ("ayni yesil iki anlam tasir"): operator neyin
-engellendigini gormek zorundadir.
+donuk degisirdi. Ayni olgu burada da korunur.
+
+🔴 **AMA TEPKI `RuntimeError` DEGILDIR.** Ilk tasarim DURDURUYORDU; yonetim
+bunu degistirdi ve gerekcesi baglayicidir:
+
+1. Migration'in durmasi = `alembic upgrade head` patlar = **uygulama HIC
+   ACILMAZ** (`Dockerfile:22` `alembic upgrade head && uvicorn …` — patlayan
+   migration `&&`yi kisa devre yapar). Bu, gecen turda PG 16/18 enum tuzagiyla
+   kil payi onlenen **URETIM KESINTISI** sinifinin aynisidir. Bir KORKULUK,
+   korudugu seyden daha buyuk bir hasar uretemez.
+2. Veri riski deneme verisinde sifira yakindir: bordro ekrani bugune kadar
+   yoktu (F-BOR yeni merge edildi), donem onaylamak icin dogrudan API cagirmak
+   gerekirdi.
+3. Canli DB OLCULEMIYOR (yetki disi). Olculemeyen bir olguya "uygulamayi
+   acmama" riski baglanamaz.
+4. **KK-8** (2026-08-17): "gecmis donemler donmus kalsin, duzeltme yolu
+   acilmasin." Kilitli bir yili ATLAMAK bu kararla TUTARLIDIR; durmak degil.
+
+🔴 **SESSIZ ATLAMA YASAK** ("ayni yesil iki anlam tasir"): atlama ERROR
+duzeyinde, tek satirda, gozle bulunabilir bir kayit birakir. `alembic.ini` kok
+logger'i WARNING/stderr'dir ve `alembic` logger'i INFO'dur → ERROR her iki
+yoldan da Railway deploy gunlugune duser.
+
+🔴 **ATLAMA KALICIDIR — ACIK BORC.** Alembic bir revizyonu BIR KEZ kosar;
+atlanan duzeltme o veritabaninda **bir daha calismaz**. Yil sonradan kilitten
+ciksa bile kendiliginden uygulanmaz ve `upsert_rate` de o yila 409 verir. Bu
+yuzden gunluk satiri operatore ne yapmasi gerektigini de yazar.
 
 🔴 **KAPININ SIRASI ONEMLIDIR.** Once "degisecek satir var mi" olculur.
 Degisecek satir YOKSA migration hicbir sey yapmaz ve kapi HIC CALISMAZ — cunku
-korunacak bir degisiklik de yoktur. Boylece kapi yalnizca gercekten tehlikeli
-olan tek senaryoda ates eder: tohum degeri (`1`) HALA yerinde VE o yilda
-kilitli donem VAR. Ters sirada yazilsaydi, hicbir sey degistirmeyecek olan bir
-migration bile canlida acilisi kilitlerdi (`Dockerfile:22`
-`alembic upgrade head && uvicorn …` — patlayan migration `&&`yi kisa devre
-yapar ve **uygulama HIC BASLAMAZ**).
+korunacak bir degisiklik de yoktur. Boylece gurultu yalnizca gercekten anlamli
+oldugu senaryoda cikar: tohum degeri (`1`) HALA yerinde VE o yilda kilitli
+donem VAR.
 
 --------------------------------------------------------------------------
 🔴 DOWNGRADE NO-OP'TUR — VERI KAPISININ BURADAKI BICIMI
@@ -72,12 +92,21 @@ Create Date: 2026-08-17
 
 """
 
+import logging
 from collections.abc import Sequence
 from decimal import Decimal
 
 import sqlalchemy as sa
 
 from alembic import op
+
+#: `alembic.ini` kok logger'i WARNING/stderr, `alembic` logger'i INFO'dur →
+#: ERROR her iki yoldan da Railway deploy gunlugune duser. `alembic.runtime`
+#: altinda durur ki migration ciktisiyla ayni akista okunsun.
+logger = logging.getLogger("alembic.runtime.migration")
+
+#: Atlama satirinin GREPLENEBILIR imzasi — deploy gunlugunde gozle aranir.
+SKIP_LOG_PREFIX = "IK3-RATE-FIX ATLANDI"
 
 # revision identifiers, used by Alembic.
 revision: str = "f6a7b8c9d0e1"
@@ -134,18 +163,33 @@ def upgrade() -> None:
     ).all()
     if kilitli:
         donemler = ", ".join(f"{TARGET_YEAR}-{month:02d} ({status})" for month, status in kilitli)
-        raise RuntimeError(
-            f"IK3-RATE-FIX durduruldu: {TARGET_YEAR} yilinda onaylanmis/odenmis "
-            f"{len(kilitli)} bordro donemi var -> {donemler}. "
-            f"`short_work_pct` {SEEDED_SHORT_WORK_PCT} -> {CORRECTED_SHORT_WORK_PCT} "
-            f"(KK-5) duzeltmesi {len(hedef_satirlar)} oran satirini "
-            f"({', '.join(hedef_satirlar)}) etkileyecekti; oran satira "
-            "KOPYALANMADIGI icin bu donemlerin raporlanmis isveren yuku ve SGK "
-            "bildiriminin TAMAMI geriye donuk degisirdi. `service.upsert_rate` "
-            "ayni durumda 409 verir; migration onu arkadan dolanmaz. Once bu "
-            "donemlerin geriye donuk degismesi acikca kararlastirilmalidir. "
-            "Sema BOZULMADAN birakildi."
+        # 🔴 SESSIZ ATLAMA YASAK — tek satir, ERROR duzeyinde, gozle bulunabilir.
+        #    Bu cagri ile asagidaki `return` AYRI kusur siniflaridir ve AYRI
+        #    testlerle cakilidir: sinyali susturmak da atlamayi kaldirmak da
+        #    kendi testini kirmizi yapar.
+        logger.error(
+            "%s: %s yilinda onaylanmis/odenmis %d bordro donemi var (%s) -> "
+            "`short_work_pct` %s -> %s (KK-5) duzeltmesi bu yil icin ATLANDI. "
+            "Etkilenecek %d oran satiri (%s) DOKUNULMADAN birakildi, degeri %s "
+            "olarak KALDI. Gerekce: oran satira kopyalanmaz, degistirilseydi bu "
+            "donemlerin raporlanmis isveren yuku ve SGK bildiriminin TAMAMI "
+            "geriye donuk degisirdi (KK-8: gecmis donemler donmus kalir). "
+            "🔴 BU DUZELTME BU VERITABANINDA BIR DAHA CALISMAYACAK (alembic "
+            "revizyonu bir kez kosar): yil kilitten ciksa bile kendiliginden "
+            "uygulanmaz. Duzeltme isteniyorsa acikca kararlastirilip elle "
+            "yapilmalidir.",
+            SKIP_LOG_PREFIX,
+            TARGET_YEAR,
+            len(kilitli),
+            donemler,
+            SEEDED_SHORT_WORK_PCT,
+            CORRECTED_SHORT_WORK_PCT,
+            len(hedef_satirlar),
+            ", ".join(hedef_satirlar),
+            SEEDED_SHORT_WORK_PCT,
         )
+        # 🔴 ATLA — DURMA. Migration basariyla devam eder ve uygulama ACILIR.
+        return
 
     # 3. Hedefli duzeltme. `= :seeded` kosulu ZORUNLU: kullanicinin elle
     #    girdigi baska bir deger EZILMEZ.
