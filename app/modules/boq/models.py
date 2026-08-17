@@ -137,8 +137,12 @@ class BoqItemSectionAllocation(Base):
     (poz `quantity`si DUSER — kotayi tahsis toplaminin altina cekmek ayni
     invarianti ters yonden kirar).
 
-    ON DELETE CASCADE — ve bu, repodaki YEDI `sections.id` FK'sinin (`SET NULL`)
-    BILINCLI SAPMASIDIR (K2). Gerekce: tahsis satirinin BAGIMSIZ VARLIGI YOKTUR;
+    ON DELETE CASCADE (K2). 🔴 OLCUM NOTU: emir bunu "yedi FK'lik `SET NULL`
+    emsalinden bilincli sapma" diye tanimliyordu; sayim yapildi ve `sections.id`
+    hedefleyen SEKIZ FK vardi — YEDISI `SET NULL`, BIRI (`section_milestones`)
+    ZATEN CASCADE. Yani bu bir sapma degil, VAR OLAN AYRIMIN dogru tarafina
+    yerlesmektir: bilgi bagi olan kayitlar `SET NULL`, bolumun bir PARCASI olan
+    kayitlar CASCADE. Gerekce: tahsis satirinin BAGIMSIZ VARLIGI YOKTUR;
     o satir "su poz, su bolume, su kadar" demekten ibarettir, bolum gidince cumle
     anlamsizlasir. `SET NULL` secilseydi kolon nullable olmak ZORUNDA kalirdi
     (NOT NULL kolona SET NULL calisma aninda FK hatasi verir), sahipsiz satirlar

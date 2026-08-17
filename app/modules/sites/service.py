@@ -1049,15 +1049,26 @@ async def delete_site(session: AsyncSession, actor: User, site_id: uuid.UUID) ->
 async def delete_section(session: AsyncSession, actor: User, section_id: uuid.UUID) -> str:
     """Spec §7.1. Bolum silme KOSULSUZDUR — uydurma bir engel yazilmaz.
 
-    Kod tabaninda `sections.id`'yi hedefleyen HICBIR FK yoktur (dogrulandi):
-    bolumun bugun bagli alt kaydi OLAMAZ. `delete_site`in uc korkulugunun bir
-    benzerini buraya "ihtiyatli olsun diye" eklemek, var olmayan bir bagi
-    kullaniciya kural gibi gostermek olurdu.
+    🔴 ESKI METIN YANLISTI (BOQ-SEC'te olculdu): "sections.id'yi hedefleyen
+    HICBIR FK yoktur" cumlesi yazildigi gunden beri bayattir — BUGUN DOKUZ FK
+    vardir (`personnel`, `timesheet`, `site_diary`, `site_planning`,
+    `procurement`, `subcontractor_progress_payments`, `sections.depends_on_
+    section_id` = SET NULL; `section_milestones` ve `boq_item_section_
+    allocations` = CASCADE). DAVRANIS DEGISMEDI, yalniz gerekce duzeltildi.
 
-    # P5 notu: `boq_groups.section_id` gelirse buraya `section_has_boq`
-    # korkulugu EKLENMELIDIR (spec §7.1 acik talebi). O bag acildigi anda bu
-    # fonksiyon kosulsuz olmaktan cikar; korkuluksuz birakilirsa bolum silmek
-    # poz gruplarini sessizce goturur.
+    Silme HALA kosulsuzdur ve bu BILINCLIDIR:
+    - `SET NULL` bacaklarinda kayit ayakta kalir, yalniz bilgi bagi kopar;
+    - `CASCADE` bacaklarinda giden satirin BAGIMSIZ VARLIGI YOKTUR
+      (kilometre tasi bolumun bir parcasidir; tahsis satiri ise "su poz, su
+      bolume, su kadar" demekten ibarettir).
+
+    # P5 notunun cevabi (BOQ-SEC K2): bag `boq_groups.section_id` olarak DEGIL
+    # `boq_item_section_allocations` olarak acildi ve `section_has_boq`
+    # korkulugu EKLENMEDI. O korkulugun gerekcesi "bolum silmek poz gruplarini
+    # sessizce goturur"du; burada giden sey POZ DEGIL yalnizca TAHSISTIR —
+    # pozun kendisi ve `quantity`si aynen durur, miktar "atanmamis" havuzuna
+    # geri doner. Korkuluk eklenseydi kullanici, silmek istedigi bolumu
+    # kurtarmak icin once her pozun tahsisini elle bosaltmak zorunda kalirdi.
 
     Gorunurluk suzgeci ONCE kosar (`_visible_section`: bolum -> santiye ->
     proje): gorunmeyen bolum 404 `Bölüm bulunamadı` doner ve govdesi var
