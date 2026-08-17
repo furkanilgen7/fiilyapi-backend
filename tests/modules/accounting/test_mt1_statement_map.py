@@ -687,3 +687,30 @@ def test_gecersiz_kod_gelir_tablosu_yolunda_da_REDDEDILIR():
             statement_map.income_statement_line_for(kod)
         with pytest.raises(ValueError):
             statement_map.is_cost_reflection(kod)
+
+
+def test_K7_HICBIR_yansitma_hesabi_GELIR_kalemine_dusmez():
+    """🔴 K7 dışlaması `_dagit`te KOŞULSUZ uygulanır (`is_cost_reflection` her
+    hesap için sorulur, bölüm sorulmaz). Bu bugün DOĞRUDUR çünkü on yansıtma
+    hesabının ONU DA bir GİDER kalemine düşer — ölçüldü.
+
+    Ama bu bir İNVARYANTTIR, tesadüf değil: haritada `70`ı (ya da `79`u) bir
+    gelir kalemine taşıyan bir değişiklik, koşulsuz dışlamayı sessizce bir
+    GELİR SİLİCİSİNE çevirirdi ve hasılat hiçbir satırda görünmeden düşerdi
+    (görünmezlik yasağının en sinsi hâli).
+
+    Bekçi haritayla birlikte kırılır ve düzeltmeyi ZORLAR: ya kod bölüm-duyarlı
+    yapılır ya harita geri alınır.
+    """
+    gider_kalemleri = {
+        k.key
+        for b in statement_map.INCOME_STATEMENT_SECTIONS
+        if b.key == statement_map.INCOME_STATEMENT_EXPENSE_SECTION
+        for k in b.lines
+    }
+    for kod in sorted(statement_map.COST_REFLECTION_ACCOUNTS):
+        kalem = statement_map.income_statement_line_for(kod)
+        assert kalem in gider_kalemleri, (
+            f"{kod} yansıtma hesabı `{kalem}` GELİR kalemine düşüyor — koşulsuz K7 "
+            "dışlaması burada hasılatı sessizce siler"
+        )
