@@ -347,6 +347,25 @@ def test_period_profit_AYRISMA_NOKTASI_sinif_6_giderleri():
     assert kar == Decimal("4000")
 
 
+def test_K6_period_profit_69_KAPANIS_grubunu_SAYMAZ():
+    """🔴 MT-2/K6: `690`/`692` bir KAPANIŞ AKTARIM hesabıdır. Kapanış fişi
+    atılmış bir dönemde kâr hem kaynak `6xx`/`7xx` hesaplarından hem `69`dan
+    sayılır ve İKİ KATINA çıkardı — bilançodaki `59` kuralının kardeşi.
+
+    🔴 Kural `period_profit()`te yaşadığı için BİLANÇONUN `Dönem Net Kârı` ve
+    `Geçmiş Yıllar Kârları` kalemlerini de kapsar. Ayrışma noktası: `69`
+    TEK BAŞINA verildiğinde sonuç `0` olmalıdır — `6x` sınıfına bakan bir
+    yazım `10000` döndürürdü.
+
+    Mutasyon: `EXCLUDED_INCOME_STATEMENT_GROUPS` kontrolü kaldırılırsa KIRMIZI.
+    """
+    assert statement_map.period_profit({"690": Decimal("-10000.00")}) == Decimal("0")
+    assert statement_map.period_profit({"692": Decimal("10000.00")}) == Decimal("0")
+    # Kapanış fişi: `600` bakiyesi `690`a aktarılır. Kâr YALNIZ `600`den sayılır.
+    kapanis = {"600": Decimal("-10000.00"), "690": Decimal("10000.00")}
+    assert statement_map.period_profit(kapanis) == Decimal("10000.00")
+
+
 def test_period_profit_KURUS_hassasiyetini_korur():
     """Kuruş ayrışma noktası: kayan nokta devreye girseydi `0.1 + 0.2` kusuru
     kârı 1 kuruş kaydırır ve bilanço dengesi kırılırdı (MT-K2 — uç YUVARLAMAZ)."""

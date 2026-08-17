@@ -448,11 +448,25 @@ def period_profit(nets: Mapping[str, Decimal]) -> Decimal:
     `66x`) taşır. Bu uygulama sınıfı yalnız "gelir tablosu hesabı mı?" sorusu
     için okur, YÖN için değil.
 
+    🔴 **Grup `69` DIŞLANIR (MT-2/K6).** `690`/`692` bir KAPANIŞ AKTARIM
+    hesabıdır: `6xx`/`7xx` bakiyeleri oraya taşınır. Sayılsaydı kapanış fişi
+    atılmış bir dönemde kâr İKİ KEZ toplanırdı — bilançodaki `59` kuralının
+    (MT-K1/2) gelir tablosu KARDEŞİ. Kural BU fonksiyonda yaşar, dolayısıyla
+    Bilanço'nun `Dönem Net Kârı` ve `Geçmiş Yıllar Kârları` kalemlerini de
+    kapsar; iki tablo aynı formülü paylaşmasaydı ayrışırlardı.
+
     Para `Decimal`dir; kayan nokta hiçbir aşamada devreye girmez.
     """
     toplam = _ZERO
     for code, net in nets.items():
-        if group_of(code)[0] in INCOME_STATEMENT_CLASSES:
+        grup = group_of(code)
+        # 🔴 MT-2/K6: `69` KAPANIŞ AKTARIM grubudur ve buradan da DIŞLANIR.
+        # `690`/`692`ye kapanış fişi atılırsa aynı kâr hem kaynak `6xx`/`7xx`
+        # hesaplarından hem aktarım hesabından İKİ KEZ sayılırdı. Bilanço
+        # tarafında `59` için ZATEN var olan kuralın kardeşidir; ikisi ayrı
+        # kalsaydı asimetri sessiz bir çift sayım bırakırdı. Değişim canlıda
+        # NO-OP'tur (`69` tohumlanmaz) ama kural ARTIK YAZILIDIR.
+        if grup[0] in INCOME_STATEMENT_CLASSES and grup not in EXCLUDED_INCOME_STATEMENT_GROUPS:
             toplam -= net
     return toplam
 
