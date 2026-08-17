@@ -26,7 +26,22 @@ SGK_4A = {
     "stamp_tax_pct": Decimal("0.759"),
     "sgk_employer_pct": Decimal("20.500"),
     "unemployment_employer_pct": Decimal("2.000"),
-    "short_work_pct": Decimal("1.000"),
+    # 🔑 KK-5 (2026-08-16): "SGK %1 kısa çalışma ödeneği YOK, hesaplanmaz."
+    # `f6a7b8c9d0e1` bu oranı canlı veride 1'den 0'a çekti; kaynak sabit
+    # `payroll/rate_seed_data.PAYROLL_RATES_2026`tır.
+    #
+    # 🔴 BU DOSYADAKİ DEĞER LOAD-BEARING DEĞİLDİR — ölçüldü: 1.000 ile de
+    # 0.000 ile de 162 test geçer. Buradaki `SGK_4A` üretim tohumunun AYNASI
+    # değil, saf `compute.py` fonksiyonlarını sınamak için kurulmuş YEREL bir
+    # fikstürdür (dosya docstring'i: "DB YOKTUR"); hiçbir test bu sütunun
+    # değerine dayanmaz. Yine de KK-5 ile TUTARLI tutulur: adı üretimdeki
+    # seed sabitiyle aynı olduğu için 1 yazsaydı, okuyan "kısa çalışma %1'dir"
+    # diye YANLIŞ sonuç çıkarırdı (para sınıfı yanılgı).
+    #
+    # İşveren sütunlarının kesintiye SIZMADIĞINI sınayan test buranın değerine
+    # DEĞİL, kendi şişirdiği 77.000'e bakar (`test_isveren_oranlari_kesintiye_GIRMEZ`),
+    # yani bu hizalama hiçbir bekçiyi zayıflatmaz.
+    "short_work_pct": Decimal("0.000"),
 }
 ZERO = dict.fromkeys(SGK_4A, Decimal("0.000"))
 # BY 243 "Serbest Makbuz · %20 Stopaj" — SGK payı YOK.
