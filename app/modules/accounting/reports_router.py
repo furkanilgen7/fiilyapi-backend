@@ -48,12 +48,14 @@ from app.modules.accounting import (
     balance_sheet,
     cash_flow_statement,
     guards,
+    income_statement,
     trial_balance,
     vat_return,
 )
 from app.modules.accounting.reports_schemas import (
     BalanceSheetResponse,
     CashFlowStatementResponse,
+    IncomeStatementResponse,
     TrialBalanceResponse,
     VatReturnResponse,
 )
@@ -205,3 +207,51 @@ async def cash_flow_statement_endpoint(
     tablosunda da kolon yok, mockup süzgeç çizmiyor).
     """
     return await cash_flow_statement.build_cash_flow_statement(session, year=year, month=month)
+
+
+@router.get("/income-statement", response_model=IncomeStatementResponse, dependencies=[_VIEW])
+async def income_statement_endpoint(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    year: _YEAR,
+    month: _MONTH,
+) -> IncomeStatementResponse:
+    """Gelir Tablosu — `GELİRLER` / `GİDERLER` + `DÖNEM KARI` (mockup GT:86-147).
+
+    🔴 **Pencere BİRİKİMLİDİR** (mockup GT:90 `Ocak – Temmuz 2026`): yılın Ocak
+    ayından `month`un SON GÜNÜNE kadar — mizan ve nakit akışıyla AYNI semantik.
+    Bilançonun `as_of` NOKTA-ZAMANI burada YANLIŞ olurdu: gelir tablosu bir AKIŞ
+    tablosudur ve kümülatif bir pencere geçmiş yılların hasılatını bu yılın
+    cirosuna eklerdi. `year`/`month` ZORUNLUDUR; sunucunun "bugün"ü HİÇ okunmaz
+    (TB5'in yerel-takvim kusuru bu uçta yapısal olarak imkânsız).
+
+    🔴 **Yapı SABİTTİR: 2 bölüm · 6 kalem · 2 ara toplam · 1 genel toplam** (K1).
+    TDHP'nin `Brüt Satış Kârı` / `Faaliyet Kârı` basamakları YAZILMAZ — mockup
+    onları çizmiyor ve icat edilmiş bir kalem tasarım otoritesini aşardı.
+    `Taşeron Ödemeleri` grup `74 Hizmet Üretim Maliyeti`nden gelir: TDHP'de
+    "taşeron" grubu YOKTUR (`101 Alınan Çekler` tuzağının kardeşi) ve satırı boş
+    bırakıp `0` bastırmak İKİ ANLAMLI bir `0` üretirdi.
+
+    🔴 **`period_profit` hiçbir kalemden toplanmaz:** Bilanço'nun `Dönem Net
+    Kârı` kalemiyle (BL:83) **AYNI FONKSİYONDAN** gelir (`statement_map.
+    period_profit()`, TEK KOPYA) — `/income-statement?year=Y&month=12` ile
+    `/balance-sheet?as_of=Y-12-31` ayrışamaz. `total_revenue − total_expense`
+    ise KALEMLERDEN toplanır ve ikisi AYRIŞABİLİR: gider kalemleri 7/A yansıtma
+    hesaplarını dışlar (satır BRÜT gideri gösterir, K7), `period_profit()` ise
+    onları sayar. Üç alan da döner ki fark GÖRÜNÜR kalsın.
+
+    🔴 **Sayfalama YOKTUR** (K7 zarfı kullanılmaz): küme SABİTTİR (6 kalem) ve
+    `period_profit` GENEL sonuçtur — sayfalanmış bir gelir tablosunda
+    anlamsızlaşırdı.
+
+    Kapsam dışı (bilinçli): **trend kolonu** (GT:99 `↑ %8,3`) — önceki dönem
+    karşılaştırması demektir, mockup hangi dönem olduğunu SÖYLEMİYOR ve
+    algoritma İCAT EDİLMEZ (nakit akışının `3 Aylık Projeksiyon`u aynı
+    gerekçeyle dışlandı) · **oran/marj kolonu** (GT:117 `%49,9`, GT:142 `%14,1`)
+    — yanıtta `total_revenue` ve satır tutarı zaten var; bölme bir GÖSTERİM
+    kararıdır ve `0` gelirde `ZeroDivisionError` üretirdi, frontend hesaplar ·
+    **proje süzgeci** (GT:81) — üç muhasebe tablosunda da `project_id`/`site_id`
+    kolonu YOKTUR (bilanço ve nakit akışı aynı gerekçeyle dışladı) · **dönem
+    kilidi rozeti** — salt-okuma ucu, dönem kilidi HİÇ okunmaz.
+    """
+    return await income_statement.build_income_statement(session, year=year, month=month)

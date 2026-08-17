@@ -31,6 +31,9 @@ __all__ = [
     "CashFlowStatementLine",
     "CashFlowStatementResponse",
     "CashFlowStatementSection",
+    "IncomeStatementLine",
+    "IncomeStatementResponse",
+    "IncomeStatementSection",
     "MonthlyCashPoint",
     "TrialBalanceResponse",
     "TrialBalanceRow",
@@ -351,3 +354,92 @@ class CashFlowStatementResponse(BaseModel):
     opening_cash: Decimal
     closing_cash: Decimal
     monthly_cash: list[MonthlyCashPoint]
+
+
+# --------------------------------------------------------------------------- #
+# MT-2 — Gelir Tablosu (mockup `Ekran 11 - Mali Tablo.dc.html`, GT:86-147)
+# --------------------------------------------------------------------------- #
+
+
+class IncomeStatementLine(BaseModel):
+    """Gelir tablosunun bir KALEMİ — mockup'ın tek bir satırı (ör. GT:98).
+
+    🔴 `amount` **POZİTİF sözleşmelidir**: gelir kalemleri `Σ(alacak − borç)`,
+    gider kalemleri `Σ(borç − alacak)` basar ve doğru işlenmiş bir defterde
+    ikisi de pozitiftir (mockup'ın altı satırının hepsi pozitif; `Toplam Gider`
+    kırmızıdır ama işaretsizdir, GT:137). Gider kalemini negatif basan bir uç,
+    `DÖNEM KARI = Toplam Gelir − Toplam Gider` mockup aritmetiğini bozardı.
+    Kalem yine de NEGATİF çıkabilir — `İş Hasılatı` satışın altında bir iade
+    hacminde (`61` grubu) eksiye döner ve bu GERÇEK bir sonuçtur, `0`a
+    kırpılsaydı toplam yalan söylerdi.
+
+    🔴 **YUVARLANMAZ** (MT-K2): `Numeric(18,2)` kuruşuyla döner. Yüzde/marj
+    (`%49,9`) ve trend (`↑ %8,3`) BURADA YOKTUR — oran bir GÖSTERİM kararıdır
+    (`0` gelirde `ZeroDivisionError` üretirdi) ve trend önceki dönem
+    karşılaştırması ister; mockup hangi dönem olduğunu SÖYLEMİYOR ve algoritma
+    İCAT EDİLMEZ (nakit akışının `3 Aylık Projeksiyon`u ile aynı gerekçe).
+
+    `account_codes` mockup'ta basılmıyor ama **ZORUNLUDUR**: bir kalemin
+    hangi hesaplardan geldiğinin tek kanıtı budur ve `Genel Giderler` kovasını
+    (on grup) ŞEFFAF kılar. 🔴 Gider kalemlerinde 7/A YANSITMA hesapları
+    (`711`, `741`, …) listede YOKTUR çünkü tutara da girmezler (K7).
+    """
+
+    key: str
+    label: str
+    amount: Decimal
+    account_codes: list[str]
+
+
+class IncomeStatementSection(BaseModel):
+    """`GELİRLER` (GT:95) ya da `GİDERLER` (GT:113) bölümü + ara toplamı.
+
+    `subtotal` kalemlerinden HESAPLANIR, mockup'tan KOPYALANMAZ (K15). Mockup'ın
+    aritmetiği bu tabloda TEMİZDİR (24.870.500+124.200 = 24.994.700 ·
+    12.480.000+5.840.000+3.120.000+42.000 = 21.482.000) ama kural rakamın doğru
+    çıkmasına bağlı değildir.
+    """
+
+    key: str
+    title: str
+    subtotal_label: str
+    subtotal: Decimal
+    lines: list[IncomeStatementLine]
+
+
+class IncomeStatementResponse(BaseModel):
+    """Gelir Tablosunun tamamı — 🔴 **K7 SAYFALAMA ZARFI YOKTUR** (bilanço emsali).
+
+    Küme SABİTTİR: **2 bölüm · 6 kalem · 2 ara toplam · 1 genel toplam.**
+    TDHP'nin `Brüt Satış Kârı` / `Faaliyet Kârı` basamakları YAZILMAZ — mockup
+    onları çizmiyor ve icat edilmiş bir kalem tasarım otoritesini aşardı.
+
+    🔴 **`period_profit` hiçbir kalemden toplanmaz.** Değeri
+    `statement_map.period_profit()`ten gelir ve Bilanço'nun `Dönem Net Kârı`
+    kalemi (BL:83) ile **BİREBİR AYNI** fonksiyondur — iki uç ayrışamaz.
+    `total_revenue − total_expense` ise KALEMLERDEN toplanır.
+
+    🔴 **İkisi AYRIŞABİLİR ve bu bilinçlidir (K7):** gider kalemleri 7/A
+    yansıtma hesaplarını dışlar (satır BRÜT gideri gösterir), `period_profit()`
+    ise onları sayar. Yansıtma fişi ATILMIŞ bir defterde
+    `total_revenue − total_expense ≠ period_profit` olur. Üç alanın da
+    dönmesinin sebebi budur: fark GÖRÜNÜR kalsın, sessizce bir tarafa
+    yazılmasın (`CashFlowStatementResponse`un dört alanı emsal).
+
+    `year`/`month` yanıtta TEKRARLANIR: mockup GT:90 (`Ocak – Temmuz 2026`)
+    başlığı buradan kurulur ve istemci hangi dönemi gördüğünü kendi isteğinden
+    değil SUNUCUNUN cevabından okur.
+
+    Kapsam dışı (bilinçli): trend kolonu (GT:99 `↑ %8,3`) · oran/marj kolonu
+    (GT:117 `%49,9`, GT:142 `%14,1`) · proje süzgeci (GT:81 — üç muhasebe
+    tablosunda da `project_id`/`site_id` YOKTUR) · dönem kilidi rozeti
+    (salt-okuma ucu).
+    """
+
+    year: int
+    month: int
+    sections: list[IncomeStatementSection]
+    total_revenue: Decimal
+    total_expense: Decimal
+    profit_label: str
+    period_profit: Decimal
