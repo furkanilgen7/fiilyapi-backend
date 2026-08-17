@@ -117,3 +117,74 @@ class BoqItem(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class BoqItemSectionAllocation(Base):
+    """Bir pozun BIR BOLUME tahsis edilen MIKTARI (BOQ-SEC, kullanici karari 2026-08-17).
+
+    🔴 Bu bir `boq_items.section_id` FK'si DEGILDIR ve olamaz: bir poz BIRDEN COK
+    boluma pay edilebilir (1.200 m³ betonun 400'u "Kat 6-10", 300'u "Kat 11-15",
+    500'u atanmamis). Mockup'in `section-form/BoqAssignmentCard.tsx:13-21`de
+    cizdigi "Santiye Kotasi / Bu Bolume" ikilisi tam olarak budur: kota
+    `boq_items.quantity`, "bu bolume" ise BU tablodaki satirdir.
+
+    INVARIANT (K3): `SUM(quantity) <= boq_items.quantity`. DB ile ZORLANAMAZ
+    (satirlar arasi toplam kisidi bir CHECK'e sigmaz) — servis katmaninda ve
+    🔴 POZ SATIRI `FOR UPDATE` ILE KILITLENEREK tutulur (EŞİK = KİLİT, İK-2
+    dersi): kilitsiz bir esik kontrolu iki eszamanli tahsiste IKISINI DE gecirir.
+    Invariantin IKI yazma kapisi vardir ve ikisi de AYNI kilidi alir:
+    `service.replace_allocations` (tahsis toplami ARTAR) ve `service.update_item`
+    (poz `quantity`si DUSER — kotayi tahsis toplaminin altina cekmek ayni
+    invarianti ters yonden kirar).
+
+    ON DELETE CASCADE — ve bu, repodaki YEDI `sections.id` FK'sinin (`SET NULL`)
+    BILINCLI SAPMASIDIR (K2). Gerekce: tahsis satirinin BAGIMSIZ VARLIGI YOKTUR;
+    o satir "su poz, su bolume, su kadar" demekten ibarettir, bolum gidince cumle
+    anlamsizlasir. `SET NULL` secilseydi kolon nullable olmak ZORUNDA kalirdi
+    (NOT NULL kolona SET NULL calisma aninda FK hatasi verir), sahipsiz satirlar
+    birikir ve hicbir ekranda gorunmeden pozun kotasini BLOKE ederdi; UNIQUE de
+    NULL dalinda islemedigi icin coklanabilirlerdi. CASCADE veri kaybi DEGILDIR:
+    poz satiri ve `quantity`si AYNEN durur, yalniz tahsis cozulur ve miktar
+    "atanmamis" havuzuna geri doner.
+
+    UQ (boq_item_id, section_id) DEFERRABLE INITIALLY DEFERRED — `site_planning`
+    deseni (`SitePlanRow`): DEGISTIRME (replace) ucu tek istekte bir satiri silip
+    baskasini onun anahtarina tasiyabilir; anlik kontrolde INSERT DELETE'ten once
+    flush edilirse istek HAKSIZ yere cakisma alirdi. Ertelenmis kontrol gercek
+    cakismayi HALA yakalar; govde ici tekillik ayrica servis katmaninda 422 verir.
+    """
+
+    __tablename__ = "boq_item_section_allocations"
+    __table_args__ = (
+        UniqueConstraint(
+            "boq_item_id",
+            "section_id",
+            name="uq_boq_item_section_allocations_item_section",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        # Sifir tahsis bir SATIR olarak tutulmaz — silinir (K1).
+        CheckConstraint("quantity > 0", name="ck_boq_item_section_allocations_qty_positive"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    boq_item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("boq_items.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    section_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sections.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # `boq_items.quantity` ile AYNI tip: olcek/hassasiyet farki bir invariant kacagidir.
+    quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )

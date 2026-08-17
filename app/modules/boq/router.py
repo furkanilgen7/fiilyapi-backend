@@ -2,7 +2,7 @@ import uuid
 from typing import Annotated
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel
@@ -20,6 +20,8 @@ from app.modules.boq.schemas import (
     BoqGroupCreate,
     BoqGroupResponse,
     BoqGroupUpdate,
+    BoqItemAllocationsReplace,
+    BoqItemAllocationsResponse,
     BoqItemCreate,
     BoqItemResponse,
     BoqItemUpdate,
@@ -44,13 +46,32 @@ _FULL = require_permission("boq", AccessLevel.full)
 _ADMIN = require_permission("boq", AccessLevel.admin)
 
 
+#: BOQ-SEC K5 — bolum suzgeci. Uc EKLENMEZ, mevcut uca parametre eklenir:
+#: iki okuma yolu iki farkli hesap uretir ve zamanla ayrisirdi.
+_SECTION_FILTER = Annotated[
+    uuid.UUID | None,
+    Query(
+        description=(
+            "Bolum suzgeci. Verilirse yalniz o bolume tahsisi olan kalemler doner ve "
+            "`quantity` o bolume tahsis edilen miktardir (poz kotasi degil)."
+        )
+    ),
+]
+
+
 @router.get("/sites/{site_id}/boq", response_model=BoqListResponse, dependencies=[_VIEW])
 async def get_boq_endpoint(
     site_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
+    section_id: _SECTION_FILTER = None,
 ) -> BoqListResponse:
-    return await service.get_boq_for_site(session, user, site_id)
+    """`section_id` YOKSA davranis birebir eskisidir (BOQ-SEC K5).
+
+    Baska santiyenin bolum kimligi BOS LISTE degil **404** alir
+    (`service.visible_section_in_site` gerekcesi).
+    """
+    return await service.get_boq_for_site(session, user, site_id, section_id)
 
 
 def _content_disposition(filename: str) -> str:
@@ -76,10 +97,16 @@ async def export_boq_endpoint(
     site_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
+    section_id: _SECTION_FILTER = None,
 ) -> Response:
     """Spec §5.3: BOQ'yu xlsx olarak indirir. Okuma ucudur — `record_audit`
-    cagirmaz (T7 kurali: okumalar denetim gunlugune yazmaz)."""
-    site, boq = await service.get_boq_export_for_site(session, user, site_id)
+    cagirmaz (T7 kurali: okumalar denetim gunlugune yazmaz).
+
+    BOQ-SEC K5: `section_id` ekran ucuyla AYNI cagriyi besler
+    (`get_boq_export_for_site`) — ikinci bir suzme kodu yazilmaz, yoksa Excel
+    ile ekran zamanla ayrisirdi.
+    """
+    site, boq = await service.get_boq_export_for_site(session, user, site_id, section_id)
     buffer = build_boq_workbook(boq)
     filename = f"is-kalemleri-{site.code}.xlsx"
     return Response(
@@ -110,7 +137,7 @@ async def create_boq_group_endpoint(
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
-    return service.to_group(group)
+    return await service.group_response(session, group)
 
 
 @router.post(
@@ -134,7 +161,7 @@ async def create_boq_item_endpoint(
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
-    return service.to_item(item)
+    return await service.item_response(session, item)
 
 
 @router.patch("/boq/groups/{group_id}", response_model=BoqGroupResponse, dependencies=[_FULL])
@@ -153,7 +180,7 @@ async def update_boq_group_endpoint(
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
-    return service.to_group(group)
+    return await service.group_response(session, group)
 
 
 @router.patch("/boq/items/{item_id}", response_model=BoqItemResponse, dependencies=[_FULL])
@@ -172,7 +199,38 @@ async def update_boq_item_endpoint(
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
-    return service.to_item(item)
+    return await service.item_response(session, item)
+
+
+@router.put(
+    "/boq/items/{item_id}/allocations",
+    response_model=BoqItemAllocationsResponse,
+    dependencies=[_FULL],
+)
+async def replace_boq_item_allocations_endpoint(
+    request: Request,
+    item_id: uuid.UUID,
+    data: BoqItemAllocationsReplace,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> BoqItemAllocationsResponse:
+    """BOQ-SEC K4 — pozun bolum tahsislerini TAM KUME olarak degistirir.
+
+    Kapi `_FULL`dur (K8): tahsis YAZMADIR, mevcut BOQ yazma uclariyla BIREBIR
+    ayni izin. Yeni izin modulu ACILMAZ, izin matrisi DEGISMEZ.
+
+    Govdedeki `allocations` alani ZORUNLUDUR: gonderilmezse 422. Bos dizi `[]`
+    tum tahsisleri kaldirir — "dokunma" anlami YOKTUR (K4).
+    """
+    result = await service.replace_allocations(session, user, item_id, data)
+    await record_audit(
+        session,
+        action=AuditAction.update,
+        detail=messages.boq_item_allocations_replaced(result.item.code, len(result.allocations)),
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return result
 
 
 @router.delete(

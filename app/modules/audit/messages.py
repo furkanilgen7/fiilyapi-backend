@@ -172,6 +172,16 @@ def boq_item_updated(code: str, description: str) -> str:
     return f"İş kalemi güncellendi: {code} — {description}"
 
 
+def boq_item_allocations_replaced(code: str, section_count: int) -> str:
+    """BOQ-SEC: pozun bölüm tahsisleri değiştirildi.
+
+    Adet VERİLİR (silme mesajlarının "adet verilmez" kuralının tersi): burada
+    sayı bir uyarı değil DEĞİŞİKLİĞİN KENDİSİDİR — `0` "tüm tahsisler
+    kaldırıldı" demektir ve denetim kaydında bu ayırt edilebilmelidir.
+    """
+    return f"İş kalemi bölüm tahsisleri güncellendi: {code} — {section_count} bölüm"
+
+
 def block_created(project_name: str, block_name: str) -> str:
     return f"Yeni blok oluşturuldu: {project_name} · {block_name}"
 
