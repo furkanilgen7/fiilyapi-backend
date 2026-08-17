@@ -7,9 +7,10 @@ Girdisi bir hesap KODU, çıktısı bir kalem ANAHTARIDIR. Böyle olması bilin�
 biri `19`u aktifte, öteki pasifte sayar ve **`AKTİF ≠ PASİF`** çıkardı.
 
 Ölçülen gerçek: repoda kod-aralığı eşleme tablosu **HİÇ YOKTU**. `codes.py`
-yalnız `class_code()` (ilk hane) ve `level()` verir; hesap planı **seed'i de
-yoktur**, yani taze bir veritabanında plan boştur ve harita hiçbir kayıttan
-türetilemez — TDHP'den YAZILMAK zorundadır.
+yalnız `class_code()` (ilk hane) ve `level()` verir. 🔄 (MU-SEED T5) Hesap planı
+artık `e5f6a7b8c9d0` migration'ıyla tohumlanır — 56 grup (`NN`) + 260 ana hesap
+(`NNN`), 316 satır — ama bu tohum bir HARİTA YAZMAZ, yalnız kod/ad/tür/kontra
+taşır. Harita hâlâ hiçbir kayıttan türetilemez — TDHP'den YAZILMAK zorundadır.
 
 ## 🔴 Anahtar İKİ HANELİ GRUPTUR, ilk hane DEĞİL
 

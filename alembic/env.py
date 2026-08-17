@@ -90,7 +90,35 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    # 🔴 `transaction_per_migration=True` — HER MIGRATION KENDİ İŞLEMİNDE KOŞAR
+    # (MU-SEED T7 bulgusu, kusuru YALNIZ CI'daki PG 16 gördü).
+    #
+    # Varsayılan (`False`) TÜM zinciri TEK işleme sokar. Postgres ise
+    # `ALTER TYPE … ADD VALUE` ile eklenen bir enum değerinin **aynı işlemde
+    # KULLANILMASINI** yasaklar. MT-1 (`c8d9e0f1a2b3`) `equity`yi ekler,
+    # MU-SEED (`e5f6a7b8c9d0`) o değerle satır INSERT eder; taze bir
+    # veritabanında zincir baştan koştuğunda ikisi aynı işleme düşüyordu ve
+    # migration şu hatayla patlıyordu:
+    #     asyncpg.exceptions.UnsafeNewEnumValueUsageError:
+    #     unsafe use of new value "equity" of enum type chart_account_type
+    #
+    # 🔴 **YEREL PG 18 BUNU GÖREMEZ:** kısıtlama PG 17'de KALDIRILDI. Yerelde
+    # (PG 18) upgrade→downgrade→upgrade turu YEŞİL geçiyordu; CI'daki PG 16
+    # kırmızı verdi. WORKFLOW'un "PG SÜRÜM TUZAĞI" kanonunun birebir hâli.
+    # MT-1'in kendi docstring'i tuzağı yazmıştı (*"yeni değer AYNI işlemde
+    # KULLANILMADIĞI sürece"*); değeri fiilen kullanan ilk migration MU-SEED'dir.
+    #
+    # Sonuç: migration'lar artık tek tek commit'lenir. Zincir ortasında bir
+    # migration patlarsa öncekiler UYGULANMIŞ kalır ve `alembic_version` en son
+    # başarılı revizyonu gösterir — bir sonraki deploy KALDIĞI YERDEN devam eder.
+    # Bu, "hepsi ya da hiçbiri"nden daha güvenlidir: `Dockerfile` açılışta
+    # `alembic upgrade head && uvicorn …` koşar, alembic patlarsa `&&` kısa devre
+    # yapar ve uygulama zaten açılmaz.
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        transaction_per_migration=True,
+    )
 
     with context.begin_transaction():
         context.run_migrations()

@@ -121,8 +121,10 @@ async def _assert_parent_has_no_lines(session: AsyncSession, code: str) -> None:
 
     İki erken çıkış vardır ve ikisi de meşrudur:
     * grubun ebeveyni YOKTUR (sınıf bir kayıt değildir, `parent_code` → `None`);
-    * ebeveynin KAYDI olmayabilir (hesap planı boş açılır, R14) — kayıt yoksa
-      satırı da yoktur.
+    * ebeveynin KAYDI olmayabilir — `e5f6a7b8c9d0` (MU-SEED) NN grubunu ve NNN
+      ana hesabını tohumlar ama `NNN.NN` alt hesap YAZMAZ (K2); üstelik
+      kullanıcı ana hesabı silmiş ya da hiç migrate etmemiş olabilir (R14).
+      Kayıt yoksa satırı da yoktur.
 
     Yalnız BİR düzey yukarı bakılır: iki düzey yukarıdaki bir hesabın satırı
     varsa zaten arada duran çocuk açılırken bu kapı ısırmıştır.

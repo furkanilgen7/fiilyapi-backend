@@ -170,8 +170,9 @@ async def get_account(
 async def get_account_by_code(session: AsyncSession, code: str) -> ChartAccount | None:
     """Koddan hesap — K-Ş3 kapısının (ebeveyn arama) tek yolu.
 
-    Ebeveynin KAYDI olmayabilir (hesap planı boş açılır, R14): `None` bir hata
-    değildir, "kapı ısırmaz" demektir.
+    Ebeveynin KAYDI olmayabilir (`NNN.NN` alt hesap `e5f6a7b8c9d0` tohumunda
+    hiç yazılmaz, K2; ya da kullanıcı ana hesabı silmiş/hiç migrate etmemiş
+    olabilir, R14): `None` bir hata değildir, "kapı ısırmaz" demektir.
     """
     stmt = select(ChartAccount).where(ChartAccount.code == code)
     return (await session.execute(stmt)).scalar_one_or_none()
