@@ -15,6 +15,10 @@ __all__ = [
     "BoqGroupCreate",
     "BoqGroupResponse",
     "BoqGroupUpdate",
+    "BoqItemAllocation",
+    "BoqItemAllocationInput",
+    "BoqItemAllocationsReplace",
+    "BoqItemAllocationsResponse",
     "BoqItemCreate",
     "BoqItemResponse",
     "BoqItemUpdate",
@@ -24,9 +28,19 @@ __all__ = [
 
 _MONEY = Decimal("0.01")
 
+#: Miktar hassasiyeti — `boq_items.quantity` / `boq_item_section_allocations.quantity`
+#: kolonlarinin `Numeric(14, 3)` olcegiyle BIREBIR. Govdeden gelen miktar YAZILMADAN
+#: ONCE bu olcege cekilir: kontrol edilen sayi ile SAKLANAN sayi ayrisirsa toplam
+#: invarianti (K3) DB'nin yuvarlamasi kadar kacak verir.
+_QUANTITY = Decimal("0.001")
+
 
 def _quantize_money(value: Decimal) -> Decimal:
     return value.quantize(_MONEY, rounding=ROUND_HALF_UP)
+
+
+def quantize_quantity(value: Decimal) -> Decimal:
+    return value.quantize(_QUANTITY, rounding=ROUND_HALF_UP)
 
 
 # --- Okuma semalari ---
@@ -45,6 +59,16 @@ class BoqItemResponse(BaseModel):
     unit_price: Decimal
     progress_pct: MetricPlaceholder
     sort_order: int
+    # --- BOQ-SEC (K6) — MEVCUT alanlarin hicbiri degismedi, ikisi EKLENDI ---
+    #
+    # 🔴 IKI ANLAM TUZAGI: `section_id` suzgeciyle okundugunda `quantity` O BOLUME
+    # tahsis edilen miktardir (poz toplami DEGIL, K5) — ama asagidaki iki alan HER
+    # ZAMAN pozun GERCEK santiye kotasi uzerinden turer. Yani suzulmus yanitta
+    # `unallocated_quantity != quantity - allocated_quantity`'dir ve bu bir kusur
+    # degil tanimdir. Mockup'in "Santiye Kotasi" sutunu (BoqAssignmentCard.tsx:17)
+    # suzulmus yanitta `allocated_quantity + unallocated_quantity`den okunur.
+    allocated_quantity: Decimal
+    unallocated_quantity: Decimal
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -106,6 +130,48 @@ class BoqItemCreate(BaseModel):
     quantity: Decimal = Field(gt=0)
     unit_price: Decimal = Field(ge=0)
     sort_order: int = Field(default=0, ge=0)
+
+
+class BoqItemAllocationInput(BaseModel):
+    """Tek tahsis satiri (BOQ-SEC K4).
+
+    `quantity` STRICT pozitiftir: sifir tahsis bir satir olarak TUTULMAZ (K1
+    `CHECK`i ile ayni kural) — "bu bolumden cikar" demenin yolu satiri govdeden
+    DUSURMEKTIR, sifir yazmak degil.
+    """
+
+    section_id: uuid.UUID
+    quantity: Decimal = Field(gt=0)
+
+
+class BoqItemAllocationsReplace(BaseModel):
+    """`PUT /boq/items/{item_id}/allocations` govdesi — TAM KUME DEGISTIRME.
+
+    🔴 `allocations` ZORUNLUDUR (varsayilani YOKTUR): alan hic gonderilmezse ya
+    da `null` gecilirse istek 422 alir. Bu ucta "dokunma" anlami YOKTUR; bos
+    dizi `[]` "hepsini kaldir" demektir ve eksik alani sessizce ona ya da
+    "degistirme"ye yorumlamak, kullanicinin niyetini SUNUCUNUN uydurmasi olurdu.
+    """
+
+    allocations: list[BoqItemAllocationInput]
+
+
+class BoqItemAllocation(BaseModel):
+    """Yaziladan SONRAKI tahsis satiri. `section_name` UI icindir (mockup F131-211).
+
+    Bu sema santiye BOQ listesinde BASILMAZ (K6): her kalem icin tahsis listesi
+    donmek N+1 acar ve liste ekraninin ihtiyaci olan sey zaten `allocated_quantity`
+    ozetidir.
+    """
+
+    section_id: uuid.UUID
+    section_name: str
+    quantity: Decimal
+
+
+class BoqItemAllocationsResponse(BaseModel):
+    item: BoqItemResponse
+    allocations: list[BoqItemAllocation]
 
 
 class BoqItemUpdate(BaseModel):

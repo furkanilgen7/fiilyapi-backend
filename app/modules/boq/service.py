@@ -1,33 +1,42 @@
 import uuid
+from collections.abc import Iterable
 from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import (
     BoqGroupSiteMismatchError,
+    ConflictError,
     DuplicateError,
     NotFoundError,
     RelatedRecordsExistError,
+    SiteValidationError,
 )
 from app.modules.boq import repository
-from app.modules.boq.models import BoqGroup, BoqItem
+from app.modules.boq.models import BoqGroup, BoqItem, BoqItemSectionAllocation
 from app.modules.boq.schemas import (
     BoqGroupCreate,
     BoqGroupResponse,
     BoqGroupUpdate,
+    BoqItemAllocation,
+    BoqItemAllocationsReplace,
+    BoqItemAllocationsResponse,
     BoqItemCreate,
     BoqItemResponse,
     BoqItemUpdate,
     BoqListResponse,
     BoqTotals,
     MetricPlaceholder,
+    quantize_quantity,
 )
 
 # Gorunurluk suzgeci P2'DEN GELIR (plan T3 notu): site->proje cozumu kopyalanmaz,
 # `sites.service._visible_site` yeniden kullanilir. Ayni desen zaten
 # `projects.service`'in `sites.service._next_site_code`'u yeniden
 # kullanmasinda var (bkz. app/modules/projects/service.py).
-from app.modules.sites.models import Site
+from app.modules.sites import guards as sites_guards
+from app.modules.sites import repository as sites_repository
+from app.modules.sites.models import Section, Site
 from app.modules.sites.service import _visible_site
 from app.modules.users.models import User
 
@@ -41,6 +50,10 @@ _DUPLICATE_CODE = "Bu poz numarası bu şantiyede zaten kullanılıyor"
 # TB3-C: kalemi olan grup silinemez. `contracts/guards.py.GROUP_HAS_ITEMS`
 # deseninin aynısı — metinde ADET VERİLMEZ, eyleme dönüktür.
 _GROUP_HAS_ITEMS = "Bu grupta iş kalemi var, önce kalemleri silin"
+# --- BOQ-SEC (bölüm tahsisi) mesajları ---
+_ALLOCATION_EXCEEDS_QUANTITY = "Bölümlere dağıtılan miktar poz miktarını aşamaz"
+_ALLOCATION_DUPLICATE_SECTION = "Aynı bölüm gövdede birden fazla kez gönderildi"
+_QUANTITY_BELOW_ALLOCATED = "Poz miktarı bölümlere dağıtılan toplamın altına indirilemez"
 
 # Spec §3.2/§5.1: bu dilimde YAZILMAYAN turev alanlarin bagli oldugu modul
 # anahtarlari. Kullaniciya gosterilecek metin degil, B6 sozlesmesindeki
@@ -59,26 +72,74 @@ def _metric(pending_module: str) -> MetricPlaceholder:
     return MetricPlaceholder(pending_module=pending_module)
 
 
-def to_item(item: BoqItem) -> BoqItemResponse:
+_ZERO_QUANTITY = Decimal("0.000")
+
+
+def to_item(
+    item: BoqItem, *, allocated: Decimal, quantity: Decimal | None = None
+) -> BoqItemResponse:
+    """`allocated` ANAHTAR KELIMEDIR ve varsayilani YOKTUR (BOQ-SEC K6).
+
+    Bilincli bir zorlamadir: varsayilani `0` olsaydi yeni bir cagri yeri sessizce
+    "hic tahsis yok" derdi ve ekran atanmamis miktari OLDUGUNDAN BUYUK gosterirdi.
+
+    `quantity` YALNIZ bolum suzgecinde verilir (K5): o zaman poz kotasi degil O
+    BOLUME tahsis edilen miktar basilir ve `amount` ondan turer. `allocated`/
+    `unallocated` ise HER ZAMAN pozun GERCEK kotasi uzerinden hesaplanir — bkz.
+    `BoqItemResponse`taki "iki anlam" notu.
+    """
     return BoqItemResponse(
         id=item.id,
         code=item.code,
         description=item.description,
         unit=item.unit,
-        quantity=item.quantity,
+        quantity=item.quantity if quantity is None else quantity,
         unit_price=item.unit_price,
         progress_pct=_metric(_PROGRESS_PAYMENTS),
         sort_order=item.sort_order,
+        allocated_quantity=allocated,
+        unallocated_quantity=item.quantity - allocated,
     )
 
 
-def to_group(group: BoqGroup) -> BoqGroupResponse:
+async def item_response(session: AsyncSession, item: BoqItem) -> BoqItemResponse:
+    """Tekil kalem yaniti — tahsis toplamini DB'den okur (yazma uclari icin)."""
+    return to_item(item, allocated=await repository.allocated_total_for_item(session, item.id))
+
+
+def to_group(
+    group: BoqGroup,
+    *,
+    allocated_totals: dict[uuid.UUID, Decimal],
+    section_quantities: dict[uuid.UUID, Decimal] | None = None,
+) -> BoqGroupResponse:
+    """`section_quantities` verilmisse (bolum suzgeci, K5) o bolume TAHSISI OLMAYAN
+    kalemler listeden DUSER — sifir miktarli hayalet satir basilmaz."""
+    items = []
+    for item in group.items:
+        allocated = allocated_totals.get(item.id, _ZERO_QUANTITY)
+        if section_quantities is None:
+            items.append(to_item(item, allocated=allocated))
+            continue
+        section_quantity = section_quantities.get(item.id)
+        if section_quantity is None:
+            continue
+        items.append(to_item(item, allocated=allocated, quantity=section_quantity))
     return BoqGroupResponse(
         id=group.id,
         name=group.name,
         sort_order=group.sort_order,
-        items=[to_item(item) for item in group.items],
+        items=items,
     )
+
+
+async def group_response(session: AsyncSession, group: BoqGroup) -> BoqGroupResponse:
+    """Tekil grup yaniti (yazma uclari icin) — kalemlerinin tahsis toplamlarini
+    santiye capinda TEK sorguda okur. Grup yeni acilmissa koleksiyon bostur ve
+    sozluk kullanilmaz; yine de sorgu ATLANMAZ: "yeni grup her zaman bostur"
+    varsayimi PATCH yolunda YANLIStir ve sessizce sifir tahsis basardi."""
+    allocated_totals = await repository.allocated_totals_for_site(session, group.site_id)
+    return to_group(group, allocated_totals=allocated_totals)
 
 
 def _totals(groups: list[BoqGroupResponse]) -> BoqTotals:
@@ -95,22 +156,59 @@ def _totals(groups: list[BoqGroupResponse]) -> BoqTotals:
     )
 
 
+async def visible_section_in_site(
+    session: AsyncSession, site: Site, section_id: uuid.UUID | None
+) -> Section | None:
+    """Okuma suzgecinin bolumu (K5). BASKA SANTIYENIN bolumu **404**tur.
+
+    Bos liste donmek, kullaniciya "bu bolume hic is kalemi atanmamis" YALANINI
+    soylerdi (`timesheet.service.visible_section` kanonu); var olmayan bolumle
+    AYNI 404 ise kaydin varligini sizdirmaz. Mesaj `sites` modulunun TEK
+    cumlesidir — kopya uretilmez.
+    """
+    if section_id is None:
+        return None
+    section = await sites_repository.get_section(session, section_id)
+    if section is None or section.site_id != site.id:
+        raise NotFoundError(sites_guards.SECTION_MISSING)
+    return section
+
+
 async def get_boq_export_for_site(
-    session: AsyncSession, actor: User, site_id: uuid.UUID
+    session: AsyncSession, actor: User, site_id: uuid.UUID, section_id: uuid.UUID | None = None
 ) -> tuple[Site, BoqListResponse]:
     """Spec §5.1/§5.3 ortak okuma yolu. Gorunmeyen santiye 404 doner (P2 §5.2
     deseni), 403 degil — varligin kendisi sizdirilmaz. `Site` de donulur:
-    T8 disa aktarim ucu dosya adi icin `site.code`'a ihtiyac duyar."""
+    T8 disa aktarim ucu dosya adi icin `site.code`'a ihtiyac duyar.
+
+    BOQ-SEC K5: `section_id` VERILMEZSE davranis BIREBIR eskisidir. Verilirse
+    yalniz o bolume tahsisi olan kalemler doner, `quantity` o bolumun payidir ve
+    BOSALAN GRUPLAR listeden DUSER (aksi hâlde ekran bos basliklarla dolardi).
+    Disa aktarim ucu bu AYNI cagriyi kullanir — iki ayri suzme kodu yazilmaz
+    (`timesheet/router.py:57↔93` emsali), yoksa Excel ile ekran ayrisirdi.
+    """
     site, _ = await _visible_site(session, actor, site_id)
-    groups = [to_group(group) for group in await repository.list_groups_for_site(session, site.id)]
+    section = await visible_section_in_site(session, site, section_id)
+    allocated_totals = await repository.allocated_totals_for_site(session, site.id)
+    section_quantities = (
+        None
+        if section is None
+        else await repository.section_allocations_for_site(session, site.id, section.id)
+    )
+    groups = [
+        to_group(group, allocated_totals=allocated_totals, section_quantities=section_quantities)
+        for group in await repository.list_groups_for_site(session, site.id)
+    ]
+    if section is not None:
+        groups = [group for group in groups if group.items]
     return site, BoqListResponse(totals=_totals(groups), groups=groups)
 
 
 async def get_boq_for_site(
-    session: AsyncSession, actor: User, site_id: uuid.UUID
+    session: AsyncSession, actor: User, site_id: uuid.UUID, section_id: uuid.UUID | None = None
 ) -> BoqListResponse:
     """Spec §5.1 okuma yolu — `get_boq_export_for_site`'in ince sarmalayicisi."""
-    _, response = await get_boq_export_for_site(session, actor, site_id)
+    _, response = await get_boq_export_for_site(session, actor, site_id, section_id)
     return response
 
 
@@ -238,6 +336,14 @@ async def update_item(
         await _ensure_group_in_site(session, updates["group_id"], site)
     if "code" in updates and updates["code"] != item.code:
         await _ensure_code_unique(session, site.id, updates["code"], exclude_item_id=item.id)
+    if updates.get("quantity") is not None:
+        # 🔴 INVARIANTIN IKINCI KAPISI (BOQ-SEC K3). Tahsis ucu toplami YUKARI
+        # dogru sinirlar; burada kota AŞAĞI cekilerek AYNI invariant ters yonden
+        # kirilabilir: 1.200'un 700'u dagitilmisken kotayi 500'e indirmek
+        # SUM > quantity birakir ve hicbir uc bunu bir daha fark etmez.
+        # Kilit ve kontrol tahsis ucundakiyle BIREBIR ayni sirayla alinir.
+        updates["quantity"] = quantize_quantity(updates["quantity"])
+        await _assert_quantity_covers_allocations(session, item, updates["quantity"])
     for field, value in updates.items():
         setattr(item, field, value)
     await session.flush()
@@ -282,6 +388,10 @@ async def delete_item(session: AsyncSession, actor: User, item_id: uuid.UUID) ->
     yeniden yuklenmesini saglar. Grubun kendisi SILINMEZ; santiye toplamlari
     kalan kalemlerden yeniden turedigi icin ayrica guncelleme gerekmez.
     """
+    # BOQ-SEC: kalemin tahsisleri `boq_item_id` CASCADE ile birlikte gider —
+    # korkuluk EKLENMEZ. Tahsis satiri kalemin bir ALT PARCASIDIR (grup->kalem
+    # iliskisindeki gibi bagimsiz bir kayit degil); "once tahsisleri kaldir"
+    # demek, kullaniciya anlamsiz bir ara adim dayatmak olurdu.
     item, _ = await _visible_item(session, actor, item_id)
     identity = (item.code, item.description)
     group_id = item.group_id
@@ -291,3 +401,131 @@ async def delete_item(session: AsyncSession, actor: User, item_id: uuid.UUID) ->
     if group is not None:
         session.expire(group, ["items"])
     return identity
+
+
+# --- BOQ-SEC: bölüm tahsisi (K3/K4) ---------------------------------------
+
+
+async def _assert_quantity_covers_allocations(
+    session: AsyncSession, item: BoqItem, quantity: Decimal
+) -> None:
+    """🔴 EŞİK = KİLİT (İK-2 dersi) — kontrolden ÖNCE poz satırı kilitlenir.
+
+    Kilitsiz sıralama (oku → karşılaştır → yaz) iki eşzamanlı istekte İKİSİNİ DE
+    geçirir: her ikisi de eski toplamı okur, her ikisi de "sığıyor" der ve
+    şantiye kotası aşılır. `lock_item` satırı `FOR UPDATE` ile tuttuğu için
+    ikinci istek BEKLER, tazelenmiş toplamı okur ve 409 alır.
+
+    Kilit ile toplam okuması arasında hiçbir karar YOKTUR: araya giren her
+    kontrol TOCTOU penceresi açardı.
+    """
+    locked = await repository.lock_item(session, item.id)
+    if locked is None:  # pragma: no cover — `_visible_item` zaten çözdü
+        raise NotFoundError(_ITEM_MISSING)
+    allocated = await repository.allocated_total_for_item(session, item.id)
+    if allocated > quantity:
+        raise ConflictError(_QUANTITY_BELOW_ALLOCATED)
+
+
+def _assert_body_shape(data: BoqItemAllocationsReplace) -> dict[uuid.UUID, Decimal]:
+    """Gövdenin KENDİ İÇİNDE tutarlılığı — DB'ye hiç gitmeden (`site_planning` deseni).
+
+    🔴 Aynı bölüm iki kez geçerse 422: sunucu SESSİZCE TOPLAMAZ. Toplamak,
+    kullanıcının "400 yaz" dediği bir satırı 700'e çıkarır ve hiçbir ekranda
+    görünmez. Miktarlar yazılmadan ÖNCE `Numeric(14,3)` ölçeğine çekilir ki
+    kontrol edilen sayı ile saklanan sayı aynı olsun.
+    """
+    istenen: dict[uuid.UUID, Decimal] = {}
+    for giris in data.allocations:
+        if giris.section_id in istenen:
+            raise SiteValidationError(_ALLOCATION_DUPLICATE_SECTION)
+        istenen[giris.section_id] = quantize_quantity(giris.quantity)
+    return istenen
+
+
+async def _resolve_sections(
+    session: AsyncSession, site: Site, section_ids: Iterable[uuid.UUID]
+) -> dict[uuid.UUID, Section]:
+    """Her bölüm bu ŞANTİYEye ait olmalı; değilse **404** (K4).
+
+    422 DEĞİL: `timesheet`/`site_planning`te bölüm gövdenin düzeltilebilir bir
+    ALANIydı, burada ise tahsisin HEDEF KAYDIDIR — var olmayan bir bölüme yazma
+    isteği ile başka şantiyenin bölümüne yazma isteği AYIRT EDİLEMEZ olmalıdır,
+    aksi hâlde uç bir bölüm kimliği tarayıcısına döner.
+    """
+    cozulmus: dict[uuid.UUID, Section] = {}
+    for section_id in section_ids:
+        section = await sites_repository.get_section(session, section_id)
+        if section is None or section.site_id != site.id:
+            raise NotFoundError(sites_guards.SECTION_MISSING)
+        cozulmus[section_id] = section
+    return cozulmus
+
+
+async def replace_allocations(
+    session: AsyncSession, actor: User, item_id: uuid.UUID, data: BoqItemAllocationsReplace
+) -> BoqItemAllocationsResponse:
+    """`PUT /boq/items/{item_id}/allocations` — pozun TÜM tahsislerini gövdeye eşitler.
+
+    Sıra ZORUNLUDUR ve `site_planning.write` kuralının aynısıdır: ÖNCE TÜM
+    DOĞRULAMALAR, SONRA TEK YAZMA — ikinci satırda patlayan bir istek birincisini
+    session'a eklemiş OLMAMALIDIR.
+
+    1. `_visible_item` — görünmeyen kalem 404 (IDOR: 403 değil),
+    2. gövde şekli (aynı bölüm iki kez → 422),
+    3. 🔴 poz satırı `FOR UPDATE` — buradan sonrası serileşmiştir,
+    4. bölüm kapsamı (başka şantiye → 404),
+    5. toplam invariantı (`SUM <= quantity`) → aşarsa 409,
+    6. yazma.
+
+    Kimlik KORUNUR: gövdede yeniden geçen bir (poz, bölüm) çifti SİLİNİP YENİDEN
+    yazılmaz, `quantity`si güncellenir. Sil+yaz yapılsaydı her kaydetme
+    `created_at`i sıfırlar ve DEFERRABLE olmayan bir UQ'da çakışırdı.
+
+    Boş dizi `[]` tüm tahsisleri kaldırır ve miktar tamamen "atanmamış"a döner —
+    bu bir HATA DEĞİL geçerli bir istektir (K4).
+    """
+    item, site = await _visible_item(session, actor, item_id)
+    istenen = _assert_body_shape(data)
+
+    locked = await repository.lock_item(session, item.id)
+    if locked is None:  # pragma: no cover — `_visible_item` zaten çözdü
+        raise NotFoundError(_ITEM_MISSING)
+
+    sections = await _resolve_sections(session, site, istenen)
+
+    toplam = sum(istenen.values(), Decimal("0"))
+    if toplam > locked.quantity:
+        raise ConflictError(_ALLOCATION_EXCEEDS_QUANTITY)
+
+    # --- Buradan itibaren YAZMA; doğrulama YOK (yukarıdaki sıra kısıtı). ---
+    mevcut = {
+        row.section_id: row for row in await repository.list_allocations_for_item(session, item.id)
+    }
+    for section_id, row in mevcut.items():
+        if section_id not in istenen:
+            await session.delete(row)
+    for section_id, quantity in istenen.items():
+        row = mevcut.get(section_id)
+        if row is None:
+            session.add(
+                BoqItemSectionAllocation(
+                    boq_item_id=item.id, section_id=section_id, quantity=quantity
+                )
+            )
+        else:
+            row.quantity = quantity
+    await session.flush()
+
+    satirlar = await repository.list_allocations_for_item(session, item.id)
+    return BoqItemAllocationsResponse(
+        item=to_item(locked, allocated=sum((row.quantity for row in satirlar), Decimal("0"))),
+        allocations=[
+            BoqItemAllocation(
+                section_id=row.section_id,
+                section_name=sections[row.section_id].name,
+                quantity=row.quantity,
+            )
+            for row in satirlar
+        ],
+    )

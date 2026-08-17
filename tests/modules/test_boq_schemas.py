@@ -37,6 +37,10 @@ def _item(**overrides) -> BoqItemResponse:
         unit_price=Decimal("280.00"),
         progress_pct=_metric("progress_payments"),
         sort_order=1,
+        # BOQ-SEC K6: additive alanlar ZORUNLUDUR (varsayilanlari yok) — bir cagri
+        # yerinin "tahsis bilmiyorum" diyerek sessizce 0 basmasi engellenir.
+        allocated_quantity=Decimal("0.000"),
+        unallocated_quantity=Decimal("1240.000"),
     )
     defaults.update(overrides)
     return BoqItemResponse(**defaults)

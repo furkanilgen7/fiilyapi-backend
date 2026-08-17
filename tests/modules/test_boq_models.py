@@ -152,3 +152,88 @@ async def test_group_delete_cascades_to_items(db_session, project_factory):
     await db_session.flush()
 
     assert (await db_session.execute(select(BoqItem).where(BoqItem.id == item_id))).first() is None
+
+
+# --- BOQ-SEC T1: tahsis tablosu kısıtları DB DÜZEYİNDE kanıtlanır ----------
+#
+# 🔴 Servis korkuluğunun varlığı, kısıtın DB'de OLDUĞUNU kanıtlamaz: korkuluk
+# yarın bir yerde atlanabilir. Aşağıdaki iddialar ihlali gerçekten DENER ve
+# veritabanının reddettiğini görür.
+
+
+async def _section(session, site, name: str = "Kat 6-10"):
+    from app.modules.sites.models import Section
+
+    section = Section(site_id=site.id, name=name)
+    session.add(section)
+    await session.flush()
+    return section
+
+
+async def test_allocation_ayni_poz_ayni_bolum_IKI_SATIR_yazamaz(db_session, project_factory):
+    """UQ (boq_item_id, section_id) — DEFERRABLE olduğu için ihlal COMMIT/flush
+    sonunda değil, `SET CONSTRAINTS IMMEDIATE` ile ZORLANARAK ölçülür.
+
+    Ertelenmiş kısıtın var olduğunu görmenin tek dürüst yolu budur: `flush`
+    tek başına ertelenmiş kısıtı tetiklemez ve test SESSİZCE yeşil kalırdı.
+    """
+    from sqlalchemy import text
+
+    from app.modules.boq.models import BoqItemSectionAllocation
+
+    project = await project_factory("P-BOQSEC-1")
+    site = await _site(db_session, project)
+    group = _group(site)
+    db_session.add(group)
+    await db_session.flush()
+    item = _item(site, group)
+    db_session.add(item)
+    await db_session.flush()
+    section = await _section(db_session, site)
+
+    db_session.add_all(
+        [
+            BoqItemSectionAllocation(
+                boq_item_id=item.id, section_id=section.id, quantity=Decimal("100.000")
+            ),
+            BoqItemSectionAllocation(
+                boq_item_id=item.id, section_id=section.id, quantity=Decimal("200.000")
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    with pytest.raises(IntegrityError) as hata:
+        await db_session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+    assert "uq_boq_item_section_allocations_item_section" in str(hata.value), str(hata.value)
+
+
+async def test_allocation_sifir_ve_negatif_miktar_DB_tarafindan_reddedilir(
+    db_session, project_factory
+):
+    """CHECK (quantity > 0) — sıfır tahsis bir SATIR olarak tutulmaz."""
+    from app.modules.boq.models import BoqItemSectionAllocation
+
+    project = await project_factory("P-BOQSEC-2")
+    site = await _site(db_session, project)
+    group = _group(site)
+    db_session.add(group)
+    await db_session.flush()
+    item = _item(site, group)
+    db_session.add(item)
+    await db_session.flush()
+    section = await _section(db_session, site)
+
+    item_id, section_id = item.id, section.id
+
+    for miktar in (Decimal("0.000"), Decimal("-1.000")):
+        db_session.add(
+            BoqItemSectionAllocation(boq_item_id=item_id, section_id=section_id, quantity=miktar)
+        )
+        with pytest.raises(IntegrityError) as hata:
+            await db_session.flush()
+        # 🔴 "IntegrityError atıldı" YETMEZ: rollback sonrası kurulum satırları da
+        # düşmüş olabilir ve ikinci tur FK ihlaliyle SAHTE YEŞİL verirdi. İhlal
+        # eden kısıtın ADI iddia edilir.
+        assert "ck_boq_item_section_allocations_qty_positive" in str(hata.value), str(hata.value)
+        await db_session.rollback()
