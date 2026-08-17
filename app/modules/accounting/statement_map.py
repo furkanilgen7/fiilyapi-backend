@@ -706,26 +706,14 @@ COST_REFLECTION_ACCOUNTS: frozenset[str] = frozenset(
     {"701", "711", "721", "731", "741", "751", "761", "771", "781", "798"}
 )
 
-#: 🔴 **K7-b — transfer çiftinin BORÇ bacağı** (final review CRITICAL-1).
-#:
-#: `COST_REFLECTION_ACCOUNTS` yalnız çiftin ALACAK bacağını taşıyordu. Ama iki
-#: transfer hesabı `expense` TÜRÜNDEDİR (borç yönlü) ve kendi gider kalemine
-#: düşüyordu — ölçüldü, `chart_seed_data.py:460` ve `:508`:
-#:
-#: * **`799 Üretim Maliyet Hesabı`** — 7/B tam çevriminde `790` GERÇEK gideri,
-#:   `799` aynı tutarın TRANSFERİNİ taşır ve **ikisi de grup `79`dadır** →
-#:   `Malzeme Giderleri` aynı parayı **İKİ KAT** basardı.
-#: * **`700 Maliyet Muhasebesi Bağlantı Hesabı`** — `700`/`701` çiftinde
-#:   **iki bacak da sınıf 7'dedir**; `701` dışlanıp `700` sayılınca
-#:   `Genel Giderler` HİÇ VAR OLMAYAN bir gider basardı.
-#:
-#: Kusur sinsidir çünkü ikisi de bir GİDER hesabı gibi görünür; onları ayıran
-#: şey TÜRLERİ değil, bir MALİYET AKTARIM çifti olmalarıdır — `690`/`692`nin
-#: (K6) sınıf 7'deki kardeşi.
-#:
-#: 🔴 `period_profit()`e GİRMEZLER: orada `700`+`701` ve `790`+`799` çiftleri
-#: zaten birbirini götürür ve kâr DOĞRU çıkar. Bu bir **SATIR** kusurudur, kâr
-#: kusuru değil — düzeltme tek noktada, `is_cost_reflection()`ta durur.
+#: 🔴 **K7-b — aktarım çiftinin BORÇ bacağı** (final review CRITICAL-1). İkisi de
+#: `expense` TÜRÜNDEDİR (`chart_seed_data.py:460` ve `:508`), yani bir GİDER
+#: hesabı gibi GÖRÜNÜR — onları ayıran şey TÜRLERİ değil, bir MALİYET AKTARIM
+#: bacağı olmalarıdır (`690`/`692`nin sınıf 7'deki kardeşi). Sayılsalardı:
+#: `790`+`799` **ikisi de grup `79`da** → `Malzeme Giderleri` **İKİ KAT**;
+#: `700`+`701` **iki bacak da sınıf 7'de** → `Genel Giderler` HİÇ VAR OLMAYAN
+#: bir gider. 🔴 `period_profit()`e GİRMEZLER: orada çiftler zaten birbirini
+#: götürür ve kâr DOĞRUDUR — bu bir **SATIR** kusuruydu, kâr kusuru değil.
 COST_TRANSFER_ACCOUNTS: frozenset[str] = frozenset({"700", "799"})
 
 INCOME_STATEMENT_SOURCE_NOTES: dict[str, str] = {
