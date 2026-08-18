@@ -13,7 +13,11 @@ from app.core.ratelimit import client_ip
 from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
-from app.modules.projects import cost_summary, service, timeline
+from app.modules.projects import cost_summary, land_share, service, timeline
+from app.modules.projects.land_share_schemas import (
+    LandShareSummaryResponse,
+    LandShareUnitListResponse,
+)
 from app.modules.projects.models import ProjectStatus, ProjectType
 from app.modules.projects.schemas import (
     EmployerCreate,
@@ -26,6 +30,7 @@ from app.modules.projects.schemas import (
     ProjectTimelineResponse,
     ProjectUpdate,
 )
+from app.modules.units.schemas import UnitOwnerSideFilter
 from app.modules.users.models import User
 
 router = APIRouter(prefix="/projects", tags=["projects"], responses=COMMON_ERROR_RESPONSES)
@@ -145,6 +150,55 @@ async def get_project_costs_endpoint(
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> ProjectCostsResponse:
     return await cost_summary.get_project_costs(session, user, project_id)
+
+
+# --- P-KK: kat karşılığı paylaşım (OKUMA) ---
+#
+# Yol `/{project_id}/land-share/...`tır ve ayrı bir router AÇILMAZ: iki uç da
+# proje bağlamındadır ve `projects` izinleriyle korunur — yeni izin modülü
+# açmak (`roles/seed_data.py`) migration doğururdu (K9).
+
+
+@router.get(
+    "/{project_id}/land-share/summary",
+    response_model=LandShareSummaryResponse,
+    # OKUMA ucu: `view` yeter; audit YAZILMAZ (`/costs` ucuyla aynı karar —
+    # türev okuma hiçbir şey değiştirmez).
+    dependencies=[require_permission("projects", AccessLevel.view)],
+)
+async def get_land_share_summary_endpoint(
+    project_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> LandShareSummaryResponse:
+    return await land_share.get_summary(session, user, project_id)
+
+
+@router.get(
+    "/{project_id}/land-share/units",
+    response_model=LandShareUnitListResponse,
+    dependencies=[require_permission("projects", AccessLevel.view)],
+)
+async def list_land_share_units_endpoint(
+    project_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    owner_side: UnitOwnerSideFilter | None = None,
+    block_id: uuid.UUID | None = None,
+    q: str | None = None,
+    limit: _LIMIT = 50,
+    offset: _OFFSET = 0,
+) -> LandShareUnitListResponse:
+    return await land_share.list_units(
+        session,
+        user,
+        project_id,
+        owner_side=owner_side,
+        block_id=block_id,
+        q=q,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.post(
