@@ -1427,3 +1427,68 @@ def accounting_period_reopened(year: int, month: int) -> str:
     sorusunun yeri TAM OLARAK burasıdır.
     """
     return f"Muhasebe dönemi yeniden açıldı: {accounting_period_label(year, month)}"
+
+
+# --- FIN-1: cek & senet portfoyu ---
+#
+# Kimlik IKI parcalidir: CEK NO (E10:104, kaydin gorunen kimligi) + KESIDECI
+# (E10:105). 🔴 Cek numarasi TEKIL DEGILDIR (K3) — tek basina yazilsaydi ayni
+# numarali iki kayit gunlukte AYIRT EDILEMEZDI.
+#
+# 🔴 **TUTAR metne GIRMEZ.** Repoda hicbir denetim metni para tasimaz
+# (`bank_account_*` / `payment_*` kanonu): gunluge donmus bir kopya duserse
+# kayit degistiginde ikinci bir gercek olarak yasamaya devam eder.
+#
+# 🔴 YENI `AuditAction` UYESI ACILMADI (TB3/T3 kanonu): durum gecisi de
+# `update`tir, ayrim METINDEDIR — "Durumu degistirildi" cumlesi hedef durumu
+# TURKCE etiketiyle tasir, enum degeriyle degil (gunlugu okuyan kullanicidir).
+
+
+#: Durum etiketleri E10 rozetlerinden BIREBIR (E10:130 `Portfoyde` ·
+#: E10:157 `Tahsil Edildi` · E10:86 `Iade / Iptal` karti). `paid` mockup'ta
+#: cizilmemistir (E10 yalniz "Alinan Cekler" sekmesini gosterir) — "Odendi"
+#: karsi yonun dogal karsiligidir ve K2'de bu adla tanimlidir.
+FINANCIAL_INSTRUMENT_STATUS_LABELS: dict[str, str] = {
+    "portfolio": "Portföyde",
+    "collected": "Tahsil Edildi",
+    "paid": "Ödendi",
+    "returned": "İade",
+    "cancelled": "İptal",
+}
+
+
+def financial_instrument_label(serial_no: str, drawer_name: str) -> str:
+    """Dort denetim metninin TEK kimlik kaynagi.
+
+    Ayri ayri kurulsalardi biri kesideciyi unutur ve ayni numarali iki cek
+    (farkli banka, farkli yon — K3) gunlukte ayirt edilemezdi.
+    """
+    return f"{serial_no} · {drawer_name}"
+
+
+def financial_instrument_created(serial_no: str, drawer_name: str) -> str:
+    return f"Çek/senet kaydı oluşturuldu: {financial_instrument_label(serial_no, drawer_name)}"
+
+
+def financial_instrument_updated(serial_no: str, drawer_name: str) -> str:
+    """Metin GUNCELLENMIS degerlerle kurulur: kullanici numarayi duzelttiyse
+    gunlukte yeni numara durmalidir, yoksa satir neyin ne oldugunu anlatmaz."""
+    return f"Çek/senet kaydı güncellendi: {financial_instrument_label(serial_no, drawer_name)}"
+
+
+def financial_instrument_status_changed(serial_no: str, drawer_name: str, status: str) -> str:
+    """Hedef durum TURKCE etiketiyle yazilir (gunlugu okuyan kullanicidir).
+
+    Bilinmeyen bir enum degeri ham hâliyle basilir: sozlukte bulunamayan bir uye
+    metni PATLATMAMALI, ama gorunur de olmalidir — sessizce bosluk basmak yeni
+    bir durum eklendiginde gunlugu ANLAMSIZ kilardi.
+    """
+    etiket = FINANCIAL_INSTRUMENT_STATUS_LABELS.get(status, status)
+    kimlik = financial_instrument_label(serial_no, drawer_name)
+    return f"Çek/senet durumu değiştirildi: {kimlik} → {etiket}"
+
+
+def financial_instrument_deleted(serial_no: str, drawer_name: str) -> str:
+    """Metin `session.delete`ten ONCE kurulur — sonra kurulsaydi numara ve
+    keside guvenilir okunamaz, silinenin NE OLDUGU kaybolurdu."""
+    return f"Çek/senet kaydı silindi: {financial_instrument_label(serial_no, drawer_name)}"
