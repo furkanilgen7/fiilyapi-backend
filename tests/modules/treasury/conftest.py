@@ -44,7 +44,16 @@ from app.modules.subcontractor_progress_payments.models import (
     SubcontractorProgressPayment,
     SubcontractorProgressPaymentLine,
 )
-from app.modules.treasury.models import BankAccount, BankAccountType, Payment, PaymentMethodKind
+from app.modules.treasury.models import (
+    BankAccount,
+    BankAccountType,
+    FinancialInstrument,
+    FinancialInstrumentDirection,
+    FinancialInstrumentKind,
+    FinancialInstrumentStatus,
+    Payment,
+    PaymentMethodKind,
+)
 from app.modules.users.models import User, UserProjectAccess
 from tests._iban import tr_iban
 
@@ -436,5 +445,67 @@ def taseron_hakedisi_fabrikasi(seeded_db: AsyncSession, project_factory, user_fa
         await seeded_db.flush()
         await seeded_db.refresh(payment)
         return payment
+
+    return _create
+
+
+# --------------------------------------------------------------------------- #
+# FIN-1 — çek & senet portföyü (E10)
+#
+# 🔴 İzin kapısı yine **`treasury`**tir (K9): yeni izin modülü AÇILMADI. Yukarıdaki
+# dört başlık fixture'ı (`admin` / `muhasebe` / `pm` / `yetkisiz`) bu dilimi de
+# temsil eder — aynı seviyeleri ikinci kez üretmek anlamsız olurdu.
+#
+# 🔴 K3'ün BURADA GENİŞLEDİĞİ nokta: banka HESABI şirket geneli olsa da ÇEK
+# `project_id` taşır (bilgi bağı) ve satır keşideci + tutar sızdırır → kapsam
+# süzgeci UYGULANIR (`invoicing` emsali). Bu yüzden `kapsamli_muhasebe_headers`
+# ve iki proje fixture'ı FIN-1 testlerinin de taşıyıcısıdır.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def cek_fabrikasi(seeded_db: AsyncSession):
+    """Çek/senedi DOĞRUDAN kurar — uçtan geçilmez.
+
+    POST ucundan kurulsaydı liste/özet/geçiş testleri POST'un doğruluğuna
+    bağlanır ve tek bir kusur bütün dosyayı kırmızıya çevirirdi
+    (`fatura_fabrikasi` dersi). Ayrıca terminal durumdaki bir kaydı kurmak POST
+    ile İMKÂNSIZDIR: yeni kayıt her zaman `portfolio` doğar (K7).
+    """
+    sayac = {"n": 0}
+
+    async def _create(
+        *,
+        direction: FinancialInstrumentDirection = FinancialInstrumentDirection.received,
+        instrument_kind: FinancialInstrumentKind = FinancialInstrumentKind.cheque,
+        status: FinancialInstrumentStatus = FinancialInstrumentStatus.portfolio,
+        serial_no: str | None = None,
+        drawer_name: str = "Güneşkent A.Ş.",
+        description: str | None = None,
+        bank_name: str | None = "Ziraat Bank",
+        issue_date: date = date(2026, 7, 1),
+        due_date: date = date(2026, 7, 25),
+        amount: str = "1200000.00",
+        project=None,  # noqa: ANN001
+        bank_account=None,  # noqa: ANN001
+    ) -> FinancialInstrument:
+        sayac["n"] += 1
+        instrument = FinancialInstrument(
+            instrument_kind=instrument_kind,
+            direction=direction,
+            serial_no=serial_no if serial_no is not None else f"{sayac['n']:010d}",
+            drawer_name=drawer_name,
+            description=description,
+            bank_name=bank_name,
+            issue_date=issue_date,
+            due_date=due_date,
+            amount=Decimal(amount),
+            status=status,
+            project_id=None if project is None else project.id,
+            bank_account_id=None if bank_account is None else bank_account.id,
+        )
+        seeded_db.add(instrument)
+        await seeded_db.flush()
+        return instrument
 
     return _create

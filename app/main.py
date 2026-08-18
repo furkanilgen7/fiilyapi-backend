@@ -45,6 +45,7 @@ from app.modules.subcontractor_progress_payments.router import (
     router as subcontractor_progress_payments_router,
 )
 from app.modules.timesheet.router import router as timesheet_router
+from app.modules.treasury.instruments.router import router as financial_instruments_router
 from app.modules.treasury.router import router as treasury_router
 from app.modules.units.router import router as units_router
 from app.modules.users.router import router as users_router
@@ -174,6 +175,11 @@ app.include_router(timesheet_router)
 # `/invoices/{id}/payments` altında ve `invoicing_router`ın İÇİNDE tanımlanır —
 # ayrı bir router olarak buraya eklenmezler (spec §5, MK-2 dersi).
 app.include_router(treasury_router)
+# FIN-1 — `/financial-instruments` kökü. `treasury_router`dan AYRI bir router'dır
+# çünkü kendi içinde bir LİTERAL/UUID sırası taşır (`/summary` önce) ve o sıra
+# kendi modülünde okunabilir olmalıdır. Kök başka hiçbir router'ın yoluyla
+# çakışmaz (ölçüldü).
+app.include_router(financial_instruments_router)
 app.include_router(units_router)
 app.include_router(users_router)
 

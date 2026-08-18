@@ -107,7 +107,10 @@ async def build_summary(
     tutarlar = satir[: len(kosullar)]
     adetler = satir[len(kosullar) :]
     kartlar = {
-        ad: FinancialInstrumentSummaryCard(amount=Decimal(tutar), count=adet)
+        # 🔴 `quantize` SART: `coalesce(sum, 0)` bos kumede TAMSAYI 0 doner ve
+        # kart "0" basardi — dolu kart ise "300.00". Iki farkli olcek istemciye
+        # gidince bicimlendirme kaydi ve fark YALNIZ bos ayda gorunurdu.
+        ad: FinancialInstrumentSummaryCard(amount=Decimal(tutar).quantize(ZERO), count=adet)
         for ad, tutar, adet in zip(kosullar, tutarlar, adetler, strict=True)
     }
     return FinancialInstrumentSummaryResponse(**kartlar, as_of=as_of)
