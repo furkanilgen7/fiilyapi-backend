@@ -291,6 +291,12 @@ def test_payment_columns_match_spec():
         "invoice_id",
         "bank_account_id",
         "method",
+        # 🔴 FIN-1 (2026-08-18) EKLEDI (K4): çek/senet varlığına İSTEĞE BAĞLI bağ.
+        # HZ-1'in bu satırdaki "cheque_id kolonu YOKTUR" kararı FIN-1 ile bilinçli
+        # olarak DEĞİŞTİ; `test_payment_has_no_direction_and_no_cheque_columns`
+        # aşağıda hâlâ `cheque_id`/`promissory_note_id` gibi TÜRE ÖZGÜ kolonları
+        # yasaklar — açılan bağ TEK ve TÜR-BAĞIMSIZDIR (tek tablo, K1).
+        "financial_instrument_id",
         "amount",
         "paid_on",
         "note",
