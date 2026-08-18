@@ -35,11 +35,15 @@ ACILMAZ. Odenen = Σ payments, kalan = `invoice.total − Σ payments`; faturani
 durumu bundan TURETILEREK damgalanir. Politika degisirse cozum bir yeniden
 hesaptir, veri gocu degil.
 
-ACILMAYANLAR (spec §1, kasitli — "eksik" diye geri acilmaz): cek/senet VARLIGI
-(E10'un tamami; durum gecisleri ve `Karsiliksiz` hic cizilmemis → HZ-2) · nakit
+ACILMAYANLAR (spec §1, kasitli — "eksik" diye geri acilmaz): nakit
 hareket/islem tablosu (HZ-3) · planlanan odeme · bakiye bilesenleri
 (kullanilabilir/bloke) · para birimi/kur (`₺` metne gomulu sabit) · sube /
 hesap no / SWIFT / kart rengi.
+
+🔴 **FIN-1 (2026-08-18) BU LISTEYI KISALTTI:** cek/senet VARLIGI artik ACIK —
+`financial_instruments` tablosu (E10'un tamami) bu dosyanin altinda tanimlidir.
+HZ-1 spec'i onu "HZ-2" adiyla ertelemisti; is FIN-1 adiyla yapildi ve iki ad
+AYNI isi gosterir. Bu dosyadaki her "HZ-2" atfi FIN-1 olarak okunur.
 
 Serbest metin tavani: `note` kolonu `Text`tir (DB'de sinirsiz); 2000 karakter
 tavani TB4/B4 standardi geregi SEMA katmanindadir
@@ -89,9 +93,16 @@ class BankAccountType(str, enum.Enum):
 class PaymentMethodKind(str, enum.Enum):
     """Odeme sekli — FGI:225-228 KAPALI kumesi BIREBIR.
 
-    ⚠️ `cheque` / `promissory_note` yalnizca ODEME SEKLININ ETIKETIDIR: cek ya
-    da senet KAYDI ACMAZ (cek varligi HZ-2'nin isi, `cheque_id` kolonu bu
-    yuzden yoktur).
+    ⚠️ `cheque` / `promissory_note` yalnizca ODEME SEKLININ ETIKETIDIR ve
+    OYLE KALIR: bu alan tek basina bir cek KAYDI ACMAZ.
+
+    🔴 **FIN-1 (2026-08-18) ILE DEGISEN KISIM:** artik cek/senet VARLIGI vardir
+    (`FinancialInstrument`) ve `payments.financial_instrument_id` ile bu tabloya
+    ISTEGE BAGLI bir bag kurulabilir. HZ-1'in "`cheque_id` kolonu bu yuzden
+    yoktur" cumlesi ARTIK GECERSIZDIR — ama bagin **ZORUNLU OLMAMASI** bilincli
+    bir karardir (FIN-1 K4): bugunku `method='cheque'` kayitlarinin hepsi bossa
+    ve migration onlari dolduramiyorsa, zorunluluk MEVCUT VERIYI gecersiz
+    kilardi. Yani etiket ile varlik AYRI iki olgudur ve biri otekini ima ETMEZ.
 
     `invoicing.InvoicePaymentMethod` ile AYRI bir tiptir ve oyle kalir: fatura
     tarafi `credit_card` tasir ama `promissory_note` tasimaz — kumeler
