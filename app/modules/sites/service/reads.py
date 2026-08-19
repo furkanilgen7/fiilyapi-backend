@@ -1,0 +1,107 @@
+"""Okuma uclari (spec §4-§6): liste + detay derleyicileri."""
+
+import uuid
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.modules.projects.models import Project
+from app.modules.sites import repository
+from app.modules.sites.models import Section, Site
+from app.modules.sites.schemas import (
+    SectionDetailResponse,
+    SectionListResponse,
+    SiteDetailResponse,
+    SiteListResponse,
+)
+from app.modules.sites.service.presenters import (
+    _section_counts,
+    _site_counts,
+    _totals,
+    to_card,
+    to_detail,
+    to_section,
+    to_section_detail,
+)
+from app.modules.sites.service.visibility import _visible_project, _visible_section, _visible_site
+
+# Isci sayaclarinin TEK kaynagi puantaj modulüdur (T4, spec §4): bu modul kendi
+# `SELECT`ini yazmaz, aksi halde santiye karti ile proje karti ayni ayda farkli
+# sayi gosterir. Donem karari (icinde bulunulan ay) orada gerekcelenmistir.
+from app.modules.timesheet import counts as timesheet_counts
+from app.modules.users.models import User
+
+
+async def list_sites_overview(
+    session: AsyncSession, actor: User, project_id: uuid.UUID
+) -> SiteListResponse:
+    """Isci sayaclari IKI TOPLU sorgudan gelir (santiye kirilimi + proje toplami).
+
+    Kart basina sorgu KOSULMAZ (N+1 yok) ve alt KPI seridi kart sayaclarinin
+    TOPLAMI DEGILDIR: iki santiyede birden calisan kisi projede BIR kez sayilir.
+    """
+    project = await _visible_project(session, actor, project_id)
+    sites = await repository.list_sites_for_project(session, project_id)
+    worker_counts = await timesheet_counts.by_site(session, [site.id for site in sites])
+    project_counts = await timesheet_counts.by_project(session, [project.id])
+    return SiteListResponse(
+        counts=_site_counts(sites),
+        items=[to_card(site, project, worker_counts.get(site.id, 0)) for site in sites],
+        totals=_totals(project_counts.get(project.id, 0)),
+    )
+
+
+async def build_site_detail(
+    session: AsyncSession, site: Site, project: Project
+) -> SiteDetailResponse:
+    """Santiye detay zarfi + isci sayaclari. YAZMA uclarinin yaniti da buradan
+    gecer: okuma ve yazma ayni zarfi tasimazsa ekran kaydettikten sonra sayaci
+    kaybeder."""
+    site_counts = await timesheet_counts.by_site(session, [site.id])
+    section_counts = await timesheet_counts.by_section(session, [s.id for s in site.sections])
+    # Milestone koleksiyonu SENKRON donusturucuye girmeden ONCE yuklenir
+    # (gerekcesi `repository.ensure_milestones_loaded` docstring'inde).
+    await repository.ensure_milestones_loaded(session, site.sections)
+    return to_detail(site, project, site_counts.get(site.id, 0), section_counts)
+
+
+async def build_section_detail(session: AsyncSession, section: Section) -> SectionDetailResponse:
+    section_counts = await timesheet_counts.by_section(session, [section.id])
+    await repository.ensure_milestones_loaded(session, [section])
+    return to_section_detail(section, section_counts.get(section.id, 0))
+
+
+async def get_site_detail(
+    session: AsyncSession, actor: User, site_id: uuid.UUID
+) -> SiteDetailResponse:
+    site, project = await _visible_site(session, actor, site_id)
+    return await build_site_detail(session, site, project)
+
+
+async def list_sections_for_site(
+    session: AsyncSession, actor: User, site_id: uuid.UUID
+) -> SectionListResponse:
+    site, _ = await _visible_site(session, actor, site_id)
+    sections = await repository.list_sections(session, site.id)
+    section_counts = await timesheet_counts.by_section(session, [s.id for s in sections])
+    await repository.ensure_milestones_loaded(session, sections)
+    return SectionListResponse(
+        counts=_section_counts(sections),
+        items=[to_section(s, section_counts.get(s.id, 0)) for s in sections],
+    )
+
+
+async def get_section_detail(
+    session: AsyncSession, actor: User, section_id: uuid.UUID
+) -> SectionDetailResponse:
+    """P6 §5 — `GET /sections/{section_id}`.
+
+    Gorunurluk suzgeci `_visible_section`tir (bolum -> santiye -> proje):
+    OKUMA ucu de YENI BIR IDOR YUZEYIDIR. Kendi erisim mantigini yazmaz,
+    silme/guncelleme uclariyla AYNI fonksiyonu cagirir — iki ayri suzgec zamanla
+    ayrisir ve ayrisan taraf sessiz bir yetki sizintisi olur.
+
+    Gorunmeyen bolum 404 `Bölüm bulunamadı` doner ve govdesi var olmayan bir
+    UUID'ninkiyle BIREBIR AYNIDIR.
+    """
+    section, _ = await _visible_section(session, actor, section_id)
+    return await build_section_detail(session, section)
