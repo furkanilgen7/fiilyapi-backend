@@ -5,6 +5,17 @@ on:
     branches: [main]
   pull_request:
 
+# Aynı dala arka arkaya commit atıldığında ESKİ turlar iptal edilir.
+# Şef oturumları bir dilimde 5-8 commit atıyor; bu blok olmadan her biri tam
+# turu (test ~17-19 dk + alembic-cycle) sonuna kadar koşuyordu — hâlbuki yalnız
+# EN SON commit'in sonucu anlamlı. Kapsam kaybı YOK.
+# `main` HARİÇ TUTULUR (`github.run_id` benzersiz olduğu için grup çakışmaz):
+# main'e inen tur, migration canlıda kendiliğinden koşacağı için ASLA yarıda
+# kesilmemelidir.
+concurrency:
+  group: ci-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
