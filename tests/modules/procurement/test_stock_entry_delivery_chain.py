@@ -326,9 +326,13 @@ def test_inventory_modul_duzeyinde_procurement_IMPORT_ETMEZ():
     yön modül düzeyinde açılsaydı iki paket birbirini import eder ve içe
     aktarma sırası bir gün 500 üretirdi. ST bağı bu yüzden `stock_link`
     modülüne FONKSİYON İÇİNDEN (gecikmeli) girer.
+
+    🔴 TB7 T4 (kanon 6): `glob("*.py")` yalnız üst düzeyi tarar; `inventory`
+    ileride pakete bölünürse (`statement_map` emsali) alt dosyalar denetim
+    dışında kalırdı. `rglob` alt dizinleri de kapsar.
     """
     kok = pathlib.Path(__file__).resolve().parents[3] / "app" / "modules" / "inventory"
-    for dosya in sorted(kok.glob("*.py")):
+    for dosya in sorted(kok.rglob("*.py")):
         kirli = [ad for ad in _modul_duzeyi_importlar(dosya) if "procurement" in ad]
         assert kirli == [], (dosya.name, kirli)
 
@@ -340,7 +344,7 @@ def test_procurement_inventory_SERVISINI_import_etmez():
     yapan yol gerçek bir çember kurardı.
     """
     kok = pathlib.Path(__file__).resolve().parents[3] / "app" / "modules" / "procurement"
-    for dosya in sorted(kok.glob("*.py")):
+    for dosya in sorted(kok.rglob("*.py")):
         kirli = [
             ad for ad in _modul_duzeyi_importlar(dosya) if ad == "app.modules.inventory.service"
         ]
