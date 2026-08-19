@@ -172,6 +172,36 @@ async def test_self_ucu_baskasinin_talebini_LISTELEMEZ(
     assert {s["personnel_id"] for s in zarf["items"]} == {str(kayit.id)}
 
 
+async def test_self_GORUNMEYEN_arsiv_belgesine_bag_kuramaz_404(
+    client, calisan, yillik, seeded_db, project_factory
+):
+    """`document_id` self gövdesindeki TEK varlık referansıdır — BC IDOR korkuluğu
+    self yolunda da koşar (`_create_leave_request_for` TEK gövde olduğu için).
+
+    Aktör (`procurement`, hiçbir projeye erişimi yok) göremediği bir arşiv
+    belgesine bağ kuramaz; cevap var olmayan belgeninkiyle AYNI 404'tür."""
+    from app.modules.documents.models import Document
+
+    _, headers, _ = calisan
+    proje = await project_factory(code="IK21-GRN", name="Görünmeyen Proje")
+    belge = Document(
+        project_id=proje.id, filename="rapor.pdf", mime_type="application/pdf", size_bytes=10
+    )
+    seeded_db.add(belge)
+    await seeded_db.flush()
+
+    gorunmeyen = await client.post(
+        "/leave-requests/self", json=_govde(yillik, document_id=str(belge.id)), headers=headers
+    )
+    olmayan = await client.post(
+        "/leave-requests/self",
+        json=_govde(yillik, document_id=str(uuid.uuid4())),
+        headers=headers,
+    )
+    assert gorunmeyen.status_code == olmayan.status_code == 404, gorunmeyen.text
+    assert gorunmeyen.json() == olmayan.json()
+
+
 # --- 3. Bağlı personel kaydı yok -------------------------------------------
 
 
