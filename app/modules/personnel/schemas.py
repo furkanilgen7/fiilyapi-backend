@@ -328,6 +328,37 @@ class LeaveRequestCreate(BaseModel):
         return self
 
 
+class SelfLeaveRequestCreate(BaseModel):
+    """İK-2.1 — personelin KENDİ izin talebi. `LeaveRequestCreate`in `personnel_id`
+    ALINMIŞ hâlidir ve fark BİLİNÇLİDİR, kopya değil.
+
+    🔴 **`personnel_id` alanı YOKTUR ve `extra="forbid"` onu REDDEDER.** Başkasının
+    adına talep açmak bu yüzden 403/404 kararı gerektiren bir YETKİ SORUSU değil,
+    **yapısal olarak imkânsız** bir gövdedir: hangi personel adına yazılacağını
+    sunucu aktörün `user_id` köprüsünden ÇÖZER, istemci SÖYLEYEMEZ. Cevap (422)
+    hedefin var olup olmadığına göre DEĞİŞMEZ — sunucu "bu personel var" bilgisini
+    hiçbir biçimde sızdırmaz (IDOR korkuluğu).
+
+    Diğer her şey `LeaveRequestCreate` ile AYNIDIR: `days` SUNUCU hesabıdır,
+    `status` her zaman `pending` başlar, `document_id` görünürlüğü SERVİSTE
+    denetlenir. Alan kümesi genişletilmez — yetki genişlemesi DAR olmalıdır.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    leave_type_id: uuid.UUID
+    start_date: date
+    end_date: date
+    note: str | None = Field(default=None, max_length=2000)
+    document_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def _date_order(self) -> "SelfLeaveRequestCreate":
+        if self.end_date < self.start_date:
+            raise ValueError(guards.LEAVE_DATE_ORDER)
+        return self
+
+
 class LeaveRequestUpdate(BaseModel):
     """Kısmi güncelleme — YALNIZ `pending` kayıtta (kural serviste, 409).
 

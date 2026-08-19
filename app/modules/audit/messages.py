@@ -1031,6 +1031,12 @@ def leave_request_created(full_name: str, type_name: str, start: date, end: date
     return f"İzin talebi oluşturuldu: {full_name} · {type_name} · {start} - {end}"
 
 
+def leave_request_self_created(full_name: str, type_name: str, start: date, end: date) -> str:
+    """İK-2.1 — personelin KENDİ actigi talep. `AuditAction` uyesi ACILMAZ
+    (gercek Postgres enum, migration isterdi); self/İK ayrimi METINDEN okunur."""
+    return f"Self-servis izin talebi oluşturuldu: {full_name} · {type_name} · {start} - {end}"
+
+
 def leave_request_updated(full_name: str, type_name: str, start: date, end: date) -> str:
     return f"İzin talebi güncellendi: {full_name} · {type_name} · {start} - {end}"
 

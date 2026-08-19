@@ -212,6 +212,17 @@ class PaymentCreate(BaseModel):
 
     bank_account_id: uuid.UUID
     method: PaymentMethodKind
+    #: 🔴 FIN-PAY — ödemenin bağlandığı çek/senet. **İSTEĞE BAĞLIDIR ve öyle
+    #: kalır**: `method='cheque'` iken bile zorunlu değildir, çünkü etiket
+    #: (`method`) ile varlık (`financial_instrument_id`) AYRI iki olgudur
+    #: (`models.py:226`). Zorunlu kılınsaydı alanı hiç bilmeyen mevcut
+    #: istemcilerin tamamı 422 alır ve boş kolonlu mevcut kayıtlar
+    #: geçersizleşirdi.
+    #:
+    #: ⚠️ VAR OLUP OLMADIĞI burada denetlenemez (başka bir tabloya ve KAPSAM
+    #: süzgecine bakmayı gerektirir) — o kapı `payments_service`tedir ve
+    #: **404**tür, sessiz `None` DEĞİL.
+    financial_instrument_id: uuid.UUID | None = None
     amount: Decimal = _AMOUNT
     paid_on: date
     note: str | None = Field(default=None, max_length=FREE_TEXT_MAX_LENGTH)
@@ -229,6 +240,11 @@ class PaymentResponse(BaseModel):
     id: uuid.UUID
     invoice_id: uuid.UUID
     bank_account_id: uuid.UUID
+    #: 🔴 FIN-PAY — YALNIZ saklanan kolon. Çek no / vade / keşideci gibi TÜREV
+    #: alan EKLENMEZ: eklenseydi aynı olgunun ikinci bir kopyası doğar, çek
+    #: düzeltildiğinde ödeme yanıtı BAYAT kalır ve hiçbir kolon farkı bunu ele
+    #: vermezdi. İstemci ayrıntıyı `/financial-instruments/{id}`den okur.
+    financial_instrument_id: uuid.UUID | None
     method: PaymentMethodKind
     amount: Decimal
     paid_on: date

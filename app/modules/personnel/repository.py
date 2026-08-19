@@ -104,6 +104,24 @@ async def get_personnel(session: AsyncSession, personnel_id: uuid.UUID) -> Perso
     return await session.get(Personnel, personnel_id)
 
 
+async def list_personnel_by_user(session: AsyncSession, user_id: uuid.UUID) -> list[Personnel]:
+    """`user_id` köprüsüne bağlı personel kayıtları — İK-2.1 self-servis çözümü.
+
+    🔴 **Liste döner, tek kayıt DEĞİL — ve bu bilinçlidir.** `personnel.user_id`
+    üzerinde UNIQUE kısıt YOKTUR (yalnız tekil OLMAYAN `ix_personnel_user_id`),
+    yani iki kayıt aynı kullanıcıya bağlanabilir. `scalar_one_or_none()` bu hâlde
+    ham `MultipleResultsFound` (=> 500) verirdi; `.first()` ise SESSİZCE bir kaydı
+    seçip diğerini yutardı — belirsizlikte hangi personelin adına yazıldığı
+    kullanıcıya sorulmadan kararlaştırılmış olurdu. Karar servise bırakılır ve
+    orada FAIL-CLOSED'dır (409).
+
+    `is_active`/`is_draft` süzgeci YOKTUR: süzgeç, iki kayıtlı belirsizliği
+    sessizce "çözerek" yukarıdaki kararı by-pass ederdi.
+    """
+    stmt = select(Personnel).where(Personnel.user_id == user_id).order_by(Personnel.id)
+    return list((await session.execute(stmt)).scalars().all())
+
+
 async def get_personnel_by_tc_no(
     session: AsyncSession, tc_no: str, exclude_id: uuid.UUID | None = None
 ) -> Personnel | None:

@@ -61,8 +61,28 @@ damgalanır ve damga **matrisin TANIDIĞI geçişle sınırlıdır**
 |---|---|---|
 | Görünmeyen/olmayan fatura ya da ödeme | 404 | `NotFoundError` |
 | Gövdedeki `bank_account_id` yok | 404 | `NotFoundError` |
+| Gövdedeki `financial_instrument_id` yok **ya da görünmüyor** | 404 | `NotFoundError` |
 | Biçim ihlali (ölçek, `gt=0`, `limit` tavanı, bilinmeyen alan) | 422 | Pydantic |
 | **Aşırı tahsilat (K6)** · pasif hesap | 422 | `TreasuryValidationError` |
+| **Çek/senet YÖN çelişkisi (FIN-PAY K3)** | 422 | `TreasuryValidationError` |
+
+## 🔴 FIN-PAY — çek/senet bağı (`financial_instrument_id`)
+
+Bağ **İSTEĞE BAĞLI bir ETİKETTİR** ve `create_payment`in belgelenmiş kilit
+sırasına (fatura → Σ → hesap → eşik) **DOKUNMADAN** o sıranın SONUNA eklenir.
+İki şey bilinçle YAPILMAZ:
+
+* **Hiçbir para türevine girdi eklenmez.** `balance.py` bakiyeyi
+  `Σ payments.amount`tan türetir, `cash_flow.py` aynı toplamdan; çek/senet
+  portföyü AYRI bir yüzeydir. Bağ bir türeve sızsaydı aynı para İKİ KEZ
+  sayılırdı ve bakiye SAKLANMADIĞI için hiçbir kolon farkı bunu ele vermezdi.
+* **Enstrümanın DURUMU değiştirilmez.** Portföy geçişi (`portfolio → collected`)
+  AYRI bir uçtur (`instruments/router.py`); buradan damgalansaydı geçiş
+  matrisinin (`instruments/transitions.py`) tanımadığı bir ikinci yazma kapısı
+  doğardı.
+
+Değiştirme ucu (`PATCH /payments/{id}`) YOKTUR ve bu dilimde doğmaz: yanlış bağ
+bugünkü yolla düzeltilir — `DELETE /payments/{id}` (admin) + yeniden yazma.
 
 Yeni `AuditAction` üyesi AÇILMAZ (TB3/T3 kanonu): ayrım `messages.payment_*`
 METNİNDEDİR.
@@ -81,7 +101,13 @@ from app.modules.invoicing import transitions
 from app.modules.invoicing.models import Invoice, InvoiceDirection, InvoiceStatus
 from app.modules.invoicing.transitions import InvoiceAction
 from app.modules.treasury import repository
-from app.modules.treasury.models import BankAccount, Payment
+from app.modules.treasury.instruments import service as instruments_service
+from app.modules.treasury.models import (
+    BankAccount,
+    FinancialInstrument,
+    FinancialInstrumentDirection,
+    Payment,
+)
 from app.modules.treasury.schemas import PaymentCreate, PaymentListResponse, PaymentResponse
 from app.modules.users.models import User
 
@@ -117,6 +143,30 @@ PAYMENT_ACCOUNT_INACTIVE = "Kullanımdan kaldırılmış hesaba ödeme kaydedile
 # kavramı yoktur) ve sessizce kabul etmek bakiyeyi şişirirdi. Karşılaştırma
 # `Decimal` üzerinde, KURUŞ BAZINDA ve TAM'dır — tolerans YOKTUR.
 PAYMENT_EXCEEDS_TOTAL = "Toplam tahsilat fatura tutarını aşamaz"
+
+# 🔴 422 — FIN-PAY K3. Ayrı bir metindir çünkü kullanıcının yapabileceği şey de
+# ayrıdır: 404 "böyle bir çek yok" demektir, bu ise "çek var ama YANLIŞ YÖNDE"
+# demektir. `instruments.guards.DIRECTION_MISMATCH`ten de AYRIDIR: o, DURUM
+# GEÇİŞİNİN yönle çelişmesidir (409) — bu ise ödeme ile portföyün yön çelişkisi.
+PAYMENT_INSTRUMENT_DIRECTION_MISMATCH = "Seçilen çek/senedin yönü, faturanın yönüyle uyuşmuyor"
+
+#: 🔴 FIN-PAY K3 — UYUMLU YÖN ÇİFTLERİ. Eşleme koddan ÖLÇÜLDÜ, tahmin edilmedi
+#: (`balance.inflow_condition()` ve `models.FinancialInstrumentDirection`):
+#:
+#: * **giden** fatura bizim kestiğimizdir → tahsilat → hesaba GİRİŞ → karşılığında
+#:   elimize **alınan** (`received`) bir çek girer;
+#: * **gelen** fatura bize kesilmiştir → ödeme → hesaptan ÇIKIŞ → karşılığında
+#:   **verilen** (`issued`) bir çek çıkar.
+#:
+#: Model docstring'i (`models.py:277`) bunu zaten söylüyor: *"`payments`ta yön
+#: bağlı faturanın `direction`'ından gelir"*. Tablo TAMDIR (iki yön de yazılı)
+#: ama okuma yine de `.get()` iledir: yeni bir fatura yönü açılırsa eşleme
+#: BİLİNMEZ olur ve bilinmeyen **REDDEDİLİR** (fail-closed) — `KeyError` ham 500
+#: verirdi, sessiz kabul ise yönsüz bir bağ yazardı.
+_UYUMLU_YON: dict[InvoiceDirection, FinancialInstrumentDirection] = {
+    InvoiceDirection.outgoing: FinancialInstrumentDirection.received,
+    InvoiceDirection.incoming: FinancialInstrumentDirection.issued,
+}
 
 
 def _collected_source_status() -> InvoiceStatus:
@@ -193,6 +243,39 @@ async def _account_or_404(session: AsyncSession, account_id: uuid.UUID) -> BankA
     return account
 
 
+async def _instrument_or_none(
+    session: AsyncSession, actor: User, invoice: Invoice, instrument_id: uuid.UUID | None
+) -> FinancialInstrument | None:
+    """🔴 FIN-PAY K2 + K3 — bağın TEK kapısı.
+
+    **K1:** kimlik gönderilmemişse (ya da açıkça `null`sa) bağ YOKTUR ve hiçbir
+    denetim koşmaz — alan isteğe bağlıdır, `method='cheque'` iken bile.
+
+    **K2 — 404, sessiz `None` DEĞİL.** Gövdede bir kimlik gönderilip kayda
+    `NULL` yazılsaydı kullanıcı bağladığını SANIRDI ve hiçbir ekran onu
+    yalanlamazdı. FK ihlaline bırakmak da olmaz: ham `IntegrityError` **500**
+    olarak sızardı. Okuma `instruments.service.visible_instrument`tan geçer —
+    yani KAPSAM süzgeci de uygulanır: görünmeyen bir projenin çeki var
+    olmayanla AYNI 404'ü alır (repo kanonu), aksi hâlde elinde kimlik olan
+    kullanıcı o çekin varlığını doğrulayan bir yan kanal bulurdu.
+
+    **K3 — YÖN UYUMU.** Tablo `_UYUMLU_YON`dedir ve burada `if direction == ...`
+    YAZILMAZ; ikinci bir yazım bir gün tersine dönebilir ve iki yer sessizce
+    ayrışırdı.
+
+    🔴 **KİLİT ALINMAZ** (K6): burada bir EŞİK/SAYAÇ semantiği YOKTUR — bir üst
+    sınır sayılmıyor, yalnız var olan bir satırın yönü okunuyor. İK-2'nin
+    "EŞİK = KİLİT" kanonu bu yüzden geçerli değildir; gereksiz bir
+    `FOR UPDATE` yalnızca portföy uçlarıyla çekişme üretirdi.
+    """
+    if instrument_id is None:
+        return None
+    instrument = await instruments_service.visible_instrument(session, actor, instrument_id)
+    if _UYUMLU_YON.get(invoice.direction) is not instrument.direction:
+        raise TreasuryValidationError(PAYMENT_INSTRUMENT_DIRECTION_MISMATCH)
+    return instrument
+
+
 # --- Uç 6: GET /invoices/{id}/payments ---
 
 
@@ -250,9 +333,21 @@ async def create_payment(
     if yeni_toplam > invoice.total:
         raise TreasuryValidationError(PAYMENT_EXCEEDS_TOTAL)
 
+    # 🔴 FIN-PAY — çek/senet bağı, kilit sırasının SONUNA eklenir ve yukarıdaki
+    # dört adıma (kilitli fatura → Σ oku → hesap → eşik) DOKUNMAZ. Araya
+    # sokulsaydı belgelenmiş sıra bozulur ve eşik kararı ile kilit arasına yeni
+    # bir sorgu girerdi. Enstrüman satırı KİLİTLENMEZ (K6 gerekçesi
+    # `_instrument_or_none` docstring'indedir), dolayısıyla yeni bir deadlock
+    # yolu da açılmaz.
+    instrument = await _instrument_or_none(session, actor, invoice, data.financial_instrument_id)
+
     payment = Payment(
         invoice_id=invoice.id,
         bank_account_id=account.id,
+        # 🔴 K4 — ÇİFT SAYIM YOK: bu bir ETİKETTİR. `balance.py` bakiyeyi
+        # `Σ payments.amount` üzerinden türetir ve bu satır o toplama HİÇBİR
+        # girdi eklemez; çek/senet portföyü AYRI bir yüzeydir.
+        financial_instrument_id=None if instrument is None else instrument.id,
         method=data.method,
         amount=data.amount,
         paid_on=data.paid_on,

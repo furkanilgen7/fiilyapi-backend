@@ -140,6 +140,29 @@ LEAVE_ENTITLEMENT_UNKNOWN = (
 # 422 — red gerekçesi ZORUNLU (TH emsali) ve YALNIZ BOŞLUKTAN oluşamaz.
 LEAVE_REJECT_REASON_REQUIRED = "İzin reddi için gerekçe zorunludur"
 
+# --- İK-2.1: self-servis izin talebi korkulukları -------------------------
+
+# 404 — aktörün `user_id`si HİÇBİR personel kaydına bağlı değil (K3). `user_id`
+# yalnız OPSİYONEL bir köprüdür (`models.py:81`): saha personelinin çoğunun
+# login'i YOKTUR, dolayısıyla bu hâl bir HATA DEĞİL normal bir durumdur ve
+# 500'e ASLA düşmez. Kod 404'tür (repo emsali: istenen kayıt yoksa 404) —
+# "yetkin yok" (403) YANLIŞ olurdu: kullanıcının yetkisi vardır, ORTADA KAYIT
+# YOKTUR ve çözümü İK'nın kartına login'ini bağlamasıdır.
+SELF_PERSONNEL_MISSING = (
+    "Kullanıcınıza bağlı bir personel kaydı bulunamadı; İK ile iletişime geçin."
+)
+
+# 409 — İKİ (ya da daha çok) personel kaydı AYNI `user_id`ye bağlı (K4).
+# 🔴 ÖLÇÜLDÜ: `personnel.user_id` üzerinde UNIQUE kısıt YOKTUR — yalnız tekil
+# OLMAYAN `ix_personnel_user_id` indeksi vardır (`c6d7e8f9a0b1_puantaj_cekirdegi.py:90`).
+# Belirsizlikte FAIL-CLOSED davranılır: sunucu hangi kaydın kastedildiğini
+# TAHMİN ETMEZ, hiçbir şey YAZMAZ. (Kısıt eklemek migration ister; bu dilimde
+# AÇILMADI.)
+SELF_PERSONNEL_AMBIGUOUS = (
+    "Kullanıcınıza birden fazla personel kaydı bağlı; İK kayıtları düzeltmeden "
+    "self-servis izin talebi açılamaz."
+)
+
 
 def validate_personnel_source(source: WorkerSource, subcontractor_id: uuid.UUID | None) -> None:
     """Kural BİRLEŞİK kayıt üzerinde koşar.
