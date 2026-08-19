@@ -529,3 +529,52 @@ async def replace_allocations(
             for row in satirlar
         ],
     )
+
+
+async def get_allocations(
+    session: AsyncSession, actor: User, item_id: uuid.UUID
+) -> BoqItemAllocationsResponse:
+    """`GET /boq/items/{item_id}/allocations` — pozun TÜM tahsislerini okur.
+
+    🔴 NEDEN VAR: `replace_allocations` **tam küme değiştirmedir** (K4). Kümenin
+    tamamını TEK çağrıda okuyan bir uç olmadan, kısmi görüşe sahip bir ekran
+    (yalnız kendi bölümünü gören) o PUT'a yazınca **görmediği bölümlerin
+    paylarını sessizce siler.** Kanon: tam küme değiştirme ucu, kümenin tamamını
+    okuyan bir uç olmadan yazmaya açılamaz.
+
+    Yazma yolundan AYRILAN üç nokta ve gerekçeleri:
+      * **Kilit YOK** (K7): `lock_item` çağrılmaz. Okuma bir invariant KARARI
+        vermez, yalnız mevcut hâli basar; kilit almak yazarları boşuna
+        serileştirirdi.
+      * **`record_audit` YOK** (K3, T7 kuralı): okumalar denetim günlüğüne
+        yazmaz — `export_boq_endpoint` emsali.
+      * **Bölüm adları GÖVDEDEN DEĞİL SATIRLARDAN çözülür** (K5): PUT gövdedeki
+        `section_id`leri `_resolve_sections` ile tek tek çözebiliyordu çünkü
+        onları ayrıca ŞANTİYE KAPSAMINA karşı doğrulaması gerekiyordu. Burada
+        böyle bir doğrulama YOKTUR (satırlar zaten görünür bir poza ait), o
+        yüzden adlar **tek `IN (...)` sorgusuyla** toplu çekilir.
+
+    Cevap gövdesi PUT'un cevabıyla **birebir aynı şekildedir** (K4) — aynı
+    `response_model`, `allocated_quantity` aynı biçimde tahsis satırlarının
+    toplamından türer. Frontend'in "oku → değiştir → yaz" döngüsünde iki ayrı
+    şekil ayrıştırması olmamalıdır.
+
+    Tahsisi olmayan poz `allocations: []` ile **200** döner, 404 DEĞİL (K6):
+    boş küme geçerli bir cevaptır ve PUT'un `[]` kabulüyle simetriktir.
+    """
+    item, _ = await _visible_item(session, actor, item_id)
+    satirlar = await repository.list_allocations_for_item(session, item.id)
+    adlar = await sites_repository.section_names_by_ids(
+        session, [row.section_id for row in satirlar]
+    )
+    return BoqItemAllocationsResponse(
+        item=to_item(item, allocated=sum((row.quantity for row in satirlar), Decimal("0"))),
+        allocations=[
+            BoqItemAllocation(
+                section_id=row.section_id,
+                section_name=adlar[row.section_id],
+                quantity=row.quantity,
+            )
+            for row in satirlar
+        ],
+    )
