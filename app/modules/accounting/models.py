@@ -36,7 +36,8 @@ kolonlarinin bilincli istisnasinin ayni gerekcesi): bir CHECK **baska
 satirlarin toplamini GOREMEZ** (`treasury/models.py` asiri-tahsilat notu). K1
 "DB duzeyinde korunur" diyorsa toplam bir KOLON olmak zorundadir. Sapma
 penceresi kapalidir: satirlar YALNIZ `draft`ta ve YALNIZ tek yoldan
-(`_apply_totals`) yazilir, CHECK de zaten yalniz `posted`ta isirir.
+(`_apply_totals`) yazilir, CHECK de `draft` DISINDAKI her durumda isirir
+(TB6 T2: eskiden yalniz `posted`ti — asagidaki `BALANCE_ENFORCED_STATUSES`).
 TRIGGER YOKTUR (repo hicbir yerde kullanmiyor) — "posted fisin satiri UPDATE
 edilemez" iddiasi SERVIS katmanindadir.
 
@@ -205,6 +206,25 @@ class JournalEntryStatus(str, enum.Enum):
     draft = "draft"
     posted = "posted"
     reversed = "reversed"
+
+
+#: 🔴 TB6 T2 — dengesi **DB duzeyinde** zorlanan durumlar. `balance`in
+#: `POSTING_STATUSES` demetiyle AYNI kume olmak ZORUNDADIR ve bu bir yorum
+#: degil, TESTLE baglidir (`test_tb6_reversed_balanced_check`): iki liste
+#: ayrisirsa deftere giren ama dengesi denetlenmeyen bir durum dogar.
+#:
+#: 🔴 Burada durur, `balance.py`de DEGIL: `balance` bu modulu import eder, ters
+#: yon dongu olurdu. `balance.POSTING_STATUSES` anlamli olani (defterin
+#: suzgeci), bu sabit ise onun SQL yansimasidir.
+BALANCE_ENFORCED_STATUSES: tuple[str, ...] = ("posted", "reversed")
+
+#: CHECK'in SQL'i ELLE yazilmaz, kumeden URETILIR: elle yazilsaydi yeni bir
+#: durum eklendiginde biri guncellenir, oteki kalirdi.
+POSTING_BALANCED_CHECK = (
+    "status NOT IN ("
+    + ", ".join(f"'{durum}'" for durum in BALANCE_ENFORCED_STATUSES)
+    + ") OR total_debit = total_credit"
+)
 
 
 class AccountingPeriodStatus(str, enum.Enum):
@@ -405,12 +425,9 @@ class JournalEntry(Base):
         # Bir fisin en fazla BIR stornosu olur (K2).
         UniqueConstraint("reversal_of_id", name="uq_journal_entries_reversal_of"),
         CheckConstraint(PERIOD_MATCHES_DATE_CHECK, name="ck_journal_entries_period_matches_date"),
-        # 🔴 K1'in baslik ayagi: DENGESIZ FIS `posted` OLAMAZ. `draft` dengesiz
+        # 🔴 K1'in baslik ayagi: DENGESIZ FIS DEFTERE GIREMEZ. `draft` dengesiz
         # BIRAKILABILIR — kapi kayitlastirma aninda yeniden kosar.
-        CheckConstraint(
-            "status <> 'posted' OR total_debit = total_credit",
-            name="ck_journal_entries_posted_balanced",
-        ),
+        CheckConstraint(POSTING_BALANCED_CHECK, name="ck_journal_entries_posting_balanced"),
         CheckConstraint(
             "total_debit >= 0 AND total_credit >= 0",
             name="ck_journal_entries_totals_non_negative",

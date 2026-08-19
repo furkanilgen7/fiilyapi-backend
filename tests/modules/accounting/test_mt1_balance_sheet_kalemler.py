@@ -225,12 +225,24 @@ async def test_DENGESIZ_reversed_fis_is_balanced_FALSE_yapar(
 ) -> None:
     """🔴 Sabit `True` basan bir bilanço SESSİZCE YALAN SÖYLER.
 
-    `ck_journal_entries_posted_balanced` yalnız `posted`ı bağlar; **dengesiz bir
-    `reversed` fiş satırı DB'ye GİREBİLİR** (açık borç, `ROADMAP-BACKEND.md`)
-    ve `POSTING_STATUSES` `reversed`ı deftere ALIR. Bilançonun kontrol
-    göstergesi bu yüzden ÖLÇÜLMEK zorundadır (mizanın `is_balanced`i emsal)."""
+    `POSTING_STATUSES` `reversed`ı deftere ALIR ve tek bacaklı bir defter
+    dengesizdir. Bilançonun kontrol göstergesi bu yüzden ÖLÇÜLMEK zorundadır
+    (mizanın `is_balanced`i emsal).
+
+    🔴 **TB6 T2'DEN SONRA:** dengesizlik artık BAŞLIKTAN kurulamaz —
+    `ck_journal_entries_posting_balanced` `posted`/`reversed` bir fişin
+    `total_debit = total_credit` olmasını ZORLAR. Prob yine de kurulabilir ve
+    iddiası DEĞİŞMEDİ, çünkü defter **SATIRLARI** toplar, başlığı DEĞİL:
+    `header_totals` ile başlık dengeli yazılır, satırlar dengesiz bırakılır.
+    (Uygulama böyle bir fiş üretemez — `apply_totals` yalnız `draft`ta koşar —
+    ama ölçülecek şey `is_balanced`in SÜS OLMADIĞIDIR.)
+    """
     kasa = await hesap_fabrikasi("100", name="Kasa", account_type=_T.asset)
-    await fis_fabrikasi([(kasa, "1200.00", "0")], status=JournalEntryStatus.reversed)
+    await fis_fabrikasi(
+        [(kasa, "1200.00", "0")],
+        status=JournalEntryStatus.reversed,
+        header_totals=("1200.00", "1200.00"),
+    )
 
     govde = await _bilanco(client, muhasebe_headers)
     assert _tutar(govde, "cash") == Decimal("1200.00")
