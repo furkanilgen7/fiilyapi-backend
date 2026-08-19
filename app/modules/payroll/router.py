@@ -51,7 +51,8 @@ from app.core.ratelimit import client_ip
 from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
-from app.modules.payroll import export, service
+from app.modules.payroll import export, service, tax_brackets_service
+from app.modules.payroll.models import IncomeKind
 from app.modules.payroll.schemas import (
     MAX_PAYROLL_YEAR,
     MIN_PAYROLL_YEAR,
@@ -69,6 +70,8 @@ from app.modules.payroll.schemas import (
     PayrollRateUpdate,
     PayrollSgkSubmitResult,
     PayrollSgkSummaryResponse,
+    PayrollTaxBracketListResponse,
+    PayrollTaxBracketSetUpdate,
 )
 from app.modules.site_diary.models import WorkerSource
 from app.modules.users.models import User
@@ -77,6 +80,11 @@ router = APIRouter(tags=["payroll"], responses=COMMON_ERROR_RESPONSES)
 
 _VIEW = require_permission(service.PERMISSION_MODULE, AccessLevel.view)
 _FULL = require_permission(service.PERMISSION_MODULE, AccessLevel.full)
+#: 🔴 TB6 T1 — tarifenin TAM KÜME değiştirmesi fiilen bir SİLMEDİR (eski dilim
+#: satırları GİDER, UQ yüzünden pasifleştirilemezler) ve WORKFLOW §8 gereği
+#: **silme yalnız `admin`**tir. `payroll_rates`in PUT'u satırın ÜSTÜNE yazar,
+#: o yüzden orası `full` kalır.
+_ADMIN = require_permission(service.PERMISSION_MODULE, AccessLevel.admin)
 
 # TB3 sayfalama standardı: varsayılan 50, tavan 200 — aşım sessizce KIRPILMAZ,
 # 422 döner (SA/ST ile birebir).
@@ -498,6 +506,67 @@ async def upsert_payroll_rate_endpoint(
     rate, detail = await service.upsert_rate(session, year, source, data)
     await _audit(request, session, user, AuditAction.update, detail)
     return PayrollRateResponse.model_validate(rate)
+
+
+# --- TB6 T1: gelir vergisi tarifesi (IK3-GV'nin ERTELENMİŞ ucu) -------------
+#
+# 🔴 Bu iki uç açılmasaydı 2027'nin ilk bordro dönemi K3 gereği `uncomputed`
+# dönerdi: tarife YILLIKTIR ve tohum (`b3c4d5e6f7a8`) yalnız 2026'yı basar.
+# Ürün sessizce yanlış bordro üretmez ama HESAPLAYAMAZ hâle gelirdi.
+
+
+@router.get(
+    "/payroll/tax-brackets", response_model=PayrollTaxBracketListResponse, dependencies=[_VIEW]
+)
+async def list_payroll_tax_brackets_endpoint(
+    session: Annotated[AsyncSession, Depends(get_db)],
+    year: int | None = None,
+    income_kind: IncomeKind | None = None,
+) -> PayrollTaxBracketListResponse:
+    """GVK m.103 artan oranlı tarifesi (IK3-GV K2) — `(yıl, gelir türü, sıra)`.
+
+    Pasif setler de döner: geçmiş bir bordronun hangi tarifeyle hesaplandığı
+    okunabilir kalmalıdır. Sayfalama YOKTUR (gerekçe `schemas`).
+
+    🔴 Bu uç aynı zamanda PUT'un ÖN KOŞULUDUR: tam küme değiştirmeye açılan bir
+    yüzeyin, kümenin TAMAMINI okuyan bir eşi olmak zorundadır — yoksa kullanıcı
+    neyin üstüne yazdığını göremeden yazar.
+    """
+    return await tax_brackets_service.list_tax_brackets(session, year, income_kind)
+
+
+@router.put(
+    "/payroll/tax-brackets/{year}/{income_kind}",
+    response_model=PayrollTaxBracketListResponse,
+    responses={
+        409: {"description": "Bu yılda onaylanmış/ödenmiş dönem var: tarife değiştirilemez"}
+    },
+    dependencies=[_ADMIN],
+)
+async def replace_payroll_tax_brackets_endpoint(
+    request: Request,
+    year: Annotated[int, Path(ge=MIN_PAYROLL_YEAR, le=MAX_PAYROLL_YEAR)],
+    income_kind: IncomeKind,
+    data: PayrollTaxBracketSetUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> PayrollTaxBracketListResponse:
+    """Yılın tarifesini **TAM KÜME** olarak değiştirir (K1: mevzuat VERİDİR).
+
+    🔴 **GEÇMİŞ DÖNEM DEĞİŞMEZ (para korkuluğu):** o yılda `approved`/`paid` bir
+    dönem varsa **409**. Gerekçe oran ucununkiyle AYNI DEĞİLDİR ve ölçülmüştür —
+    vergi satıra SNAPSHOT edilir, ama ayın vergisi `T(önceki+bu ay) − T(önceki)`
+    olduğu için yıl ortasında değişen bir tarife, sonraki ilk bordroya ödenmiş
+    ayların farkını YÜKLER.
+
+    Gövde yılın TÜM dilimlerini taşır; kısmi güncelleme YOKTUR (tarife birikimli
+    okunur, tek dilimi yamalamak setin bütününün anlamını değiştirirdi). Kümenin
+    bütünlüğü (boşluk · örtüşme · ortada açık uç · sınırsız SON dilim)
+    `income_tax.normalize_brackets` ile doğrulanır → **422**.
+    """
+    rows, detail = await tax_brackets_service.replace_tax_brackets(session, year, income_kind, data)
+    await _audit(request, session, user, AuditAction.update, detail)
+    return PayrollTaxBracketListResponse(items=rows, total=len(rows))
 
 
 def _content_disposition(name: str) -> str:

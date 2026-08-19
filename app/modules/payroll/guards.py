@@ -111,6 +111,18 @@ RATES_LOCKED_BY_PERIOD = (
     "yılın kesinti oranları güncellenemez"
 )
 
+#: 409 — TB6 T1. `RATES_LOCKED_BY_PERIOD`un kardeşi ama gerekçesi AYRIDIR ve
+#: ölçülmüştür: gelir vergisi satıra SNAPSHOT edilir (`service._apply`), yani
+#: onaylı dönemin RAPORLANMIŞ sayısı bu yazıyla kendiliğinden değişmez. Kapı,
+#: `income_tax.monthly_income_tax`in FARK formülü yüzünden gereklidir —
+#: `T(önceki + bu ay) − T(önceki)`nin İKİ çağrısı da YÜRÜRLÜKTEKİ setle yapılır.
+#: Yıl ortasında tarife değişirse, ondan sonra hesaplanan ilk ay ödenmiş
+#: ayların farkını TEK BAŞINA yutar.
+TAX_BRACKETS_LOCKED_BY_PERIOD = (
+    "Bu yılda onaylanmış veya ödenmiş bordro dönemi var: ödenmiş ayların vergisi sonraki "
+    "bordroya taşınmasın diye yılın gelir vergisi tarifesi değiştirilemez"
+)
+
 #: 409 — fail-closed (NULL-EŞİK kanonu): onaylı görünse de tutarı bilinmeyen bir
 #: satır ÖDENMEZ. Bilinmeyeni 0 sayıp geçmek, eksik ödemeyi banka ekstresine
 #: bırakırdı.
