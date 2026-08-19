@@ -5,7 +5,7 @@ emsali): o dosya 1.349 satırla 800 tavanının ZATEN üstündedir (açık borç
 tarife yönetimi oraya eklenseydi borç büyütülmüş olurdu. Ayrım da doğaldır —
 `service.py` bordroyu HESAPLAR, bu dosya hesabın GİRDİSİNİ yönetir.
 
-`_year_has_locked_period` KOPYALANMAZ, `service`ten çağrılır: "hesabı donmuş
+`year_has_locked_period` KOPYALANMAZ, `service`ten çağrılır: "hesabı donmuş
 yıl" tanımı tek yerde durmalıdır (oran kapısıyla tarife kapısı AYNI olguyu
 ölçer).
 """
@@ -80,11 +80,11 @@ async def replace_tax_brackets(
     eskilerin üstüne çarpar, iki set aynı `(yıl, tür)` altında YAN YANA DURAMAZ.
     "Eski tarife silinmez" kuralı YIL bazındadır ve bundan etkilenmez.
 
-    Kilit `_year_has_locked_period`in `FOR UPDATE`idir (EŞİK = KİLİT) ve
+    Kilit `year_has_locked_period`in `FOR UPDATE`idir (EŞİK = KİLİT) ve
     denetimden ÖNCE alınır: eşzamanlı bir `approve_period` aksi hâlde tam bu
     pencerede dönemi onaylayabilirdi (TOCTOU).
     """
-    if await service._year_has_locked_period(session, year):
+    if await service.year_has_locked_period(session, year):
         raise ConflictError(guards.TAX_BRACKETS_LOCKED_BY_PERIOD)
 
     await session.execute(
