@@ -335,3 +335,36 @@ async def test_self_rotasi_uuid_rotasina_YEM_OLMAZ(client, calisan):
     resp = await client.get("/leave-requests/self", headers=headers)
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"items": [], "total": 0, "limit": 50, "offset": 0}
+
+
+# --- 7. Katalog: self formun doldurulabilmesi için ------------------------
+
+
+async def test_leave_types_personnel_izni_OLMAYAN_role_de_ACIK(client, calisan, yillik):
+    """🔴 Self-servis talebin ÇALIŞABİLMESİ için katalog okunabilir olmalı.
+
+    `POST /leave-requests/self` açıkken `GET /leave-types` `personnel=view`
+    isteseydi, matriste `personnel=none` olan `procurement` rolündeki çalışan
+    talebini **açabilir ama formu dolduramazdı** (tip listesi 403). Kullanıcı
+    kararı "personel kendi talebini girsin"di; girilemeyen talep bu kararı
+    karşılamaz.
+
+    Katalog SALT OKUMA bir REFERANS listesidir (izin tipi adı/rengi/sırası) —
+    kişi, kayıt ya da tutar verisi TAŞIMAZ, bu yüzden açılması bir veri sızıntısı
+    değildir. Yazma ucu hâlâ YOKTUR (405) ve başka hiçbir kapı değişmedi.
+    """
+    _, headers, _ = calisan
+
+    # Aynı kullanıcı personel/talep listelerinde HÂLÂ 403 — genişleme katalogla sınırlı.
+    assert (await client.get("/personnel", headers=headers)).status_code == 403
+    assert (await client.get("/leave-requests", headers=headers)).status_code == 403
+
+    resp = await client.get("/leave-types", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert [t["name"] for t in resp.json()] == ["Yıllık İzin"]
+
+
+async def test_leave_types_KIMLIKSIZ_kapali(client, yillik):
+    """Açılan kapı "herkese" değil "kimliği doğrulanmış herkese"dir."""
+    resp = await client.get("/leave-types")
+    assert resp.status_code == 401, resp.text

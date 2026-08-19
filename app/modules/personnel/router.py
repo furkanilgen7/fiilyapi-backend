@@ -298,11 +298,30 @@ async def delete_personnel_document_endpoint(
 # approve/reject uçları ve bakiye T3'ün işidir — BURADA YOKTUR.
 
 
-@router.get("/leave-types", response_model=list[LeaveTypeResponse], dependencies=[_VIEW])
+@router.get(
+    "/leave-types",
+    response_model=list[LeaveTypeResponse],
+    dependencies=[Depends(get_current_user)],
+)
 async def list_leave_types_endpoint(
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> list[LeaveTypeResponse]:
-    """Aktif izin tipleri (`sort_order`). Yazma ucu YOKTUR — katalog ayarlar dilimidir."""
+    """Aktif izin tipleri (`sort_order`). Yazma ucu YOKTUR — katalog ayarlar dilimidir.
+
+    🔴 **Kapı İK-2.1'de `personnel=view`den KİMLİK DOĞRULAMASINA indirildi** ve
+    bu, self-servis talep ucunun ÇALIŞABİLMESİ için zorunludur: matriste
+    `personnel=none` olan `procurement` rolündeki bir çalışan kendi talebini
+    açabiliyor ama tip listesini okuyamasaydı **formu dolduramazdı**.
+
+    Veri sızıntısı DEĞİLDİR: bu uç bir **referans kataloğudur** — izin tipinin
+    adı, rengi, sırası ve "yıllıktan düşer mi / belge ister mi" bayrakları. Ne
+    kişi, ne kayıt, ne tutar, ne de proje bilgisi taşır; şirkete özgü hiçbir
+    gizli değer yoktur ve satırları `leave_types` SEED'i belirler. Kapı yine de
+    ANONİM DEĞİLDİR (`get_current_user`): dışarıya açılmadı, yalnız oturum açmış
+    her role açıldı.
+
+    Genişleme BURADA BİTER: `/personnel*`, `/leave-requests` (klasik liste),
+    `approve`/`reject` ve bakiye uçlarının kapıları AYNEN durur."""
     types = await service.list_leave_types(session)
     return [LeaveTypeResponse.model_validate(t) for t in types]
 
