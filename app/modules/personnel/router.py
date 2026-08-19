@@ -54,6 +54,7 @@ from app.modules.personnel.schemas import (
     PersonnelListResponse,
     PersonnelResponse,
     PersonnelUpdate,
+    SelfLeaveRequestCreate,
 )
 from app.modules.site_diary.models import WorkerSource
 from app.modules.users.models import User
@@ -297,11 +298,30 @@ async def delete_personnel_document_endpoint(
 # approve/reject uçları ve bakiye T3'ün işidir — BURADA YOKTUR.
 
 
-@router.get("/leave-types", response_model=list[LeaveTypeResponse], dependencies=[_VIEW])
+@router.get(
+    "/leave-types",
+    response_model=list[LeaveTypeResponse],
+    dependencies=[Depends(get_current_user)],
+)
 async def list_leave_types_endpoint(
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> list[LeaveTypeResponse]:
-    """Aktif izin tipleri (`sort_order`). Yazma ucu YOKTUR — katalog ayarlar dilimidir."""
+    """Aktif izin tipleri (`sort_order`). Yazma ucu YOKTUR — katalog ayarlar dilimidir.
+
+    🔴 **Kapı İK-2.1'de `personnel=view`den KİMLİK DOĞRULAMASINA indirildi** ve
+    bu, self-servis talep ucunun ÇALIŞABİLMESİ için zorunludur: matriste
+    `personnel=none` olan `procurement` rolündeki bir çalışan kendi talebini
+    açabiliyor ama tip listesini okuyamasaydı **formu dolduramazdı**.
+
+    Veri sızıntısı DEĞİLDİR: bu uç bir **referans kataloğudur** — izin tipinin
+    adı, rengi, sırası ve "yıllıktan düşer mi / belge ister mi" bayrakları. Ne
+    kişi, ne kayıt, ne tutar, ne de proje bilgisi taşır; şirkete özgü hiçbir
+    gizli değer yoktur ve satırları `leave_types` SEED'i belirler. Kapı yine de
+    ANONİM DEĞİLDİR (`get_current_user`): dışarıya açılmadı, yalnız oturum açmış
+    her role açıldı.
+
+    Genişleme BURADA BİTER: `/personnel*`, `/leave-requests` (klasik liste),
+    `approve`/`reject` ve bakiye uçlarının kapıları AYNEN durur."""
     types = await service.list_leave_types(session)
     return [LeaveTypeResponse.model_validate(t) for t in types]
 
@@ -351,6 +371,70 @@ async def create_leave_request_endpoint(
     görünmez BC belgesi (`document_id`) → 404 (IDOR korkuluğu).
     """
     response, detail = await service.create_leave_request(session, user, data)
+    await record_audit(
+        session,
+        action=AuditAction.create,
+        detail=detail,
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return response
+
+
+# --- İK-2.1: self-servis izin talebi (kullanıcı kararı 2026-08-19) ----------
+#
+# 🔴 **Bu iki uç `/leave-requests/{request_id}` rotasından ÖNCE tanımlanmak
+# ZORUNDADIR** (MK-2 rota sırası tuzağı): FastAPI ilk eşleşeni seçer, sonra
+# tanımlansaydı "self" bir UUID sanılır ve 422 gelirdi.
+#
+# 🔴 **Kapıda `_VIEW`/`_FULL` YOKTUR ve bu bilinçlidir.** Yetkinin kaynağı
+# `personnel` modül izni DEĞİL, kaydın SAHİPLİĞİdir: talep açan kişi kendi
+# `user_id` köprüsüyle eşleşen TEK personel kaydına yazar. `personnel` kapısı
+# konsaydı matriste `personnel=none` olan `procurement` rolündeki bir çalışan
+# kendi iznini talep edemezdi — yüzeyin var oluş nedeni tam olarak budur.
+# Genişleme buraya kadardır: onay/red/düzenleme/silme kapıları DEĞİŞMEDİ ve
+# gövde `personnel_id` KABUL ETMEZ (başkasının adına talep yapısal olarak yok).
+
+
+@router.get("/leave-requests/self", response_model=LeaveRequestListResponse)
+async def list_self_leave_requests_endpoint(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    status_filter: Annotated[LeaveStatus | None, Query(alias="status")] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> LeaveRequestListResponse:
+    """Aktörün KENDİ izin talepleri (K6).
+
+    `personnel_id` süzgeci YOKTUR — sunucu koyar; bu uç başka bir personelin
+    listesine çevrilemez. Bağlı personel kaydı yok → 404 · birden fazla → 409.
+    """
+    items, total = await service.list_self_leave_requests(
+        session, user, status=status_filter, limit=limit, offset=offset
+    )
+    return LeaveRequestListResponse(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.post(
+    "/leave-requests/self",
+    response_model=LeaveRequestResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_self_leave_request_endpoint(
+    request: Request,
+    data: SelfLeaveRequestCreate,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> LeaveRequestResponse:
+    """Personelin KENDİ izin talebi — onay akışı DEĞİŞMEZ, İK'da kalır.
+
+    Hedef personel gövdeden alınmaz, `user_id` köprüsünden çözülür; gövdeye
+    `personnel_id` konması 422'dir ve cevap hedefin var olup olmadığına göre
+    DEĞİŞMEZ. Bağlı kayıt yok → 404 (K3) · birden fazla kayıt → 409 (K4) ·
+    izin tipi yok → 404, pasif → 422 · ters tarih → 422 · görünmez BC belgesi
+    → 404.
+    """
+    response, detail = await service.create_self_leave_request(session, user, data)
     await record_audit(
         session,
         action=AuditAction.create,

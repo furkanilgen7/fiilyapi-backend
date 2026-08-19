@@ -138,6 +138,9 @@ from app.modules.personnel.service.leave_requests import (
     _can_delete_leave_request as _can_delete_leave_request,
 )
 from app.modules.personnel.service.leave_requests import (
+    _create_leave_request_for as _create_leave_request_for,
+)
+from app.modules.personnel.service.leave_requests import (
     _leave_response as _leave_response,
 )
 from app.modules.personnel.service.leave_requests import (
@@ -145,6 +148,9 @@ from app.modules.personnel.service.leave_requests import (
 )
 from app.modules.personnel.service.leave_requests import (
     create_leave_request as create_leave_request,
+)
+from app.modules.personnel.service.leave_requests import (
+    create_self_leave_request as create_self_leave_request,
 )
 from app.modules.personnel.service.leave_requests import (
     delete_leave_request as delete_leave_request,
@@ -163,6 +169,12 @@ from app.modules.personnel.service.leave_requests import (
 )
 from app.modules.personnel.service.leave_requests import (
     list_leave_types as list_leave_types,
+)
+from app.modules.personnel.service.leave_requests import (
+    list_self_leave_requests as list_self_leave_requests,
+)
+from app.modules.personnel.service.leave_requests import (
+    resolve_self_personnel as resolve_self_personnel,
 )
 from app.modules.personnel.service.leave_requests import (
     update_leave_request as update_leave_request,

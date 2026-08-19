@@ -24,6 +24,7 @@ from app.modules.personnel.schemas import (
     LeaveRequestCreate,
     LeaveRequestResponse,
     LeaveRequestUpdate,
+    SelfLeaveRequestCreate,
 )
 from app.modules.personnel.service.core import PERMISSION_MODULE, get_personnel
 from app.modules.personnel.service.documents import _assert_document_visible
@@ -163,6 +164,23 @@ async def create_leave_request(
     Çakışma (K3) BURADA DENETLENMEZ — `approve` kapısıdır (T3).
     """
     personnel = await get_personnel(session, data.personnel_id)
+    return await _create_leave_request_for(session, actor, personnel, data)
+
+
+async def _create_leave_request_for(
+    session: AsyncSession,
+    actor: User,
+    personnel: Personnel,
+    data: LeaveRequestCreate | SelfLeaveRequestCreate,
+) -> tuple[LeaveRequestResponse, str]:
+    """İzin talebi yazmanın TEK gövdesi — İK yolu ve self-servis yolu bunu ÇAĞIRIR.
+
+    İki yol yalnız **personelin NASIL belirlendiğinde** ayrışır (gövdeden mi,
+    `user_id` köprüsünden mi); kuralların geri kalanı (tip 404/422, tarih 422,
+    BC görünürlüğü 404, `days` sunucu hesabı, `status=pending`) TEK KOPYADIR.
+    Kopyalansaydı iki yol zamanla ayrışır ve dar olması gereken self yüzeyi
+    farkında olmadan gevşerdi.
+    """
     leave_type = await _resolve_leave_type(session, data.leave_type_id)
     _assert_date_order(data.start_date, data.end_date)
     await _assert_document_visible(session, actor, data.document_id)
@@ -182,6 +200,77 @@ async def create_leave_request(
         personnel.full_name, leave_type.name, request.start_date, request.end_date
     )
     return _leave_response(request, personnel, leave_type), detail
+
+
+# --- İK-2.1: self-servis izin talebi (kullanıcı kararı 2026-08-19) ----------
+#
+# 🔴 Bu YETKİ YÜZEYİDİR ve genişleme DAR tutulmuştur: aktörün `user_id`siyle
+# eşleşen **TEK** personel kaydına, **YALNIZ** izin talebi OLUŞTURMA ve **kendi**
+# taleplerini OKUMA açılır. Onay/red/düzenleme/silme kapıları DEĞİŞMEDİ.
+
+
+async def resolve_self_personnel(session: AsyncSession, actor: User) -> Personnel:
+    """Aktörün KENDİ personel kaydı — self-servis yüzeyinin TEK yetki kaynağı.
+
+    Üç hâl, üçü de AÇIK (500 YOK):
+    * 0 kayıt → 404 (K3). `user_id` yalnız opsiyonel bir köprüdür; saha
+      personelinin çoğunun login'i yoktur, bu yüzden yokluğu normal bir durumdur.
+    * 1 kayıt → o kayıt.
+    * >1 kayıt → 409 FAIL-CLOSED (K4). `personnel.user_id` üzerinde UNIQUE kısıt
+      **YOKTUR** (ölçüldü: yalnız tekil olmayan `ix_personnel_user_id`), bu yüzden
+      belirsizlik gerçekten mümkündür ve sunucu TAHMİN YÜRÜTMEZ — hiçbir şey yazmaz.
+
+    Yazma ve okuma AYNI çözümü kullanır: ekranda görülen küme ile yazılan kayıt
+    ASLA farklı bir personele ait olamaz.
+    """
+    kayitlar = await repository.list_personnel_by_user(session, actor.id)
+    if not kayitlar:
+        raise NotFoundError(guards.SELF_PERSONNEL_MISSING)
+    if len(kayitlar) > 1:
+        raise ConflictError(guards.SELF_PERSONNEL_AMBIGUOUS)
+    return kayitlar[0]
+
+
+async def create_self_leave_request(
+    session: AsyncSession, actor: User, data: SelfLeaveRequestCreate
+) -> tuple[LeaveRequestResponse, str]:
+    """Personelin KENDİ izin talebi.
+
+    Hedef personel gövdeden ALINMAZ, `user_id` köprüsünden ÇÖZÜLÜR — `data`
+    şemasında `personnel_id` alanı YOKTUR (`extra="forbid"` gönderilmesini de
+    reddeder). Başkasının adına talep bu yüzden bir yetki denetimiyle değil
+    YAPISAL OLARAK engellenir.
+
+    Denetim metni İK yolundan AYRIDIR (`AuditAction` üyesi AÇILMAZ — ayrım
+    `messages.*` metnindedir): günlükte "kim kimin adına açtı" karışmasın.
+    """
+    personnel = await resolve_self_personnel(session, actor)
+    response, _ = await _create_leave_request_for(session, actor, personnel, data)
+    detail = messages.leave_request_self_created(
+        personnel.full_name, response.leave_type_name, response.start_date, response.end_date
+    )
+    return response, detail
+
+
+async def list_self_leave_requests(
+    session: AsyncSession, actor: User, status: LeaveStatus | None, limit: int, offset: int
+) -> tuple[list[LeaveRequestResponse], int]:
+    """Aktörün KENDİ talepleri (K6): yazma açılıp okuma açılmazsa kullanıcı
+    gönderdiği talebi hiç göremezdi.
+
+    Süzgeç `personnel_id`si SUNUCU tarafından KONUR — istemci gönderemez, yani
+    bu uç başka bir personelin listesine ASLA çevrilemez. `project_id` süzgeci
+    de yoktur: kendi kayıtlarında daraltmanın anlamı yok, yüzey dar kalır.
+    """
+    personnel = await resolve_self_personnel(session, actor)
+    return await list_leave_requests(
+        session,
+        status=status,
+        personnel_id=personnel.id,
+        project_id=None,
+        limit=limit,
+        offset=offset,
+    )
 
 
 async def update_leave_request(
