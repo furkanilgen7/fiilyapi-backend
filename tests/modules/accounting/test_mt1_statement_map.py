@@ -47,21 +47,39 @@ from app.modules.accounting import statement_map
 # --------------------------------------------------------------------------- #
 
 
+def _kaynak_dosyalari(modul) -> list[Path]:
+    """`modul` tek dosya mı paket mi ayırt etmeden TÜM kaynak dosyalarını döner.
+
+    🔴 TB7 T2 (kanon 6): `inspect.getsourcefile` bir pakette YALNIZ `__init__.py`ye
+    çözülür. `statement_map` TB-REFACTOR ile pakete bölündü (`core.py`,
+    `balance_sheet_map.py`, `cash_flow_map.py`, `income_statement_map.py`) ve eski
+    bekçi bu dört dosyayı hiç görmüyordu. Paketse `__init__.py` + tüm kardeşleri
+    (alt dizinler dahil) taranır; düz modülse kendisi tek başına döner.
+    """
+    kaynak_dosyasi = Path(inspect.getsourcefile(modul))
+    if kaynak_dosyasi.name != "__init__.py":
+        return [kaynak_dosyasi]
+    return sorted(kaynak_dosyasi.parent.rglob("*.py"))
+
+
 def test_modul_SAFTIR_db_pydantic_takvim_bilmez():
     """🔴 `codes.py` emsali: harita bir METİN dönüşümüdür.
 
     SQLAlchemy/Pydantic ithal edilseydi modül DB oturumuna ve şema sürümüne
     bağlanır, Gelir Tablosu dilimi onu bağımsız test edemezdi. `datetime`
     yasağı ayrıca K6 (yerel takvim) bekçisinin kardeşidir.
+
+    🔴 Paketin TÜM `.py` dosyaları taranır (bkz. `_kaynak_dosyalari`) — yalnız
+    `__init__.py` değil.
     """
-    kaynak = Path(inspect.getsourcefile(statement_map)).read_text(encoding="utf-8")
-    agac = ast.parse(kaynak)
     ithal: set[str] = set()
-    for dugum in ast.walk(agac):
-        if isinstance(dugum, ast.Import):
-            ithal.update(ad.name.split(".")[0] for ad in dugum.names)
-        elif isinstance(dugum, ast.ImportFrom) and dugum.module:
-            ithal.add(dugum.module.split(".")[0])
+    for dosya in _kaynak_dosyalari(statement_map):
+        agac = ast.parse(dosya.read_text(encoding="utf-8"))
+        for dugum in ast.walk(agac):
+            if isinstance(dugum, ast.Import):
+                ithal.update(ad.name.split(".")[0] for ad in dugum.names)
+            elif isinstance(dugum, ast.ImportFrom) and dugum.module:
+                ithal.add(dugum.module.split(".")[0])
     for yasak in ("sqlalchemy", "pydantic", "fastapi", "datetime", "app"):
         assert yasak not in ithal, f"saf modül {yasak} ithal ediyor"
 
