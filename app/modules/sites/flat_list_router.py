@@ -7,7 +7,7 @@ bunu istiyor. Migration YOKTUR: hicbir sema degisikligi getirmez.
 
 ## 🔴 Nicin AYRI, INCE bir router
 
-`sites/service.py` 1076 satirla 800 tavaninin USTUNDE — o dosyaya SATIR
+`sites/service.py` dosya tavaninin (800 satir) USTUNDE — o dosyaya SATIR
 EKLENMEZ. Bu router `projects.service.visible_projects`i cagirip
 `sites.repository`nin iki ince sorgusunu kullanir (servis katmani atlanir —
 `personnel/document_type_router.py` ve `equipment/document_router.py`nin ayni

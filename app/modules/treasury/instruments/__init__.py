@@ -1,8 +1,8 @@
 """FIN-1 — cek & senet portfoyu (E10 `Cek & Odeme` ekrani).
 
 Paket, tek dosyaya YIGILMADAN acildi (gorev emri tuzak listesi): `sites/
-service.py` 1087 ve `personnel/service.py` 1124 satirla 800 tavanini ZATEN
-asmis durumda ve ikisi de "sonra boleriz" diye baslamisti.
+service.py` ve `personnel/service.py` 800 satir dosya tavanini ZATEN asmis
+durumdaydi ve ikisi de "sonra boleriz" diye baslamisti.
 
 | dosya | sorumluluk |
 |---|---|
