@@ -96,6 +96,27 @@ async def get_section(session: AsyncSession, section_id: uuid.UUID) -> Section |
     return await session.get(Section, section_id)
 
 
+async def section_names_by_ids(
+    session: AsyncSession, section_ids: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, str]:
+    """Verilen bolumlerin adlari — TEK `IN (...)` sorgusu (N+1 YOK).
+
+    NEDEN: `GET /boq/items/{id}/allocations` her tahsis satirinda `section_name`
+    basar ama PUT'un aksine cozulecek bolumleri govdeden ALAMAZ (govde yoktur),
+    mevcut SATIRLARDAN cozer. Bolum basina `get_section` cagirmak miktar
+    yuzeyine N+1 sokardi; kapsam denetimi de gereksizdir: satirlar zaten
+    gorunurluk suzgecinden gecmis bir POZA aittir.
+
+    Bos girdide sorgu HIC ATILMAZ — `IN ()` bos kumede gereksiz gidis donustur.
+    """
+    if not section_ids:
+        return {}
+    result = await session.execute(
+        select(Section.id, Section.name).where(Section.id.in_(set(section_ids)))
+    )
+    return {row[0]: row[1] for row in result.all()}
+
+
 async def ensure_milestones_loaded(session: AsyncSession, sections: Sequence[Section]) -> None:
     """P11 — verilen bolumlerin `milestones` koleksiyonunu TEK sorguda doldurur.
 

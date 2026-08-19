@@ -202,6 +202,29 @@ async def update_boq_item_endpoint(
     return await service.item_response(session, item)
 
 
+@router.get(
+    "/boq/items/{item_id}/allocations",
+    response_model=BoqItemAllocationsResponse,
+    dependencies=[_VIEW],
+)
+async def get_boq_item_allocations_endpoint(
+    item_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> BoqItemAllocationsResponse:
+    """BOQ-ALLOC — pozun bolum tahsislerinin TAMAMI, TEK cagrida.
+
+    🔴 Bu uc olmadan `PUT .../allocations` yazmaya ACILAMAZ: PUT tam kume
+    degistirmedir (K4) ve kismi gorusu olan bir ekran gormedigi bolumlerin
+    paylarini sessizce siler. Bolum ekrani yalniz KENDI payini gorur.
+
+    Kapi `_VIEW`dir (K1), PUT'un `_FULL`u DEGIL: okuma ucudur ve izin matrisi
+    DEGISMEZ. `record_audit` CAGIRILMAZ (K3, T7 kurali — `export_boq_endpoint`
+    emsali). Gorunmeyen kalem **404** alir, 403 degil (K2).
+    """
+    return await service.get_allocations(session, user, item_id)
+
+
 @router.put(
     "/boq/items/{item_id}/allocations",
     response_model=BoqItemAllocationsResponse,
