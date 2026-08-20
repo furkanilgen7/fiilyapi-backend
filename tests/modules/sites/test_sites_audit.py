@@ -124,7 +124,18 @@ async def test_draft_create_writes_site_draft_created(
 async def test_sections_create_writes_one_summary_row(
     client, db_session, user_factory, project_factory
 ):
-    """5 bolumlu form 6 satir DEGIL 2 satir uretir (`units_bulk_created` deseni)."""
+    """5 bolumlu form 6 satir DEGIL 2 satir uretir (`units_bulk_created` deseni).
+
+    🔴 TB7 T1 (K2-yeni, yonetim karari): iddia SAYI + ICERIKTIR, SIRA degil. Bu
+    iki satir AYNI istekte, AYNI transaction'da yazilir; `occurred_at` transaction
+    BASLANGICIdir (`func.now()`), yani ikisi BIREBIR ayni damgayi tasir ve
+    Postgres esit anahtarlar icin sira GARANTI ETMEZ (olculdu). Hangi satirin
+    once goruntulendigi kullaniciya hicbir sey ifade etmiyor — urunun kendisi de
+    bu ikisini tanimsiz sirada gosteriyor. Bu yuzden `sorted(...)` ile SIRA
+    serbest, SAYI ve ICERIK sabit tutulur. `set()` KULLANILMAZ: kume "ayni metin
+    iki kez yazildi" kusurunu sessizce yutar, oysa testin asil iddiasi tam da
+    satir SAYISIdir.
+    """
     project = await project_factory("AU-3")
     headers = await _admin(client, db_session, user_factory)
     sections = [{"name": f"Faz {index}"} for index in range(1, 6)]
@@ -136,10 +147,14 @@ async def test_sections_create_writes_one_summary_row(
     )
 
     assert resp.status_code == 201, resp.text
-    assert await _details(db_session, AuditAction.create) == [
-        site_created("A-Blok Şantiyesi"),
-        site_sections_created("A-Blok Şantiyesi", 5),
-    ]
+    details = await _details(db_session, AuditAction.create)
+    assert len(details) == 2
+    assert sorted(details) == sorted(
+        [
+            site_created("A-Blok Şantiyesi"),
+            site_sections_created("A-Blok Şantiyesi", 5),
+        ]
+    )
     assert site_sections_created("X", 5) == "Şantiye bölümleri oluşturuldu: X · 5 bölüm"
 
 

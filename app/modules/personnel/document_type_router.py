@@ -7,8 +7,8 @@ YOKTUR, CRUD ucu YOKTUR (katalog yönetimi ayarlar dilimine ertelenmiştir —
 
 ## 🔴 Niçin AYRI, İNCE bir router (K5)
 
-`personnel/service.py` 1124 satırla 800 tavanının üstünde — o dosyaya SATIR
-EKLENMEZ. `personnel/router.py` da 579 satırla sıkışık; yeni ucu oraya eklemek
+`personnel/service.py` dosya tavanının (800 satır) üstünde — o dosyaya SATIR
+EKLENMEZ. `personnel/router.py` da sıkışık; yeni ucu oraya eklemek
 yerine bu dosya doğrudan `repository.list_document_types(session)`i çağırır
 (servis katmanı atlanır — `equipment/document_router.py`nin
 `list_equipment_document_types_endpoint`inin birebiri).
