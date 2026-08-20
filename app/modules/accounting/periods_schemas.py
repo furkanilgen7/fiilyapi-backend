@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict
 
 from app.modules.accounting.models import AccountingPeriodStatus
 
-__all__ = ["AccountingPeriodListResponse", "AccountingPeriodResponse"]
+__all__ = ["AccountingPeriodListItem", "AccountingPeriodListResponse", "AccountingPeriodResponse"]
 
 
 class AccountingPeriodResponse(BaseModel):
@@ -49,10 +49,49 @@ class AccountingPeriodResponse(BaseModel):
     updated_at: datetime
 
 
+class AccountingPeriodListItem(AccountingPeriodResponse):
+    """DKAP-B — liste satırı, `AccountingPeriodResponse`e ÜÇ türetilmiş alan
+    EKLER. `close`/`reopen` cevabı hâlâ çıplak `AccountingPeriodResponse`dir
+    (görev emri kapsamı yalnız `GET /accounting-periods`); tek bir dönemi
+    döndüren o iki uç için bu alanları hesaplamak GEREKSİZ bir sorgu turudur
+    ve emrin "kod/uçlar DEĞİŞMEZ" maddesini ihlal ederdi.
+
+    🔴 K9 — bu ekranda İKİ AYRI kapı vardır (ayrıntı `repository.
+    count_entries_by_period` docstring'i): (1) kapalı döneme YAZMA yasağı —
+    STATÜ AYRIMI YAPMAZ; (2) kapanışın ÖN KOŞULU (`has_draft_entries`) —
+    YALNIZ `draft` fişe bakar. `entry_count` (1)e, `draft_count` (2)ye karşılık
+    gelir; ikisi AYNI alanmış gibi anlatılırsa (önceki tur böyleydi, K2
+    çürütüldü) ekranın "142 fiş var ama kapatamıyorum" sorusu cevapsız kalır.
+
+    `entry_count` — o döneme (`period_year`/`period_month`) ait TÜM yevmiye
+    fişi sayısı, STATÜ AYRIMI YAPMADAN. Kapalı dönemde zaten `draft` KALMAZ
+    (kapanış onu reddeder), bu yüzden toplamda ayrıma gerek yoktur ve
+    mockup'ın "Fiş" sütunu (defter hacmi) budur. Mockup kanıtı: Temmuz satırı
+    "3 taslak fiş var" uyarısıyla birlikte Fiş=218 basar — taslak sayının
+    İÇİNDEDİR, toplamdan ayrı bir sayı DEĞİLDİR.
+
+    `draft_count` — AYNI dönemdeki `draft` fiş sayısı (`has_draft_entries`in
+    baktığı KÜME). Mockup özet şeridindeki "1 engelli" bunun türevidir: ekran
+    `draft_count > 0` ile "bu dönem kapatılamaz" OLGUSUNU üretir. 🔴
+    Kapanabilirlik KARARININ kendisi (`can_close` gibi) burada TAŞINMAZ —
+    karar `periods_service`in kapısıdır; ikinci bir karar kopyası kapı bir gün
+    değişince ekranı sessizce yanlış bırakırdı.
+
+    `closed_by_name` — `users.full_name` (K5: depodaki TEK ad kolonu,
+    `audit/repository.py`nin `outerjoin(User, ...)` deseniyle AYNI yoldan
+    okunur). NULL olabilir (K4): açık dönemde veya kapatan kullanıcı
+    silinmişse `None` kalır, `"Bilinmiyor"` gibi bir metin UYDURULMAZ.
+    """
+
+    entry_count: int
+    draft_count: int
+    closed_by_name: str | None
+
+
 class AccountingPeriodListResponse(BaseModel):
     """K7 liste zarfı: `items` + `total` + `limit`/`offset` (repo kanonu)."""
 
-    items: list[AccountingPeriodResponse]
+    items: list[AccountingPeriodListItem]
     total: int
     limit: int
     offset: int
