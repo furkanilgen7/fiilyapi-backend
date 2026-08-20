@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict
 
 from app.modules.accounting.models import AccountingPeriodStatus
 
-__all__ = ["AccountingPeriodListResponse", "AccountingPeriodResponse"]
+__all__ = ["AccountingPeriodListItem", "AccountingPeriodListResponse", "AccountingPeriodResponse"]
 
 
 class AccountingPeriodResponse(BaseModel):
@@ -49,10 +49,34 @@ class AccountingPeriodResponse(BaseModel):
     updated_at: datetime
 
 
+class AccountingPeriodListItem(AccountingPeriodResponse):
+    """DKAP-B — liste satırı, `AccountingPeriodResponse`e İKİ türetilmiş alan
+    EKLER. `close`/`reopen` cevabı hâlâ çıplak `AccountingPeriodResponse`dir
+    (görev emri kapsamı yalnız `GET /accounting-periods`); tek bir dönemi
+    döndüren o iki uç için bu iki alanı hesaplamak GEREKSİZ bir sorgu turudur
+    ve emrin "kod/uçlar DEĞİŞMEZ" maddesini ihlal ederdi.
+
+    `entry_count` — o döneme (`period_year`/`period_month`) ait TÜM yevmiye
+    fişi sayısı, STATÜ AYRIMI YAPMADAN (K2 kararı, `periods_service.py`
+    modül docstring'inde gerekçelidir): kapanış kapısı (`assert_periods_
+    open`/`lock_period`) kapalı dönemde HER statüdeki fişi reddeder, sayaç da
+    aynı kümeye bakar. Mockup kanıtı: Temmuz satırı "3 taslak fiş var"
+    uyarısıyla birlikte Fiş=218 basar — taslak sayının İÇİNDEDİR.
+
+    `closed_by_name` — `users.full_name` (K5: depodaki TEK ad kolonu,
+    `audit/repository.py`nin `outerjoin(User, ...)` deseniyle AYNI yoldan
+    okunur). NULL olabilir (K4): açık dönemde veya kapatan kullanıcı
+    silinmişse `None` kalır, `"Bilinmiyor"` gibi bir metin UYDURULMAZ.
+    """
+
+    entry_count: int
+    closed_by_name: str | None
+
+
 class AccountingPeriodListResponse(BaseModel):
     """K7 liste zarfı: `items` + `total` + `limit`/`offset` (repo kanonu)."""
 
-    items: list[AccountingPeriodResponse]
+    items: list[AccountingPeriodListItem]
     total: int
     limit: int
     offset: int
