@@ -69,6 +69,7 @@ from app.core.errors import ConflictError
 from app.modules.accounting import guards, repository
 from app.modules.accounting.models import AccountingPeriod, AccountingPeriodStatus
 from app.modules.accounting.periods_schemas import (
+    AccountingPeriodListItem,
     AccountingPeriodListResponse,
     AccountingPeriodResponse,
 )
@@ -153,10 +154,30 @@ async def assert_periods_open(session: AsyncSession, periods: Iterable[Period]) 
 async def list_periods(
     session: AsyncSession, *, year: int | None, limit: int, offset: int
 ) -> AccountingPeriodListResponse:
-    """K7 zarfı. `total` liste ile AYNI süzgeçten geçer (`_period_filtered`)."""
+    """K7 zarfı. `total` liste ile AYNI süzgeçten geçer (`_period_filtered`).
+
+    🔴 DKAP-B / K1: sayfa BAŞINA tam olarak İKİ ek sorgu koşar —
+    `repository.list_periods` (dönem + `closed_by_name`, outerjoin ile TEK
+    sorgu) ve `repository.count_entries_by_period` (sayfadaki dönemlerin
+    toplam + `draft` fiş sayısı, TEK `GROUP BY` sorgusunda `FILTER` ile
+    birlikte gelir — K8, ikinci bir sorgu AÇILMAZ). İkisi de sayfa
+    büyüklüğünden BAĞIMSIZ çalışır; döngü içinde `await` YOKTUR — yapısal
+    N+1 garantisi budur.
+    """
     satirlar = await repository.list_periods(session, year=year, limit=limit, offset=offset)
+    sayilar = await repository.count_entries_by_period(
+        session, ((donem.year, donem.month) for donem, _ in satirlar)
+    )
     return AccountingPeriodListResponse(
-        items=[AccountingPeriodResponse.model_validate(donem) for donem in satirlar],
+        items=[
+            AccountingPeriodListItem(
+                **AccountingPeriodResponse.model_validate(donem).model_dump(),
+                entry_count=sayilar.get((donem.year, donem.month), (0, 0))[0],
+                draft_count=sayilar.get((donem.year, donem.month), (0, 0))[1],
+                closed_by_name=ad,
+            )
+            for donem, ad in satirlar
+        ],
         total=await repository.count_periods(session, year=year),
         limit=limit,
         offset=offset,
