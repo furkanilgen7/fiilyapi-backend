@@ -477,15 +477,30 @@ async def count_periods(session: AsyncSession, *, year: int | None) -> int:
 
 async def count_entries_by_period(
     session: AsyncSession, periods: Iterable[tuple[int, int]]
-) -> dict[tuple[int, int], int]:
-    """🔴 DKAP-B / K1 + K2 — sayfadaki dönemlerin fiş sayısını TEK sorguda
-    toplu döner (`GROUP BY`); dönem başına ayrı sorgu YOKTUR.
+) -> dict[tuple[int, int], tuple[int, int]]:
+    """🔴 DKAP-B / K1 — sayfadaki dönemlerin fiş sayılarını TEK sorguda toplu
+    döner (`GROUP BY`); dönem başına ayrı sorgu YOKTUR. Değer `(toplam,
+    draft_sayisi)` çiftidir — `draft_sayisi` `count(*) FILTER (WHERE
+    status = 'draft')` ile AYNI sorguda gelir, İKİNCİ bir sorgu AÇILMAZ.
 
-    Süzgeç `(period_year, period_month)`tir — `has_draft_entries`in ve
-    `assert_periods_open`ın baktığı AYNI kolon çifti (K2 kararı,
-    `periods_service.py` modül docstring'inde gerekçelidir). STATÜ süzgeci
-    YOKTUR: kapalı dönem `draft`/`posted`/`reversed` AYRIMI YAPMADAN her
-    statüdeki fişi reddeder, sayaç da aynı kümeye bakar.
+    🔴 DKAP-B / K9 — bu ekranda İKİ AYRI kapı vardır, KARIŞTIRILMAMALIDIR:
+
+    1. **Kapalı döneme YAZMA yasağı** (`periods_service.assert_periods_open`,
+       `status is closed` kontrolü) — STATÜ AYRIMI YAPMAZ, kapalı dönem
+       `draft`/`posted`/`reversed` fark etmeksizin HER yazmayı reddeder.
+    2. **Kapanışın ÖN KOŞULU** (`has_draft_entries`, bu dosyada yukarıda) —
+       STATÜ AYRIMI YAPAR: yalnız `draft` fiş kapanışı ENGELLER, `posted`/
+       `reversed` engellemez.
+
+    Toplam (`entry_count`) 1. kapının kümesine bakar — kapalı dönemde zaten
+    `draft` KALMAZ, dolayısıyla toplamda statü ayrımına gerek YOKTUR ve
+    mockup'ın "Fiş" sütunu (defter hacmi) budur. Ama toplam TEK BAŞINA 2.
+    kapıyı yansıtmaz: 10 `posted` + 1 `draft` fişli bir dönem "11 fiş" basar
+    ama `has_draft_entries` yüzünden KAPATILAMAZ — kullanıcı bu ikisini
+    bağdaştıramaz. `draft_sayisi` tam olarak bu ayrımı taşır: ekran
+    `draft_sayisi > 0` ile "kapatılamaz" durumunu OLGUDAN türetebilir
+    (kapanabilirlik KARARININ kendisi burada TAŞINMAZ — o karar
+    `periods_service`in kapısıdır, bkz. `AccountingPeriodListItem` docstring'i).
 
     Boş küme (sayfa boşsa) sorgusuz `{}` döner — `tuple_(...).in_(())` boş
     IN'de PG'de sözdizimi hatası fırlatır, bu yüzden erken çıkış ŞARTTIR.
@@ -494,9 +509,14 @@ async def count_entries_by_period(
     if not pairs:
         return {}
     stmt = (
-        select(JournalEntry.period_year, JournalEntry.period_month, func.count())
+        select(
+            JournalEntry.period_year,
+            JournalEntry.period_month,
+            func.count(),
+            func.count().filter(JournalEntry.status == JournalEntryStatus.draft),
+        )
         .where(tuple_(JournalEntry.period_year, JournalEntry.period_month).in_(pairs))
         .group_by(JournalEntry.period_year, JournalEntry.period_month)
     )
     rows = (await session.execute(stmt)).all()
-    return {(yil, ay): sayi for yil, ay, sayi in rows}
+    return {(yil, ay): (toplam, taslak) for yil, ay, toplam, taslak in rows}

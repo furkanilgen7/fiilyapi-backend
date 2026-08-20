@@ -1,14 +1,24 @@
-"""DKAP-B — `GET /accounting-periods` cevabına iki türetilmiş alan: `entry_count`
-· `closed_by_name`. Kapsam SADECE liste ucudur; `close`/`reopen` cevabı
-(`AccountingPeriodResponse`) DEĞİŞMEZ (bkz. `periods_schemas.py`).
+"""DKAP-B — `GET /accounting-periods` cevabına üç türetilmiş alan: `entry_count`
+· `draft_count` · `closed_by_name`. Kapsam SADECE liste ucudur; `close`/
+`reopen` cevabı (`AccountingPeriodResponse`) DEĞİŞMEZ (bkz. `periods_schemas.py`).
 
-K2 KARARI (ölçülerek verildi): `entry_count`, kapanış kapısının aynı süzgecini
-kullanır — `assert_periods_open`/`lock_period` `(period_year, period_month)`e
-göre çalışır ve kapalı dönem HER statüdeki fişi (draft dahil) reddeder; bu
-yüzden sayaç da STATÜ AYRIMI YAPMADAN `(period_year, period_month)`e göre
-sayar. Mockup kanıtı: `projedesign/Muhasebe - Dönem Kapanışı.dc.html` Temmuz
-satırı — "3 taslak fiş var" uyarısıyla birlikte "Fiş" sütunu 218 basar; taslak
-fişler toplam sayının İÇİNDEDİR, dışında değil.
+🔴 K2/K8/K9 KARARI (yönetim denetimiyle DÜZELTİLDİ — ilk tur K2 gerekçesi
+ölçümle çürüdü): bu ekranda İKİ AYRI kapı vardır, TEK kapıymış gibi
+anlatılmamalıdır (ayrıntı `repository.count_entries_by_period` docstring'i):
+
+1. **Kapalı döneme YAZMA yasağı** (`assert_periods_open`/`lock_period`) —
+   STATÜ AYRIMI YAPMAZ, kapalı dönem HER statüdeki fişi reddeder.
+2. **Kapanışın ÖN KOŞULU** (`has_draft_entries`) — STATÜ AYRIMI YAPAR, YALNIZ
+   `draft` fiş kapanışı ENGELLER.
+
+`entry_count` 1. kapının kümesine bakar (STATÜ AYRIMI YOK — kapalı dönemde
+zaten `draft` kalmaz). Mockup kanıtı: Temmuz satırı "3 taslak fiş var"
+uyarısıyla birlikte "Fiş" sütunu 218 basar; taslak fişler toplam sayının
+İÇİNDEDİR. `draft_count` (K8) ise 2. kapının kümesine bakar — `entry_count`ten
+BİLE BİLE AYRIŞIR: 1 `posted` + 1 `draft` fişli dönem `entry_count=2` ama
+`draft_count=1` basar, ekran bunu "kapanış engelli" (mockup özet şeridi "1
+engelli") olgusuna çevirir. Kapanabilirlik KARARININ kendisi cevaba
+TAŞINMAZ (K8: `can_close` gibi bir alan AÇILMADI).
 
 K1 — N+1 YASAK — iki ayrı kanıt tutulur:
 1. **Sayaç** (`_sorgu_sayaci`, repo kanonu): dönem sayısı artınca `journal_
@@ -205,28 +215,34 @@ async def test_N1_YOK_YAPISAL_toplu_sayim_TEK_KEZ_cagrilir(
 
 
 # --------------------------------------------------------------------------- #
-# 4 — K2 tutarlılığı: sayaç KAPANIŞ KAPISIYLA aynı kümeye bakar
+# 4 — K2/K8/K9: `entry_count` TOPLAMI sayar, `draft_count` ÖN KOŞULUN
+# baktığı kümeyi AYRICA verir (iki AYRI kapı, bkz. K9)
 # --------------------------------------------------------------------------- #
 
 
-async def test_K2_entry_count_TASLAK_fisi_de_sayar_kapanis_kapisiyla_TUTARLI(
+async def test_K2_entry_count_TASLAK_fisi_de_sayar_TOPLAM_defter_hacmidir(
     client: AsyncClient,
     pm_headers: dict[str, str],
     muhasebe_headers: dict[str, str],
     hesap_fabrikasi,
     fis_fabrikasi,
 ) -> None:
-    """Kapanış kapısı (`has_draft_entries`) bu dönemi TASLAK fiş yüzünden
-    REDDEDER (409) — yani draft fiş dönemin `(period_year, period_month)`
-    kümesinin İÇİNDEDİR. `entry_count` AYNI kümeye bakmalı ve draft'ı SAYMALI;
-    yalnız `POSTING_STATUSES` sayan bir mutasyon burada `1` yerine `0` üretir
-    ve bu test KIRMIZI olur.
+    """Kapalı-döneme-yazma yasağı (`assert_periods_open`) STATÜ AYRIMI
+    YAPMAZ — bu yüzden `entry_count` de yapmaz ve draft'ı SAYAR. Mockup
+    kanıtı: Temmuz satırı "3 taslak fiş var" uyarısıyla birlikte Fiş=218
+    basar, taslak toplamın İÇİNDEDİR.
     """
     kasa, saticilar = await iki_yaprak(hesap_fabrikasi)
     await fis_fabrikasi(
         [(kasa, "1000.00", "0"), (saticilar, "0", "1000.00")],
+        status=JournalEntryStatus.posted,
+        entry_date=date(2026, 7, 5),
+    )
+    await fis_fabrikasi(
+        [(kasa, "200.00", "0"), (saticilar, "0", "200.00")],
         status=JournalEntryStatus.draft,
         entry_date=date(2026, 7, 17),
+        description="Taslak",
     )
 
     kapat = await client.post(_kapat(2026, 7), headers=muhasebe_headers)
@@ -235,7 +251,75 @@ async def test_K2_entry_count_TASLAK_fisi_de_sayar_kapanis_kapisiyla_TUTARLI(
     resp = await client.get(f"{YOL}?year=2026", headers=pm_headers)
     assert resp.status_code == 200, resp.text
     donem = next(d for d in resp.json()["items"] if d["month"] == 7)
+    assert donem["entry_count"] == 2
+
+
+async def test_K9_draft_count_kapanisin_ON_KOSULUNU_TASIR(
+    client: AsyncClient,
+    pm_headers: dict[str, str],
+    muhasebe_headers: dict[str, str],
+    hesap_fabrikasi,
+    fis_fabrikasi,
+) -> None:
+    """🔴 K8/K9 — `draft_count`, `has_draft_entries`in baktığı AYNI kümedir
+    ve `entry_count`ten AYRIŞIR: 2 `posted` + 1 `draft` fişli dönem
+    `entry_count=3` ama `draft_count=1` basar — ekran bu ikisinden "kapanış
+    engelli" olgusunu türetebilir. `posted`/`draft` sayıları BİLE BİLE FARKLI
+    (2 ↔ 1) seçildi: `draft` yerine `posted` sayan bir mutasyon `1` yerine
+    `2` üretir ve rastlantısal bir eşleşmeyle YEŞİL KALAMAZ.
+    """
+    kasa, saticilar = await iki_yaprak(hesap_fabrikasi)
+    await fis_fabrikasi(
+        [(kasa, "1000.00", "0"), (saticilar, "0", "1000.00")],
+        status=JournalEntryStatus.posted,
+        entry_date=date(2026, 7, 5),
+    )
+    await fis_fabrikasi(
+        [(kasa, "300.00", "0"), (saticilar, "0", "300.00")],
+        status=JournalEntryStatus.posted,
+        entry_date=date(2026, 7, 9),
+        description="İkinci posted",
+    )
+    await fis_fabrikasi(
+        [(kasa, "200.00", "0"), (saticilar, "0", "200.00")],
+        status=JournalEntryStatus.draft,
+        entry_date=date(2026, 7, 17),
+        description="Taslak",
+    )
+
+    kapat = await client.post(_kapat(2026, 7), headers=muhasebe_headers)
+    assert kapat.status_code == 409, kapat.text
+
+    resp = await client.get(f"{YOL}?year=2026", headers=pm_headers)
+    assert resp.status_code == 200, resp.text
+    donem = next(d for d in resp.json()["items"] if d["month"] == 7)
+    assert donem["entry_count"] == 3
+    assert donem["draft_count"] == 1
+
+
+async def test_K9_draft_count_TASLAKSIZ_donemde_SIFIR(
+    client: AsyncClient,
+    pm_headers: dict[str, str],
+    muhasebe_headers: dict[str, str],
+    hesap_fabrikasi,
+    fis_fabrikasi,
+) -> None:
+    """`posted`/`reversed` fiş `draft_count`e GİRMEZ — kapanışı da ENGELLEMEZ."""
+    kasa, saticilar = await iki_yaprak(hesap_fabrikasi)
+    await fis_fabrikasi(
+        [(kasa, "1000.00", "0"), (saticilar, "0", "1000.00")],
+        status=JournalEntryStatus.posted,
+        entry_date=date(2026, 7, 5),
+    )
+
+    kapat = await client.post(_kapat(2026, 7), headers=muhasebe_headers)
+    assert kapat.status_code == 200, kapat.text
+
+    resp = await client.get(f"{YOL}?year=2026", headers=pm_headers)
+    assert resp.status_code == 200, resp.text
+    donem = next(d for d in resp.json()["items"] if d["month"] == 7)
     assert donem["entry_count"] == 1
+    assert donem["draft_count"] == 0
 
 
 # --------------------------------------------------------------------------- #
@@ -278,4 +362,5 @@ async def test_view_yetkili_kullanici_yeni_alanlari_da_OKUYABILIR(
     assert resp.status_code == 200, resp.text
     donem = resp.json()["items"][0]
     assert "entry_count" in donem
+    assert "draft_count" in donem
     assert "closed_by_name" in donem

@@ -158,9 +158,11 @@ async def list_periods(
 
     🔴 DKAP-B / K1: sayfa BAŞINA tam olarak İKİ ek sorgu koşar —
     `repository.list_periods` (dönem + `closed_by_name`, outerjoin ile TEK
-    sorgu) ve `repository.count_entries_by_period` (sayfadaki dönemlerin fiş
-    sayısı, `GROUP BY` ile TEK sorgu). İkisi de sayfa büyüklüğünden BAĞIMSIZ
-    çalışır; döngü içinde `await` YOKTUR — yapısal N+1 garantisi budur.
+    sorgu) ve `repository.count_entries_by_period` (sayfadaki dönemlerin
+    toplam + `draft` fiş sayısı, TEK `GROUP BY` sorgusunda `FILTER` ile
+    birlikte gelir — K8, ikinci bir sorgu AÇILMAZ). İkisi de sayfa
+    büyüklüğünden BAĞIMSIZ çalışır; döngü içinde `await` YOKTUR — yapısal
+    N+1 garantisi budur.
     """
     satirlar = await repository.list_periods(session, year=year, limit=limit, offset=offset)
     sayilar = await repository.count_entries_by_period(
@@ -170,7 +172,8 @@ async def list_periods(
         items=[
             AccountingPeriodListItem(
                 **AccountingPeriodResponse.model_validate(donem).model_dump(),
-                entry_count=sayilar.get((donem.year, donem.month), 0),
+                entry_count=sayilar.get((donem.year, donem.month), (0, 0))[0],
+                draft_count=sayilar.get((donem.year, donem.month), (0, 0))[1],
                 closed_by_name=ad,
             )
             for donem, ad in satirlar
