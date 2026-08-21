@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.access import AccessLevel, satisfies
 from app.core.errors import ApprovalNotAllowedError, ApprovalValidationError, ConflictError
 from app.core.text import FREE_TEXT_MAX_LENGTH
-from app.modules.approvals import definitions, guards, repository
+from app.modules.approvals import definitions, guards, inbox, repository
 from app.modules.approvals.models import (
     ApprovalChain,
     ApprovalDocumentType,
@@ -42,6 +42,7 @@ from app.modules.approvals.models import (
 )
 from app.modules.audit import messages
 from app.modules.company import repository as company_repository
+from app.modules.projects.service import visible_projects
 from app.modules.roles.repository import get_permission
 from app.modules.users.models import User
 
@@ -95,6 +96,14 @@ class PendingStepView:
 
 @dataclass(frozen=True)
 class PendingChainView:
+    """Onay kutusu satiri: ZINCIRIN olgulari + EVRAGIN olgulari (T4).
+
+    🔴 `amount_snapshot` ile `gross_amount` AYNI SEY DEGILDIR ve karistirilirsa
+    ikisi de yalan soyler: birincisi zincir kurulurken DONMUS esik carpanidir
+    (MK-2 kanonu, "neden bu adimlar?" sorusunu yanitlar), ikincisi evragin
+    BUGUNKU brut tutaridir (mockup `:138` `:173` `:227`).
+    """
+
     chain_id: uuid.UUID
     document_type: ApprovalDocumentType
     document_id: uuid.UUID
@@ -104,6 +113,10 @@ class PendingChainView:
     amount_snapshot: Decimal | None
     current_step_no: int
     steps: list[PendingStepView]
+    title: str | None
+    subtitle: str | None
+    gross_amount: Decimal | None
+    net_amount: Decimal | None
 
 
 # --------------------------------------------------------------------------- #
@@ -532,29 +545,36 @@ async def pending_for_user(
     birlestirir.
 
     🔴 N+1 YOK: sorgu sayisi SATIR SAYISINDAN bagimsizdir (sayim · sayfa ·
-    adimlar · adlar + sabit sayida izin sorgusu).
+    adimlar · adlar + sabit sayida izin/kapsam sorgusu + AILE BASINA sabit
+    sayida evrak sorgusu). Sayfada bulunmayan evrak ailesi HIC sorgulanmaz.
 
-    ⚠️ KAPSAM DISI (T4): satir basligi/alt basligi, brut-net tutar ikilisi ve
-    `projects.service.visible_projects` uzerinden proje gorunurlugu suzgeci.
-    Bugun evraklarin hicbiri zincire BAGLI DEGILDIR (o T3'tur), dolayisiyla
-    ortada suzulecek gercek bir evrak yoktur; ustelik satirin kendisi zaten
-    "bu adim SANA dustu" olgusuyla sinirlidir.
+    🔴 IDOR (T4): kapsam `projects.service.visible_projects` uzerinden gelir ve
+    suzgec SQL'dedir — `total` da ondan turer (`repository._pending_filter`).
+    Kapsam BELLEKTE suzulseydi `total` gorunmeyeni de sayardi.
+
+    ⚠️ Kapsam sorgusu ROL sorgusundan SONRA kosar: onay rolu olmayan aktor icin
+    (cogunluk) ikinci bir sorgu hic acilmaz.
     """
     roller = await repository.user_approval_roles(session, actor.id)
     if not roller:
         return [], 0, []
 
     admin_tipleri = await _admin_document_types(session, actor)
+    gorunur_proje_kimlikleri = [proje.id for proje in await visible_projects(session, actor)]
     rows, total = await repository.pending_page(
         session,
         actor_id=actor.id,
         roles=roller,
         admin_document_types=admin_tipleri,
+        visible_project_ids=gorunur_proje_kimlikleri,
         limit=limit,
         offset=offset,
     )
     chain_ids = [chain.id for chain, _ in rows]
     steps = await repository.steps_of_chains(session, chain_ids)
+    olgular = await inbox.load_facts(
+        session, [(chain.document_type, chain.document_id) for chain, _ in rows]
+    )
 
     kimlikler: set[uuid.UUID] = set()
     for chain, _ in rows:
@@ -579,22 +599,32 @@ async def pending_for_user(
         )
 
     return (
-        [
-            PendingChainView(
-                chain_id=chain.id,
-                document_type=chain.document_type,
-                document_id=chain.document_id,
-                created_by_name=adlar.get(chain.created_by_user_id)
-                if chain.created_by_user_id
-                else None,
-                created_at=chain.created_at,
-                threshold_snapshot=chain.threshold_snapshot,
-                amount_snapshot=chain.amount_snapshot,
-                current_step_no=current.step_no,
-                steps=adim_haritasi.get(chain.id, []),
-            )
-            for chain, current in rows
-        ],
+        [_pending_view(chain, current, adlar, adim_haritasi, olgular) for chain, current in rows],
         total,
         roller,
+    )
+
+
+def _pending_view(
+    chain: ApprovalChain,
+    current: ApprovalStep,
+    adlar: dict[uuid.UUID, str],
+    adim_haritasi: dict[uuid.UUID, list[PendingStepView]],
+    olgular: dict[tuple[ApprovalDocumentType, uuid.UUID], inbox.DocumentFacts],
+) -> PendingChainView:
+    olgu = olgular.get((chain.document_type, chain.document_id), inbox.EMPTY_FACTS)
+    return PendingChainView(
+        chain_id=chain.id,
+        document_type=chain.document_type,
+        document_id=chain.document_id,
+        created_by_name=adlar.get(chain.created_by_user_id) if chain.created_by_user_id else None,
+        created_at=chain.created_at,
+        threshold_snapshot=chain.threshold_snapshot,
+        amount_snapshot=chain.amount_snapshot,
+        current_step_no=current.step_no,
+        steps=adim_haritasi.get(chain.id, []),
+        title=olgu.title,
+        subtitle=olgu.subtitle,
+        gross_amount=olgu.gross_amount,
+        net_amount=olgu.net_amount,
     )

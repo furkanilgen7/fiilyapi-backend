@@ -16,10 +16,10 @@ import uuid
 from decimal import Decimal
 
 import pytest
-from app.modules.approvals import service
-from app.modules.approvals.models import ApprovalDocumentType, ApprovalRole
 from sqlalchemy import select
 
+from app.modules.approvals import service
+from app.modules.approvals.models import ApprovalDocumentType, ApprovalRole
 from app.modules.audit import messages
 from app.modules.audit.models import AuditLog
 from app.modules.company.schemas import CompanyUpdate
@@ -253,16 +253,21 @@ async def test_onay_kutusu_ZARFI_ve_VARSAYILANLARI(client, admin_basliklari):
 
 
 async def test_onay_kutusu_YALNIZ_siradaki_adimi_ve_KENDI_rollerini_doner(
-    client, seeded_db, aktor_fabrikasi, giris
+    client, seeded_db, aktor_fabrikasi, evrak_fabrikasi, giris
 ):
-    """Üç ayrı süzgeç TEK turda: rol · sıra · bekçi 5 (kendi evrakı)."""
+    """Üç ayrı süzgeç TEK turda: rol · sıra · bekçi 5 (kendi evrakı).
+
+    ⚠️ T4 UYARLAMASI: zincirler artık GERÇEK evraklara bağlanıyor. Uydurma bir
+    `document_id` projeye çözülemediği için görünürlük süzgecine (fail-closed)
+    takılır ve kutuda HİÇ görünmezdi — iddia sessizce boş kümeye kayardı.
+    """
     yaratan = await aktor_fabrikasi("kutu-yaratan@ok1a.co")
     sef = await aktor_fabrikasi(
         "kutu-sef@ok1a.co", role_key="site_chief", approval_roles=[ApprovalRole.site_chief]
     )
     basliklar = await giris("kutu-sef@ok1a.co")
 
-    dusen = uuid.uuid4()
+    dusen, _ = await evrak_fabrikasi(_TASERON, creator=yaratan)
     await service.create_chain(
         seeded_db,
         document_type=_TASERON,
@@ -271,7 +276,7 @@ async def test_onay_kutusu_YALNIZ_siradaki_adimi_ve_KENDI_rollerini_doner(
         created_by_user_id=yaratan.id,
     )
     # (a) Şefin KENDİ evrakı — bekçi 5 yüzünden kutuda GÖRÜNMEZ.
-    kendi = uuid.uuid4()
+    kendi, _ = await evrak_fabrikasi(_TASERON, creator=sef)
     await service.create_chain(
         seeded_db,
         document_type=_TASERON,
@@ -280,7 +285,7 @@ async def test_onay_kutusu_YALNIZ_siradaki_adimi_ve_KENDI_rollerini_doner(
         created_by_user_id=sef.id,
     )
     # (b) Sıradaki adımı `accounting` olan evrak — şefin rolü DEĞİL.
-    baskasinin = uuid.uuid4()
+    baskasinin, _ = await evrak_fabrikasi(ApprovalDocumentType.progress_payment, creator=yaratan)
     await service.create_chain(
         seeded_db,
         document_type=ApprovalDocumentType.progress_payment,
@@ -310,7 +315,7 @@ async def test_onay_kutusu_YALNIZ_siradaki_adimi_ve_KENDI_rollerini_doner(
 
 
 async def test_onay_kutusu_GOREVLER_AYRILIGINA_takilan_satiri_GIZLER(
-    client, seeded_db, aktor_fabrikasi, giris
+    client, seeded_db, aktor_fabrikasi, evrak_fabrikasi, giris
 ):
     yaratan = await aktor_fabrikasi("kutu-ayrilik-yaratan@ok1a.co")
     cift_rollu = await aktor_fabrikasi(
@@ -319,7 +324,7 @@ async def test_onay_kutusu_GOREVLER_AYRILIGINA_takilan_satiri_GIZLER(
         approval_roles=[ApprovalRole.site_chief, ApprovalRole.project_manager],
     )
     basliklar = await giris("kutu-ayrilik@ok1a.co")
-    document_id = uuid.uuid4()
+    document_id, _ = await evrak_fabrikasi(_TASERON, creator=yaratan)
     await service.create_chain(
         seeded_db,
         document_type=_TASERON,

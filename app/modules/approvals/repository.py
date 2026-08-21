@@ -5,6 +5,7 @@ import uuid
 from sqlalchemy import Select, and_, distinct, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.approvals import documents
 from app.modules.approvals.models import (
     ApprovalChain,
     ApprovalDocumentType,
@@ -168,12 +169,18 @@ def _pending_filter(
     actor_id: uuid.UUID,
     roles: list[ApprovalRole],
     admin_document_types: list[ApprovalDocumentType],
+    visible_project_ids: list[uuid.UUID],
 ) -> tuple[Select, Select]:
     """Kullaniciya DUSEN siradaki adimlarin ortak suzgeci.
 
     Bekci 5 ve 6 SQL'e cevrilir; ekranda gosterilen kume ile ucta gecen kume
     AYNI kuraldan turemek zorundadir, yoksa kutuda gorunen bir satir tiklaninca
     403 verirdi.
+
+    🔴 DORDUNCU KOSUL PROJE KAPSAMIDIR (T4, IDOR). Gövde ile SAYIM ayni
+    `kosullar` demetinden turer: `total` suzgecin DISINDA kalsaydi kullanici
+    GOREMEDIGI kayitlari sayardi (BOR-TEMIZ kanonu) — "items bos ama total > 0"
+    hâli sahte-yesildir ve sayfalayici bos sayfalar uretirdi.
     """
     siradaki = (
         select(
@@ -194,6 +201,8 @@ def _pending_filter(
         ),
         # Bekci 6 — gorevler ayriligi (admin ISTISNASI YOK).
         ApprovalChain.id.not_in(benim_kararim),
+        # 🔴 IDOR — evragin PROJESI aktorun gordukleri arasinda mi (T4).
+        documents.visible_document_clause(visible_project_ids),
     )
     govde = (
         select(ApprovalChain, ApprovalStep)
@@ -229,10 +238,11 @@ async def pending_page(
     actor_id: uuid.UUID,
     roles: list[ApprovalRole],
     admin_document_types: list[ApprovalDocumentType],
+    visible_project_ids: list[uuid.UUID],
     limit: int,
     offset: int,
 ) -> tuple[list[tuple[ApprovalChain, ApprovalStep]], int]:
-    govde, sayim = _pending_filter(actor_id, roles, admin_document_types)
+    govde, sayim = _pending_filter(actor_id, roles, admin_document_types, visible_project_ids)
     total = await session.scalar(sayim)
     rows = await session.execute(
         govde.order_by(ApprovalChain.created_at, ApprovalChain.id).limit(limit).offset(offset)

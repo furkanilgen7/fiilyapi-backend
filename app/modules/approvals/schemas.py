@@ -75,11 +75,21 @@ class ApprovalStepRead(BaseModel):
 
 
 class ApprovalInboxItem(BaseModel):
-    """Onay kutusu satiri — MOTORUN bildigi olgular.
+    """Onay kutusu satiri — mockup kartinin BES parcasi (`Onay Kutusu.dc.html`).
 
-    ⚠️ T4 EKLER: `title` / `subtitle` ve `gross_amount` / `net_amount`. Bunlar
-    evrak ailelerinden okunur ve evraklar zincire T3'te baglanir; bugun
-    uretilseydi UYDURULMUS olurlardi.
+    | Kart parcasi | Mockup | Alan |
+    |---|---|---|
+    | tip rozeti | `:123` `:157` `:216` | `document_type` |
+    | olusturan + zaman | `:124` `:159` `:217` | `created_by_name` · `created_at` |
+    | baslik | `:126` `:161` `:219` | `title` |
+    | alt baslik | `:127` `:162` `:220` | `subtitle` |
+    | adim seridi | `:129-135` `:164-170` `:222-224` | `steps` |
+    | tutar(lar) | `:138-139` `:173` `:227-228` | `gross_amount` · `net_amount` |
+
+    🔴 `net_amount` SATINALMADA `null`dur: talebin brut/net ayrimi YOKTUR
+    (mockup `:173` TEK kutu). 🔴 `gross_amount` da `null` OLABILIR — tutarin
+    BELIRLENEMEDIGI hâl gercektir (fiyatsiz kalem) ve `0` yazmak "eksik veri"
+    ile "sifir tutar"i ayirt edilemez kilardi (SA kanonu).
     """
 
     chain_id: uuid.UUID
@@ -91,6 +101,10 @@ class ApprovalInboxItem(BaseModel):
     amount_snapshot: Decimal | None
     current_step_no: int
     steps: list[ApprovalStepRead]
+    title: str | None
+    subtitle: str | None
+    gross_amount: Decimal | None
+    net_amount: Decimal | None
 
     @classmethod
     def from_view(cls, view: PendingChainView) -> "ApprovalInboxItem":
@@ -112,6 +126,10 @@ class ApprovalInboxItem(BaseModel):
                 )
                 for adim in view.steps
             ],
+            title=view.title,
+            subtitle=view.subtitle,
+            gross_amount=view.gross_amount,
+            net_amount=view.net_amount,
         )
 
 
