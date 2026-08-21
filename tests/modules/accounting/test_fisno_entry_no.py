@@ -297,7 +297,7 @@ async def test_entry_no_govdeden_GELEMEZ_POST_ve_PATCH_422(
     ), guncelle.text
 
 
-async def test_PATCH_baska_alani_guncellerken_numara_AYNI_kalir(
+async def test_PATCH_entry_dateI_SONRAKI_YILA_tasisa_bile_numara_AYNI_kalir(
     client, muhasebe_headers, hesap_fabrikasi
 ) -> None:
     """Numara `PATCH` ile DEĞİŞMEZ — `entry_date` bir sonraki YILA taşınsa bile.

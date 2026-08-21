@@ -121,8 +121,19 @@ async def generate_entry_no(session: AsyncSession, *, year: int) -> str:
     sessizce BU yilin numarasini verirdi.
 
     Iki ifadelik UPSERT-SONRA-KILITLE — gerekcesi modul docstring'indedir.
-    Numara bir kez dagitildiktan sonra GERI ALINMAZ: cagiranin islemi rollback
-    etse bile sayac ilerlemis olabilir ve bu KASITLIDIR (karar 2).
+
+    🔴 ROLLBACK SAYACI GERI ALIR — bosluk ORADAN GELMEZ (kod duzeyinde
+    dogrulandi, 2026-08-21; ampirik olarak OLCULMEDI).
+    Her iki ifade de CAGIRANIN kendi `AsyncSession`inda kosar: ayri baglanti,
+    otonom transaction ve ic `commit()` YOKTUR. Cagiran rollback ederse sayac
+    da geri alinir; dahasi eszamanli bekleyen, satir kilidinde kazananin
+    commit'ini VEYA rollback'ini bekler ve rollback halinde ILERLEMEMIS degeri
+    okur. Yani rollback edilen bir yaratma numara YAKMAZ.
+
+    Boslugun GERCEK kaynagi DELETE yoludur (karar 2): commit edilmis bir fis
+    sonradan silindiginde numarasi bosta kalir ve sayac geri SARILMAZ. Bunu
+    `test_EN_BUYUK_numara_silinse_bile_sayac_GERI_ALINMAZ` kilitler — en buyuk
+    numarali fis silinse bile sonraki fis onun numarasini YENIDEN KULLANMAZ.
     """
     # 1. KILIT + OKUMA. No-op `DO UPDATE` satiri her iki yolda da KILITLER ve
     #    DONDURUR; `DO NOTHING` catisan satiri ne kilitler ne dondurur.
