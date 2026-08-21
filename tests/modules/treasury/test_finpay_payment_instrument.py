@@ -545,7 +545,9 @@ async def test_bagli_odeme_silinince_durum_TURETIMI_bozulmadi(
 
 
 async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
-    """🔴 Kapsam bekçisi (tripwire): "yol" ile "operasyon" AYRI ölçülerdir
+    """🔴 Kapsam: TB6-T1 (`GET/PUT /payroll/tax-brackets`) İKİ YENİ YOL açtı.
+
+    🔴 Kapsam bekçisi (tripwire): "yol" ile "operasyon" AYRI ölçülerdir
     (Kanon 3). Bu dosya kendi başına var olan İKİ uca (`POST`/`GET
     /invoices/{id}/payments`) alan ekler, yeni yol AÇMAZ — ama sayaç dosya
     bazlı değil, TÜM uygulamayı ölçer: başka bir dilim aynı anda gerçekten
