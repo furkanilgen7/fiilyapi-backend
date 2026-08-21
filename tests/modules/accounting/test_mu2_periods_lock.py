@@ -59,11 +59,11 @@ aynı `open` satırı okuyup ikisi de kapatır. Bu yüzden iki eşzamanlılık t
 import asyncio
 import contextlib
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import ConflictError
@@ -97,6 +97,15 @@ _KODLAR = ("199", "399")
 YIL, AY = 2031, 5
 TARIH = date(YIL, AY, 12)
 
+#: SIRA-B — kronolojik sıra denetiminin baktığı KOMŞU dönemler. `ONCEKI` (2031/4)
+#: `(YIL, AY)`nin takvim öncesidir; `ONCEKININ_ONCESI` (2031/3) yalnızca
+#: `ONCEKI`nin kendisinin de kapatılabilmesi için KAPALI kurulur — aksi hâlde
+#: eşzamanlılık testinde iki görevden biri sıra kuralına takılır ve yarış hiç
+#: kurulamazdı.
+ONCEKI = (YIL, AY - 1)
+ONCEKININ_ONCESI = (YIL, AY - 2)
+_DONEMLER = ((YIL, AY), ONCEKI, ONCEKININ_ONCESI)
+
 #: Baraj/görev bekleyişlerinin TAVANI. Kilit DOĞRUYKEN görevler saniyenin
 #: altında biter; tavan yalnızca bozuk bir kurulumun testi asmasını engeller.
 _TAVAN_SANIYE = 15
@@ -116,7 +125,9 @@ class _Kurulum:
         self.entry_id = entry_id
 
 
-async def _kur(*, taslak_fis: bool = False, donem_var: bool = False) -> _Kurulum:
+async def _kur(
+    *, taslak_fis: bool = False, donem_var: bool = False, sira_zinciri: bool = False
+) -> _Kurulum:
     """İki aktör + iki YAPRAK hesap; istenirse dönemde bir `draft` fiş.
 
     🔴 `donem_var=True` dönem satırını **AÇIK** olarak ÖNCEDEN yazar. Bu dal
@@ -151,6 +162,28 @@ async def _kur(*, taslak_fis: bool = False, donem_var: bool = False) -> _Kurulum
         session.add_all(hesaplar)
         if donem_var:
             session.add(AccountingPeriod(year=YIL, month=AY, status=AccountingPeriodStatus.open))
+        if sira_zinciri:
+            # 🔴 Aktörler ÖNCE flush edilir: `closed_by_id` Python tarafında
+            # doğan bir UUID'dir ve flush olmadan `None`dır — damga eksik kalır
+            # ve `ck_accounting_periods_closed_stamp` INSERT'ü reddederdi.
+            await session.flush()
+            # SIRA-B: (AY-1) AÇIK — yarışın konusu; (AY-2) KAPALI — (AY-1)'in
+            # kendisi de kapatılabilsin diye. `closed` damgası BÜTÜNDÜR
+            # (`ck_accounting_periods_closed_stamp`), bu yüzden üç parça birlikte.
+            session.add(
+                AccountingPeriod(
+                    year=ONCEKI[0], month=ONCEKI[1], status=AccountingPeriodStatus.open
+                )
+            )
+            session.add(
+                AccountingPeriod(
+                    year=ONCEKININ_ONCESI[0],
+                    month=ONCEKININ_ONCESI[1],
+                    status=AccountingPeriodStatus.closed,
+                    closed_at=datetime(2031, 4, 1, tzinfo=UTC),
+                    closed_by_id=aktorler[0].id,
+                )
+            )
         await session.flush()
 
         entry_id: uuid.UUID | None = None
@@ -232,7 +265,7 @@ async def _temizle(kurulum: _Kurulum) -> None:
             await session.execute(delete(JournalEntry).where(JournalEntry.id.in_(fis_ids)))
         await session.execute(
             delete(AccountingPeriod).where(
-                AccountingPeriod.year == YIL, AccountingPeriod.month == AY
+                tuple_(AccountingPeriod.year, AccountingPeriod.month).in_(_DONEMLER)
             )
         )
         await session.execute(delete(ChartAccount).where(ChartAccount.id.in_(kurulum.account_ids)))
@@ -249,7 +282,13 @@ async def _guvenli_temizlik(kurulum: _Kurulum, *gorevler: asyncio.Task | None) -
         await asyncio.wait_for(_temizle(kurulum), timeout=_TAVAN_SANIYE)
 
 
-async def _kapat(kurulum: _Kurulum, aktor_sirasi: int, baraj: asyncio.Barrier) -> str:
+async def _kapat(
+    kurulum: _Kurulum,
+    aktor_sirasi: int,
+    baraj: asyncio.Barrier,
+    yil: int = YIL,
+    ay: int = AY,
+) -> str:
     """Bağımsız bir bağlantıda TAM `close` yolu: UPSERT → KİLİT → denetim → damga.
 
     🔴 ISINMA + BARAJ — determinizmin tamamı buradadır (modül docstring'i).
@@ -258,7 +297,7 @@ async def _kapat(kurulum: _Kurulum, aktor_sirasi: int, baraj: asyncio.Barrier) -
         actor = await session.get(User, kurulum.actor_ids[aktor_sirasi])
         await asyncio.wait_for(baraj.wait(), timeout=_TAVAN_SANIYE)
         try:
-            await periods_service.close_period(session, actor, YIL, AY)
+            await periods_service.close_period(session, actor, yil, ay)
         except ConflictError:
             await session.rollback()
             return "conflict"
@@ -272,12 +311,18 @@ async def _kapat(kurulum: _Kurulum, aktor_sirasi: int, baraj: asyncio.Barrier) -
         return "closed"
 
 
-async def _ac(kurulum: _Kurulum, aktor_sirasi: int, baraj: asyncio.Barrier) -> str:
+async def _ac_donem(
+    kurulum: _Kurulum,
+    aktor_sirasi: int,
+    baraj: asyncio.Barrier,
+    yil: int = YIL,
+    ay: int = AY,
+) -> str:
     async with _SessionFactory() as session:
         actor = await session.get(User, kurulum.actor_ids[aktor_sirasi])
         await asyncio.wait_for(baraj.wait(), timeout=_TAVAN_SANIYE)
         try:
-            await periods_service.reopen_period(session, actor, YIL, AY)
+            await periods_service.reopen_period(session, actor, yil, ay)
         except ConflictError:
             await session.rollback()
             return "conflict"
@@ -547,7 +592,7 @@ async def test_3_ESZAMANLI_close_ve_reopen_TEK_SATIR_TUTARLI_DAMGA() -> None:
     try:
         gorevler = [
             asyncio.create_task(_kapat(kurulum, 0, baraj)),
-            asyncio.create_task(_ac(kurulum, 1, baraj)),
+            asyncio.create_task(_ac_donem(kurulum, 1, baraj)),
         ]
         kapanis, acilis = await asyncio.wait_for(asyncio.gather(*gorevler), timeout=_TAVAN_SANIYE)
         assert not kapanis.startswith("error:") and not acilis.startswith("error:"), (
@@ -574,5 +619,145 @@ async def test_3_ESZAMANLI_close_ve_reopen_TEK_SATIR_TUTARLI_DAMGA() -> None:
             kapali = donem.status is AccountingPeriodStatus.closed
             assert (donem.closed_at is not None) is kapali
             assert (donem.closed_by_id is not None) is kapali
+    finally:
+        await _guvenli_temizlik(kurulum, *gorevler)
+
+
+# --------------------------------------------------------------------------- #
+# (iv) SIRA-B — iki KOMŞU dönemin eşzamanlı kapanışı
+# --------------------------------------------------------------------------- #
+
+
+async def test_4_ESZAMANLI_KOMSU_close_KRONOLOJIK_TUTARSIZLIK_URETMEZ() -> None:
+    """🔴 SIRA-B / K6 — Temmuz ve Ağustos AYNI ANDA kapatılmak istenirse ne olur?
+
+    Kronolojik sıra denetimi önceki dönemi **KİLİTLEMEZ** (`repository.get_period`,
+    `FOR UPDATE` yok). Emir haklı olarak sordu: bu, ikisini birden geçirir mi?
+
+    **Ölçüm (6 koşu, deterministik):** bu kurulumda (AY-1 KAYITLI ve `open`)
+    sonuç DAİMA `['closed', 'conflict']`tır — `AY`ı kapatan görev, `AY-1`i
+    henüz commit edilmemiş hâlde yani `open` okur ve **409** alır. READ
+    COMMITTED altında öteki işlemin damgası görünmez; denetim yani kilitsiz
+    olmasına rağmen MUHAFAZAKÂR yönde yanılır.
+
+    `AY-1` KAYITSIZ olsaydı ikisi de geçerdi (K2) — o da SORUN DEĞİLDİR.
+    Burada korunacak eşik/sayaç yoktur; korunacak şey bir SON DURUM
+    invaryantıdır:
+
+        🔴 "kapalı bir dönemin takvim öncesi, KAYITLI ve `open` olamaz"
+
+    "İkisi de kapandı" bu invaryantı SAĞLAR. Bozan tek son durum
+    *"AY kapalı, AY-1 açık"*tır ve hiçbir sıralama onu üretemez: `AY`ı geçiren
+    okuma `AY-1`i ya `closed` ya KAYITSIZ görmüştür, ve `AY-1`i kayıtlı-`open`
+    bırakabilecek tek yol olan BAŞARISIZ bir `close` denemesi kendi UPSERT'ünü
+    de geri sarar (READ COMMITTED altında o satır zaten hiç görünmez).
+
+    Bu yüzden kilit GENİŞLETİLMEDİ: önceki dönemi de kilitlemek modül
+    docstring'indeki SABİT kilit sırasına yeni bir kenar eklerdi ve karşılığında
+    hiçbir invaryant kazandırmazdı.
+
+    Test bu invaryantı ölçer, "kaç tanesi geçti"yi DEĞİL — sayıya bağlanan bir
+    iddia, yarışın nasıl düştüğüne göre kâh yeşil kâh kırmızı olurdu (görsel
+    turdaki `flaky` dersi).
+    """
+    kurulum = await _kur(donem_var=True, sira_zinciri=True)
+    baraj = asyncio.Barrier(2)
+    gorevler: list[asyncio.Task] = []
+    try:
+        gorevler = [
+            asyncio.create_task(_kapat(kurulum, 0, baraj, ONCEKI[0], ONCEKI[1])),
+            asyncio.create_task(_kapat(kurulum, 1, baraj, YIL, AY)),
+        ]
+        sonuclar = list(await asyncio.wait_for(asyncio.gather(*gorevler), timeout=_TAVAN_SANIYE))
+        assert not [s for s in sonuclar if s.startswith("error:")], (
+            f"eşzamanlı komşu `close` bir istisna sızdırdı ({sonuclar}) — canlıda 500"
+        )
+
+        async with _SessionFactory() as session:
+            durum = {
+                (satir.year, satir.month): satir.status
+                for satir in (
+                    (
+                        await session.execute(
+                            select(AccountingPeriod).where(
+                                tuple_(AccountingPeriod.year, AccountingPeriod.month).in_(_DONEMLER)
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+            }
+        if durum.get((YIL, AY)) is AccountingPeriodStatus.closed:
+            assert durum.get(ONCEKI) is not AccountingPeriodStatus.open, (
+                f"🔴 KRONOLOJİK TUTARSIZLIK: {YIL}/{AY} kapalı ama {ONCEKI} kayıtlı ve AÇIK "
+                f"(sonuçlar: {sonuclar}, durum: {durum}) — sıra denetimi eşzamanlı "
+                "kapanışta sızıntı veriyor"
+            )
+    finally:
+        await _guvenli_temizlik(kurulum, *gorevler)
+
+
+async def test_5_ESZAMANLI_ONCEKI_reopen_ve_SONRAKI_close_SIZINTI_OLCUMU() -> None:
+    """🔴 SIRA-B / K6 ikinci yön — `reopen(AY-1)` ile `close(AY)` aynı anda.
+
+    Bu, sıra kuralını eşzamanlı olarak DELEBİLECEK tek gerçek desendir:
+    `close(AY)` `AY-1`i `closed` okurken, `reopen(AY-1)` onu `open`a çevirebilir
+    ve son durum *"AY kapalı, AY-1 açık"* olur.
+
+    **Ama bu bir KUSUR DEĞİL, K5'in KENDİSİDİR.** Aynı son duruma sıralı olarak
+    da ulaşılır ve bu MEŞRUDUR: "Ağustos kapalıyken Temmuz'u geri aç" tam olarak
+    yöneticinin elinde bırakılan düzeltme yoludur (`reopen` `admin` yetkisinde,
+    `close` `full`). Kilit koyarak engellenecek bir şey yoktur; engellenseydi
+    yönetici düzeltemeyeceği bir defterle baş başa kalırdı.
+
+    **Ölçüm (6 koşu, deterministik):** `['opened', 'closed']` — son durum
+    *"AY kapalı, AY-1 açık"*. Yani sıra kuralı eşzamanlı `reopen` ile GERÇEKTEN
+    delinebilir; delen şey `close`un kilitsiz okuması değil, `reopen`in K5
+    gereği hiçbir sıra kuralına tabi OLMAMASIDIR — aynı sonuca iki ayrı
+    istekle, sırayla da ulaşılır. Kilit genişletmek bunu değiştirmezdi.
+
+    Test bu yüzden yasak KOYMAZ, iki şeyi ölçer: (a) 500 SIZMAZ, (b) `AY-1`
+    satırı TEKTİR ve damgası kendi durumuyla TUTARLIDIR
+    (`ck_accounting_periods_closed_stamp`).
+    """
+    kurulum = await _kur(donem_var=True, sira_zinciri=True)
+    baraj = asyncio.Barrier(2)
+    gorevler: list[asyncio.Task] = []
+    try:
+        # `AY-1`i önce KAPAT (sıralı, yarışsız) — `reopen` için kapalı olmalı.
+        tek = asyncio.Barrier(1)
+        assert await _kapat(kurulum, 0, tek, ONCEKI[0], ONCEKI[1]) == "closed"
+
+        gorevler = [
+            asyncio.create_task(_ac_donem(kurulum, 0, baraj, ONCEKI[0], ONCEKI[1])),
+            asyncio.create_task(_kapat(kurulum, 1, baraj, YIL, AY)),
+        ]
+        sonuclar = list(await asyncio.wait_for(asyncio.gather(*gorevler), timeout=_TAVAN_SANIYE))
+        assert not [s for s in sonuclar if s.startswith("error:")], (
+            f"eşzamanlı `reopen`+`close` bir istisna sızdırdı ({sonuclar}) — canlıda 500"
+        )
+
+        async with _SessionFactory() as session:
+            satirlar = (
+                (
+                    await session.execute(
+                        select(AccountingPeriod).where(
+                            AccountingPeriod.year == ONCEKI[0],
+                            AccountingPeriod.month == ONCEKI[1],
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert len(satirlar) == 1, "aynı (yıl, ay) için birden fazla satır doğdu"
+            onceki = satirlar[0]
+            if onceki.status is AccountingPeriodStatus.open:
+                assert onceki.closed_at is None and onceki.closed_by_id is None, (
+                    "geri açılan dönem eski kapatma damgasını taşıyor — mali iz YALAN SÖYLER"
+                )
+            else:
+                assert onceki.closed_at is not None and onceki.closed_by_id is not None
     finally:
         await _guvenli_temizlik(kurulum, *gorevler)

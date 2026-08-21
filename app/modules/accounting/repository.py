@@ -428,6 +428,32 @@ async def has_draft_entries(session: AsyncSession, year: int, month: int) -> boo
     return bool((await session.execute(stmt)).scalar_one())
 
 
+async def get_period(session: AsyncSession, year: int, month: int) -> AccountingPeriod | None:
+    """Dönem satırını **KİLİTSİZ** okur; satır YOKSA `None` — SIRA-B'nin okuması.
+
+    🔴 `lock_period`ten kasıtlı olarak AYRIDIR ve onun yerine geçmez:
+
+    * `lock_period` satırı **DOĞURUR** (UPSERT). Kronolojik sıra denetimi bunu
+      yapamaz — K2'nin tamamı "kaydı olmayan ay HİÇ VAR OLMAMIŞTIR" üzerine
+      kuruludur; denetim önceki ayı doğursaydı bir sonraki kapanış onu "açık"
+      bulur ve sistem kendi kuyruğunu yerdi.
+    * `FOR UPDATE` de ALINMAZ: burada bir eşik/sayaç yarışı yoktur, okunan şey
+      komşu dönemin DURUMUDUR ve o durumu değiştiren her yol (`close`/`reopen`)
+      kendi satırını zaten kilitler. Kilit alınsaydı `close` iki dönem satırını
+      birden tutar ve modül docstring'indeki SABİT kilit sırasına yeni bir
+      kenar eklenirdi.
+
+    `populate_existing` ŞARTTIR: aynı transaction'da daha önce yüklenmiş bayat
+    bir nesne kimlik haritasından geri gelirdi (`invoicing.get_invoice` dersi).
+    """
+    stmt = (
+        select(AccountingPeriod)
+        .where(AccountingPeriod.year == year, AccountingPeriod.month == month)
+        .execution_options(populate_existing=True)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
 def _period_filtered(stmt: Select, *, year: int | None) -> Select:
     """Dönem listesinin TEK süzgeci — liste ve sayım aynı yardımcıdan geçer
     (`_entry_filtered` deseni). Kopya açılsaydı `total` ile tablo ayrışırdı."""

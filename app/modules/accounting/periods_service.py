@@ -82,6 +82,7 @@ __all__ = [
     "list_periods",
     "lock_period",
     "period_of",
+    "previous_period",
     "reopen_period",
 ]
 
@@ -98,6 +99,16 @@ def period_of(gun: date) -> Period:
     gerçekte durduğu dönemden BAŞKA bir dönemi denetlerdi.
     """
     return (gun.year, gun.month)
+
+
+def previous_period(year: int, month: int) -> Period:
+    """🔴 K1 — TAKVİM olarak bir önceki ay; Ocak'ın öncesi ÖNCEKİ YILIN ARALIĞI.
+
+    `(year, month - 1)` diye yazılsaydı Ocak için `(year, 0)` üretirdi; öyle bir
+    dönem hiçbir zaman kaydedilmediği için sıra denetimi her 1 Ocak'ta SESSİZCE
+    geçer ve Aralık sonsuza dek açık kalabilirdi. Kural yıl sınırında kopmaz.
+    """
+    return (year - 1, 12) if month == 1 else (year, month - 1)
 
 
 async def lock_period(session: AsyncSession, year: int, month: int) -> AccountingPeriod:
@@ -192,8 +203,50 @@ async def close_period(
         1. KİLİT   — `lock_period` (UPSERT + `FOR UPDATE`), TÜM denetimlerden ÖNCE
         2. DURUM   — zaten `closed` ise **409**
         3. TASLAK  — dönemde `draft` fiş varsa **409**
-        4. DAMGA   — `status` + `closed_at` + `closed_by_id` BİRLİKTE
-        5. REFRESH — `updated_at` sunucu damgasıdır
+        4. SIRA    — 🔴 SIRA-B: önceki dönem KAYITLI ve `open` ise **409**
+        5. DAMGA   — `status` + `closed_at` + `closed_by_id` BİRLİKTE
+        6. REFRESH — `updated_at` sunucu damgasıdır
+
+    ## 🔴 4. adım — KRONOLOJİK SIRA (SIRA-B, kullanıcı kararı)
+
+    Kapanış defterin bir noktasına "buraya kadar kesin" der. Temmuz açıkken
+    Ağustos kapatılabilseydi bu cümle YALAN olurdu: Ağustos donmuşken Temmuz'a
+    fiş girilmeye devam eder ve mizan/bilanço hangi aya kadar kesin olduğunu
+    söyleyemezdi. Bu yüzden kapanış eskiden yeniye YÜRÜR.
+
+    **Önceki dönem TAKVİM ayıdır** (`previous_period`, K1) — yıl sınırında
+    kopmaz.
+
+    **Kaydı olmayan önceki ay ENGEL DEĞİLDİR** (K2). `accounting_periods`
+    satırının doğduğu TEK yer `lock_period`tir; o da yalnız bir yazma ya da
+    kapatma isteğiyle koşar. Yani "satır yok" = *o ayda hiç iş olmamış*, "açık"
+    DEĞİL. Engel sayılsaydı sistemin İLK kapanışı hiçbir zaman yapılamazdı:
+    her ayın öncesinde sonsuza kadar kayıtsız aylar vardır. Doğal sonucu K3'tür
+    — sistemdeki EN ESKİ dönem her zaman kapatılabilir.
+
+    Denetim önceki dönemi **KİLİTLEMEZ** (`repository.get_period`, `FOR UPDATE`
+    yok): burada bir eşik/sayaç yarışı yoktur — okunan şey komşu satırın
+    DURUMUDUR ve o durumu yazan iki yol (`close`/`reopen`) kendi satırını zaten
+    kilitler.
+
+    🔴 **İki eşzamanlı kapatma ÖLÇÜLDÜ** (`test_mu2_periods_lock.py`, test 4):
+    Temmuz + Ağustos aynı anda kapatılmak istendiğinde sonuç deterministik
+    olarak *"Temmuz kapandı, Ağustos 409"*tur — Ağustos'u kapatan işlem,
+    Temmuz'un henüz commit edilmemiş damgasını READ COMMITTED altında GÖREMEZ
+    ve Temmuz'u `open` okur. Yani kilitsiz okuma MUHAFAZAKÂR yönde yanılır.
+    Temmuz KAYITSIZ olsaydı ikisi de geçerdi, ki o da kronolojik olarak
+    GEÇERLİ bir son durumdur ("ikisi de kapalı").
+
+    Korunan şey bir eşik değil bir SON DURUM invaryantıdır: *"kapalı bir
+    dönemin takvim öncesi, KAYITLI ve `open` olamaz"*. İki `close` bunu
+    bozamaz. Bozan tek desen eşzamanlı `reopen(AY-1)` + `close(AY)`tir
+    (test 5) — ve o, K5'in KENDİSİDİR: aynı son duruma sırayla da ulaşılır ve
+    bu MEŞRUDUR. Kilidi genişletmek (önceki dönemi de kilitlemek) SABİT kilit
+    sırasına yeni bir kenar ekler ve hiçbir invaryant KAZANDIRMAZ.
+
+    🔴 Sıra denetimi taslak denetiminden SONRA koşar: iki engel birden varken
+    kullanıcı ÖNCE kendi dönemindeki eksiği duyar (daha yakın iş), sonra
+    komşusunun durumunu.
 
     **Kilit 2. adımdan SONRA alınsaydı** iki eşzamanlı `close` da `open` okur,
     ikisi de damgayı yazar ve ikincisi birincinin `closed_at`ini EZERDİ; kayıt
@@ -213,6 +266,10 @@ async def close_period(
         raise ConflictError(guards.PERIOD_ALREADY_CLOSED)
     if await repository.has_draft_entries(session, year, month):
         raise ConflictError(guards.PERIOD_HAS_DRAFT_ENTRIES)
+    onceki_yil, onceki_ay = previous_period(year, month)
+    onceki = await repository.get_period(session, onceki_yil, onceki_ay)
+    if onceki is not None and onceki.status is AccountingPeriodStatus.open:
+        raise ConflictError(guards.period_previous_open(onceki_yil, onceki_ay))
 
     period.status = AccountingPeriodStatus.closed
     period.closed_at = datetime.now(UTC)
@@ -235,6 +292,14 @@ async def reopen_period(
     🔴 Damga SÖKÜLMEK ZORUNDADIR: `ck_accounting_periods_closed_stamp`in ters
     yönü `open` bir dönemde damganın NULL olmasını şart koşar. Bırakılsaydı
     yeniden açılmış dönem eski kapatma damgasını taşır ve mali iz YALAN SÖYLERDİ.
+
+    🔴 **SIRA-B: kronolojik sıra kuralı BURAYA GİRMEZ** (K5). `close` eskiden
+    yeniye yürür; geri açma bunun simetriği DEĞİLDİR. "Ağustos kapalıyken
+    Temmuz'u geri aç" tam olarak meşru düzeltme yoludur: Temmuz'da yanlış bir
+    fiş bulunduğunda düzeltilecek yer Temmuz'dur. Buraya "önce sonrakini aç"
+    kuralı konsaydı yönetici, tek bir ayı düzeltmek için kapanmış TÜM sonraki
+    ayları geri açmak zorunda kalır — mali izi düzeltme adına daha da çok geri
+    sarardı. Uç zaten `admin`dedir; kapı YETKİDEDİR, sırada değil.
 
     `actor` YAZILMAZ ama parametredir: "kim açtı" sorusunun yeri denetim
     günlüğüdür (B5) — tabloda `reopened_by_id` kolonu AÇILMADI, çünkü üçüncü bir

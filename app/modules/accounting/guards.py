@@ -41,6 +41,7 @@ __all__ = [
     "PERIOD_CLOSED",
     "PERIOD_HAS_DRAFT_ENTRIES",
     "PERIOD_MOVED",
+    "PERIOD_PREVIOUS_OPEN",
     "PERMISSION_MODULE",
     "REVERSAL_NOT_REVERSIBLE",
     "REVERSAL_PREFIX",
@@ -182,3 +183,25 @@ PERIOD_HAS_DRAFT_ENTRIES = "Bu dönemde taslak fiş var; dönem kapatılamaz"
 # olur; buna rağmen fiş başka bir döneme kaymışsa elimizdeki kilit YANLIŞ
 # satırdadır ve karar veremeyiz. Kullanıcı isteği yineler.
 PERIOD_MOVED = "Fişin dönemi değişti; lütfen tekrar deneyin"
+
+# 409 — SIRA-B: kapanışın ÜÇÜNCÜ ön koşulu, KRONOLOJİK SIRA. `PERIOD_ALREADY_CLOSED`
+# ve `PERIOD_HAS_DRAFT_ENTRIES` ile AYNI SINIFTIR (409, `ConflictError`): kullanıcının
+# yetkisi vardır, biçimi de doğrudur — engelleyen şey DEFTERİN DURUMUDUR. 422 olsaydı
+# istemci onu bir alan hatası sanır ve forma iliştirecek bir alan arardı.
+#
+# 🔴 Metin ENGELLEYEN DÖNEMİ ADIYLA söyler. Genel bir "dönemler sırayla kapatılır"
+# cümlesi, kullanıcıyı on iki dönemlik listede hangi ayın açık kaldığını aramaya
+# zorlardı; engel her zaman TEK ve BİLİNEN bir aydır, söylememek için sebep yok.
+PERIOD_PREVIOUS_OPEN = (
+    "Önceki dönem ({yil}/{ay:02d}) hâlâ açık; dönemler kronolojik sırayla kapatılır"
+)
+
+
+def period_previous_open(year: int, month: int) -> str:
+    """`PERIOD_PREVIOUS_OPEN`u ENGELLEYEN dönemle doldurur — TEK kurulum noktası.
+
+    Şablon iki yerde (servis + test) ayrı ayrı `format` edilseydi biri gün gelip
+    `{ay}`ı sıfır dolgusuz basar ve aynı kuralın iki farklı yüzü doğardı; bu
+    dosyanın modül docstring'indeki "METİNLER TEK kopya" kuralının aynısıdır.
+    """
+    return PERIOD_PREVIOUS_OPEN.format(yil=year, ay=month)
