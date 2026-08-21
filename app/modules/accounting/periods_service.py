@@ -120,6 +120,38 @@ async def lock_period(session: AsyncSession, year: int, month: int) -> Accountin
 
     `session.get(..., with_for_update=True)` KULLANILMAZ: kilitlenecek satır
     birincil anahtarla değil `(year, month)` ile bulunur.
+
+    ## 🔴 `ON CONFLICT DO NOTHING` GERÇEKTE NE YAPAR (TB9 ölçümü, 2026-08-21)
+
+    Yaygın kanı, `DO NOTHING`in çatışan satırı *"ne kilitlediği ne döndürdüğü"*,
+    dolayısıyla kaybedenin BOŞ ELLE dönüp 2. ifadede `NoResultFound` (= ayrımsız
+    **500**) yiyebileceğidir. **Ölçüldü — öyle davranmıyor:**
+
+      * Çatışan tuple HENÜZ AÇIKTA ise 1. ifade `Lock/transactionid` üzerinde
+        **BEKLER**; kilitsiz geçip gitmez.
+      * Kazanan ABORT ederse ifade kendiliğinden INSERT yoluna döner — kaybeden
+        satırı KENDİSİ yazar.
+      * Kazanan COMMIT ederse 2. ifadedeki `SELECT … FOR UPDATE` satırı **BULUR**.
+
+    Yani *"kaybeden boş eller döner"* hâli HİÇ DOĞMAZ; burada bir yeniden-deneme
+    dalı GEREKMEZ ve `DO UPDATE`e geçmek için bir sebep de YOKTUR. Ölçümün
+    ayrıntısı (koşum biçimi, tanık, sayılar)
+    `tests/modules/accounting/test_tb9_periods_delete_path.py` modül
+    docstring'indedir; buraya KOPYALANMAZ — iki kopya bir gün AYRIŞIR.
+
+    ⚠️ Ölçüm **yerel PG 18.4** üzerinde yapıldı; **canlının Postgres sürümü
+    AYRICA DOĞRULANMADI**.
+
+    ## 🔴 İki ifade arasındaki TEK gerçek açık: DELETE
+
+    Satır iki ifade arasında **silinirse** `scalar_one()` hiçbir şey bulamaz.
+    Bu, `accounting_periods` için bugün ERİŞİLEMEZ bir hâldir: DELETE metodlu uç
+    YOK · `app/` altında dönem satırını silen çağrı YOK · bu tabloya bakan
+    yabancı anahtar (dolayısıyla `ON DELETE CASCADE`) YOK.
+
+    🔴 Bu güvenlik bir KOD ÖZELLİĞİ değil bir **YOKLUK**tur ve yokluklar sessizce
+    dolar. Üçünü de yukarıdaki test dosyası AYRI AYRI bekçiler; oradaki bir
+    kırmızı, bu fonksiyonun bir ÖN KOŞULUNUN düştüğü anlamına gelir.
     """
     await session.execute(
         pg_insert(AccountingPeriod)
