@@ -22,8 +22,9 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import select
 
-from app.modules.payroll import service, summary
-from app.modules.payroll.models import PayrollLine
+from app.modules.payroll import payable, service, summary
+from app.modules.payroll.models import PayrollLine, PayrollLineStatus
+from tests.modules.payroll.conftest import satir_of
 
 pytestmark = pytest.mark.asyncio
 
@@ -149,3 +150,62 @@ async def test_orani_kaybolan_satirin_maliyeti_UYDURULMAZ(db_session, donem, ora
     assert ozet.unknown_cost_count == 4
     assert ozet.total_employer_cost == Decimal("0.00")
     assert ozet.sgk_employer_total == Decimal("0.00")
+
+
+# --- TB8: SÜRÜKLENME BEKÇİSİ ----------------------------------------------
+
+
+async def test_SQL_ve_PYTHON_odenebilir_toplami_AYRISMAZ(db_session, donem, dort_tip):
+    """🔴 İKİ GERÇEK KAYNAK BEKÇİSİ — `payable.py` (SQL) ile `summary.py` (Python).
+
+    Ödenebilir net toplam artık İKİ yerden okunuyor ve ikisi de para basıyor:
+
+    * `summary.build_period_summary(...).net_total` → bordro ekranının BY 69
+      kartı (satırlar bellekte, Python'da toplanır);
+    * `payable.payable_net_totals_by_period()` → hazine kartının
+      `upcoming-payments` satırı (dönem sayısından bağımsız TEK gruplu sorgu;
+      dönem başına satır çekmek `test_N_ARTI_1_YAPMAZ`ın ölçtüğü N+1'dir).
+
+    Kural TEK cümledir: **AYNI veri üzerinde AYNI sayı.** Ayrışırlarsa hiçbir
+    kolon farkı ele vermez (toplam saklanmaz, ikisi de türevdir) ve kullanıcı
+    aynı dönem için hazinede başka, bordroda başka bir tutar görür. Küme zaten
+    `PAYABLE_LINE_STATUSES`ten İTHAL edilir; bu bekçi ithalin sürdüğünü ve iki
+    yolun aynı satırları saydığını ÖLÇER.
+
+    Veri gerçektir (`compute_period` üretir) ve BEŞ satır durumunun HEPSİNİ
+    taşır: `compute` `pending`/`uncomputed`/`excluded` üretir, kalan ikisi
+    (`approved`/`paid`) elle çakılır. Dört durum ölçülseydi `paid` satırı SQL
+    tarafında unutulan bir uygulama bu bekçiden geçerdi.
+
+    Beklenen toplam AÇIKÇA yazılır: yalnız eşitlik iddia edilseydi iki yol da
+    0,00 dönerek testi geçerdi (sahte yeşil).
+    """
+    await service.compute_period(db_session, donem.id)
+    satirlar = list(
+        (
+            await db_session.execute(
+                select(PayrollLine).where(PayrollLine.payroll_period_id == donem.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    satir_of(satirlar, dort_tip["sirket"].id).status = PayrollLineStatus.approved
+    satir_of(satirlar, dort_tip["serbest"].id).status = PayrollLineStatus.paid
+    await db_session.flush()
+    assert {satir.status for satir in satirlar} == set(PayrollLineStatus)
+
+    odenebilir = payable.payable_net_totals_by_period()
+    sql_toplam = (
+        await db_session.execute(
+            select(odenebilir.c.payable_net).where(odenebilir.c.payroll_period_id == donem.id)
+        )
+    ).scalar_one()
+
+    rates = await service.rates_by_source(db_session, donem.year)
+    python_toplam = summary.build_period_summary(satirlar, rates).net_total
+
+    # şirket 7.650,00 (approved) + serbest 10.000,00 (paid) + stajyer 7.500,00 (pending)
+    # — taşeron `excluded` ve ücretsiz `uncomputed` İKİ YOLDA DA dışarıdadır.
+    assert python_toplam == Decimal("25150.00")
+    assert Decimal(sql_toplam) == python_toplam

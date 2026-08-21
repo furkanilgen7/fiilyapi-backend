@@ -1347,10 +1347,15 @@ def chart_account_deleted(code: str, name: str) -> str:
 
 # --- MU-1 T3b: yevmiye fişi ---
 #
-# 🔴 Kimlik TARİH + AÇIKLAMADIR. Fiş NUMARASI YOKTUR (spec §3b): ne HP'de ne
-# E8'de fiş numarası sütunu çizilmiştir, `numbering.py` AÇILMADI. Kimlik teknik
-# olarak `id`dir ama denetim tablosunda kimse UUID okumaz — tarih ile açıklama
-# birlikte satırı ayırt eder.
+# 🔴 Kimlik TARİH + AÇIKLAMADIR — burada, denetim metninde. Fiş artık bir
+# `entry_no`ya SAHİPTİR (FIS-NO, kullanıcı kararı 2026-08-21, bkz.
+# `accounting/models.JournalEntry` sınıf docstring'i); ama bu dilim denetim
+# metnini DEĞİŞTİRMEDİ — kapsam bilinçli olarak `entry_no` + `numbering.py`
+# ile SINIRLIDIR. Yani `journal_entry_label` hâlâ tarih + açıklama kurar ve
+# numarayı TAŞIMAZ; bu bir unutma değil, açık bir borçtur (numarayı denetim
+# metnine eklemek FIS-NO'nun kapsamı dışında ayrı bir karar gerektirir).
+# Kimlik teknik olarak `id`dir ama denetim tablosunda kimse UUID okumaz —
+# tarih ile açıklama birlikte satırı ayırt eder.
 #
 # 🔴 **TUTAR METNE GİRMEZ** (HZ-1 kanonu, `bank_account_*`/`chart_account_*` ile
 # aynı gerekçe): fişin toplamı bir satır düzeltmesiyle değişir ve günlüğe donmuş

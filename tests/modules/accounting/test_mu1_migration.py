@@ -363,9 +363,19 @@ def test_chart_account_has_no_parent_or_derived_columns():
 
 
 def test_journal_entry_columns_match_spec():
+    """🔑 `entry_no` KUMEYE EKLENDI (FIS-NO, kullanici karari 2026-08-21).
+
+    MU-1 kolonu "hicbir mockup sutununda fis numarasi yok" gerekcesiyle
+    acmamisti; dayanak iki mockup'ta FIILEN cizili oldugu icin karar GERI
+    ALINDI (`models.JournalEntry` docstring'i). Emsal MT-1/KK-1'dir: orada da
+    `is_contra` bu tam sayima BOYLE eklenmisti.
+
+    Sayim BILEREK tamdir: `entry_no` DISINDA yeni bir kolon sessizce eklenemez.
+    """
     columns = JournalEntry.__table__.columns
     assert set(columns.keys()) == {
         "id",
+        "entry_no",
         "entry_date",
         "period_year",
         "period_month",
@@ -396,14 +406,19 @@ def test_journal_entry_columns_match_spec():
     assert not columns["created_by_id"].nullable
 
 
-def test_journal_entry_has_no_entry_no_and_no_scope_columns():
-    """🔴 `entry_no` AÇILMAZ: ne HP'de ne E8'de fiş numarası sütunu çizilidir
-    (FAT-1'de vardı çünkü FY tablosunda çiziliydi). Kimlik `id`dir,
-    `numbering.py` YOKTUR. Proje/şantiye alanı da yoktur — E8:28-30 topbar'daki
-    `Güneşkent Konut` tabloda karşılığı olmayan bir bağlamdır."""
+def test_journal_entry_has_no_scope_columns():
+    """🔑 `entry_no` YASAK KUMEDEN CIKARILDI (FIS-NO, kullanici karari).
+
+    MU-1 bu testi "`entry_no` AÇILMAZ, `numbering.py` YOKTUR" iddiasıyla
+    yazmıştı; karar geri alındı ve kolon `test_journal_entry_columns_match_spec`
+    tam sayımında bekçileniyor. **İptal `entry_no` ile SINIRLIDIR** — testin
+    asıl yükü olan KAPSAM (IDOR) iddiası aynen durur: proje/şantiye alanı hâlâ
+    yoktur (E8:28-30 topbar'daki `Güneşkent Konut` tabloda karşılığı olmayan
+    bir bağlamdır) ve `entry_number`/`document_no` gibi İKİNCİ bir numara
+    kolonu da açılmaz — numara TEKTİR ve adı `entry_no`dur.
+    """
     columns = set(JournalEntry.__table__.columns.keys())
     for yasak in (
-        "entry_no",
         "entry_number",
         "document_no",
         "entry_type",

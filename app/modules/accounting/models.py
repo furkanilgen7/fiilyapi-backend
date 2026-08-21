@@ -73,8 +73,7 @@ YOKTUR; maliyet merkezi/proje kirilimi MU-3'un isidir.
 
 ACILMAYANLAR (spec §9, kasitli — "eksik" diye geri acilmaz): banka
 mutabakati · e-Fatura · fatura/hazine/bordro → otomatik fis (MU-3) ·
-`entry_no` + `numbering.py` (hicbir mockup sutununda fis numarasi yok; kimlik
-`id`dir) · `parent_id` FK · sinif KAYDI · Excel/disa aktarim · para birimi/kur
+`parent_id` FK · sinif KAYDI · Excel/disa aktarim · para birimi/kur
 (`₺` metne gomulu sabit) · fise belge eki · toplu ice aktarim / tekduzen hesap
 plani seed'i · `draft` icin onay akisi.
 
@@ -85,7 +84,11 @@ geri alindigi gorunur olsun): mizan + KDV beyani + donem kapanisi /
 MU-1 `257`in parantezini bir SUNUM kurali sayip kolonu acmamisti; MT-1'de
 sunucunun `Maddi Duran Varliklar (net)` kalemini FIILEN netlemesi gerektigi
 icin karar geri alindi · 🔑 **`ChartAccountType.equity` (ayni karar)** —
-Bilanco `III. OZKAYNAKLAR` bolumu dort uyeli kumeyle ifade edilemiyordu.
+Bilanco `III. OZKAYNAKLAR` bolumu dort uyeli kumeyle ifade edilemiyordu ·
+🔑 **`entry_no` + `numbering.py` (FIS-NO, kullanici karari 2026-08-21)** —
+MU-1 "hicbir mockup sutununda fis numarasi yok, kimlik `id`dir" gerekcesiyle
+acmamisti; dayanak iki mockup'ta FIILEN cizili oldugu icin karar geri alindi
+(bkz. `JournalEntry` sinif docstring'i).
 
 Serbest metin tavani: `description` kolonu `Text`tir (DB'de sinirsiz); 2000
 karakter tavani TB4/B4 standardi geregi SEMA katmanindadir
@@ -399,9 +402,37 @@ class ChartAccount(Base):
 class JournalEntry(Base):
     """Yevmiye fisi basligi.
 
-    🔴 `entry_no` (fis numarasi) YOKTUR: ne HP'de ne E8'de fis numarasi sutunu
-    cizilmistir. FAT-1'de vardi cunku FY tablosunda cizilliydi. Kimlik `id`dir,
-    `numbering.py` ACILMAZ.
+    🔑 **`entry_no` VARDIR** (FIS-NO, kullanici karari 2026-08-21). MU-1 bu
+    kolonu "hicbir mockup sutununda fis numarasi yok" gerekcesiyle ACMAMISTI;
+    karar GERI ALINDI cunku dayanak iki mockup'ta FIILEN cizilidir:
+      * `projedesign/Form - Yevmiye Kaydi.dc.html` — **Fis No** alani `disabled`
+        ve "Otomatik" / "Kayitta uretilir" der: numarayi SUNUCU verir, istemci
+        GONDEREMEZ (sema `extra="forbid"` ile bunu 422'ye cevirir).
+      * `projedesign/Muhasebe - Donem Kapanisi.dc.html` — TASLAK fisler
+        `YEV-2026-0214` / `0216` / `0218` ile listelenir. Tek basina UC seyi
+        birden kanitlar: bicim `YEV-{yil}-{sira}`dir, numara `draft`ta ZATEN
+        vardir ve sira BOSLUKLU ilerler (214 -> 216 -> 218).
+
+    Uretim `accounting/numbering.py`dedir (bu dilimde ACILDI). Kullanicinin
+    bagladigi uc karar kolona gomuludur:
+      1. Sira YIL bazlidir — yil `period_year` KOLONUNDAN okunur (tek kaynak;
+         `ck_journal_entries_period_matches_date` onu `entry_date`in yiliyla
+         zaten esitler) — ve her 1 Ocak'ta 1'e doner. Sayac SIRKET GENELINDE
+         tektir: santiye/proje kirilimi YOKTUR (bu tabloda `project_id` de
+         yoktur). Dort hane bir TAVAN degil EN AZ genisliktir; 9999'dan sonra
+         numara BUDANMAZ, bes haneye UZAR.
+      2. BOSLUK OLABILIR: fis silinince numarasi bosta kalir, sayac GERI
+         ALINMAZ ve numaralar YENIDEN DIZILMEZ.
+      3. Numara `draft` ACILIRKEN verilir ve `posted` olurken DEGISMEZ. `PATCH`
+         `entry_date`i sonraki YILA tasisa bile numara KAYMAZ: bir kez verilir
+         ve fisin kimligidir — kaydigi anda kullanicinin elindeki kagit yanlis
+         fisi gosterirdi.
+
+    🔴 UNIQUE **kolonun genelindedir**, `(period_year, entry_no)` ciftinde
+    DEGIL: yil ZATEN numaranin icindedir, yani kolon geneli tekillik dogru
+    olcudur. Cift kisit hem ayni seyi iki kez soyler hem de YANLIS olurdu —
+    `period_year` bir `PATCH` ile degisir ama numara degismez, dolayisiyla cift
+    kisit fisin kimligini KAYAN bir alana baglardi.
 
     `description` E8:113'un UST satiridir (islemin ADI, bir NOT degil);
     `detail_note` ALT satiridir ve bir FK DEGILDIR: alti ornekten biri
@@ -425,6 +456,8 @@ class JournalEntry(Base):
     __table_args__ = (
         # Bir fisin en fazla BIR stornosu olur (K2).
         UniqueConstraint("reversal_of_id", name="uq_journal_entries_reversal_of"),
+        # 🔑 FIS-NO — numara SIRKET GENELINDE tekildir (yil numaranin icinde).
+        UniqueConstraint("entry_no", name="uq_journal_entries_entry_no"),
         CheckConstraint(PERIOD_MATCHES_DATE_CHECK, name="ck_journal_entries_period_matches_date"),
         # 🔴 K1'in baslik ayagi: DENGESIZ FIS DEFTERE GIREMEZ. `draft` dengesiz
         # BIRAKILABILIR — kapi kayitlastirma aninda yeniden kosar.
@@ -440,6 +473,18 @@ class JournalEntry(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # 🔑 FIS-NO — `YEV-2026-0214`. SUNUCU URETIR (`numbering.generate_entry_no`).
+    #
+    # 🔴 NOT NULL: numarasiz fis diye bir sey YOKTUR. Nullable olsaydi numara
+    # uretmeyi UNUTAN bir yazma yolu satiri sessizce NULL birakir ve kusur ancak
+    # kullanici fisi telefonda soylemeye calistiginda gorunurdu; UNIQUE de
+    # PG'de coklu NULL'a izin verdigi icin kisit onu HIC yakalamazdi.
+    #
+    # `String(20)`: `request_no`/`order_no` deseni. `YEV-2026-0001` 13
+    # karakterdir; bant, sirasi ALTI haneye uzamis bir yila kadar yeter.
+    # `server_default` YOKTUR ve olmamalidir: uydurulmus bir varsayilan
+    # (`''` gibi) UNIQUE'e carpardi — numara TEK yoldan, ureticiden gelir.
+    entry_no: Mapped[str] = mapped_column(String(20), nullable=False)
     # E8:101 `Tarih`. `Mapped[date]`tir — `timestamptz` DEGIL (K6).
     entry_date: Mapped[date] = mapped_column(Date, nullable=False)
     period_year: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -525,4 +570,62 @@ class JournalLine(Base):
     )
     credit: Mapped[Decimal] = mapped_column(
         Numeric(18, 2), nullable=False, default=0, server_default=text("0")
+    )
+
+
+class JournalEntryCounter(Base):
+    """FIS-NO — yil bazli yevmiye fis numarasi sayaci (`YEV-{yil}-{sira}`).
+
+    🔴 **NEDEN UCUNCU BIR MEKANIZMA — `procurement`/`invoicing` deseni BURADA
+    YANLIS OLURDU.** Depoda zaten iki numara ureticisi var ve ikisi de
+    `pg_advisory_xact_lock(anahtar, yil)` + `max(cast(sonek AS int)) + 1`
+    kullanir; ikisinin de docstring'i `SELECT … FOR UPDATE`yi ACIKCA REDDEDER
+    ("kilitlenecek SATIR henuz yoktur"). Bu tablo o kanondan BILEREK ayrilir ve
+    bu bir DRIFT DEGILDIR:
+
+    `max + 1` numarayi HAYATTA KALAN SATIRLARDAN yeniden HESAPLAR. En buyuk
+    numarali fis silinince numarasi YENIDEN KULLANILIR — bu, kullanicinin
+    2. kararini ("sayac GERI ALINMAZ") dogrudan cigner ve mali izi bozar:
+    silinen fisi kagida basmis bir kullanici, ayni numarayi tasiyan BASKA bir
+    fisle karsilasirdi. Yevmiye fisinde bu bir KENAR DURUM DEGILDIR: `draft`
+    SILINEBILIR ve numara `draft` ACILIRKEN verilir, yani "kullanici taslak
+    acti, sonra vazgecti" OLAGAN yoldur. `procurement`/`invoicing`de ayni fark
+    ISIRMAZ cunku oradaki numaralar ayni bicimde silinmez.
+
+    Sayac tablosu MONOTONDUR ve bunu yapisal olarak atlatir: fislerden BAGIMSIZ
+    yasar, silmeden hic etkilenmez ve yalnizca ileri gider. Bosluk bir kusur
+    degil, kararin ta kendisidir. Satir VAR OLDUGU icin `SELECT … FOR UPDATE`
+    de burada ise YARAR — reddedilme gerekcesi (satirin yoklugu) UPSERT-SONRA-
+    KILITLE ile ortadan kalkar (MU-2 kanonu, `numbering.py`de uygulanir).
+
+    Ayri bir Postgres `SEQUENCE` de secilmedi: yil basinda sifirlanmasi ELLE
+    mudahale ister ve `nextval` transaction disidir — rollback'te bosluk birakir
+    ama daha onemlisi kilit davranisi test edilebilir DEGILDIR.
+
+    `year` BIRINCIL ANAHTARDIR: yil basina TEK satir. Ayri bir `id` + UNIQUE
+    acilsaydi "2026'nin sayaci kac?" sorusunun IKI cevabi olabilirdi.
+
+    `next_no` = BIR SONRAKI dagitilacak siradir, kullanilan SON numara DEGIL.
+    "Son kullanilan" saklansaydi yilin ilk fisi 0 ile ifade edilirdi ve 0 hem
+    "hic dagitilmadi" hem de gecerli bir sira gibi okunabilirdi; "sonraki" her
+    zaman DOGRUDAN kullanilabilir bir degerdir ve ureticide `+1` dali kalmaz.
+
+    KAPSAM: santiye/proje kirilimi YOKTUR — sayac SIRKET GENELINDE tektir
+    (kullanici karari) ve `journal_entries`te zaten `project_id` de yoktur.
+    Zaman damgasi kolonu da ACILMAZ: bu bir MALI KAYIT degil bir sayactir,
+    "kim ne zaman numara aldi" sorusunun yaniti fisin kendisidir.
+    """
+
+    __tablename__ = "journal_entry_counters"
+    __table_args__ = (
+        # Elle bir `UPDATE … SET next_no = 0` sayaci GERI SARARDI; 1'in altina
+        # inmek "sayac geri alinmaz" kararinin tek fiili ihlal yoludur.
+        CheckConstraint("next_no >= 1", name="ck_journal_entry_counters_next_no_positive"),
+    )
+
+    # `autoincrement=False`: `Integer` + `primary_key` ikilisi SQLAlchemy'de
+    # varsayilan olarak SERIAL'e ayartir; yil bir dizi degeri DEGIL, veridir.
+    year: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    next_no: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default=text("1")
     )

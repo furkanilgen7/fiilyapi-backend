@@ -68,7 +68,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import ConflictError
 from app.core.security import hash_password
-from app.modules.accounting import periods_service, service, state_service
+from app.modules.accounting import numbering, periods_service, service, state_service
 from app.modules.accounting.models import (
     AccountingPeriod,
     AccountingPeriodStatus,
@@ -189,6 +189,8 @@ async def _kur(
         entry_id: uuid.UUID | None = None
         if taslak_fis:
             entry = JournalEntry(
+                # 🔑 FIS-NO — `entry_no` NOT NULL (bkz. `conftest.fis_fabrikasi`).
+                entry_no=await numbering.generate_entry_no(session, year=YIL),
                 entry_date=TARIH,
                 period_year=YIL,
                 period_month=AY,
