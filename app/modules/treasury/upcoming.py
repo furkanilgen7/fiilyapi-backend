@@ -80,12 +80,17 @@ from decimal import Decimal
 from sqlalchemy import Date, Integer, cast, exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.access import AccessLevel, satisfies
 from app.core.config import settings
 from app.core.timezone import today
 from app.modules.contracts.models import SubcontractorContract
 from app.modules.invoicing import repository as invoicing_repository
 from app.modules.invoicing.models import Invoice, InvoiceDirection, InvoiceStatus
+from app.modules.payroll import payable
+from app.modules.payroll.guards import PERMISSION_MODULE as PAYROLL_PERMISSION_MODULE
+from app.modules.payroll.models import PayrollPeriod, PayrollPeriodStatus
 from app.modules.projects.service import visible_projects
+from app.modules.roles.repository import get_permission
 from app.modules.subcontractor_progress_payments import amounts
 from app.modules.subcontractor_progress_payments.models import (
     SubcontractorPaymentStatus,
@@ -237,13 +242,108 @@ async def _progress_payment_rows(
     ]
 
 
+async def _payroll_visible(session: AsyncSession, actor: User) -> bool:
+    """Aktörün `payroll` modülünde en az `view` seviyesi var mı — TEK sorgu.
+
+    🔴 Bu ucun kapsam süzgeci burada İKİYE AYRILIR ve sebebi ölçülmüştür:
+    `PayrollPeriod`da `project_id` KOLONU YOKTUR. Dönem şirket genelindedir,
+    yani fatura/hakediş satırlarının proje süzgeci bordroya UYGULANAMAZ ve
+    bordronun görünürlük tanımı saf MODÜL iznidir.
+
+    Süzgeç yazılmasaydı matris tam burada ayrışırdı:
+
+        `"treasury": [_A, _F, _N, _N, _N, _F, _V, _N]`
+        `"payroll":  [_A, _F, _N, _N, _F, _F, _N, _N]`
+
+    `project_manager` bu ucu OKUR (`treasury=_V`) ama bordroya HİÇ erişimi
+    yoktur (`payroll=_N`) — süzgeç düşerse şirketin AYLIK TOPLAM PERSONEL
+    MALİYETİNİ okurdu.
+
+    İkinci bir görünürlük tanımı YAZILMAZ: seviye `roles/repository`den okunur
+    ve `core/access.satisfies` ile karşılaştırılır — `site_diary`, `sales` ve
+    `contracts` servislerindeki emsalin aynısı. Kapı YALNIZ bordroyu susturur;
+    ucun tamamına uygulansaydı (403 ya da boş liste) `treasury=_V` olan bir rol
+    çalışan iki kaynağı da kaybederdi.
+    """
+    permission = await get_permission(session, actor.role_id, PAYROLL_PERMISSION_MODULE)
+    level = permission.access_level if permission is not None else AccessLevel.none
+    return satisfies(level, AccessLevel.view)
+
+
+async def _payroll_rows(
+    session: AsyncSession, actor: User, ilk: date, son: date
+) -> list[UpcomingPaymentItem]:
+    """ONAYLI · vadesi pencerede · ödenebilir toplamı 0'dan büyük bordro dönemleri.
+
+    Üç süzgecin üçü de mevcut iki kaynağın kuralının kardeşidir, bordro için
+    icat edilmiş DEĞİLDİR:
+
+    * **`approved` ŞART.** `payroll/router.py` → `service.update_period` vadeyi
+      `draft`/`pending_approval`da serbestçe değiştirir ve `approved`/`paid`de
+      **409** verir; yani `payment_due_date` ancak onaydan sonra bir
+      TAAHHÜTTÜR. Onay öncesi tutar da taahhüt değildir: satırlar `uncomputed`
+      olabilir ve `compute` netleri baştan yazabilir. `paid` dönem ise DIŞARIDA
+      kalır çünkü borcu kapanmıştır (`paid` hakedişin kuralı).
+    * **NULL vade DÜŞER** (fail-closed, NULL-EŞİK kanonu). Bugün varsayılsaydı
+      vadesi hiç girilmemiş her dönem listenin en acil sırasında görünürdü —
+      vadesiz faturanın kuralıyla birebir aynı. Vade UYDURULMAZ.
+    * **Ödenebilir toplam > 0.** Faturanın `kalan > 0` süzgecinin kardeşi:
+      "₺0 · 3 gün kaldı" satırı ödenecek bir para varmış gibi görünür,
+      tıklanır, hiçbir şey bulunmaz.
+
+    Tutar bir KOLON DEĞİL TÜREVDİR ve formülü burada İKİNCİ KEZ YAZILMAZ:
+    `payroll.payable` alt sorgusu hangi satırın sayıldığını (durum kümesi +
+    `net_amount IS NOT NULL`) bordro modülünde tutar. INNER JOIN'dir — ödenebilir
+    satırı hiç olmayan dönem alt sorguda grup açmaz ve kendiliğinden düşer.
+
+    Sorgu dönem sayısından BAĞIMSIZ olarak TEKTİR (`GROUP BY` + JOIN);
+    `summary.build_period_summary`i dönem başına çağırmak N+1 olurdu.
+
+    `document_no` `"YYYY-MM"`dir: sunucu E9:117'nin "Temmuz"unu ÜRETMEZ, çeviri
+    kararı istemciye aittir. `counterparty` `None`dur — mockup bordro satırında
+    bir karşı taraf adı ÇİZMEZ.
+    """
+    if not await _payroll_visible(session, actor):
+        return []
+    odenebilir = payable.payable_net_totals_by_period()
+    stmt = (
+        select(
+            PayrollPeriod.id,
+            PayrollPeriod.year,
+            PayrollPeriod.month,
+            PayrollPeriod.payment_due_date,
+            odenebilir.c.payable_net,
+        )
+        .join(odenebilir, odenebilir.c.payroll_period_id == PayrollPeriod.id)
+        .where(
+            PayrollPeriod.status == PayrollPeriodStatus.approved,
+            PayrollPeriod.payment_due_date.is_not(None),
+            PayrollPeriod.payment_due_date >= ilk,
+            PayrollPeriod.payment_due_date <= son,
+            odenebilir.c.payable_net > 0,
+        )
+    )
+    return [
+        UpcomingPaymentItem(
+            source_type=UpcomingSourceType.payroll,
+            source_id=donem_id,
+            counterparty=None,
+            document_no=f"{yil:04d}-{ay:02d}",
+            due_date=vade,
+            days_remaining=(vade - ilk).days,
+            amount=Decimal(tutar),
+        )
+        for donem_id, yil, ay, vade, tutar in (await session.execute(stmt)).all()
+    ]
+
+
 async def build_upcoming_payments(
     session: AsyncSession, actor: User, *, days: int
 ) -> UpcomingPaymentsResponse:
-    """İki kaynağı birleştirir, VADEYE göre artan sıralar.
+    """ÜÇ kaynağı birleştirir, VADEYE göre artan sıralar.
 
-    Sıralama Python'dadır ve olmalıdır: iki ayrı `select`in birleşimi tek bir
-    `ORDER BY` ile sıralanamaz (UNION yazmak, iki farklı sütun kümesini yapay
+    Sıralama Python'dadır ve olmalıdır: ayrı `select`lerin birleşimi tek bir
+    `ORDER BY` ile sıralanamaz (UNION yazmak, üç farklı sütun kümesini yapay
     olarak aynı şekle sokmak demekti). Küme pencere ile zaten küçüktür.
 
     İkincil ölçüt `document_no`dur: aynı güne düşen iki satır her istekte aynı
@@ -255,5 +355,6 @@ async def build_upcoming_payments(
 
     satirlar = await _invoice_rows(session, project_ids, bugun, son)
     satirlar += await _progress_payment_rows(session, project_ids, bugun, son)
+    satirlar += await _payroll_rows(session, actor, bugun, son)
     satirlar.sort(key=lambda satir: (satir.due_date, satir.document_no))
     return UpcomingPaymentsResponse(items=satirlar, days=days, as_of=bugun)
