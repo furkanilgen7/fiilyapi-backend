@@ -21,8 +21,9 @@ mali kayit tabloya GIREMEZ.
     dengeleyemez (bir borc satirina `-100` yazip sahte denge kurmak imkansiz).
   * `ck_journal_lines_single_side` — `(0,0)` ve cift-dolu satir reddedilir;
     E8'in her satiri TEK TARAFLIDIR (bos taraf hep `—`, E8:114 vd.).
-  * `ck_journal_entries_posted_balanced` — DENGESIZ fis `posted` OLAMAZ; taslak
-    dengesiz BIRAKILABILIR (kayitlastirma aninda kapi yeniden kosar).
+  * `ck_journal_entries_posting_balanced` — DENGESIZ fis DEFTERE GIREMEZ
+    (`posted` + `reversed`, TB6 T2); taslak dengesiz BIRAKILABILIR
+    (kayitlastirma aninda kapi yeniden kosar).
   * `journal_entries.total_debit`/`total_credit` **NOT NULL** — nullable
     olsalardi `NULL = NULL` **NULL** uretir ve CHECK'i **GECERDI**; denge kisiti
     sessizce devre disi kalirdi.
@@ -450,7 +451,7 @@ class JournalEntry(Base):
         Enum(JournalEntryStatus, name="journal_entry_status"), nullable=False
     )
     # 🔴 NOT NULL SART: nullable olsalardi `NULL = NULL` NULL uretir ve
-    # `ck_journal_entries_posted_balanced` sessizce GECERDI.
+    # `ck_journal_entries_posting_balanced` sessizce GECERDI.
     total_debit: Mapped[Decimal] = mapped_column(
         Numeric(18, 2), nullable=False, default=0, server_default=text("0")
     )

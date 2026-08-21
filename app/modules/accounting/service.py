@@ -28,10 +28,11 @@ Toplamlar TÜREV oldukları hâlde başlıkta SAKLANIR, çünkü bir CHECK **ba�
 satırların toplamını GÖREMEZ** (`treasury/models.py` aşırı-tahsilat notunun
 aynısı) ve K1 "DB düzeyinde korunur" diyorsa toplam bir KOLON olmak zorundadır.
 Sapma penceresi kapalıdır: satırlar YALNIZ `draft`ta ve YALNIZ bu fonksiyondan
-geçerek yazılır; `posted`tan sonra satırlar değişmez (K2) ve CHECK zaten yalnız
-`posted`ta ısırır — pencere ile kısıt TAM ÖRTÜŞÜR.
+geçerek yazılır; `posted`tan sonra satırlar değişmez (K2) ve CHECK `draft`
+DIŞINDAKİ her deftere-giren durumda ısırır (`posted` + `reversed`, TB6 T2) —
+pencere ile kısıt TAM ÖRTÜŞÜR.
 
-İkinci bir yazım açılsaydı `ck_journal_entries_posted_balanced` o yolda SESSİZCE
+İkinci bir yazım açılsaydı `ck_journal_entries_posting_balanced` o yolda SESSİZCE
 devre dışı kalırdı: dengesiz satır kümesi, dengeli görünen bir başlıkla
 `posted` olabilirdi.
 

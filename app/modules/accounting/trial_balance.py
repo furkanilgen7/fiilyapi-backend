@@ -241,9 +241,10 @@ async def build_trial_balance(
         year=year,
         month=month,
         # Mockup satır 54-57 kontrol banner'ı. 🔴 SÜS DEĞİLDİR: dengesizlik
-        # KURULABİLİR — `ck_journal_entries_posted_balanced` yalnız `posted` için
-        # koşar, `reversed` bir fiş tek bacaklı olabilir ve CHECK'i geçer
-        # (bekçisi `test_DENGESIZ_defterde_is_balanced_FALSE`).
+        # KURULABİLİR — TB6 T2'den sonra BAŞLIKTAN değil SATIRLARDAN:
+        # `ck_journal_entries_posting_balanced` BAŞLIK toplamlarını bağlar,
+        # mizan ise `journal_lines`ı toplar; başlığı dengeli, satırları dengesiz
+        # bir fiş kurulabilir (bekçisi `test_DENGESIZ_defterde_is_balanced_FALSE`).
         is_balanced=totals.closing_debit == totals.closing_credit,
         rows=rows,
         totals=totals,
