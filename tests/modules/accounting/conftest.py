@@ -174,6 +174,16 @@ def fis_fabrikasi(seeded_db: AsyncSession, kullanici_id: uuid.UUID):
 
     Satırlar `(account, debit, credit)` üçlüleridir; `ck_journal_lines_single_side`
     gereği her satır TEK TARAFLIDIR.
+
+    🔴 **`header_totals` — TB6 T2'den sonra ZORUNLU oldu.** Başlık toplamları
+    normalde SATIRLARDAN türetilir, ama defterin kendisi (`balance.py`, mizan,
+    bilanço) **satırları** toplar, başlığı DEĞİL. "Dengesiz defter" probu bu
+    yüzden vardır ve tek yolu satırları dengesiz bırakmaktır — TB6 T2'den sonra
+    `posted`/`reversed` bir fişin BAŞLIĞI dengeli olmak ZORUNDADIR
+    (`ck_journal_entries_posting_balanced`). İki olgu birbirinden bağımsızdır:
+    kısıt BAŞLIĞI bağlar, defter SATIRLARI okur. `header_totals` verildiğinde
+    başlık türetilmez, açıkça yazılır ve prob dengeli bir başlıkla dengesiz bir
+    defter kurabilir.
     """
 
     async def _create(
@@ -183,9 +193,13 @@ def fis_fabrikasi(seeded_db: AsyncSession, kullanici_id: uuid.UUID):
         entry_date: date = date(2026, 7, 17),
         description: str = "Test fişi",
         reversal_of: JournalEntry | None = None,
+        header_totals: tuple[str, str] | None = None,
     ) -> JournalEntry:
-        toplam_borc = sum((Decimal(borc) for _, borc, _ in satirlar), Decimal("0"))
-        toplam_alacak = sum((Decimal(alacak) for _, _, alacak in satirlar), Decimal("0"))
+        if header_totals is None:
+            toplam_borc = sum((Decimal(borc) for _, borc, _ in satirlar), Decimal("0"))
+            toplam_alacak = sum((Decimal(alacak) for _, _, alacak in satirlar), Decimal("0"))
+        else:
+            toplam_borc, toplam_alacak = (Decimal(deger) for deger in header_totals)
         entry = JournalEntry(
             # 🔑 FIS-NO — `entry_no` NOT NULL'dir. Sabit bir metin YAZILMAZ:
             # `uq_journal_entries_entry_no` tekildir ve ayni testte iki fiş

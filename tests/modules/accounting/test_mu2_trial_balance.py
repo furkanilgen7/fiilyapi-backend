@@ -475,19 +475,25 @@ async def test_dengeli_defterde_is_balanced_TRUE(
 async def test_DENGESIZ_defterde_is_balanced_FALSE(
     client: AsyncClient, pm_headers: dict[str, str], hesap_fabrikasi, fis_fabrikasi
 ) -> None:
-    """🔴 ÖLÇÜM: dengesizlik KURULABİLİR — `ck_journal_entries_posted_balanced`
-    yalnız **`status = 'posted'`** için koşar (`status <> 'posted' OR
-    total_debit = total_credit`). `reversed` bir fiş tek bacaklı olabilir ve
-    CHECK'i geçer.
+    """🔴 ÖLÇÜM: dengesiz bir DEFTER kurulabilir — mizan SATIRLARI toplar.
 
     Bu, `is_balanced`in bir SÜS olmadığının kanıtıdır: her zaman `True` döndüren
     bir uygulama burada ölür.
+
+    🔴 **TB6 T2'DEN SONRA:** dengesizlik artık BAŞLIKTAN kurulamaz —
+    `ck_journal_entries_posting_balanced` `posted`/`reversed` bir fişin
+    `total_debit = total_credit` olmasını ZORLAR. Prob yine de kurulabilir ve
+    iddiası DEĞİŞMEDİ, çünkü defter **SATIRLARI** toplar, başlığı DEĞİL:
+    `header_totals` ile başlık dengeli yazılır, satırlar dengesiz bırakılır.
+    (Uygulama böyle bir fiş üretemez — `apply_totals` yalnız `draft`ta koşar —
+    ama ölçülecek şey `is_balanced`in SÜS OLMADIĞIDIR.)
     """
     kasa, _ = await _kasa_ve_satici(hesap_fabrikasi)
     await fis_fabrikasi(
         [(kasa, "500.00", "0.00")],
         status=JournalEntryStatus.reversed,
         entry_date=date(2026, 5, 5),
+        header_totals=("500.00", "500.00"),
     )
 
     govde = await _mizan(client, pm_headers)

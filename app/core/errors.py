@@ -237,10 +237,10 @@ class AccountingValidationError(DomainError):
     korkuluğuyla tutulur. Tek kullanıcısı **K1'in servis katmanıdır**
     (`accounting/validation.py`):
 
-    * **`Σ debit ≠ Σ credit`** — `ck_journal_entries_posted_balanced` VARDIR ama
-      yalnız BAŞLIK toplamlarına bakar ve ancak `posted`ta ısırır; ihlali
-      ayrımsız bir 409 "Veri bütünlüğü hatası" olarak dönerdi ve kullanıcı hangi
-      kuruşun kaydığını öğrenemezdi.
+    * **`Σ debit ≠ Σ credit`** — `ck_journal_entries_posting_balanced` VARDIR ama
+      yalnız BAŞLIK toplamlarına bakar ve yalnız DEFTERE GİRENLERDE ısırır
+      (`posted` + `reversed`, TB6 T2); ihlali ayrımsız bir 409 "Veri bütünlüğü
+      hatası" olarak dönerdi ve kullanıcı hangi kuruşun kaydığını öğrenemezdi.
     * **`len(lines) < 2`** — bir CHECK BAŞKA SATIRLARIN sayısını GÖREMEZ.
     * **yaprak olmayan hesaba satır** (§4c) — hiyerarşi kodun içinde taşındığı
       için (K4) DB'de zorlanacak bir FK yoktur.

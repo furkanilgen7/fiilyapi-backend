@@ -56,11 +56,15 @@ Bayrak `257`de kaldırılırsa kalem **iki katı amortisman** kadar kayar ve
 
 ## 🔴 `is_balanced` ÖLÇÜLÜR, `True` VARSAYILMAZ
 
-`ck_journal_entries_posted_balanced` (`models.py`) yalnız `posted`ı bağlar:
-**dengesiz bir `reversed` fiş satırı DB'ye GİREBİLİR** (açık borç) ve
-`POSTING_STATUSES` `reversed`ı deftere ALIR. Sabit `True` basan bir bilanço
-sessizce yalan söylerdi. Gösterge ayrıca `is_contra` veri hatalarını ve
-`59` grubu gibi dışlanmış bakiyeleri de görünür kılar.
+🔴 **GEREKÇE TB6 T2'DE DEĞİŞTİ, SONUÇ DEĞİŞMEDİ.** Eskiden
+`ck_journal_entries_posted_balanced` yalnız `posted`ı bağlardı ve dengesiz bir
+`reversed` fiş DB'ye GİREBİLİYORDU; **o borç KAPANDI** —
+`ck_journal_entries_posting_balanced` artık `POSTING_STATUSES`in TAMAMINI bağlar.
+Gösterge yine de SÜS DEĞİLDİR: kısıt **BAŞLIK** toplamlarını bağlar, bilanço ise
+`journal_lines`ı toplar (`balance.py`) — başlığı dengeli, satırları dengesiz bir
+fiş HÂLÂ kurulabilir. Gösterge ayrıca `is_contra` veri hatalarını ve `59` grubu
+gibi dışlanmış bakiyeleri de görünür kılar. Sabit `True` basan bir bilanço
+sessizce yalan söylerdi.
 
 ## Saf takvim
 
