@@ -41,6 +41,7 @@ from app.core.errors import (
     ProcurementValidationError,
 )
 from app.core.timezone import today
+from app.modules.approvals import service as approvals_service
 from app.modules.audit import messages
 from app.modules.inventory.models import StockItem
 from app.modules.procurement import guards, numbering, repository, transitions
@@ -217,6 +218,27 @@ async def visible_request(
     if request is None or request.project_id not in await _visible_project_ids(session, actor):
         raise NotFoundError(guards.REQUEST_MISSING)
     return request
+
+
+async def visible_request_locked(
+    session: AsyncSession, actor: User, request_id: uuid.UUID
+) -> PurchaseRequest:
+    """Kapsam suzgeci + `SELECT … FOR UPDATE` — DURUM GECISLERININ giris kapisi.
+
+    🔴 OK-1A T3: onay zinciri talebin satirini kilitli gormek zorundadir ve
+    KILIT SIRASI sabittir (**evrak -> zincir**). Okuma uclari kilit ALMAZ —
+    `visible_request` orada kalir; gereksiz satir kilidi listeleri ve detay
+    okumalarini yazma islemlerinin arkasinda bekletirdi.
+
+    Kapsam karari (404) kilitten ONCE verilir: gorunmeyen bir kaydin satiri
+    bosuna kilitlenmez ve govde var OLMAYAN kimliginkiyle BIREBIR AYNIDIR.
+    """
+    request = await visible_request(session, actor, request_id)
+    locked = await repository.get_request_locked(session, request.id)
+    if locked is None:
+        # Yarista silinmis olabilir — var olmayan kayitla AYNI 404.
+        raise NotFoundError(guards.REQUEST_MISSING)
+    return locked
 
 
 async def _assert_scope(
@@ -576,9 +598,20 @@ async def perform_request_action(
     Denetim metni gecisten SONRA kurulur cunku metin YENI durumu adlandirir;
     kayit yok olmadigi icin `purchase_request_deleted` dersi (once kur) burada
     GECERLI DEGILDIR.
+
+    🔴 OK-1A T3: metin zincirin kararyla BIRLESTIRILIR ve birlestirme kurali
+    `approvals.service`te TEK kopyadir (uc evrak ailesi ayni sozlukten okur):
+    ARA adimda YALNIZ adim metni yazilir (talebin durumu DEGISMEDI, "onaylandi"
+    demek gunluge OLMAMIS bir olguyu yazmak olurdu), SON adimda ve rette IKISI
+    DE yazilir.
     """
-    await transitions.apply_request_transition(session, actor, request, action, reason=reason)
-    return request, _TRANSITION_MESSAGES[action](request.request_no)
+    decision = await transitions.apply_request_transition(
+        session, actor, request, action, reason=reason
+    )
+    detail = _TRANSITION_MESSAGES[action](request.request_no)
+    if action is transitions.RequestAction.reject:
+        return request, approvals_service.rejection_audit_detail(detail, decision)
+    return request, approvals_service.audit_detail(detail, decision)
 
 
 _TRANSITION_MESSAGES = {

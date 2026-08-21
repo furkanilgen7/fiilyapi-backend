@@ -64,6 +64,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.access import AccessLevel, satisfies
 from app.core.errors import ApprovalNotAllowedError, ConflictError, ProcurementValidationError
 from app.modules.approvals import service as approvals_service
+from app.modules.approvals.models import ApprovalDocumentType
 from app.modules.procurement import guards, repository, validation
 from app.modules.procurement.models import (
     PurchaseOrder,
@@ -75,6 +76,7 @@ from app.modules.users.models import User
 
 __all__ = [
     "APPROVAL_THRESHOLD_LEVEL",
+    "chain_amount",
     "OPEN_REQUEST_STATUSES",
     "ORDER_DELIVERY_TRANSITIONS",
     "ORDER_TRANSITIONS",
@@ -254,6 +256,75 @@ def _stamp(
         request.rejection_reason = reason
 
 
+#: Bu evrak ailesinin onay zincirindeki kimligi (mockup `Onay Kutusu.dc.html:150-178`).
+_DOCUMENT_TYPE = ApprovalDocumentType.purchase_request
+
+
+async def chain_amount(session: AsyncSession, request: PurchaseRequest) -> Decimal | None:
+    """Zincirin esikle karsilastiracagi tutar — `request_estimated_total` (KDV'siz).
+
+    Esigin BUGUNKU kapisi (`_assert_approver_level`) da AYNI sayidan okur; ikinci
+    bir taban acilsaydi ayni talep izin kapisinda esigin altinda, zincirde
+    ustunde sayilirdi.
+
+    🔴 NULL-ESIK / FAIL-CLOSED (SA kanonu, FIILEN BULUNMUS acik): fiyatsiz kalem
+    `SUM`da YUTULUR ve "eksik veri" ile "dusuk tutar" ayni `0`i uretir. Bu
+    yuzden `validation.lines_missing_price` dogruysa tutar BELIRLENEMEZ sayilir
+    ve `None` doner — motor onu esigin USTU sayar, Patron adimi EKLENIR.
+    `submit` fiyatsiz kalemi zaten 422 ile durdurur (BIRINCI katman); bu IKINCI
+    katmandir ve ona DAYANMAZ (elle ya da eski bir surumle girmis satir).
+    """
+    lines = await repository.load_request_lines(session, request.id)
+    if validation.lines_missing_price(lines):
+        return None
+    return await repository.request_estimated_total(session, request.id)
+
+
+async def _chain_decision(
+    session: AsyncSession,
+    actor: User,
+    request: PurchaseRequest,
+    action: RequestAction,
+    reason: str | None,
+) -> approvals_service.ChainDecision | None:
+    """OK-1A T3 — talebin onay ZINCIRIYLE bagi. TEK yer.
+
+    🔴 KILIT SIRASI: talep satiri ZATEN kilitlidir (`service.visible_request_
+    locked`); zincir ANCAK ondan sonra kilitlenir. Sira UC evrak ailesinde de
+    AYNIDIR (deadlock).
+
+    `select-and-order` zincire DOKUNMAZ: o bir onay adimi degil, onaydan SONRAKI
+    tedarik adimidir.
+    """
+    if action is RequestAction.submit:
+        await approvals_service.create_chain(
+            session,
+            document_type=_DOCUMENT_TYPE,
+            document_id=request.id,
+            amount=await chain_amount(session, request),
+            created_by_user_id=request.created_by_user_id,
+        )
+        return None
+    if action is RequestAction.approve:
+        return await approvals_service.approve_next_step(
+            session,
+            actor=actor,
+            document_type=_DOCUMENT_TYPE,
+            document_id=request.id,
+            require_chain=False,
+        )
+    if action is RequestAction.reject:
+        return await approvals_service.reject_chain(
+            session,
+            actor=actor,
+            document_type=_DOCUMENT_TYPE,
+            document_id=request.id,
+            reason=reason,
+            require_chain=False,
+        )
+    return None
+
+
 async def apply_request_transition(
     session: AsyncSession,
     actor: User,
@@ -261,16 +332,23 @@ async def apply_request_transition(
     action: RequestAction,
     *,
     reason: str | None = None,
-) -> None:
-    """Talebin TEK geçiş yolu. Sıra: tablo → işleme özgü korkuluk → damga.
+) -> approvals_service.ChainDecision | None:
+    """Talebin TEK geçiş yolu. Sıra: tablo → korkuluk → ZİNCİR → damga.
 
-    Kapsam süzgeci (404) BURADA DEĞİL çağıranda koşar (`service.visible_request`)
-    ve tablo kontrolünden ÖNCEDİR: görünmeyen bir talebin durumu hakkında 409
-    ile bilgi sızdırılmaz.
+    Kapsam süzgeci (404) BURADA DEĞİL çağıranda koşar (`service.visible_request_
+    locked`) ve tablo kontrolünden ÖNCEDİR: görünmeyen bir talebin durumu
+    hakkında 409 ile bilgi sızdırılmaz.
 
     Korkuluklar tablodan SONRA koşar: yanlış durumdaki bir talep için önce
     "eksik alan" ya da "yetkin yetmiyor" demek, asıl engeli (kayıt o aşamada
     değil) gizlerdi.
+
+    🔴 **OK-1A T3 — ZİNCİR korkuluklardan SONRA, damgadan ÖNCE.** `approve` artık
+    zincirin SIRADAKİ adımını ilerletir ve talep ancak SON adımda `quote_wait`e
+    geçer; ara adımlarda `pending_approval`da KALIR ve HİÇBİR damga atılmaz
+    (`approved_at`/`approved_by_user_id` boş kalır — yarım bir onay "onaylandı"
+    görünmemelidir). Eşiğin izin kapısı (`_assert_approver_level`) DEĞİŞMEDİ ve
+    zincirin ÜSTÜNE değil ALTINA gelir: iki katman birbirinin yedeğidir.
     """
     new_status = _next_status(request, action)
 
@@ -279,9 +357,18 @@ async def apply_request_transition(
     elif action is RequestAction.approve:
         await _assert_approver_level(session, actor, request)
 
+    decision = await _chain_decision(session, actor, request, action, reason)
+    if action is RequestAction.approve and decision is not None and not decision.is_complete:
+        # ARA ADIM: durum ve damga DEĞİŞMEZ. Koşul YALNIZ `approve` içindir —
+        # `reject` de `is_complete=False` döner ama zinciri SİLER ve talebi
+        # `rejected`a taşıması GEREKİR.
+        await session.flush()
+        return decision
+
     request.status = new_status
     _stamp(request, action, actor, reason)
     await session.flush()
+    return decision
 
 
 def assert_order_transition(order: PurchaseOrder, target: PurchaseOrderStatus) -> None:

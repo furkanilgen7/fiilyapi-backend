@@ -47,15 +47,22 @@ from app.modules.users.models import User
 
 __all__ = [
     "ChainDecision",
+    "ChainRewind",
     "PendingChainView",
     "PendingStepView",
     "approve_next_step",
     "assignment_page",
+    "audit_detail",
+    "clean_reject_reason",
     "create_chain",
     "get_threshold",
+    "open_chain",
     "pending_for_user",
     "reject_chain",
     "replace_user_roles",
+    "rejection_audit_detail",
+    "rewind_audit_detail",
+    "rewind_last_step",
     "set_threshold",
     "user_approval_roles",
 ]
@@ -189,12 +196,37 @@ async def create_chain(
 
 
 async def _load_locked_chain(
-    session: AsyncSession, document_type: ApprovalDocumentType, document_id: uuid.UUID
-) -> ApprovalChain:
+    session: AsyncSession,
+    document_type: ApprovalDocumentType,
+    document_id: uuid.UUID,
+    *,
+    required: bool,
+) -> ApprovalChain | None:
+    """Zincir satirini `FOR UPDATE` ile yukler (bekci 2).
+
+    🔴 `required=False` T3'un ESKI KAYIT yoludur ve YALNIZ evrak uclari kullanir.
+    Gerekce OLCULMUS bir zorunluluktur: bu dilim canlida uctan UCA acilirken
+    `pending_approval` durumunda BEKLEYEN evraklar vardir ve onlarin zinciri
+    YOKTUR. Zincir kosulsuz zorunlu kilinsaydi o evraklar ne onaylanabilir ne
+    reddedilebilirdi (ikisi de zincirden gecer) — yani her ucus hâlindeki evrak
+    KILITLENIRDI. Geri doldurma ikinci bir migration ister ve bu dilimde
+    ACILMADI.
+
+    Yolun DARLIGI yapisaldir, sozle degil: `pending_approval`a goturen TEK uc
+    `submit`tir ve o HER ZAMAN zincir acar, dolayisiyla zincirsiz bir evrak API
+    ile URETILEMEZ (`test_SUBMIT_HER_ZAMAN_zincir_acar_eski_yol_URETILEMEZ`).
+    """
     chain = await repository.get_chain_for_update(session, document_type, document_id)
-    if chain is None:
+    if chain is None and required:
         raise ConflictError(guards.NO_OPEN_CHAIN)
     return chain
+
+
+async def open_chain(
+    session: AsyncSession, document_type: ApprovalDocumentType, document_id: uuid.UUID
+) -> ApprovalChain | None:
+    """Evragin ACIK zinciri (kilitsiz OKUMA) — cagiran ekranlar icin."""
+    return await repository.get_chain(session, document_type, document_id)
 
 
 def _current_step(steps: list[ApprovalStep], step_no: int | None) -> ApprovalStep:
@@ -267,8 +299,17 @@ async def approve_next_step(
     document_type: ApprovalDocumentType,
     document_id: uuid.UUID,
     step_no: int | None = None,
-) -> ChainDecision:
-    chain = await _load_locked_chain(session, document_type, document_id)
+    require_chain: bool = True,
+) -> ChainDecision | None:
+    """Zincirin SIRADAKI adimini karara baglar.
+
+    `require_chain=False` ise ZINCIRSIZ evrakta `None` doner (eski kayit yolu,
+    `_load_locked_chain` docstring'i) ve cagiran evrak ailesi BUGUNKU tek adimli
+    davranisini surdurur.
+    """
+    chain = await _load_locked_chain(session, document_type, document_id, required=require_chain)
+    if chain is None:
+        return None
     steps = await repository.chain_steps(session, chain.id)
     current = _current_step(steps, step_no)
     on_behalf = await _assert_can_decide(session, actor, chain, steps, current)
@@ -293,7 +334,7 @@ async def approve_next_step(
     )
 
 
-def _clean_reason(reason: str | None) -> str:
+def clean_reject_reason(reason: str | None) -> str:
     """Gerekce ZORUNLU metindir (K2); tavan PAYLASILAN sabittendir.
 
     Module ayri bir sayi yazilsaydi alanin bir giris noktasi kapiyi atlatirdi
@@ -314,17 +355,26 @@ async def reject_chain(
     document_type: ApprovalDocumentType,
     document_id: uuid.UUID,
     reason: str | None,
-) -> ChainDecision:
+    require_chain: bool = True,
+) -> ChainDecision | None:
     """RET TERMINALDIR (K2): zincir SATIRI SILINIR, adimlar CASCADE ile gider.
 
     Gerekce dogrulamasi bekcilerden SONRA kosar: yetkisi olmayan birine once
-    "gerekce yaz" demek, asil engeli (bu adim ona kapali) gizlerdi.
+    "gerekce yaz" demek, asil engeli (bu adim ona kapali) gizlerdi. ⚠️ Evrak
+    aileleri gerekceyi KENDI korkuluklarinda (semada ya da `guards`ta) ZATEN
+    dogrular ve o dogrulama daha ONCE kosar — bu, zincirsiz ESKI kayitlarda da
+    gerekcenin zorunlu kalmasi icin gereklidir (K2 kolonu degil ZORUNLULUGU
+    baglar).
+
+    `require_chain=False` ise zincirsiz evrakta `None` doner (eski kayit yolu).
     """
-    chain = await _load_locked_chain(session, document_type, document_id)
+    chain = await _load_locked_chain(session, document_type, document_id, required=require_chain)
+    if chain is None:
+        return None
     steps = await repository.chain_steps(session, chain.id)
     current = _current_step(steps, None)
     on_behalf = await _assert_can_decide(session, actor, chain, steps, current)
-    temiz = _clean_reason(reason)
+    temiz = clean_reject_reason(reason)
 
     detail = messages.approval_chain_rejected(
         document_type.value,
@@ -349,6 +399,101 @@ async def reject_chain(
         session.expunge(adim)
     await session.flush()
     return sonuc
+
+
+# --------------------------------------------------------------------------- #
+# Geri sarma (Y4) — `/unapprove`in zincir karsiligi
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class ChainRewind:
+    """Geri sarilan adimin KIMLIGI — denetim metni bunu tasir (Y4)."""
+
+    chain_id: uuid.UUID
+    step_no: int
+    approval_role: ApprovalRole
+
+
+async def rewind_last_step(
+    session: AsyncSession,
+    *,
+    document_type: ApprovalDocumentType,
+    document_id: uuid.UUID,
+) -> ChainRewind | None:
+    """`/unapprove` — SON karara baglanmis adimi geri sarar. ZINCIR SILINMEZ.
+
+    🔴 RETTEN FARKI BUDUR ve dilimin en kolay karistirlan iki islemi bunlardir:
+    ret zinciri SILER (K2, "tum onaylar silinir"), geri alma yalnizca SON imzayi
+    kaldirir. Ikisi de evragi geriye tasidigi icin sadece DURUMA bakan bir test
+    farki GOREMEZ — bu yuzden zincirin varligi ayrica iddia edilir.
+
+    🔴 Zincire HIC DOKUNMAYAN bir geri alma evragi KILITLERDI: tamamlanmis
+    zincirli bir evrak `pending_approval`a doner, sonraki `/approve` ise
+    `CHAIN_COMPLETED` 409'u alirdi. Yani bu fonksiyon bir sussleme degil,
+    Y4'un zorunlu parcasidir.
+
+    Zincirsiz (eski) kayitta `None` doner; karara baglanmis adim yoksa da `None`
+    doner — geri sarilacak imza YOKTUR ve evragin durum gecisi yine de kendi
+    tablosundan kosar (bu fonksiyon durum makinesini YONETMEZ).
+    """
+    chain = await _load_locked_chain(session, document_type, document_id, required=False)
+    if chain is None:
+        return None
+    steps = await repository.chain_steps(session, chain.id)
+    kararlilar = [adim for adim in steps if adim.decided_at is not None]
+    if not kararlilar:
+        return None
+    son = kararlilar[-1]
+    sonuc = ChainRewind(chain_id=chain.id, step_no=son.step_no, approval_role=son.approval_role)
+    son.decided_by_user_id = None
+    son.decided_at = None
+    await session.flush()
+    return sonuc
+
+
+# --------------------------------------------------------------------------- #
+# Denetim metninin BIRLESTIRILMESI (T3)
+# --------------------------------------------------------------------------- #
+
+
+def audit_detail(document_detail: str, decision: ChainDecision | None) -> str:
+    """Evragin kendi denetim metni + zincir adiminin metni — TEK satirda.
+
+    Uc kural, uc evrak ailesinde TEK kopya:
+      * zincir YOK (eski kayit) -> evragin BUGUNKU metni aynen;
+      * ARA adim -> YALNIZ adim metni. Evragin durumu DEGISMEDI; "Hakedis
+        onaylandi" yazmak gunluge OLMAMIS bir olguyu yazmak olurdu;
+      * SON adim (ya da ret) -> IKISI DE. Evrak durum degistirdi VE son imza
+        atildi; birini atlamak "hangi imza" ya da "ne oldu" sorusundan birini
+        yanitsiz birakirdi.
+    """
+    if decision is None:
+        return document_detail
+    if not decision.is_complete:
+        return decision.audit_detail
+    return f"{document_detail} · {decision.audit_detail}"
+
+
+def rejection_audit_detail(document_detail: str, decision: ChainDecision | None) -> str:
+    """Ret metni: evragin kendi cumlesi + hangi ADIMDA reddedildigi.
+
+    `audit_detail`ten AYRIDIR cunku ret `is_complete=False` doner (zincir
+    tamamlanmadi, SILINDI) — ortak fonksiyona sokulsaydi evragin kendi metni
+    (ve gerekcesi) gunlukten DUSERDI.
+    """
+    if decision is None:
+        return document_detail
+    return f"{document_detail} · {decision.audit_detail}"
+
+
+def rewind_audit_detail(document_detail: str, rewind: ChainRewind | None) -> str:
+    """Geri alma metni: ESKI onaylayani tasiyan mevcut iz KORUNUR, ustune geri
+    sarilan ADIMIN ROLU eklenir (Y4)."""
+    if rewind is None:
+        return document_detail
+    ek = messages.approval_step_rewound(rewind.step_no, rewind.approval_role.value)
+    return f"{document_detail} · {ek}"
 
 
 # --------------------------------------------------------------------------- #

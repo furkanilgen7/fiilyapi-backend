@@ -104,20 +104,33 @@ class ProgressPaymentUpdate(BaseModel):
 
 
 class RejectBody(BaseModel):
-    """`POST …/reject` gövdesi (spec §7, K12: ek form YOK) — yalnız isteğe
-    bağlı gerekçe, denetim günlüğüne taşınır (ayrı kolon AÇILMAZ).
+    """`POST …/reject` gövdesi — 🔴 **OK-1A K2 ile KIRICI biçimde değişti.**
 
-    `max_length=500` (H10 denetimi Y3, spec §10/6): DB kolonu yok, TEK kalıcı
-    iz denetim metnidir (`audit/messages.py.progress_payment_rejected`) —
-    sınırsız gövde keyfi uzunlukta metni günlüğe yazardı. Modülde bu deseni
-    (kalıcı kolonu olmayan, yalnız günlüğe taşınan serbest metin) paylaşan
-    başka bir alan yok; en yakın emsaller (`roles.RoleCreate.description`
-    max_length=2000, uzun biçim rol açıklaması) amaç bakımından farklı — 500,
-    tek satırlık kısa bir ret gerekçesi için yeterli ve günlük okunabilirliğini
-    (çok satırlı/şişirilmiş metin) koruyan bir üst sınırdır.
+    ## Ne değişti, ne DEĞİŞMEDİ
+
+    * **DEĞİŞTİ:** gerekçe artık ZORUNLUDUR (`str`, `| None` DEĞİL) ve gövdenin
+      kendisi de zorunludur. Eski hâli K12'nin ("mockup'ta ret formu yok")
+      çıkarımıydı; kullanıcı 2026-08-21'de K2'yi bağladı ve o çıkarımın YERİNE
+      GEÇTİ: "Ret gerekçesi ZORUNLU metindir (boş geçilemez)."
+    * **DEĞİŞMEDİ:** gerekçenin DEPOLANDIĞI yer. Bu ailede `rejection_reason`
+      KOLONU YOKTUR ve AÇILMADI (K2 "zorunlu metin" der, "kolon" demez);
+      tek kalıcı iz yine denetim günlüğüdür. Taşeron ailesi kolonu KORUR —
+      asimetri bilinçlidir, çünkü orada gerekçe L177 "Revize Gerekli"
+      rozetinin ekranda gösterilen açıklamasıdır.
+
+    Boş/yalnız boşluktan oluşan metnin reddi `min_length` ile YAPILMAZ ("   "
+    üç karakterdir): kırpma kuralı TEK kopya
+    `approvals.service.clean_reject_reason`tadır ve üç evrak ailesi de aynı
+    huniden geçer.
+
+    `max_length=500` KORUNDU (H10 denetimi Y3, spec §10/6) ve motorun
+    `FREE_TEXT_MAX_LENGTH` tavanına yükseltilmedi: kardeş uç
+    (`SubcontractorRejectBody`) da 500'dür ve aynı ekran ailesinde iki farklı
+    sınır göstermek kullanıcıya açıklanamaz. Motorun tavanı DIŞ sınır olarak
+    yerinde durur.
     """
 
-    reason: str | None = Field(default=None, max_length=500)
+    reason: str = Field(max_length=500)
 
 
 # --- Okuma şemaları: liste (spec §9.1) ---

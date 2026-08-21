@@ -302,6 +302,27 @@ async def get_request(session: AsyncSession, request_id: uuid.UUID) -> PurchaseR
     return await session.get(PurchaseRequest, request_id)
 
 
+async def get_request_locked(
+    session: AsyncSession, request_id: uuid.UUID
+) -> PurchaseRequest | None:
+    """🔴 EŞİK = KİLİT (OK-1A T3). Talep satiri, onay zincirinden ONCE kilitlenir.
+
+    Kilit SIRASI uc evrak ailesinde de AYNIDIR: **evrak satiri -> zincir satiri**.
+    Ters sirada kilitleyen ikinci bir yol karsilikli kilitlenme dogururdu.
+
+    `populate_existing=True` sarttir: satir session'da ZATEN yuklüyse
+    `with_for_update` tek basina TAZE degeri geri yazmaz ve kilit alinmis
+    olmasina ragmen BAYAT `status` uzerinden karar verilir — iki es zamanli
+    onay ayni adimi iki kez ilerletebilirdi.
+    """
+    return await session.scalar(
+        select(PurchaseRequest)
+        .where(PurchaseRequest.id == request_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+
+
 async def list_request_lines(
     session: AsyncSession, request_id: uuid.UUID
 ) -> list[tuple[PurchaseRequestLine, StockItem | None]]:
@@ -693,6 +714,7 @@ __all__ = [
     "get_order_row",
     "get_quote_in_request",
     "get_request",
+    "get_request_locked",
     "get_supplier",
     "get_supplier_with_totals",
     "list_orders",

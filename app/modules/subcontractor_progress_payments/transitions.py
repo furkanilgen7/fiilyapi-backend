@@ -41,7 +41,10 @@ from typing import NamedTuple
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
+from app.modules.approvals import service as approvals_service
+from app.modules.approvals.models import ApprovalDocumentType
 from app.modules.contracts.models import SubcontractorContract
+from app.modules.progress_payments import calculations
 from app.modules.progress_payments.transitions import PaymentAction, build_transition_table
 from app.modules.projects.models import Project
 from app.modules.subcontractor_progress_payments import guards, lines, repository, service
@@ -52,6 +55,9 @@ from app.modules.subcontractor_progress_payments.models import (
 from app.modules.users.models import User
 
 _ZERO = Decimal("0")
+
+#: Bu evrak ailesinin onay zincirindeki kimligi (mockup `Onay Kutusu.dc.html:120-144`).
+_DOCUMENT_TYPE = ApprovalDocumentType.subcontractor_progress_payment
 
 __all__ = ["TRANSITIONS", "PaymentAction", "TransitionResult", "perform"]
 
@@ -74,6 +80,10 @@ class TransitionResult(NamedTuple):
     project: Project
     previous_approver_name: str | None = None
     previous_approved_at: datetime | None = None
+    #: OK-1A T3 — zincirin bu istekte verdiği karar (`None` => zincirsiz ESKİ kayıt).
+    chain_step: approvals_service.ChainDecision | None = None
+    #: `/unapprove`te geri sarılan adım (`None` => zincirsiz ya da imza yok).
+    chain_rewind: approvals_service.ChainRewind | None = None
 
 
 async def _revalidate_quota(
@@ -153,6 +163,76 @@ async def _resolve_username(session: AsyncSession, user_id: uuid.UUID | None) ->
     return user.full_name if user is not None else None
 
 
+def chain_amount(payment: SubcontractorProgressPayment) -> Decimal | None:
+    """Zincirin eşikle karşılaştıracağı tutar — **BRÜT** (sözleşme R5).
+
+    `amounts.build_block(...).gross` ile AYNI sayıdır ve AYNI tek kopyadan
+    gelir (`calculations.gross_total`); `build_block` yolu seçilseydi sözleşme
+    bedeli ve kümülatif avans için İKİ SORGU daha koşar, dönen sayı değişmezdi.
+    KDV, avans mahsubu ve teminat kesintisi eşiğe GİRMEZ: eşik BRÜT tutara
+    bakar (R5), yoksa aynı iş iki farklı KDV oranıyla iki farklı imza zinciri
+    doğururdu.
+
+    🔴 NULL-EŞİK / FAIL-CLOSED (SA kanonu): satır YOKSA `None` döner ve motor
+    bunu eşiğin ÜSTÜ sayar.
+    """
+    if not payment.lines:
+        return None
+    return calculations.gross_total(payment.lines)
+
+
+async def _chain_decision(
+    session: AsyncSession,
+    actor: User,
+    payment: SubcontractorProgressPayment,
+    action: PaymentAction,
+    reason: str | None,
+) -> tuple[approvals_service.ChainDecision | None, approvals_service.ChainRewind | None]:
+    """OK-1A T3 — evrağın onay ZİNCİRİYLE bağı (işveren ikizinin birebiri).
+
+    🔴 KİLİT SIRASI: evrak satırı ZATEN kilitlidir (`visible_payment_locked`,
+    sözleşme → hakediş); zincir ANCAK ondan sonra kilitlenir. Sıra ÜÇ evrak
+    ailesinde de AYNIDIR (deadlock).
+    """
+    if action is PaymentAction.submit:
+        await approvals_service.create_chain(
+            session,
+            document_type=_DOCUMENT_TYPE,
+            document_id=payment.id,
+            amount=chain_amount(payment),
+            created_by_user_id=payment.created_by,
+        )
+        return None, None
+    if action is PaymentAction.approve:
+        return (
+            await approvals_service.approve_next_step(
+                session,
+                actor=actor,
+                document_type=_DOCUMENT_TYPE,
+                document_id=payment.id,
+                require_chain=False,
+            ),
+            None,
+        )
+    if action is PaymentAction.reject:
+        return (
+            await approvals_service.reject_chain(
+                session,
+                actor=actor,
+                document_type=_DOCUMENT_TYPE,
+                document_id=payment.id,
+                reason=reason,
+                require_chain=False,
+            ),
+            None,
+        )
+    if action is PaymentAction.unapprove:
+        return None, await approvals_service.rewind_last_step(
+            session, document_type=_DOCUMENT_TYPE, document_id=payment.id
+        )
+    return None, None
+
+
 async def perform(
     session: AsyncSession,
     actor: User,
@@ -181,6 +261,18 @@ async def perform(
 
     trimmed_reason = await _apply_action_rules(session, contract, payment, action, reason)
 
+    chain_step, chain_rewind = await _chain_decision(
+        session, actor, payment, action, trimmed_reason
+    )
+    if action is PaymentAction.approve and chain_step is not None and not chain_step.is_complete:
+        # 🔴 ARA ADIM: evrak `pending_approval`da KALIR (durum makinesi
+        # DEĞİŞMEDİ; `approved`a giden yol zincirin SON adımından geçiyor).
+        # Koşul YALNIZ `approve` içindir: `reject` de `is_complete=False` döner
+        # ama zinciri SİLER ve evrağı `draft`a taşıması GEREKİR.
+        await session.flush()
+        await session.refresh(payment)
+        return TransitionResult(payment, contract, project, chain_step=chain_step)
+
     previous_approver_name: str | None = None
     previous_approved_at: datetime | None = None
     if action is PaymentAction.unapprove:
@@ -194,5 +286,11 @@ async def perform(
     # refresh olmadan yanıt inşası `MissingGreenlet` verir.
     await session.refresh(payment)
     return TransitionResult(
-        payment, contract, project, previous_approver_name, previous_approved_at
+        payment,
+        contract,
+        project,
+        previous_approver_name,
+        previous_approved_at,
+        chain_step=chain_step,
+        chain_rewind=chain_rewind,
     )

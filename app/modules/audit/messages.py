@@ -1597,3 +1597,18 @@ def approval_roles_assigned(name: str, roles: list[str]) -> str:
     """Atama TAM KUMEDIR; metin de son durumu yazar, farki degil."""
     etiketler = ", ".join(APPROVAL_ROLE_LABELS.get(rol, rol) for rol in roles)
     return f"Onay rolleri güncellendi: {name} · {etiketler or 'Yok'}"
+
+
+def approval_step_rewound(step_no: int, role: str) -> str:
+    """Onay adiminin GERI SARILMASI (`/unapprove`, sozlesme Y4).
+
+    Evragin KENDI geri-alma metnine EKLENIR, onun YERINE GECMEZ: mevcut metin
+    ESKI ONAYLAYANI ve onay zamanini tasir (H10 dersi) ve o iz KORUNUR — buraya
+    yalnizca "hangi imza geri alindi" bilgisi eklenir.
+
+    `_approval_label` KULLANILMAZ: geri alma bir evrak ailesine degil TEK bir
+    adima bakar; evrak adi zaten cumlenin ilk yarisindadir ve iki kez yazilmasi
+    gunlugu okunmaz yapardi.
+    """
+    rol = APPROVAL_ROLE_LABELS.get(role, role)
+    return f"Geri sarılan onay adımı: {step_no}. adım · {rol}"

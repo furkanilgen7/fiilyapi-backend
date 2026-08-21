@@ -18,6 +18,7 @@ from app.core.deps import get_current_user
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
+from app.modules.approvals import service as approvals_service
 from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
@@ -275,14 +276,28 @@ async def approve_progress_payment_endpoint(
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> ProgressPaymentDetail:
-    """`pending_approval → approved`; kota kilit altında YENİDEN doğrulanır."""
+    """🔴 **OK-1A T3: YOL ve KAPI KORUNDU, ANLAM DEĞİŞTİ.**
+
+    Uç artık onay ZİNCİRİNİN sıradaki adımını ilerletir. Evrak ancak SON adım
+    onaylanınca `pending_approval → approved` geçişini yapar; ara adımlarda
+    `pending_approval`da KALIR (durum makinesi DEĞİŞMEDİ, ona giden yol
+    uzadı). Zincirsiz ESKİ kayıtlarda bugünkü tek adımlı davranış sürer.
+
+    Kota kilit altında YENİDEN doğrulanır — HER adımda, yalnız sonuncusunda
+    değil: aşmış bir hakedişin ara imzalarını toplaması, aşımı ancak son anda
+    görülen bir sürprize çevirirdi.
+    """
     result = await transitions.perform(session, user, payment_id, transitions.PaymentAction.approve)
     # `AuditAction.approve` (`audit/models.py` docstring'i) TAM BU UÇ için
-    # ayrılmıştı — diğer geçişler `AuditAction.update`dir.
+    # ayrılmıştı — diğer geçişler `AuditAction.update`dir. ADIM onayı da
+    # `approve`dır (sözleşme Y6: yeni `AuditAction` üyesi AÇILMAZ).
     await record_audit(
         session,
         action=AuditAction.approve,
-        detail=messages.progress_payment_approved(result.project.name, result.payment.sequence_no),
+        detail=approvals_service.audit_detail(
+            messages.progress_payment_approved(result.project.name, result.payment.sequence_no),
+            result.chain_step,
+        ),
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
@@ -299,20 +314,29 @@ async def reject_progress_payment_endpoint(
     payment_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
-    data: RejectBody | None = None,
+    data: RejectBody,
 ) -> ProgressPaymentDetail:
     """`pending_approval → draft` — ret sonrası taslak yeniden düzenlenebilir.
 
-    Gövde İSTEĞE BAĞLIDIR (K12: mockup'ta ret formu yok). `reason` hiçbir
-    kolona yazılmaz — TEK kalıcı izi denetim günlüğüdür (spec §11).
+    🔴 **KIRICI (OK-1A K2):** gövde ve gerekçe artık ZORUNLUDUR; eskiden
+    `RejectBody | None` idi. `reason` yine hiçbir kolona yazılmaz — TEK kalıcı
+    izi denetim günlüğüdür (spec §11) ve K2 bunu değiştirmez: kullanıcı kararı
+    gerekçenin ZORUNLULUĞUNU bağladı, DEPOLANDIĞI yeri değil.
+
+    Ret zinciri de BİTİRİR: `approval_chains` satırı SİLİNİR (adımlar CASCADE)
+    ve yeniden gönderim ADIM 1'den, YENİ eşik snapshot'ıyla başlar.
     """
-    result = await transitions.perform(session, user, payment_id, transitions.PaymentAction.reject)
-    reason = data.reason if data is not None else None
+    result = await transitions.perform(
+        session, user, payment_id, transitions.PaymentAction.reject, reason=data.reason
+    )
     await record_audit(
         session,
         action=AuditAction.update,
-        detail=messages.progress_payment_rejected(
-            result.project.name, result.payment.sequence_no, reason
+        detail=approvals_service.rejection_audit_detail(
+            messages.progress_payment_rejected(
+                result.project.name, result.payment.sequence_no, data.reason
+            ),
+            result.chain_step,
         ),
         actor_user_id=user.id,
         ip_address=client_ip(request),
@@ -359,6 +383,13 @@ async def unapprove_progress_payment_endpoint(
 ) -> ProgressPaymentDetail:
     """`approved → pending_approval` (geri çek) — YALNIZ `admin` (§7 tablosu).
 
+    🔴 **OK-1A Y4: YOL, `_ADMIN` KAPISI ve GEÇİŞ TABLOSU KORUNDU; anlam eklendi.**
+    Uç artık zincirin SON karara bağlanmış adımını da GERİ SARAR (`decided_by`/
+    `decided_at` NULL'lanır) — zincir SİLİNMEZ (ret'ten farkı budur) ve o adım
+    yeniden sıradaki adım olur. Geri sarmasaydı tamamlanmış zincirli bir evrak
+    `pending_approval`a döner ve sonraki onay "zincir tamamlanmış" 409'una
+    çarpardı: evrak KİLİTLENİRDİ.
+
     `paid` kaynak DEĞİLDİR (K7): ödenmiş hakedişin geri dönüşü yoktur, denemesi
     409'dur.
 
@@ -373,11 +404,14 @@ async def unapprove_progress_payment_endpoint(
     await record_audit(
         session,
         action=AuditAction.update,
-        detail=messages.progress_payment_unapproved(
-            result.project.name,
-            result.payment.sequence_no,
-            result.previous_approver_name,
-            result.previous_approved_at,
+        detail=approvals_service.rewind_audit_detail(
+            messages.progress_payment_unapproved(
+                result.project.name,
+                result.payment.sequence_no,
+                result.previous_approver_name,
+                result.previous_approved_at,
+            ),
+            result.chain_rewind,
         ),
         actor_user_id=user.id,
         ip_address=client_ip(request),

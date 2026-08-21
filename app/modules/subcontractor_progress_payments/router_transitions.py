@@ -27,6 +27,7 @@ from app.core.deps import get_current_user
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
+from app.modules.approvals import service as approvals_service
 from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
@@ -90,15 +91,27 @@ async def approve_subcontractor_progress_payment_endpoint(
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> SubcontractorProgressPaymentDetail:
-    """`pending_approval → approved`; kota KİLİT ALTINDA sırasız TAM küme
-    üzerinden YENİDEN doğrulanır (spec §4) — aşım 422, onay GERÇEKLEŞMEZ."""
+    """🔴 **OK-1A T3: YOL ve KAPI KORUNDU, ANLAM DEĞİŞTİ.**
+
+    Uç artık onay ZİNCİRİNİN sıradaki adımını ilerletir (mockup zinciri
+    `Onay Kutusu.dc.html:120-144`: Şantiye Şefi → Proje Müdürü → Muhasebe,
+    eşik üstünde + Patron). Evrak ancak SON adımda `approved` olur; ara
+    adımlarda `pending_approval`da KALIR. Zincirsiz ESKİ kayıtlarda bugünkü
+    tek adımlı davranış sürer.
+
+    Kota KİLİT ALTINDA sırasız TAM küme üzerinden YENİDEN doğrulanır (spec §4)
+    — aşım 422, onay GERÇEKLEŞMEZ."""
     result = await transitions.perform(session, user, payment_id, transitions.PaymentAction.approve)
     # `AuditAction.approve` TAM BU UÇ için ayrılmıştır; diğer geçişler `update`.
+    # ADIM onayı da `approve`dır (Y6: yeni `AuditAction` üyesi AÇILMAZ).
     await record_audit(
         session,
         action=AuditAction.approve,
-        detail=messages.subcontractor_progress_payment_approved(
-            result.project.name, result.contract.subcontractor_name, result.payment.sequence_no
+        detail=approvals_service.audit_detail(
+            messages.subcontractor_progress_payment_approved(
+                result.project.name, result.contract.subcontractor_name, result.payment.sequence_no
+            ),
+            result.chain_step,
         ),
         actor_user_id=user.id,
         ip_address=client_ip(request),
@@ -128,11 +141,14 @@ async def reject_subcontractor_progress_payment_endpoint(
     await record_audit(
         session,
         action=AuditAction.update,
-        detail=messages.subcontractor_progress_payment_rejected(
-            result.project.name,
-            result.contract.subcontractor_name,
-            result.payment.sequence_no,
-            result.payment.rejection_reason or data.reason,
+        detail=approvals_service.rejection_audit_detail(
+            messages.subcontractor_progress_payment_rejected(
+                result.project.name,
+                result.contract.subcontractor_name,
+                result.payment.sequence_no,
+                result.payment.rejection_reason or data.reason,
+            ),
+            result.chain_step,
         ),
         actor_user_id=user.id,
         ip_address=client_ip(request),
@@ -177,6 +193,13 @@ async def unapprove_subcontractor_progress_payment_endpoint(
 ) -> SubcontractorProgressPaymentDetail:
     """`approved → pending_approval` (geri çek) — YALNIZ `admin`.
 
+    🔴 **OK-1A Y4:** uç artık zincirin SON karara bağlanmış adımını da GERİ
+    SARAR; zincir SİLİNMEZ (ret'ten farkı budur). Sözleşme Y4 bu davranışı
+    yalnız işveren hakedişi için yazıyordu — ÖLÇÜM taşerona da ZORUNLU olduğunu
+    gösterdi: geri sarmayan bir `unapprove`, tamamlanmış zincirli bir evrağı
+    `pending_approval`a döndürür ve sonraki onay `CHAIN_COMPLETED` 409'una
+    çarpardı, yani evrak KİLİTLENİRDİ.
+
     `paid` kaynak DEĞİLDİR: ödenmiş hakedişin geri dönüşü yoktur, denemesi 409.
     Denetim mesajı ESKİ onaylayanı taşır — `transitions.perform` bu ikisini
     damgalar NULL'lanmadan ÖNCE yakalar, router yeniden sorgulayamaz.
@@ -187,12 +210,15 @@ async def unapprove_subcontractor_progress_payment_endpoint(
     await record_audit(
         session,
         action=AuditAction.update,
-        detail=messages.subcontractor_progress_payment_unapproved(
-            result.project.name,
-            result.contract.subcontractor_name,
-            result.payment.sequence_no,
-            result.previous_approver_name,
-            result.previous_approved_at,
+        detail=approvals_service.rewind_audit_detail(
+            messages.subcontractor_progress_payment_unapproved(
+                result.project.name,
+                result.contract.subcontractor_name,
+                result.payment.sequence_no,
+                result.previous_approver_name,
+                result.previous_approved_at,
+            ),
+            result.chain_rewind,
         ),
         actor_user_id=user.id,
         ip_address=client_ip(request),

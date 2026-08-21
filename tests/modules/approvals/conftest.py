@@ -18,6 +18,10 @@ import uuid
 from collections.abc import Awaitable, Callable, Sequence
 
 import pytest
+from httpx import AsyncClient
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.modules.approvals.models import (
     ApprovalChain,
     ApprovalDocumentType,
@@ -25,10 +29,6 @@ from app.modules.approvals.models import (
     ApprovalStep,
     UserApprovalRole,
 )
-from httpx import AsyncClient
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.modules.users.models import User
 
 PAROLA = "parola1234"
@@ -87,3 +87,44 @@ async def zincir_getir(
             ApprovalChain.document_id == document_id,
         )
     )
+
+
+# --------------------------------------------------------------------------- #
+# T3 — evrak ailelerinin ORTAK yardimcilari
+# --------------------------------------------------------------------------- #
+#
+# Bu üç yardımcı `tests/progress_payments/` · `tests/subcontractor_progress_
+# payments/` · `tests/modules/procurement/` altındaki T3 dosyalarından
+# İTHAL EDİLİR. pytest kardeş `conftest.py`leri otomatik yüklemez ama modül
+# olarak ithal etmek serbesttir (`test_ok1a_chain_build.py` deseni) — üç ayrı
+# kopya "onay rolü ver" yardımcısı doğsaydı biri değişip diğerleri unutulurdu.
+
+
+async def onay_rolu_ver(session: AsyncSession, user: User, *roller: ApprovalRole) -> User:
+    """Kullanıcıya ONAY ROLÜ verir — sistem rolüne DOKUNMAZ (K1).
+
+    İkisi kasten ayrıdır: onay rolü hiçbir izin vermez, izin matrisi de hiçbir
+    imza adaylığı vermez. Bir adımı onaylayacak aktörün İKİSİNE DE ihtiyacı
+    vardır (uç kapısı + adım rolü) ve testler bunu ayrı ayrı kurar.
+    """
+    for rol in roller:
+        session.add(UserApprovalRole(user_id=user.id, approval_role=rol))
+    await session.flush()
+    return user
+
+
+async def kullanici(session: AsyncSession, email: str) -> User:
+    """E-postadan kullanıcıyı çözer (headers fixture'ları kullanıcıyı döndürmez)."""
+    return (await session.execute(select(User).where(User.email == email))).scalar_one()
+
+
+async def adim_durumlari(session: AsyncSession, chain_id: uuid.UUID) -> list[bool]:
+    """Adımların KARARA BAĞLANMIŞ olup olmadığı, `step_no` sırasıyla."""
+    rows = (
+        await session.execute(
+            select(ApprovalStep)
+            .where(ApprovalStep.chain_id == chain_id)
+            .order_by(ApprovalStep.step_no)
+        )
+    ).scalars()
+    return [row.decided_at is not None for row in rows]
