@@ -38,6 +38,7 @@ from app.modules.accounting import codes
 from app.modules.accounting.balance import select_accounts_with_balance
 from app.modules.accounting.models import (
     AccountingPeriod,
+    AccountingPeriodStatus,
     ChartAccount,
     ChartAccountType,
     JournalEntry,
@@ -428,30 +429,43 @@ async def has_draft_entries(session: AsyncSession, year: int, month: int) -> boo
     return bool((await session.execute(stmt)).scalar_one())
 
 
-async def get_period(session: AsyncSession, year: int, month: int) -> AccountingPeriod | None:
-    """Dönem satırını **KİLİTSİZ** okur; satır YOKSA `None` — SIRA-B'nin okuması.
+async def open_periods_among(
+    session: AsyncSession, periods: Iterable[tuple[int, int]]
+) -> set[tuple[int, int]]:
+    """Verilen dönemlerden **KAYITLI ve `open`** olanların kümesi — SIRA-B'nin
+    TEK "önceki dönem engel mi" tanımı.
 
-    🔴 `lock_period`ten kasıtlı olarak AYRIDIR ve onun yerine geçmez:
+    🔴 **K10 — kapı da olgu da BURADAN okur.** `close_period` (409 kapısı) ile
+    liste ucundaki `previous_period_open` olgusu aynı fonksiyonu çağırır.
+    İkisi ayrı yazılsaydı biri gün gelip "kaydı yok" hâlini engel sayar, ekran
+    "kapatabilirsin" derken kapı 409 dönerdi — yani düzeltilmeye çalışılan
+    sorunun aynısı yeniden doğardı.
 
-    * `lock_period` satırı **DOĞURUR** (UPSERT). Kronolojik sıra denetimi bunu
-      yapamaz — K2'nin tamamı "kaydı olmayan ay HİÇ VAR OLMAMIŞTIR" üzerine
-      kuruludur; denetim önceki ayı doğursaydı bir sonraki kapanış onu "açık"
-      bulur ve sistem kendi kuyruğunu yerdi.
-    * `FOR UPDATE` de ALINMAZ: burada bir eşik/sayaç yarışı yoktur, okunan şey
-      komşu dönemin DURUMUDUR ve o durumu değiştiren her yol (`close`/`reopen`)
-      kendi satırını zaten kilitler. Kilit alınsaydı `close` iki dönem satırını
-      birden tutar ve modül docstring'indeki SABİT kilit sırasına yeni bir
-      kenar eklenirdi.
+    🔴 **Dönen şey AÇIK olanların kümesidir, satırlar değil.** Böylece
+    "kayıtsız" ile "kapalı" AYNI cevaba (kümede yok) düşer ve çağıran taraf
+    `None` ile `closed`ı ayrı ayrı ele almak zorunda kalmaz — K2'nin
+    ("kaydı olmayan ay ENGEL DEĞİLDİR") tam karşılığı budur.
 
-    `populate_existing` ŞARTTIR: aynı transaction'da daha önce yüklenmiş bayat
-    bir nesne kimlik haritasından geri gelirdi (`invoicing.get_invoice` dersi).
+    🔴 **K11 — TEK sorgu, sayfa büyüklüğünden BAĞIMSIZ.** Anahtarlar
+    `tuple_(...).in_(...)` ile toplu sorulur; dönem başına tur ATILMAZ.
+    Sorulan anahtarlar sayfadaki satırlardan TÜRETİLMEZ, çağıran tarafından
+    hesaplanır — bu yüzden sayfada bulunmayan (hatta başka yıla ait) bir
+    önceki dönem de doğru çözülür.
+
+    Boş küme için sorgu HİÇ koşmaz: `IN ()` bazı sürücülerde uyarı üretir ve
+    zaten cevabı bilinen bir tur atmanın anlamı yoktur.
+
+    `FOR UPDATE` YOKTUR — gerekçe `periods_service.close_period` docstring'i
+    (burada eşik/sayaç yarışı yok; okunan şey komşu satırın DURUMUDUR).
     """
-    stmt = (
-        select(AccountingPeriod)
-        .where(AccountingPeriod.year == year, AccountingPeriod.month == month)
-        .execution_options(populate_existing=True)
+    anahtarlar = sorted(set(periods))
+    if not anahtarlar:
+        return set()
+    stmt = select(AccountingPeriod.year, AccountingPeriod.month).where(
+        tuple_(AccountingPeriod.year, AccountingPeriod.month).in_(anahtarlar),
+        AccountingPeriod.status == AccountingPeriodStatus.open,
     )
-    return (await session.execute(stmt)).scalar_one_or_none()
+    return {(yil, ay) for yil, ay in (await session.execute(stmt)).all()}
 
 
 def _period_filtered(stmt: Select, *, year: int | None) -> Select:

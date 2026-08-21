@@ -167,17 +167,29 @@ async def list_periods(
 ) -> AccountingPeriodListResponse:
     """K7 zarfı. `total` liste ile AYNI süzgeçten geçer (`_period_filtered`).
 
-    🔴 DKAP-B / K1: sayfa BAŞINA tam olarak İKİ ek sorgu koşar —
+    🔴 SIRA-B / K11: sayfa BAŞINA tam olarak ÜÇ ek sorgu koşar —
     `repository.list_periods` (dönem + `closed_by_name`, outerjoin ile TEK
     sorgu) ve `repository.count_entries_by_period` (sayfadaki dönemlerin
     toplam + `draft` fiş sayısı, TEK `GROUP BY` sorgusunda `FILTER` ile
-    birlikte gelir — K8, ikinci bir sorgu AÇILMAZ). İkisi de sayfa
+    birlikte gelir — K8, ikinci bir sorgu AÇILMAZ) ve
+    `repository.open_periods_among` (SIRA-B: sayfadaki dönemlerin TAKVİM
+    ÖNCELERİNDEN kayıtlı-ve-`open` olanlar, TEK `IN` sorgusu). Üçü de sayfa
     büyüklüğünden BAĞIMSIZ çalışır; döngü içinde `await` YOKTUR — yapısal
-    N+1 garantisi budur.
+    N+1 garantisi budur ve bir AST testiyle ayrıca bekçilenir.
+
+    🔴 **Önceki dönemler SAYFADAN TÜRETİLMEZ.** `previous_period()` ile
+    anahtar olarak HESAPLANIR ve öyle sorulur; sayfadaki satırlar arasında
+    aranmaz. Aranırsa iki yerde bozulurdu: (a) sayfa sınırındaki dönemin
+    öncesi sayfada olmayabilir, (b) 🔴 Ocak'ın öncesi ÖNCEKİ YILIN Aralığıdır
+    ve liste `year` süzgeciyle tek yıl çektiği için o satır orada HİÇ olmaz —
+    ekran Ocak için doğru karar veremezdi.
     """
     satirlar = await repository.list_periods(session, year=year, limit=limit, offset=offset)
     sayilar = await repository.count_entries_by_period(
         session, ((donem.year, donem.month) for donem, _ in satirlar)
+    )
+    acik_oncekiler = await repository.open_periods_among(
+        session, (previous_period(donem.year, donem.month) for donem, _ in satirlar)
     )
     return AccountingPeriodListResponse(
         items=[
@@ -186,6 +198,7 @@ async def list_periods(
                 entry_count=sayilar.get((donem.year, donem.month), (0, 0))[0],
                 draft_count=sayilar.get((donem.year, donem.month), (0, 0))[1],
                 closed_by_name=ad,
+                previous_period_open=previous_period(donem.year, donem.month) in acik_oncekiler,
             )
             for donem, ad in satirlar
         ],
@@ -224,7 +237,7 @@ async def close_period(
     her ayın öncesinde sonsuza kadar kayıtsız aylar vardır. Doğal sonucu K3'tür
     — sistemdeki EN ESKİ dönem her zaman kapatılabilir.
 
-    Denetim önceki dönemi **KİLİTLEMEZ** (`repository.get_period`, `FOR UPDATE`
+    Denetim önceki dönemi **KİLİTLEMEZ** (`repository.open_periods_among`, `FOR UPDATE`
     yok): burada bir eşik/sayaç yarışı yoktur — okunan şey komşu satırın
     DURUMUDUR ve o durumu yazan iki yol (`close`/`reopen`) kendi satırını zaten
     kilitler.
@@ -243,6 +256,14 @@ async def close_period(
     (test 5) — ve o, K5'in KENDİSİDİR: aynı son duruma sırayla da ulaşılır ve
     bu MEŞRUDUR. Kilidi genişletmek (önceki dönemi de kilitlemek) SABİT kilit
     sırasına yeni bir kenar ekler ve hiçbir invaryant KAZANDIRMAZ.
+
+    🔴 **K10 — kapı ile liste ucundaki `previous_period_open` OLGUSU AYNI iki
+    yardımcıdan beslenir**: `previous_period()` (hangi ay) ve
+    `repository.open_periods_among()` (engel mi). Tek bir çağrı için toplu
+    çözücüyü kullanmak bir tuhaflık DEĞİL, kuralın kendisidir: ikinci bir
+    "kayıtlı ve açık mı" tanımı yazılsaydı ekran ile kapı bir gün ayrışır ve
+    kullanıcı "kapatabilirsin" yazan bir düğmeden 409 yerdi — düzeltmeye
+    çalıştığımız sorunun aynısı.
 
     🔴 Sıra denetimi taslak denetiminden SONRA koşar: iki engel birden varken
     kullanıcı ÖNCE kendi dönemindeki eksiği duyar (daha yakın iş), sonra
@@ -266,10 +287,9 @@ async def close_period(
         raise ConflictError(guards.PERIOD_ALREADY_CLOSED)
     if await repository.has_draft_entries(session, year, month):
         raise ConflictError(guards.PERIOD_HAS_DRAFT_ENTRIES)
-    onceki_yil, onceki_ay = previous_period(year, month)
-    onceki = await repository.get_period(session, onceki_yil, onceki_ay)
-    if onceki is not None and onceki.status is AccountingPeriodStatus.open:
-        raise ConflictError(guards.period_previous_open(onceki_yil, onceki_ay))
+    onceki = previous_period(year, month)
+    if onceki in await repository.open_periods_among(session, [onceki]):
+        raise ConflictError(guards.period_previous_open(*onceki))
 
     period.status = AccountingPeriodStatus.closed
     period.closed_at = datetime.now(UTC)
