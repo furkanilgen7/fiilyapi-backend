@@ -80,10 +80,10 @@ TABLE = "journal_entries"
 OLD_NAME = "ck_journal_entries_posted_balanced"
 NEW_NAME = "ck_journal_entries_posting_balanced"
 
-#: PG'nin CHECK ihlali sinifi (`test_tb6_reversed_balanced_check` ile ayni
-#: kanon): sinif kodu surume gore genislerse burasi OLCULEREK buyutulur, ata
-#: sinifa GEVSETILMEZ.
-CHECK_VIOLATION = "23514"
+#: PG'nin CHECK ihlali sinifi. Tek elemanli ama TUPLE'dir (`test_tb6_reversed_
+#: balanced_check` ile AYNI kanon, PG 18/16 farki): sinif kodu surume gore
+#: genislerse burasi OLCULEREK buyutulur, ata sinifa GEVSETILMEZ.
+CHECK_VIOLATION = ("23514",)
 
 MIGRATION_PATH = (
     BACKEND_DIR / "alembic" / "versions" / "e9f0a1b2c3d4_tb6_dengesiz_reversed_check.py"
@@ -221,7 +221,7 @@ async def _reddedilir(conn: asyncpg.Connection, sql: str, *args: object) -> None
     """Yazma `23514` ile ve ADI GECEN kisit yuzunden reddedilmelidir."""
     with pytest.raises(asyncpg.PostgresError) as hata:
         await conn.execute(sql, *args)
-    assert hata.value.sqlstate == CHECK_VIOLATION, hata.value
+    assert hata.value.sqlstate in CHECK_VIOLATION, hata.value
     assert NEW_NAME in str(hata.value), hata.value
 
 
