@@ -46,7 +46,7 @@ satiri YAZMAZ.
 
 Elle yazilmistir (autogenerate DEGIL) — repo deseni.
 
-Revision ID: e9f0a1b2c3d4
+Revision ID: f150c0117e42
 Revises: d8e9f0a1b2c3
 Create Date: 2026-08-21
 
@@ -59,7 +59,7 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "e9f0a1b2c3d4"
+revision: str = "f150c0117e42"
 down_revision: str | Sequence[str] | None = "d8e9f0a1b2c3"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None

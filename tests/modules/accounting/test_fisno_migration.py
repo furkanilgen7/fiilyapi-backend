@@ -58,7 +58,7 @@ ALEMBIC_CMD = (sys.executable, "-m", "alembic")
 
 # Revizyonlara ACIKCA cikilir (modul docstring'i).
 FIN1_REVISION = "d8e9f0a1b2c3"
-FISNO_REVISION = "e9f0a1b2c3d4"
+FISNO_REVISION = "f150c0117e42"
 
 TABLE = "journal_entries"
 COLUMN = "entry_no"
