@@ -3,18 +3,25 @@
 Bu uç HİÇBİR ŞEY YAZMAZ; bütün riski **hangi satırın listeye girdiği** ve
 **kimin göreceğidir**. Dört sınıf kusur ölçülür:
 
-1. **KAYNAK SEÇİMİ (K9).** Üç kaynak çizilidir, bugün İKİSİ vardır. Yanlış
-   durumdaki (taslak/ihtilaflı/ödenmiş) ya da tam ödenmiş bir evrakın listeye
-   sızması ekranda "ödenecek" görünen ama ödenmeyecek bir para üretir.
+1. **KAYNAK SEÇİMİ (K9).** Üç kaynak çizilidir ve TB8'den beri ÜÇÜ DE üretilir
+   (fatura · taşeron hakedişi · bordro dönemi). Yanlış durumdaki
+   (taslak/ihtilaflı/ödenmiş) ya da tam ödenmiş bir evrakın listeye sızması
+   ekranda "ödenecek" görünen ama ödenmeyecek bir para üretir. Bordroda ek
+   olarak vadenin TAAHHÜT olup olmadığı ölçülür: `payment_due_date` yalnız
+   `approved` dönemde kilitlidir.
 2. **PENCERE.** `days` bir SINIRDIR: tavanı aşan istek sessizce kırpılırsa
    kullanıcı 90 gün ister, 90 gün gördüğünü sanır. Sınır günleri (bugün ·
    bugün+`days` · bugün+`days`+1) ayrı ayrı sınanır.
-3. **KAPSAM (IDOR).** Hesap şirket genelidir (K3) ama KAYNAKLAR proje kapsamı
-   taşır. Süzgeç düşerse `treasury=_V` olan proje müdürü, göremediği projenin
-   karşı tarafını ve tutarını okur. Taşıyıcı `kapsamli_muhasebe_headers`tir —
-   `admin_headers` (`projects=_A`) süzgeci ATLADIĞI için sızıntıyı göstermez.
-4. **N+1.** 1 satır ile 20 satırın SORGU SAYISI ölçülür; satır başına hesap
-   çeken bir uygulama testi geçemez.
+3. **KAPSAM (IDOR).** Hesap şirket genelidir (K3) ama fatura/hakediş KAYNAKLARI
+   proje kapsamı taşır. Süzgeç düşerse `treasury=_V` olan proje müdürü,
+   göremediği projenin karşı tarafını ve tutarını okur. Taşıyıcı
+   `kapsamli_muhasebe_headers`tir — `admin_headers` (`projects=_A`) süzgeci
+   ATLADIĞI için sızıntıyı göstermez. Bordronun kapsamı AYRIDIR (`project_id`
+   kolonu yoktur): kapı `payroll` iznidir ve taşıyıcısı `pm_headers`tır —
+   `project_manager` bu ucu okur (`treasury=_V`) ama `payroll=_N`dir.
+4. **N+1.** Üç kaynağın 1'er satırı ile 10'ar satırının (3 → 30 satır) SORGU
+   SAYISI ölçülür; satır ya da dönem başına hesap çeken bir uygulama testi
+   geçemez.
 
 🔴 **K10 ayrıca sınanır:** yanıtta `urgency`/`color`/`severity` gibi bir alan
 BULUNMAMALIDIR. E9'un renk kodlaması kendi içinde tutarsızdır (2 gün→turuncu,
