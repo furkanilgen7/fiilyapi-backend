@@ -268,11 +268,16 @@ async def list_upcoming_payments_endpoint(
     🔴 **K10:** yanıt `days_remaining` (sayı) + `source_type` taşır; `urgency`/
     `color` gibi bir alan YOKTUR — renk kararı istemcinindir.
 
-    🔴 **K9:** kaynaklar bugün fatura ve taşeron hakedişidir; **bordro hiç satır
-    üretmez** (vade kolonu yok, uydurulmaz) — ayrıntı `upcoming.py`de.
+    🔴 **K9:** kaynaklar ÜÇTÜR — fatura · taşeron hakedişi · **bordro dönemi**
+    (TB8). Bordronun iki ek kapısı vardır: yalnız `approved` dönem listelenir
+    (vade ancak onaydan sonra bir TAAHHÜTTÜR) ve satır `payroll:view` izni
+    olmayan aktörden GİZLENİR. Vade hiçbir kaynakta UYDURULMAZ: vadesi NULL
+    olan kayıt listeye girmez — ayrıntı `upcoming.py`de.
 
-    🔴 **Kapsam:** hesap şirket geneli olsa da (K3) KAYNAKLAR proje kapsamlıdır
-    ve her satır karşı taraf + tutar sızdırır → süzgeç UYGULANIR.
+    🔴 **Kapsam:** hesap şirket geneli olsa da (K3) fatura/hakediş KAYNAKLARI
+    proje kapsamlıdır ve her satır karşı taraf + tutar sızdırır → süzgeç
+    UYGULANIR. Bordroda proje kapsamı YOKTUR (`payroll_periods`ta `project_id`
+    yok); oradaki kapı saf modül iznidir.
     """
     return await upcoming.build_upcoming_payments(session, user, days=days)
 

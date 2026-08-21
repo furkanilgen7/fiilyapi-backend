@@ -38,7 +38,15 @@ from app.modules.invoicing.models import (
     InvoiceDocumentType,
     InvoiceStatus,
 )
+from app.modules.payroll.models import (
+    PayrollLine,
+    PayrollLineStatus,
+    PayrollPeriod,
+    PayrollPeriodStatus,
+)
+from app.modules.personnel.models import Personnel
 from app.modules.projects.models import Project
+from app.modules.site_diary.models import WorkerSource
 from app.modules.subcontractor_progress_payments.models import (
     SubcontractorPaymentStatus,
     SubcontractorProgressPayment,
@@ -349,6 +357,34 @@ async def kapsamli_muhasebe_headers(
     return _auth(await _login_mevcut(client, email))
 
 
+@pytest.fixture
+async def kapsamli_pm_headers(
+    client: AsyncClient,
+    seeded_db: AsyncSession,
+    user_factory,
+    gorunen_proje: Project,
+    gorunmeyen_proje: Project,
+) -> dict[str, str]:
+    """`project_manager` (`treasury=_V`, **`payroll=_N`**) — kapsamı `gorunen_proje`.
+
+    🔴 `kapsamli_muhasebe_headers`in İKİZİDİR ve TB8'in kapsam bekçisi ancak bu
+    ikizle kurulabilir: proje kapsamları AYNIDIR, tek fark `payroll` iznidir.
+    Kapsamsız `pm_headers` ile ölçülseydi "PM hakedişi görmeye devam ediyor"
+    iddiası kurulamazdı — kapsamsız kullanıcı hakedişi ZATEN göremez
+    (`_progress_payment_rows` boş `project_ids`te erken döner), yani bordro
+    kapısının FAZLA GENİŞ kapanması (iki mevcut kaynağı da susturması) fark
+    edilmeden geçerdi.
+    """
+    email = "kapsamli.pm@hazine.co"
+    await user_factory(email=email, password="parola1234", role_key="project_manager")
+    user = (await seeded_db.execute(select(User).where(User.email == email))).scalar_one()
+    seeded_db.add(
+        UserProjectAccess(user_id=user.id, project_id=gorunen_proje.id, all_projects=False)
+    )
+    await seeded_db.flush()
+    return _auth(await _login_mevcut(client, email))
+
+
 async def _login_mevcut(client: AsyncClient, email: str) -> str:
     resp = await client.post("/auth/login", json={"email": email, "password": "parola1234"})
     assert resp.status_code == 200, resp.text
@@ -445,6 +481,97 @@ def taseron_hakedisi_fabrikasi(seeded_db: AsyncSession, project_factory, user_fa
         await seeded_db.flush()
         await seeded_db.refresh(payment)
         return payment
+
+    return _create
+
+
+# --------------------------------------------------------------------------- #
+# TB8 — ÜÇÜNCÜ kaynak: bordro dönemi (E9:116-119 `Bordro – Temmuz`)
+#
+# 🔴 `PayrollPeriod`da `project_id` **YOKTUR** → bordro satırının proje kapsamı
+# da yoktur. Görünürlük saf MODÜL iznidir (`payroll`), ve matris burada iki
+# kaynaktan AYRIŞIR:
+#
+#   `"treasury": [_A, _F, _N, _N, _N, _F, _V, _N]`
+#   `"payroll":  [_A, _F, _N, _N, _F, _F, _N, _N]`
+#
+# yani `project_manager` bu ucu OKUR (`treasury=_V`) ama bordroya HİÇ erişimi
+# yoktur (`payroll=_N`). Kapsam bekçisinin taşıyıcısı bu yüzden `pm_headers`tir;
+# `kapsamli_muhasebe_headers` (`payroll=_F`) satırı GÖRÜR ve fark çakılır.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def bordro_donemi_fabrikasi(seeded_db: AsyncSession):
+    """Bordro dönemi + satırlarını DOĞRUDAN kurar — uçtan geçilmez.
+
+    `taseron_hakedisi_fabrikasi` deseni: uçlardan kurulsaydı `approved` duruma
+    ulaşmak İK-3'ün geçiş zincirini (`draft → pending_approval → approved`) ve
+    `compute` akışını gerektirir, bu dosyanın testleri o uçların doğruluğuna
+    bağlanır ve tek bir kusur hepsini kırmızıya çevirirdi.
+
+    🔴 **Tutar KOLON DEĞİLDİR, satırlardan TÜREVDİR** (`payroll/summary.py:111`):
+    `Σ net_amount`, yalnız `PAYABLE_LINE_STATUSES` (`pending`/`approved`/`paid`)
+    ve `net_amount IS NOT NULL` olan satırlar. Bu yüzden fixture bir "tutar"
+    parametresi ALMAZ: satır listesi verilir, toplam testin iddiasıdır.
+
+    `lines` her öğesi `(satır durumu, net tutar | None)`. Satır başına AYRI bir
+    `Personnel` kurulur — `uq_payroll_lines_period_personnel` aynı personeli iki
+    kez kabul etmez. `personnel_source` satır durumundan TÜRETİLİR: `excluded`
+    satır K2'nin taşıyıcısıdır (taşeron personeli; neti hakedişten ödenir,
+    bordrodan ÖDENMEZ), diğerleri şirket kadrosudur.
+
+    `month=None` iken (yıl, ay) SAYAÇTAN üretilir: `uq_payroll_periods_year_month`
+    tek bir aya iki dönem kabul etmez ve N+1 ölçümü on ayrı dönem ister.
+    """
+    sayac = {"n": 0}
+
+    async def _create(
+        *,
+        year: int = 2026,
+        month: int | None = None,
+        payment_due_date: date | None = None,
+        status: PayrollPeriodStatus = PayrollPeriodStatus.approved,
+        lines: tuple[tuple[PayrollLineStatus, str | None], ...] = (
+            (PayrollLineStatus.approved, "892000.00"),
+        ),
+    ) -> PayrollPeriod:
+        sayac["n"] += 1
+        if month is None:
+            month = (sayac["n"] - 1) % 12 + 1
+            year += (sayac["n"] - 1) // 12
+        period = PayrollPeriod(
+            year=year,
+            month=month,
+            status=status,
+            payment_due_date=payment_due_date,
+        )
+        seeded_db.add(period)
+        await seeded_db.flush()
+        for sira, (satir_durumu, net) in enumerate(lines):
+            kaynak = (
+                WorkerSource.subcontractor
+                if satir_durumu is PayrollLineStatus.excluded
+                else WorkerSource.company
+            )
+            person = Personnel(
+                full_name=f"Bordro Personeli {sayac['n']:02d}-{sira + 1:02d}",
+                source=kaynak,
+            )
+            seeded_db.add(person)
+            await seeded_db.flush()
+            seeded_db.add(
+                PayrollLine(
+                    payroll_period_id=period.id,
+                    personnel_id=person.id,
+                    personnel_source=kaynak,
+                    net_amount=None if net is None else Decimal(net),
+                    status=satir_durumu,
+                )
+            )
+        await seeded_db.flush()
+        await seeded_db.refresh(period)
+        return period
 
     return _create
 
