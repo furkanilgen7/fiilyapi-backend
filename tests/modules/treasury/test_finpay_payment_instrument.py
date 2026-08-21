@@ -547,8 +547,16 @@ async def test_bagli_odeme_silinince_durum_TURETIMI_bozulmadi(
 async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
     """🔴 Kapsam: TB6-T1 (`GET/PUT /payroll/tax-brackets`) İKİ YENİ YOL açtı.
 
-    Sayı elle yazılmıştır ve bilinçlidir: bir uç eklendiğinde bu test kırmızı
-    olur ve kapsam genişlemesi GÖRÜNÜR hâle gelir.
+    🔴 Kapsam bekçisi (tripwire): "yol" ile "operasyon" AYRI ölçülerdir
+    (Kanon 3). Bu dosya kendi başına var olan İKİ uca (`POST`/`GET
+    /invoices/{id}/payments`) alan ekler, yeni yol AÇMAZ — ama sayaç dosya
+    bazlı değil, TÜM uygulamayı ölçer: başka bir dilim aynı anda gerçekten
+    yeni uç eklerse bu test kırmızı olur ve kapsam genişlemesi GÖRÜNÜR hâle
+    gelir. Sabitler bilinçli olarak ELLE yazılmıştır, tam da bu yüzden.
+
+    Bugünkü değer FIN-PAY (bu dosya) + TB6'nın (`GET /payroll/tax-brackets`
+    ve `PUT /payroll/tax-brackets/{year}/{income_kind}` — İKİ ayrı yol)
+    toplamıdır.
     """
     from app.main import app
 

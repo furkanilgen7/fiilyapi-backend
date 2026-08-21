@@ -154,9 +154,13 @@ async def balance_sheet_endpoint(
     `as_of` arasıdır (yılbaşından bugüne). Aritmetik ve kontra netlemesi
     `balance_sheet.py` modül docstring'indedir.
 
-    🔴 **`is_balanced` ÖLÇÜLÜR, `True` VARSAYILMAZ**: dengesiz bir `reversed`
-    fiş DB'ye girebilir (`ck_journal_entries_posted_balanced` yalnız `posted`ı
-    bağlar) ve sabit `True` basan bir bilanço sessizce yalan söylerdi.
+    🔴 **`is_balanced` ÖLÇÜLÜR, `True` VARSAYILMAZ**: gerekçe TB6 T2'de
+    DEĞİŞTİ, sonuç DEĞİŞMEDİ. Dengesiz bir `reversed` BAŞLIK artık yazılamaz
+    (`ck_journal_entries_posting_balanced` deftere girenlerin HEPSİNİ bağlar),
+    ama kısıt BAŞLIK toplamlarını bağlar, bilanço ise `journal_lines`ı toplar —
+    başlığı dengeli, satırları dengesiz bir fiş HÂLÂ kurulabilir; ayrıca
+    `is_contra` işaretlenmemiş bir `257` iki katı tutar kaydırır. Sabit `True`
+    basan bir bilanço sessizce yalan söylerdi.
 
     🔴 **Sayfalama YOKTUR** (K7 zarfı kullanılmaz): `total` GENEL TOPLAMDIR ve
     `is_balanced` onun üzerinden kurulur — sayfalanmış bir bilançoda ikisi de

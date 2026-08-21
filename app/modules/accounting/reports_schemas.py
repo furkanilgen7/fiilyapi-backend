@@ -245,13 +245,14 @@ class BalanceSheetResponse(BaseModel):
     kurulur ve istemci hangi ANI gördüğünü kendi isteğinden değil SUNUCUNUN
     cevabından okur.
 
-    🔴 **`is_balanced` ÖLÇÜLÜR, `True` VARSAYILMAZ.** Gerekçe ölçüldü:
-    `ck_journal_entries_posted_balanced` (`models.py`) yalnız `posted`ı bağlar,
-    yani **dengesiz bir `reversed` fiş satırı DB'ye GİREBİLİR** (açık borç) ve
-    `POSTING_STATUSES` `reversed`ı deftere alır. Sabit `True` basan bir bilanço
-    SESSİZCE YALAN SÖYLERDİ. Gösterge ayrıca `is_contra` veri hatalarını da
-    yakalar: kontra işaretlenmemiş bir `257` iki katı tutar kaydırır ve burada
-    görünür.
+    🔴 **`is_balanced` ÖLÇÜLÜR, `True` VARSAYILMAZ.** Gerekçe TB6 T2'de
+    DEĞİŞTİ, sonuç DEĞİŞMEDİ: eski `ck_journal_entries_posted_balanced` yalnız
+    `posted`ı bağlıyordu ve dengesiz bir `reversed` fiş DB'ye girebiliyordu —
+    **o borç KAPANDI** (`ck_journal_entries_posting_balanced` deftere girenlerin
+    HEPSİNİ bağlar). Ama kısıt **BAŞLIK** toplamlarını bağlar, bilanço ise
+    `journal_lines`ı toplar — başlığı dengeli, satırları dengesiz bir fiş HÂLÂ
+    kurulabilir. Gösterge ayrıca `is_contra` veri hatalarını da yakalar: kontra
+    işaretlenmemiş bir `257` iki katı tutar kaydırır ve burada görünür.
 
     🔴 **Dönem kilidi rozeti YOKTUR** (MT-K8): bilanço salt-okumadır, kapalı
     dönemin bilançosu ile açığınki arasında fark yoktur ve mockup rozet

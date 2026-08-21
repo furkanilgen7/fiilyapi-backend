@@ -21,8 +21,9 @@ mali kayit tabloya GIREMEZ.
     dengeleyemez (bir borc satirina `-100` yazip sahte denge kurmak imkansiz).
   * `ck_journal_lines_single_side` — `(0,0)` ve cift-dolu satir reddedilir;
     E8'in her satiri TEK TARAFLIDIR (bos taraf hep `—`, E8:114 vd.).
-  * `ck_journal_entries_posted_balanced` — DENGESIZ fis `posted` OLAMAZ; taslak
-    dengesiz BIRAKILABILIR (kayitlastirma aninda kapi yeniden kosar).
+  * `ck_journal_entries_posting_balanced` — DENGESIZ fis DEFTERE GIREMEZ
+    (`posted` + `reversed`, TB6 T2); taslak dengesiz BIRAKILABILIR
+    (kayitlastirma aninda kapi yeniden kosar).
   * `journal_entries.total_debit`/`total_credit` **NOT NULL** — nullable
     olsalardi `NULL = NULL` **NULL** uretir ve CHECK'i **GECERDI**; denge kisiti
     sessizce devre disi kalirdi.
@@ -36,7 +37,8 @@ kolonlarinin bilincli istisnasinin ayni gerekcesi): bir CHECK **baska
 satirlarin toplamini GOREMEZ** (`treasury/models.py` asiri-tahsilat notu). K1
 "DB duzeyinde korunur" diyorsa toplam bir KOLON olmak zorundadir. Sapma
 penceresi kapalidir: satirlar YALNIZ `draft`ta ve YALNIZ tek yoldan
-(`_apply_totals`) yazilir, CHECK de zaten yalniz `posted`ta isirir.
+(`_apply_totals`) yazilir, CHECK de `draft` DISINDAKI her durumda isirir
+(TB6 T2: eskiden yalniz `posted`ti — asagidaki `BALANCE_ENFORCED_STATUSES`).
 TRIGGER YOKTUR (repo hicbir yerde kullanmiyor) — "posted fisin satiri UPDATE
 edilemez" iddiasi SERVIS katmanindadir.
 
@@ -208,6 +210,25 @@ class JournalEntryStatus(str, enum.Enum):
     draft = "draft"
     posted = "posted"
     reversed = "reversed"
+
+
+#: 🔴 TB6 T2 — dengesi **DB duzeyinde** zorlanan durumlar. `balance`in
+#: `POSTING_STATUSES` demetiyle AYNI kume olmak ZORUNDADIR ve bu bir yorum
+#: degil, TESTLE baglidir (`test_tb6_reversed_balanced_check`): iki liste
+#: ayrisirsa deftere giren ama dengesi denetlenmeyen bir durum dogar.
+#:
+#: 🔴 Burada durur, `balance.py`de DEGIL: `balance` bu modulu import eder, ters
+#: yon dongu olurdu. `balance.POSTING_STATUSES` anlamli olani (defterin
+#: suzgeci), bu sabit ise onun SQL yansimasidir.
+BALANCE_ENFORCED_STATUSES: tuple[str, ...] = ("posted", "reversed")
+
+#: CHECK'in SQL'i ELLE yazilmaz, kumeden URETILIR: elle yazilsaydi yeni bir
+#: durum eklendiginde biri guncellenir, oteki kalirdi.
+POSTING_BALANCED_CHECK = (
+    "status NOT IN ("
+    + ", ".join(f"'{durum}'" for durum in BALANCE_ENFORCED_STATUSES)
+    + ") OR total_debit = total_credit"
+)
 
 
 class AccountingPeriodStatus(str, enum.Enum):
@@ -438,12 +459,9 @@ class JournalEntry(Base):
         # 🔑 FIS-NO — numara SIRKET GENELINDE tekildir (yil numaranin icinde).
         UniqueConstraint("entry_no", name="uq_journal_entries_entry_no"),
         CheckConstraint(PERIOD_MATCHES_DATE_CHECK, name="ck_journal_entries_period_matches_date"),
-        # 🔴 K1'in baslik ayagi: DENGESIZ FIS `posted` OLAMAZ. `draft` dengesiz
+        # 🔴 K1'in baslik ayagi: DENGESIZ FIS DEFTERE GIREMEZ. `draft` dengesiz
         # BIRAKILABILIR — kapi kayitlastirma aninda yeniden kosar.
-        CheckConstraint(
-            "status <> 'posted' OR total_debit = total_credit",
-            name="ck_journal_entries_posted_balanced",
-        ),
+        CheckConstraint(POSTING_BALANCED_CHECK, name="ck_journal_entries_posting_balanced"),
         CheckConstraint(
             "total_debit >= 0 AND total_credit >= 0",
             name="ck_journal_entries_totals_non_negative",
@@ -478,7 +496,7 @@ class JournalEntry(Base):
         Enum(JournalEntryStatus, name="journal_entry_status"), nullable=False
     )
     # 🔴 NOT NULL SART: nullable olsalardi `NULL = NULL` NULL uretir ve
-    # `ck_journal_entries_posted_balanced` sessizce GECERDI.
+    # `ck_journal_entries_posting_balanced` sessizce GECERDI.
     total_debit: Mapped[Decimal] = mapped_column(
         Numeric(18, 2), nullable=False, default=0, server_default=text("0")
     )

@@ -35,16 +35,23 @@ async def test_summary_UC_KPI_ve_net_ALACAK_EKSI_BORC(
 
     Yön burada ÖLÇÜLEBİLİR olmalıdır. Dengeli fişlerde iki toplam eşit olduğu
     için net her zaman **0** çıkar ve işaret yönü GÖRÜNMEZ. Probe bu yüzden
-    dengesiz bir fiştir ve durumu bilinçli olarak **`reversed`**tır:
-    `ck_journal_entries_posted_balanced` yalnız `posted`ta ısırır, dolayısıyla
-    dengesiz bir kayıt DB'ye ancak bu durumda girebilir — ve `reversed`
-    `POSTING_STATUSES`e DAHİLDİR, yani KPI onu sayar. KPI satırları toplar,
-    başlığı değil.
+    SATIRLARI dengesiz bir fiştir ve durumu bilinçli olarak **`reversed`**tır:
+    `reversed` `POSTING_STATUSES`e DAHİLDİR, yani KPI onu sayar. **KPI satırları
+    toplar, başlığı değil** — bu testin ölçtüğü olgu tam olarak budur.
+
+    🔴 **TB6 T2'DEN SONRA:** dengesizlik artık BAŞLIKTAN kurulamaz —
+    `ck_journal_entries_posting_balanced` `posted`/`reversed` bir fişin
+    `total_debit = total_credit` olmasını ZORLAR. Prob yine de kurulabilir ve
+    iddiası DEĞİŞMEDİ, çünkü defter **SATIRLARI** toplar, başlığı DEĞİL:
+    `header_totals` ile başlık dengeli yazılır, satırlar dengesiz bırakılır.
+    (Uygulama böyle bir fiş üretemez — `apply_totals` yalnız `draft`ta koşar —
+    ama ölçülecek şey `is_balanced`in SÜS OLMADIĞIDIR.)
     """
     kasa, saticilar = await _iki_yaprak(hesap_fabrikasi)
     await fis_fabrikasi(
         [(kasa, "100.00", "0"), (saticilar, "0", "400.00")],
         status=JournalEntryStatus.reversed,
+        header_totals=("400.00", "400.00"),
     )
     resp = await client.get(f"{_YOL}/summary?year=2026&month=7", headers=muhasebe_headers)
     assert resp.status_code == 200, resp.text
