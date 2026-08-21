@@ -36,6 +36,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.accounting import numbering
 from app.modules.accounting.models import (
     AccountingPeriod,
     AccountingPeriodStatus,
@@ -186,6 +187,12 @@ def fis_fabrikasi(seeded_db: AsyncSession, kullanici_id: uuid.UUID):
         toplam_borc = sum((Decimal(borc) for _, borc, _ in satirlar), Decimal("0"))
         toplam_alacak = sum((Decimal(alacak) for _, _, alacak in satirlar), Decimal("0"))
         entry = JournalEntry(
+            # 🔑 FIS-NO — `entry_no` NOT NULL'dir. Sabit bir metin YAZILMAZ:
+            # `uq_journal_entries_entry_no` tekildir ve ayni testte iki fiş
+            # kesen her çağrı sessizce IntegrityError üretirdi. Gerçek üretici
+            # çağrılır — fabrikanın ürettiği fiş, uçtan doğan fişle AYNI
+            # kuralı taşır.
+            entry_no=await numbering.generate_entry_no(seeded_db, year=entry_date.year),
             entry_date=entry_date,
             period_year=entry_date.year,
             period_month=entry_date.month,

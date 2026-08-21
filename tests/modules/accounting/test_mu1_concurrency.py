@@ -41,7 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.errors import ConflictError
 from app.core.security import hash_password
 from app.core.timezone import today
-from app.modules.accounting import state_service
+from app.modules.accounting import numbering, state_service
 from app.modules.accounting.models import (
     AccountingPeriod,
     ChartAccount,
@@ -107,6 +107,8 @@ async def _kur(status: JournalEntryStatus) -> _Kurulum:
         from datetime import date
 
         entry = JournalEntry(
+            # 🔑 FIS-NO — `entry_no` NOT NULL (bkz. `conftest.fis_fabrikasi`).
+            entry_no=await numbering.generate_entry_no(session, year=2026),
             entry_date=date(2026, 7, 17),
             period_year=2026,
             period_month=7,

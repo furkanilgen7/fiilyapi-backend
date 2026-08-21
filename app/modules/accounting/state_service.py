@@ -87,6 +87,7 @@ from app.core.errors import ConflictError
 from app.core.timezone import today
 from app.modules.accounting import (
     guards,
+    numbering,
     periods_service,
     repository,
     service,
@@ -156,7 +157,16 @@ async def _build_reversal(session: AsyncSession, actor: User, entry: JournalEntr
     ORİJİNALİN toplamlarıdır ve o toplamlar zaten K1'den geçmiştir.
     """
     bugun = today()
+    # 🔑 FIS-NO — storno bir bayrak değil YENİ BİR FİŞTİR (MU-1 kararı), yani
+    # KENDİ numarasını alır ve sayacı TÜKETİR: ondan sonra açılan taslak bir
+    # SONRAKİ numarayı görür. Orijinalden kopyalansaydı iki fiş aynı numarayla
+    # yaşar ve defterde hangi satırın hangi fişten geldiği ayırt edilemezdi;
+    # ayrı bir sayaçtan gelseydi çakışma yalnız üretimde, tekillik kısıtı
+    # üzerinden görünürdü. Yıl BUGÜNÜN yılıdır çünkü `entry_date` de öyledir
+    # (orijinalin tarihi kapalı bir döneme düşerdi).
+    entry_no = await numbering.generate_entry_no(session, year=bugun.year)
     storno = JournalEntry(
+        entry_no=entry_no,
         entry_date=bugun,
         period_year=bugun.year,
         period_month=bugun.month,
