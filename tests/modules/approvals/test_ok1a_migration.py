@@ -114,7 +114,23 @@ def test_alembic_has_single_head() -> None:
     assert result.returncode == 0, result.stderr
     heads = [line for line in result.stdout.splitlines() if line.strip()]
     assert len(heads) == 1, f"tek head bekleniyordu, cikti:\n{result.stdout}"
-    assert heads[0].startswith(OK1A_REVISION), result.stdout
+
+    # 🔴 BURADA `OK1A_REVISION`in HEAD OLDUGU IDDIA EDILMEZ (FRM-1 dersi,
+    # `test_frm1_document_fields_migration.py:100-138`): "bu dilim en yeni
+    # migration'dir" iddiasi, kendisinden SONRA gelen ILK dilimde kacinilmaz
+    # olarak kirmiziya doner ve o dilimin sahibine, kendi isiyle ilgisi olmayan
+    # bir kirmizi birakir. TB6'nin ayni tuzagi bu turda FIILEN kirildi ve
+    # uyarlandi. Korunmasi GEREKEN ozellik zincirden dusmemektir: kotu bir
+    # re-parent bu migration'i oksuz birakirsa tablolar canlida HIC olusmaz.
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    script = ScriptDirectory.from_config(Config(str(BACKEND_DIR / "alembic.ini")))
+    atalar = {rev.revision for rev in script.iterate_revisions(heads[0].split()[0], "base")}
+    assert OK1A_REVISION in atalar, (
+        f"{OK1A_REVISION} head'in zincirinde DEGIL — re-parent onu oksuz birakmis olabilir; "
+        f"head: {heads[0]}"
+    )
 
 
 def test_migration_parent_is_the_expected_revision() -> None:

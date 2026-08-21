@@ -254,6 +254,24 @@ class AccountingValidationError(DomainError):
     """
 
 
+class ApprovalValidationError(DomainError):
+    """Onay zinciri govde kurali ihlali (OK-1A K2) — 422.
+
+    `AccountingValidationError`/`ProcurementValidationError` deseninin aynisi ve
+    ayni sebeple onlardan AYRI: DB `CHECK` ile zorlanamayan kurallar tek yazma
+    yolunda servis korkuluguyla tutulur. Bugunku tek kullanicisi RET
+    GEREKCESIDIR (zorunlu metin + `FREE_TEXT_MAX_LENGTH` tavani).
+
+    Gerekce neden Pydantic'te DEGIL: ret uclari UC AYRI evrak ailesinde yasar ve
+    ikisinin govdesi bugun `reason`u OPSIYONEL tasir (`RejectBody`). Kurali
+    semaya yazsaydik uc semayi birden sikilastirmak gerekirdi ve biri
+    unutuldugunda kapi O UCTAN atlatilirdi (BC dersi). Motor tek hunidir.
+
+    403 DEGIL: aktor uygundur, duzeltilecek sey GOVDEDEDIR.
+    409 da DEGIL: zincir DOGRU durumdadir, engel ICERIKTIR.
+    """
+
+
 class ConflictError(DomainError):
     """Durum makinesi / iş kuralı çakışması — 409 (P7 hakediş spec §7, §9.2, §9.7).
 

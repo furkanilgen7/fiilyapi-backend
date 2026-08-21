@@ -43,6 +43,10 @@ olgudur, satınalma damgası yüzünden reddedilemez.
 "bunu KİM onaylayabilir" sorusunu. Bu yüzden ikisi ayrı modüldedir ve eşik
 `submit`te DEĞİL `approve`ta koşar.
 
+**Eşik AYARDAN okunur (OK-1A R6).** Sihirli sayı burada DEĞİL
+`company.approval_threshold_try`dedir; onay zincirinin Patron adımı da AYNI
+değerden türer. İki eşik bir arada yaşasaydı sessizce ayrışırlardı.
+
 **Eşik ONAY ANINDA, GÜNCEL kalemlerden YENİDEN hesaplanır.** `purchase_requests`
 üzerinde donmuş bir tutar kolonu yoktur (T1 kararı) ve olmamalıdır: olsaydı
 kalem değişiminde bayatlar, düşük tutarla onaya gönderilip sonra şişirilen bir
@@ -59,6 +63,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel, satisfies
 from app.core.errors import ApprovalNotAllowedError, ConflictError, ProcurementValidationError
+from app.modules.approvals import service as approvals_service
 from app.modules.procurement import guards, repository, validation
 from app.modules.procurement.models import (
     PurchaseOrder,
@@ -70,7 +75,6 @@ from app.modules.users.models import User
 
 __all__ = [
     "APPROVAL_THRESHOLD_LEVEL",
-    "APPROVAL_THRESHOLD_TRY",
     "OPEN_REQUEST_STATUSES",
     "ORDER_DELIVERY_TRANSITIONS",
     "ORDER_TRANSITIONS",
@@ -151,9 +155,17 @@ OPEN_REQUEST_STATUSES: frozenset[PurchaseRequestStatus] = frozenset(
     }
 )
 
-#: FST 166 "₺500K+ → Patron". Sihirli sayı KODA GÖMÜLMEZ; eşik ve onu geçen
-#: seviye tek kaynaktır ve testle kilitlidir.
-APPROVAL_THRESHOLD_TRY = Decimal("500000")
+#: 🔴 FST 166 "₺500K+ → Patron". ESIK ARTIK BURADA DEGIL, AYARDADIR (OK-1A R6):
+#: `company.approval_threshold_try`, tek yazma yolu `PUT /approvals/settings`.
+#:
+#: Gerekce: OK-1A cok adimli onay zincirini acti ve zincirin Patron adimi AYNI
+#: esikten turuyor. Iki esik (buradaki sabit + zincirin ayari) bir arada
+#: yasasaydi kacinilmaz olarak AYRISIRLAR ve ayni tutardaki bir talep
+#: satinalmada esigin altinda, onay zincirinde ustunde sayilirdi. Sayinin
+#: VARSAYILANI `approvals.definitions.DEFAULT_APPROVAL_THRESHOLD_TRY`dir ve
+#: kolonun `server_default`i de odur — TEK kaynak.
+#:
+#: Sabitin geri gelmedigi `test_esik_tek_kaynak_AYARDIR` ile kilitlidir.
 
 #: "Üst seviye rol" = `procurement` modülünde `full`. YENİ bir rol ya da izin
 #: İCAT EDİLMEDİ: seed matrisinde (`roles/seed_data.py`) `procurement` satırı
@@ -189,7 +201,17 @@ async def _assert_submittable(session: AsyncSession, request: PurchaseRequest) -
 async def _assert_approver_level(
     session: AsyncSession, actor: User, request: PurchaseRequest
 ) -> None:
-    """₺500K eşiği (modül docstring'indeki gerekçe).
+    """Onay eşiği (modül docstring'indeki gerekçe).
+
+    🔴 EŞİK AYARDAN OKUNUR (OK-1A R6): `company.approval_threshold_try`.
+    Buraya bir sayı GÖMÜLMEZ — onay zincirinin Patron adımı da AYNI değerden
+    türer ve iki kaynak sessizce ayrışırdı. Varsayılan ₺500.000'dur
+    (`approvals.definitions.DEFAULT_APPROVAL_THRESHOLD_TRY`).
+
+    ⚠️ Eşik DEĞİŞTİĞİNDE bu kapı ANINDA yeni değeri okur ve bu bilinçlidir:
+    burada donacak bir zincir YOKTUR — karar isteğin kendi anında verilir.
+    Snapshot yalnızca `approval_chains` içindir (açık zincirler sonradan
+    değişen eşikten etkilenmez).
 
     Tutar `repository.request_estimated_total` ile O AN hesaplanır — kayıtta
     donmuş bir toplam OKUNMAZ.
@@ -205,7 +227,8 @@ async def _assert_approver_level(
     lines = await repository.load_request_lines(session, request.id)
     total = await repository.request_estimated_total(session, request.id)
     tutar_bilinmiyor = validation.lines_missing_price(lines)
-    if total < APPROVAL_THRESHOLD_TRY and not tutar_bilinmiyor:
+    threshold = await approvals_service.get_threshold(session)
+    if total < threshold and not tutar_bilinmiyor:
         return
     level = await repository.actor_level(session, actor)
     if not satisfies(level, APPROVAL_THRESHOLD_LEVEL):

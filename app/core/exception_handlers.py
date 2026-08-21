@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from app.core.errors import (
     AccountingValidationError,
     ApprovalNotAllowedError,
+    ApprovalValidationError,
     BoqGroupSiteMismatchError,
     ConflictError,
     CustomerValidationError,
@@ -168,6 +169,14 @@ async def _accounting_validation_handler(
     )
 
 
+async def _approval_validation_handler(
+    request: Request, exc: ApprovalValidationError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content={"detail": str(exc)}
+    )
+
+
 async def _domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
     return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
 
@@ -206,5 +215,6 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(InvoicingValidationError, _invoicing_validation_handler)
     app.add_exception_handler(TreasuryValidationError, _treasury_validation_handler)
     app.add_exception_handler(AccountingValidationError, _accounting_validation_handler)
+    app.add_exception_handler(ApprovalValidationError, _approval_validation_handler)
     app.add_exception_handler(DomainError, _domain_error_handler)
     app.add_exception_handler(IntegrityError, _integrity_error_handler)

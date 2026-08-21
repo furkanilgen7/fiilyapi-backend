@@ -16,13 +16,27 @@ kurulumunu beklerken ikincisi henüz başlamamış olur ve iki görev hiç çak�
 Bu yüzden her görev ÖNCE kendi bağlantısını ısıtır (gerçek bir sorgu koşturur,
 transaction'ı başlatır) ve ANCAK ONDAN SONRA `asyncio.Barrier`a varır.
 
-## 🔴 POZİTİF KONTROL — ölçüm aleti gerçekten ölçüyor mu
+## 🔴 POZİTİF KONTROL — ölçüm aleti gerçekten ölçüyor mu (ÖLÇÜLDÜ)
 
-FIS-NO'da eşzamanlılık bekçisi, istek yolunda daha önce alınmış ALAKASIZ bir
-kilit (`assert_periods_open`) tarafından maskeleniyordu ve özellik hiç yokken
-bile yeşil geçiyordu. Bu dosyanın iki bekçisi de `service.approve_next_step`
-içindeki `_ZINCIR_KILIDI` bayrağı `False` yapılarak MUTASYONLA sınanır; ikisi de
-kırmızıya dönmezse test yarışı hiç kurmamış demektir.
+Mutasyon: `repository.get_chain_for_update` içindeki `.with_for_update()`
+KALDIRILIR. Üç bekçi bu mutasyon altında tek tek koşuldu:
+
+| bekçi | izole ×3 | dosya bütün |
+|---|---|---|
+| `..._ESZAMANLI_iki_onay...` (`gather` + baraj) | **3/3 YEŞİL** | YEŞİL |
+| `..._TUTULAN_KILIT` (bayat okuma)              | **3/3 KIRMIZI** | KIRMIZI |
+| `..._POZITIF_KONTROL` (kilit gerçekten alınıyor mu) | **3/3 KIRMIZI** | KIRMIZI |
+
+🔴 **Yani `gather` bekçisi bu mutasyonu HİÇ GÖRMÜYOR** — FAT-1'in kırılgan
+bekçisinin daha da kötü hâli (orada 3'te 2 kırmızıydı). Yarış fiilen kurulmuyor:
+görevler barajdan sonra da sıraya giriyor ve ikinci görev, birincinin commit'ini
+GÖRMÜŞ hâlde okuyor. Yarışan sayısı 4'e çıkarılarak da denendi — mutasyon yine
+yakalanmadı (yalnızca iddia aritmetiği bozuldu).
+
+Bu yüzden `gather` bekçisi burada **DAVRANIŞ KATMANIDIR** ve kilidin kanıtı
+SAYILMAZ; kanıt aşağıdaki İKİ DETERMİNİSTİK bekçidir. Biri kilidin ETKİSİNİ
+(bayat okuma yok), öteki kilidin VARLIĞINI (ikinci istek gerçekten bekliyor)
+ölçer.
 
 ## Ayrışma noktası BLOKE OLMAK değil, NE OKUDUĞUDUR (FIN-1 dersi)
 
@@ -44,7 +58,12 @@ import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from app.modules.approvals import definitions, service
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from app.core.errors import ConflictError
+from app.core.security import hash_password
+from app.modules.approvals import definitions, repository, service
 from app.modules.approvals.models import (
     ApprovalChain,
     ApprovalDocumentType,
@@ -52,11 +71,6 @@ from app.modules.approvals.models import (
     ApprovalStep,
     UserApprovalRole,
 )
-from sqlalchemy import delete, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
-from app.core.errors import ConflictError
-from app.core.security import hash_password
 from app.modules.roles.models import Role
 from app.modules.users.models import User
 from tests.conftest import test_engine
@@ -230,8 +244,10 @@ async def test_ESZAMANLI_iki_onay_AYNI_adimi_IKI_KEZ_ilerletemez() -> None:
     İki gerçek bağlantıdaki İKİ FARKLI şef aynı zincirin 1. adımını aynı anda
     onaylamaya çalışır. Doğru davranış: BİRİ geçer, ÖTEKİ **409** alır.
 
-    `_ZINCIR_KILIDI` `False` yapılırsa ikisi de "approved" döner ve 1. adımın
-    onaylayanı, ikinci commit'in üstüne yazmasıyla SESSİZCE değişir.
+    ⚠️ **BU BEKÇİ KİLİDİN KANITI DEĞİLDİR** (modül docstring'indeki ölçüm
+    tablosu): `.with_for_update()` kaldırıldığında 3/3 YEŞİL kaldı — yarış
+    fiilen kurulmuyor. DAVRANIŞ katmanı olarak kalır; kilidin kanıtı aşağıdaki
+    iki deterministik bekçidir.
     """
     kurulum = await _kur()
     baraj = asyncio.Barrier(2)
@@ -299,3 +315,68 @@ async def test_ADIM_kaydi_DENETIMDEN_ONCE_kilitlenir_TUTULAN_KILIT() -> None:
     finally:
         birak.set()
         await _guvenli_temizlik(kurulum, tx0, gecici)
+
+
+async def _kilidi_tut(kurulum: _Kurulum, hazir: asyncio.Event, birak: asyncio.Event) -> str:
+    """tx0: zincir satirinin KILIDINI alir ama HICBIR SEY YAZMAZ.
+
+    Yazmamasi KASITLIDIR ve bu testin ayirt ediciligi tam olarak buradan gelir:
+    tx0 bir adima yazsaydi, kilidi KALDIRILMIS kod da kendi `UPDATE`inin ortuk
+    satir kilidinde bloke olurdu ve "ikinci istek bekledi" iddiasi mutasyonda da
+    YESIL kalirdi (FIN-1 dersi). Hicbir yazma olmadigi icin bloke olmanin TEK
+    sebebi `FOR UPDATE`tir.
+    """
+    async with _SessionFactory() as session:
+        chain = await repository.get_chain_for_update(session, _TASERON, kurulum.document_id)
+        assert chain is not None
+        hazir.set()
+        await birak.wait()
+        await session.rollback()
+        return "released"
+
+
+async def test_ZINCIR_KILIDI_GERCEKTEN_ALINIYOR_POZITIF_KONTROL() -> None:
+    """🔴 ÖLÇÜM ALETİNİN KENDİSİNİ ÖLÇER (madde 9, FIS-NO dersi).
+
+    FIS-NO'da eşzamanlılık bekçisi, istek yolunda daha önce alınmış ALAKASIZ bir
+    kilit tarafından maskeleniyordu ve özellik HİÇ YOKKEN bile yeşil geçiyordu.
+    Bu test o sınıfı kapatır: `approve_next_step`in gerçekten ZİNCİR SATIRINI
+    kilitleyip kilitlemediğini, başka hiçbir kilidin karışamayacağı bir
+    kurulumda ölçer.
+
+    tx0 yalnızca `FOR UPDATE` tutar, HİÇBİR SATIRA YAZMAZ. O hâlde:
+
+    * kilit YERİNDEYSE ikinci istek tx0 serbest bırakana kadar İLERLEYEMEZ;
+    * kilit KALDIRILIRSA ikinci isteği tutacak BAŞKA HİÇBİR ŞEY YOKTUR ve istek
+      tx0 daha elini kaldırmadan biter → iddia KIRMIZI, her turda.
+
+    Son iddia da önemlidir: tx0 bırakınca ikinci istek GEÇER. Kilidin kalıcı bir
+    tıkanma üretmediği, yalnızca sıraya soktuğu böylece kanıtlanır.
+    """
+    kurulum = await _kur()
+    hazir = asyncio.Event()
+    birak = asyncio.Event()
+    tx0: asyncio.Task | None = None
+    bekleyen: asyncio.Task | None = None
+    try:
+        tx0 = asyncio.create_task(_kilidi_tut(kurulum, hazir, birak))
+        await asyncio.wait_for(hazir.wait(), timeout=_TAVAN_SANIYE)
+
+        bekleyen = asyncio.create_task(_onayla(kurulum, 2, None))
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(bekleyen), timeout=_BLOKE_TAVANI)
+
+        assert not bekleyen.done(), (
+            "ikinci onay, tx0 zincir satırının kilidini TUTARKEN tamamlandı — "
+            "`approve_next_step` zincir satırını HİÇ KİLİTLEMİYOR (tx0 hiçbir "
+            "satıra yazmadı, bloke edecek başka bir şey YOKTU)"
+        )
+
+        birak.set()
+        assert await asyncio.wait_for(tx0, timeout=_TAVAN_SANIYE) == "released"
+        assert await asyncio.wait_for(bekleyen, timeout=_TAVAN_SANIYE) == "approved", (
+            "kilit bırakıldıktan sonra ikinci onay geçmeliydi — kilit sıraya sokar, tıkamaz"
+        )
+    finally:
+        birak.set()
+        await _guvenli_temizlik(kurulum, tx0, bekleyen)

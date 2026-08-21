@@ -498,18 +498,37 @@ def test_forbidden_columns_are_absent():
         assert name not in PurchaseOrder.__table__.columns, f"purchase_orders.{name} acilmamaliydi"
 
 
-def test_no_approval_chain_table_opened():
-    """§7 S2: cok adimli onay motoru ACILMAZ — tablosu da yoktur."""
+def test_satinalmanin_KENDI_onay_tablosu_ACILMAZ():
+    """§7 S2 tripwire'i — 🔴 **UYARLANDI (OK-1A T2), cunku GOREVINI YAPTI.**
+
+    Eski hâli `approval_chains` / `approval_steps` tablolarinin HIC olmadigini
+    iddia ediyordu ("SA T1'de cok adimli onay motoru ACILMAZ"). OK-1A tam da o
+    motoru aciyor (kullanici karari K1/K4) ve bu test kirilarak KAPSAM
+    GENISLEMESINI GORUNUR kildi — tripwire'in var olma sebebi budur.
+
+    Uyarlama iddiayi ZAYIFLATMAZ, YERINI DEGISTIRIR: yasak olan sey artik
+    "onay motoru" degil, **SATINALMANIN KENDI onay tablosunu acmasi**dir.
+    Motor ORTAKTIR ve `app/modules/approvals/` altinda yasar; satinalma ona
+    `document_type='purchase_request'` ile baglanir (T3). `purchase_approvals`
+    gibi aileye ozel ikinci bir tablo acilsaydi ayni kavram iki yerde yasar ve
+    onay kutusu iki kaynaktan okumak zorunda kalirdi.
+
+    SA'nin oteki kalici kararlari (`supplier_ratings`, `goods_receipts`)
+    DEGISMEDI ve aynen bekcilenmeye devam eder.
+    """
     from app.core.db import Base
 
-    for table in (
-        "approval_chains",
-        "approval_steps",
-        "purchase_approvals",
-        "supplier_ratings",
-        "goods_receipts",
-    ):
-        assert table not in Base.metadata.tables, f"{table} SA T1'de acilmamaliydi"
+    for table in ("purchase_approvals", "supplier_ratings", "goods_receipts"):
+        assert table not in Base.metadata.tables, f"{table} acilmamaliydi (SA §5)"
+
+    # Ortak motor VARDIR ve `approvals` modulunundur — satinalmanin degil.
+    from app.modules.approvals.models import ApprovalChain, ApprovalStep
+
+    assert ApprovalChain.__table__.name == "approval_chains"
+    assert ApprovalStep.__table__.name == "approval_steps"
+    assert ApprovalChain.__module__.startswith("app.modules.approvals"), (
+        "onay zinciri satinalma modulune tasinmis — motor ORTAK kalmali"
+    )
 
 
 def test_permission_module_already_seeded():
