@@ -231,12 +231,66 @@ async def test_matris_disi_her_gecis_409(
 # --- ₺500K eşiği ---
 
 
-def test_esik_tek_kaynak_sabittir():
-    """Sihirli sayı YOK: eşik ve onu geçen seviye tek yerde tanımlıdır."""
+def test_esik_tek_kaynak_AYARDIR():
+    """Sihirli sayı YOK — ve artık sabit de YOK: eşik AYARDAN okunur (OK-1A R6).
+
+    🔴 **UYARLANDI (OK-1A T2).** Eski hâli `transitions.APPROVAL_THRESHOLD_TRY`
+    sabitinin ₺500.000 olduğunu iddia ediyordu. OK-1A eşiği
+    `company.approval_threshold_try` ayarına taşıdı: iki eşik (satınalmanın
+    sabiti + onay zincirinin ayarı) bir arada yaşasaydı kaçınılmaz olarak
+    AYRIŞIRLAR ve aynı tutardaki bir talep satınalmada eşiğin altında, onay
+    zincirinde üstünde sayılırdı.
+
+    Sabitin YOKLUĞU da iddiadır: modül ona geri dönerse test kırılır. Sayının
+    kendisi artık kolonun `server_default`ı ve
+    `approvals.definitions.DEFAULT_APPROVAL_THRESHOLD_TRY`dir — TEK kaynak.
+
+    `APPROVAL_THRESHOLD_LEVEL` DEĞİŞMEDİ: "kim onaylayabilir" sorusu hâlâ izin
+    seviyesiyle yanıtlanır (onay ROLÜ zincirin işidir, bu kapının değil).
+    """
+    from app.modules.approvals import definitions
+
     from app.core.access import AccessLevel
 
-    assert transitions.APPROVAL_THRESHOLD_TRY == Decimal("500000")
+    assert not hasattr(transitions, "APPROVAL_THRESHOLD_TRY"), (
+        "eşik yeniden sabite döndü — iki eşik doğar ve ayrışır (OK-1A R6)"
+    )
+    assert definitions.DEFAULT_APPROVAL_THRESHOLD_TRY == Decimal("500000.00")
     assert transitions.APPROVAL_THRESHOLD_LEVEL is AccessLevel.full
+
+
+async def test_esik_AYARDAN_okunur_ayar_dusunce_kapi_KAPANIR(
+    client, admin_headers, pm_headers, gorunen_proje, talep_fabrikasi, seeded_db
+):
+    """🔴 R6'nın DAVRANIŞ kanıtı — sabit yerine ayar okunuyor mu?
+
+    Yukarıdaki `hasattr` iddiası tek başına SAHTE-YEŞİL olabilirdi: sabit
+    silinip yerine yine gömülü bir sayı yazılsaydı o test yeşil kalırdı. Bu
+    test ayarı UÇTAN değiştirir ve aynı tutarın kapıyı önce GEÇTİĞİNİ, ayar
+    düşünce GEÇEMEDİĞİNİ ölçer.
+    """
+    ucuz = await talep_fabrikasi(
+        gorunen_proje,
+        status=PurchaseRequestStatus.pending_approval,
+        lines=[("1.000", "100000.00")],
+    )
+    once = await client.post(f"{_YOL}/{ucuz.id}/approve", headers=pm_headers)
+    assert once.status_code == 200, once.text
+
+    ayar = await client.put(
+        "/approvals/settings",
+        json={"approval_threshold_try": "50000.00"},
+        headers=admin_headers,
+    )
+    assert ayar.status_code == 200, ayar.text
+
+    ayni_tutar = await talep_fabrikasi(
+        gorunen_proje,
+        status=PurchaseRequestStatus.pending_approval,
+        lines=[("1.000", "100000.00")],
+    )
+    sonra = await client.post(f"{_YOL}/{ayni_tutar.id}/approve", headers=pm_headers)
+    assert sonra.status_code == 403, sonra.text
 
 
 @pytest.mark.parametrize(

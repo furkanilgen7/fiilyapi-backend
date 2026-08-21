@@ -555,8 +555,14 @@ async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
     gelir. Sabitler bilinçli olarak ELLE yazılmıştır, tam da bu yüzden.
 
     Bugünkü değer FIN-PAY (bu dosya) + TB6'nın (`GET /payroll/tax-brackets`
-    ve `PUT /payroll/tax-brackets/{year}/{income_kind}` — İKİ ayrı yol)
-    toplamıdır.
+    ve `PUT /payroll/tax-brackets/{year}/{income_kind}` — İKİ ayrı yol) +
+    **OK-1A'nın BEŞ yeni yolu**nun toplamıdır.
+
+    🔴 OK-1A (onay zinciri motoru) BİLEREK ve GEREKÇELİ olarak +5 yol / +5
+    operasyon ekler (sözleşme Y5): `GET /approvals` · `GET|PUT
+    /approvals/settings` · `GET /approvals/roles` · `PUT
+    /approvals/roles/{user_id}`. Beşi de TEK operasyonludur (yol = operasyon),
+    bu yüzden iki sayaç da 5 artar: 226→231 · 333→338.
     """
     from app.main import app
 
@@ -568,5 +574,5 @@ async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
         for metot in uc
         if metot in {"get", "post", "put", "patch", "delete"}
     )
-    assert len(yollar) == 226
-    assert operasyonlar == 333
+    assert len(yollar) == 231
+    assert operasyonlar == 338
