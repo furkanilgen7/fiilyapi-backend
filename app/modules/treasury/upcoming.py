@@ -333,6 +333,11 @@ async def _payroll_rows(
     * **NULL vade DÜŞER** (fail-closed, NULL-EŞİK kanonu). Bugün varsayılsaydı
       vadesi hiç girilmemiş her dönem listenin en acil sırasında görünürdü —
       vadesiz faturanın kuralıyla birebir aynı. Vade UYDURULMAZ.
+      ⚠️ Şarttaki `payment_due_date.is_not(None)` **KANITLANMIŞ BİÇİMDE
+      GEREKSİZDİR** (mutasyon denetiminde hayatta kaldı): SQL'de `NULL >= tarih`
+      sonucu NULL'dır ve `WHERE` onu zaten eler. Satır — `_invoice_rows`taki
+      kardeşi gibi — BELGELEME amacıyla durur; silinirse davranış DEĞİŞMEZ.
+      Kuralı bekçileyen şey bu satır değil `test_vadesiz_bordro_donemi_LISTELENMEZ`tir.
     * **Ödenebilir toplam > 0.** Faturanın `kalan > 0` süzgecinin kardeşi:
       "₺0 · 3 gün kaldı" satırı ödenecek bir para varmış gibi görünür,
       tıklanır, hiçbir şey bulunmaz.
