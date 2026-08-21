@@ -1268,7 +1268,7 @@ async def list_rates(
     )
 
 
-async def _year_has_locked_period(session: AsyncSession, year: int) -> bool:
+async def year_has_locked_period(session: AsyncSession, year: int) -> bool:
     """O yılda `approved`/`paid` bir dönem var mı? (T5 oran korkuluğu)
 
     `LOCKED_PERIOD_STATUSES` YENİDEN KULLANILIR ve bu bilinçlidir: "hesabı
@@ -1327,7 +1327,7 @@ async def upsert_rate(
     PUT TAM SETTİR (`PayrollRateUpdate`): kısmi gönderim yoktur, eksik alan
     sessizce 0 olamaz.
     """
-    if await _year_has_locked_period(session, year):
+    if await year_has_locked_period(session, year):
         raise ConflictError(guards.RATES_LOCKED_BY_PERIOD)
 
     rate = (
