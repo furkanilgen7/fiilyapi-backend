@@ -56,7 +56,14 @@ from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AccountingValidationError, ConflictError, NotFoundError
-from app.modules.accounting import guards, periods_service, repository, transitions, validation
+from app.modules.accounting import (
+    guards,
+    numbering,
+    periods_service,
+    repository,
+    transitions,
+    validation,
+)
 from app.modules.accounting.models import (
     ChartAccount,
     JournalEntry,
@@ -331,6 +338,11 @@ async def create_entry(
     )
     _apply_period(entry, data.entry_date)
     apply_totals(entry, data.lines)
+    # 🔑 FIS-NO — numara TASLAK AÇILIRKEN verilir (karar 3) ve yıl
+    # `period_year` KOLONUNDAN okunur (karar 1), `data.entry_date`ten DEĞİL:
+    # ikisi `ck_journal_entries_period_matches_date` ile zaten kilitlidir ve
+    # numaranın yılı fişin dönemiyle TEK kaynaktan gelmelidir.
+    entry.entry_no = await numbering.generate_entry_no(session, year=entry.period_year)
     session.add(entry)
     await session.flush()
 

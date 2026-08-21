@@ -355,6 +355,12 @@ class JournalEntryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    # 🔑 FIS-NO — `YEV-2026-0214`. YALNIZ yanittadir: `JournalEntryCreate`/
+    # `JournalEntryUpdate` gövdesine EKLENMEZ (ikisi de `extra="forbid"` taşır
+    # ve istemciden gelen bir numara 422 olur). Bu şekil üç yanıtı birden
+    # besler — yalnız detaya eklenseydi liste ekranı numarayı hiç göremez ve
+    # fiş seçimi yine UUID'ye düşerdi.
+    entry_no: str
     entry_date: date
     period_year: int
     period_month: int
