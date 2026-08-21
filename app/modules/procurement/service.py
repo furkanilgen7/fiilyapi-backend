@@ -611,7 +611,10 @@ async def perform_request_action(
     detail = _TRANSITION_MESSAGES[action](request.request_no)
     if action is transitions.RequestAction.reject:
         return request, approvals_service.rejection_audit_detail(detail, decision)
-    return request, approvals_service.audit_detail(detail, decision)
+    # Talebin KIMLIGI zaten numarasidir; ara adim metni onu ayrica tasir.
+    return request, approvals_service.audit_detail(
+        detail, decision, document_label=request.request_no
+    )
 
 
 _TRANSITION_MESSAGES = {

@@ -393,12 +393,21 @@ def progress_payment_deleted(
     return f"Hakediş silindi: {project_name} · #{sequence_no} · {status_label} · {amount:,.2f} TL"
 
 
+def progress_payment_label(project_name: str, sequence_no: int) -> str:
+    """Isveren hakedisinin KIMLIGI (`subcontractor_payment_label` esdegeri).
+
+    OK-1A T3: zincirin ARA ADIM metni evragin cumlesini kullanamaz ama kimliksiz
+    de kalamaz — bu etiket oraya eklenir.
+    """
+    return f"{project_name} · #{sequence_no}"
+
+
 def progress_payment_submitted(project_name: str, sequence_no: int) -> str:
-    return f"Hakediş onaya gönderildi: {project_name} · #{sequence_no}"
+    return f"Hakediş onaya gönderildi: {progress_payment_label(project_name, sequence_no)}"
 
 
 def progress_payment_approved(project_name: str, sequence_no: int) -> str:
-    return f"Hakediş onaylandı: {project_name} · #{sequence_no}"
+    return f"Hakediş onaylandı: {progress_payment_label(project_name, sequence_no)}"
 
 
 def progress_payment_rejected(project_name: str, sequence_no: int, reason: str | None) -> str:
@@ -445,37 +454,44 @@ def progress_payment_prices_refreshed(project_name: str, sequence_no: int, count
 # başına kaydı adreslemez — "#1" aynı projede birden çok sözleşmede vardır.
 
 
-def _subcontractor_payment_label(
+def subcontractor_payment_label(
     project_name: str, subcontractor_name: str | None, sequence_no: int
 ) -> str:
+    """Taseron hakedisinin KIMLIGI. 🔴 OK-1A T3'te GORUNUR yapildi (`_` kalkti):
+
+    zincirin ARA ADIM denetim metni evragin kendi cumlesini KULLANAMAZ ("onaylandi"
+    demek olurdu, oysa evrak hâlâ onay bekliyor) — ama kimliksiz bir "adim 1/3
+    onaylandi" satiri gunlukte HANGI evrak sorusunu yanitsiz birakirdi. Bu yuzden
+    ara adim metnine bu ETIKET eklenir.
+    """
     return f"{project_name} · {subcontractor_name or 'taşeron seçilmedi'} · #{sequence_no}"
 
 
 def subcontractor_progress_payment_created(
     project_name: str, subcontractor_name: str | None, sequence_no: int
 ) -> str:
-    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    label = subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
     return f"Taşeron hakedişi oluşturuldu: {label}"
 
 
 def subcontractor_progress_payment_updated(
     project_name: str, subcontractor_name: str | None, sequence_no: int
 ) -> str:
-    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    label = subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
     return f"Taşeron hakedişi güncellendi: {label}"
 
 
 def subcontractor_progress_payment_lines_saved(
     project_name: str, subcontractor_name: str | None, sequence_no: int, count: int
 ) -> str:
-    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    label = subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
     return f"Taşeron hakediş satırları kaydedildi: {label} · {count} satır"
 
 
 def subcontractor_progress_payment_prices_refreshed(
     project_name: str, subcontractor_name: str | None, sequence_no: int, count: int
 ) -> str:
-    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    label = subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
     return f"Taşeron hakediş fiyatları tazelendi: {label} · {count} kalem"
 
 
@@ -490,7 +506,7 @@ def subcontractor_progress_payment_deleted(
 
     ÖNCESİNDE çıkarılmalıdır — kayıt gittiğinde durum/tutar bir daha okunamaz.
     """
-    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    label = subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
     return f"Taşeron hakedişi silindi: {label} · {status_label} · {amount:,.2f} TL"
 
 
@@ -500,14 +516,14 @@ def subcontractor_progress_payment_deleted(
 def subcontractor_progress_payment_submitted(
     project_name: str, subcontractor_name: str | None, sequence_no: int
 ) -> str:
-    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    label = subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
     return f"Taşeron hakedişi onaya gönderildi: {label}"
 
 
 def subcontractor_progress_payment_approved(
     project_name: str, subcontractor_name: str | None, sequence_no: int
 ) -> str:
-    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    label = subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
     return f"Taşeron hakedişi onaylandı: {label}"
 
 
@@ -517,14 +533,14 @@ def subcontractor_progress_payment_rejected(
     """İşverenin `reason`ı OPSİYONELDİR; burada ZORUNLUDUR (spec §5) — gerekçe
     `rejection_reason` kolonuna da yazılır, günlük onun İKİNCİ değil KALICI
     kopyasıdır (kolon güncellenebilir, günlük satırı değişmez)."""
-    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    label = subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
     return f"Taşeron hakedişi reddedildi: {label} · Gerekçe: {reason}"
 
 
 def subcontractor_progress_payment_paid(
     project_name: str, subcontractor_name: str | None, sequence_no: int
 ) -> str:
-    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    label = subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
     return f"Taşeron hakedişi ödendi olarak işaretlendi: {label}"
 
 
@@ -538,7 +554,7 @@ def subcontractor_progress_payment_unapproved(
     """`progress_payment_unapproved` ile AYNI ZORUNLULUK: bu iki değer
     `transitions._stamp` onları NULL'lamadan ÖNCE okunmalıdır, sonra okunursa
     `unapprove` sessiz bir tarih silme işlemi olur."""
-    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    label = subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
     approver = previous_approver_name or BILINMIYOR
     when = _damga(previous_approved_at)
     return f"Taşeron hakediş onayı geri çekildi: {label} · Önceki onay: {approver} · {when}"

@@ -297,6 +297,9 @@ async def approve_progress_payment_endpoint(
         detail=approvals_service.audit_detail(
             messages.progress_payment_approved(result.project.name, result.payment.sequence_no),
             result.chain_step,
+            document_label=messages.progress_payment_label(
+                result.project.name, result.payment.sequence_no
+            ),
         ),
         actor_user_id=user.id,
         ip_address=client_ip(request),

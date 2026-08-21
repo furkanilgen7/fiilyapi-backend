@@ -27,6 +27,7 @@ from app.modules.procurement.models import (
     PurchaseRequestLine,
     PurchaseRequestStatus,
 )
+from app.modules.users.models import UserProjectAccess
 
 _YOL = "/purchase-requests"
 
@@ -248,9 +249,8 @@ def test_esik_tek_kaynak_AYARDIR():
     `APPROVAL_THRESHOLD_LEVEL` DEĞİŞMEDİ: "kim onaylayabilir" sorusu hâlâ izin
     seviyesiyle yanıtlanır (onay ROLÜ zincirin işidir, bu kapının değil).
     """
-    from app.modules.approvals import definitions
-
     from app.core.access import AccessLevel
+    from app.modules.approvals import definitions
 
     assert not hasattr(transitions, "APPROVAL_THRESHOLD_TRY"), (
         "eşik yeniden sabite döndü — iki eşik doğar ve ayrışır (OK-1A R6)"
@@ -481,12 +481,36 @@ async def test_olmayan_talep_404(client, admin_headers):
 
 
 async def test_her_gecis_denetim_satiri_yazar(
-    client, admin_headers, seeded_db, gorunen_proje, talep_fabrikasi
+    client, admin_headers, seeded_db, user_factory, gorunen_proje, talep_fabrikasi
 ):
+    """🔴 OK-1A T3 UYARLAMASI — iddia GENİŞLETİLDİ, zayıflatılmadı.
+
+    `submit` artık gerçek bir onay zinciri açar (Satınalma → Proje Müdürü →
+    Muhasebe) ve `/approve` zincirin SIRADAKİ adımını ilerletir. Bu testin
+    konusu "her geçiş TAM BİR denetim satırı yazar"dır ve o KORUNUR; değişen
+    şey ikinci satırın ARA ADIM metnini taşımasıdır — talep `pending_approval`da
+    KALDIĞI için "onaylandı" yazmak günlüğe OLMAMIŞ bir olguyu yazmak olurdu.
+
+    🔴 Metnin talep NUMARASINI taşıması AYRICA iddia edilir: uyarlama sırasında
+    ölçülen ilk hâlde ara adım satırı kimliksizdi ve "hangi talep" sorusu
+    günlükte yanıtsız kalıyordu (`approvals.service.audit_detail` düzeltildi).
+    """
+    from app.modules.approvals.models import ApprovalRole, UserApprovalRole
     from app.modules.audit.models import AuditAction, AuditLog
 
     async def _sayim() -> int:
         return (await seeded_db.execute(select(AuditLog))).scalars().all().__len__()
+
+    onaycı = await user_factory(
+        email="sa-denetim@ok1a.co", password="parola1234", role_key="procurement"
+    )
+    seeded_db.add(
+        UserProjectAccess(user_id=onaycı.id, project_id=gorunen_proje.id, all_projects=False)
+    )
+    seeded_db.add(UserApprovalRole(user_id=onaycı.id, approval_role=ApprovalRole.procurement))
+    await seeded_db.flush()
+    giris = await client.post("/auth/login", json={"email": onaycı.email, "password": "parola1234"})
+    onay_basliklari = {"Authorization": f"Bearer {giris.json()['access_token']}"}
 
     talep = await talep_fabrikasi(
         gorunen_proje, lines=[("1.000", "10.00")], needed_by=date(2026, 9, 1)
@@ -496,9 +520,10 @@ async def test_her_gecis_denetim_satiri_yazar(
     assert (
         await client.post(f"{_YOL}/{talep.id}/submit", headers=admin_headers)
     ).status_code == 200
-    assert (
-        await client.post(f"{_YOL}/{talep.id}/approve", headers=admin_headers)
-    ).status_code == 200
+    ara = await client.post(f"{_YOL}/{talep.id}/approve", headers=onay_basliklari)
+    assert ara.status_code == 200, ara.text
+    # ARA ADIM: talep ilerlemedi, ama denetim satırı YAZILDI.
+    assert ara.json()["status"] == "pending_approval"
 
     assert await _sayim() == once + 2
     # `occurred_at`e göre SIRALANMAZ: Postgres'te `now()` işlem boyu sabittir ve
@@ -517,6 +542,6 @@ async def test_her_gecis_denetim_satiri_yazar(
     assert {kayit.action for kayit in kayitlar} == {AuditAction.update, AuditAction.approve}
     metinler = sorted(kayit.detail for kayit in kayitlar)
     assert metinler == [
+        f"Onay adımı onaylandı: Satın alma talebi · adım 1/3 · Satınalma · {talep.request_no}",
         f"Satın alma talebi onaya gönderildi: {talep.request_no}",
-        f"Satın alma talebi onaylandı: {talep.request_no}",
     ]

@@ -45,6 +45,18 @@ GECERLI: dict[tuple[str, str], str] = {
 TUM_CIFTLER = [(durum, uc) for durum in DURUMLAR for uc in UCLAR]
 GECERSIZ_CIFTLER = [cift for cift in TUM_CIFTLER if cift not in GECERLI]
 
+# 🔴 OK-1A K2 (KIRICI, kullanıcı kararı 2026-08-21): `/reject` gövdesi ve
+# gerekçesi ZORUNLU oldu (eskiden `RejectBody | None` idi ve gövdesiz istek
+# geçerliydi). Gövde şema katmanında doğrulandığı için EKSİK gövde 422'dir ve
+# 409/404 gibi ASIL iddiaları GÖLGELER — bu yüzden matris testleri artık her
+# `reject` çağrısında geçerli bir gerekçe gönderir (taşeron ikizinin `GEREKCE`
+# sabitiyle aynı desen).
+GEREKCE = {"reason": "Metrajlar eksik, revize edin"}
+
+
+def _govde(uc: str) -> dict[str, str] | None:
+    return GEREKCE if uc == "reject" else None
+
 
 async def _durum(session: AsyncSession, payment_id: uuid.UUID) -> ProgressPayment:
     payment = await session.get(ProgressPayment, payment_id)
@@ -70,7 +82,9 @@ async def test_gecersiz_gecis_409(
     yetki değil YALNIZ geçiş tablosudur.
     """
     payment_id = await hakedis_fabrikasi(ProgressPaymentStatus(durum))
-    yanit = await client.post(f"/progress-payments/{payment_id}/{uc}", headers=admin_headers)
+    yanit = await client.post(
+        f"/progress-payments/{payment_id}/{uc}", json=_govde(uc), headers=admin_headers
+    )
     assert yanit.status_code == 409, yanit.text
     assert yanit.json()["detail"] == guards.INVALID_STATUS_TRANSITION
 
@@ -88,7 +102,9 @@ async def test_gecerli_gecis_hedef_duruma_goturur(
     kontrolü bunu kaçırırdı."""
     durum, uc = cift
     payment_id = await hakedis_fabrikasi(ProgressPaymentStatus(durum))
-    yanit = await client.post(f"/progress-payments/{payment_id}/{uc}", headers=admin_headers)
+    yanit = await client.post(
+        f"/progress-payments/{payment_id}/{uc}", json=_govde(uc), headers=admin_headers
+    )
     assert yanit.status_code == 200, yanit.text
     assert yanit.json()["status"] == hedef
 
@@ -192,7 +208,9 @@ async def test_reject_drafta_dondurur_ve_yeniden_duzenlenir(
     item, _ = hakedis_kalemi
     payment_id = await hakedis_fabrikasi(ProgressPaymentStatus.pending_approval)
 
-    ret = await client.post(f"/progress-payments/{payment_id}/reject", headers=admin_headers)
+    ret = await client.post(
+        f"/progress-payments/{payment_id}/reject", json=GEREKCE, headers=admin_headers
+    )
     assert ret.status_code == 200, ret.text
     assert ret.json()["status"] == "draft"
 
@@ -347,7 +365,9 @@ async def test_muhasebe_reject_ve_mark_paid_yapabilir(
 ) -> None:
     """`reject` ve `mark-paid` de ONAY seviyesindedir (§7 tablosu, K11)."""
     ret_edilecek = await hakedis_fabrikasi(ProgressPaymentStatus.pending_approval)
-    ret = await client.post(f"/progress-payments/{ret_edilecek}/reject", headers=muhasebe_headers)
+    ret = await client.post(
+        f"/progress-payments/{ret_edilecek}/reject", json=GEREKCE, headers=muhasebe_headers
+    )
     assert ret.status_code == 200, ret.text
 
     odenecek = await hakedis_fabrikasi(ProgressPaymentStatus.approved)
@@ -405,9 +425,11 @@ async def test_gorunmeyen_hakedis_404_olmayanla_ayni(
     oraya 403 ile takılır (kapı görünürlükten önce) — ayrı testi aşağıdadır.
     """
     gercek = await client.post(
-        f"/progress-payments/{gorunmeyen_hakedis}/{uc}", headers=kisitli_headers
+        f"/progress-payments/{gorunmeyen_hakedis}/{uc}", json=_govde(uc), headers=kisitli_headers
     )
-    sahte = await client.post(f"/progress-payments/{uuid.uuid4()}/{uc}", headers=kisitli_headers)
+    sahte = await client.post(
+        f"/progress-payments/{uuid.uuid4()}/{uc}", json=_govde(uc), headers=kisitli_headers
+    )
     assert gercek.status_code == sahte.status_code == 404, gercek.text
     assert gercek.json() == sahte.json() == {"detail": guards.PAYMENT_MISSING}
 
@@ -650,12 +672,20 @@ async def _onayli_toplam(session: AsyncSession, project_id: uuid.UUID) -> Decima
 async def test_onay_sirasi_degistirerek_kota_asma_zinciri_kapali(
     client: AsyncClient,
     admin_headers: dict[str, str],
+    zincir_onaycilari: None,
     seeded_db: AsyncSession,
     sozlesmeli_proje: uuid.UUID,
     hakedis_santiyesi,
     hakedis_kalemi,
 ) -> None:
     """K1'in KANITLANMIŞ SÖMÜRÜ ZİNCİRİ — yedi adım, hepsi meşru uçlarla (kota 1.000).
+
+    🔴 OK-1A T3 UYARLAMASI: zincir artık UÇTAN kurulduğu için (`submit` → gerçek
+    `approval_chain`) aktörün ONAY ROLÜ de olmalıdır (`zincir_onaycilari`).
+    Sömürü zincirinin KENDİSİ değişmedi; yalnız aktör gerçekçileşti — hakedişi
+    `admin` AÇTIĞI için "kendi evrakı" bekçisi de devrededir ve `system_admin`in
+    `progress_payments=_A` istisnasıyla ("vekâleten") geçer. Yani bu test artık
+    kota bekçisini AYNI ANDA zincirin en gevşek dalında sınıyor.
 
     Zincir (denetim raporundaki hâliyle):
       1. P1 (seq 1) satır 600 → submit → approve
@@ -687,6 +717,17 @@ async def test_onay_sirasi_degistirerek_kota_asma_zinciri_kapali(
             ],
         }
 
+    # 🔴 OK-1A T3: eşik bilerek YÜKSELTİLİR. Bu testin konusu KOTA'dır, eşik
+    # değil; varsayılan ₺500.000 ile 600 × ₺1.850 = ₺1.110.000 zincire bir
+    # PATRON adımı ekler ve tek aktör görevler ayrılığı yüzünden ikinci adımı
+    # atamaz — senaryo kota bekçisine HİÇ ULAŞAMADAN takılırdı (ölçüldü).
+    ayar = await client.put(
+        "/approvals/settings",
+        json={"approval_threshold_try": "99000000.00"},
+        headers=admin_headers,
+    )
+    assert ayar.status_code == 200, ayar.text
+
     # 1 — P1: 600, onaya gönder, onayla.
     p1_yanit = await client.post(
         f"/projects/{sozlesmeli_proje}/progress-payments", json=_govde("600"), headers=admin_headers
@@ -715,7 +756,7 @@ async def test_onay_sirasi_degistirerek_kota_asma_zinciri_kapali(
         await client.post(f"/progress-payments/{p1}/unapprove", headers=admin_headers)
     ).status_code == 200
     assert (
-        await client.post(f"/progress-payments/{p1}/reject", headers=admin_headers)
+        await client.post(f"/progress-payments/{p1}/reject", json=GEREKCE, headers=admin_headers)
     ).status_code == 200
 
     # 4 — P1 satırı 1.000'e yükseltilir. Yazma anındaki kontrol yalnız

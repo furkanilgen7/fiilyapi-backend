@@ -457,13 +457,18 @@ async def rewind_last_step(
 # --------------------------------------------------------------------------- #
 
 
-def audit_detail(document_detail: str, decision: ChainDecision | None) -> str:
+def audit_detail(
+    document_detail: str, decision: ChainDecision | None, *, document_label: str
+) -> str:
     """Evragin kendi denetim metni + zincir adiminin metni — TEK satirda.
 
     Uc kural, uc evrak ailesinde TEK kopya:
       * zincir YOK (eski kayit) -> evragin BUGUNKU metni aynen;
-      * ARA adim -> YALNIZ adim metni. Evragin durumu DEGISMEDI; "Hakedis
-        onaylandi" yazmak gunluge OLMAMIS bir olguyu yazmak olurdu;
+      * ARA adim -> adim metni + evragin KIMLIGI (`document_label`). Evragin
+        durumu DEGISMEDI, dolayisiyla "Hakedis onaylandi" yazmak gunluge OLMAMIS
+        bir olguyu yazmak olurdu; ama kimliksiz bir "adim 1/3 onaylandi" satiri
+        da HANGI evrak sorusunu yanitsiz birakirdi (bu, `test_her_gecis_denetim_
+        satiri_yazar` uyarlanirken OLCULDU: satir talep numarasini KAYBETMISTI);
       * SON adim (ya da ret) -> IKISI DE. Evrak durum degistirdi VE son imza
         atildi; birini atlamak "hangi imza" ya da "ne oldu" sorusundan birini
         yanitsiz birakirdi.
@@ -471,7 +476,7 @@ def audit_detail(document_detail: str, decision: ChainDecision | None) -> str:
     if decision is None:
         return document_detail
     if not decision.is_complete:
-        return decision.audit_detail
+        return f"{decision.audit_detail} · {document_label}"
     return f"{document_detail} · {decision.audit_detail}"
 
 

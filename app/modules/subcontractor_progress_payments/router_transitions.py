@@ -112,6 +112,9 @@ async def approve_subcontractor_progress_payment_endpoint(
                 result.project.name, result.contract.subcontractor_name, result.payment.sequence_no
             ),
             result.chain_step,
+            document_label=messages.subcontractor_payment_label(
+                result.project.name, result.contract.subcontractor_name, result.payment.sequence_no
+            ),
         ),
         actor_user_id=user.id,
         ip_address=client_ip(request),

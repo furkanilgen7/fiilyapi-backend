@@ -17,6 +17,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.approvals.models import ApprovalRole, UserApprovalRole
 from app.modules.boq.models import BoqGroup, BoqItem
 from app.modules.contracts.models import EmployerContractGroup, EmployerContractItem
 from app.modules.progress_payments.models import (
@@ -1503,3 +1504,29 @@ async def tavana_dayanan_iki_proje(
         plan=[(ProgressPaymentStatus.approved, Decimal("8000"))],
     )
     return a_project.id, b_project.id
+
+
+@pytest.fixture
+async def zincir_onaycilari(
+    seeded_db: AsyncSession, admin_headers: dict[str, str], muhasebe_headers: dict[str, str]
+) -> None:
+    """🔴 OK-1A T3 — `submit`ten GEÇEN akışların ONAY ROLÜ ihtiyacı.
+
+    Bu modülün fabrikaları hakedişi doğrudan DB'ye yazar (durumu elle verir), o
+    yüzden zincirleri YOKTUR ve bugünkü tek adımlı davranışları sürer. Ama
+    `submit` → `approve` sırasını UÇTAN koşan testlerde artık gerçek bir zincir
+    açılır ve `/approve` aktörden ADIM ROLÜNÜ ister (uç kapısı `progress_
+    payments ≥ approve` yetmez — onay rolü ≠ sistem rolü, K1).
+
+    Fixture bunu OPT-IN bırakır (autouse DEĞİL): rolü olmayan aktörün 403
+    aldığını ölçen testler (`test_onay_ROLU_olmayan_aktor_403`) aynı
+    `muhasebe_headers`ı KULLANIR ve sessizce yeşile boyanmamalıdır.
+
+    Verilen tek rol `accounting`tir: işveren hakedişi zincirinin eşik ALTI tek
+    adımı odur (mockup `Onay Kutusu.dc.html:210-240`). `patron` bilinçli olarak
+    VERİLMEZ — eşik üstü akışlar kendi aktörünü kurar.
+    """
+    for email in ("admin@pp-crud.co", "muhasebe@pp-transitions.co"):
+        user = (await seeded_db.execute(select(User).where(User.email == email))).scalar_one()
+        seeded_db.add(UserApprovalRole(user_id=user.id, approval_role=ApprovalRole.accounting))
+    await seeded_db.flush()
