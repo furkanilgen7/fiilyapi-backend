@@ -5,7 +5,6 @@ from datetime import date
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.access import AccessLevel, satisfies
 from app.core.errors import (
     ConflictError,
     DeleteNotAllowedError,
@@ -26,9 +25,12 @@ from app.modules.personnel.schemas import (
     LeaveRequestUpdate,
     SelfLeaveRequestCreate,
 )
-from app.modules.personnel.service.core import PERMISSION_MODULE, get_personnel
+from app.modules.personnel.service.core import (
+    get_personnel,
+    has_personnel_admin,
+    is_own_personnel_record,
+)
 from app.modules.personnel.service.documents import _assert_document_visible
-from app.modules.roles.repository import get_permission
 from app.modules.users.models import User
 
 
@@ -344,12 +346,13 @@ async def _can_delete_leave_request(
 ) -> bool:
     """`admin` seviyesi YA DA talebin sahibi (personelin bağlı kullanıcısı).
 
-    Seviye router kapısında DEĞİL burada okunur: router kapısı tek bir asgari
-    seviye zorlar, oysa buradaki kural İKİ ayrı yoldan açılır (seviye VEYA
-    sahiplik) — kapıyı `admin`e çekmek sahibi dışarıda bırakır, `view`de bırakmak
-    yabancıya silme verirdi.
+    İKİ ayrı yoldan açılır (seviye VEYA sahiplik) — kapıyı `admin`e çekmek sahibi
+    dışarıda bırakır, `view`de bırakmak yabancıya silme verirdi.
+
+    Her iki yordam da `core`un TEK yazımıdır: aynı iki soruyu OK-1A T5'in onay
+    kapısı da sorar ve ikinci bir yazım açılsaydı biri gevşerken öteki katı
+    kalabilirdi.
     """
-    permission = await get_permission(session, actor.role_id, PERMISSION_MODULE)
-    if permission is not None and satisfies(permission.access_level, AccessLevel.admin):
+    if await has_personnel_admin(session, actor):
         return True
-    return personnel.user_id is not None and personnel.user_id == actor.id
+    return is_own_personnel_record(personnel, actor)

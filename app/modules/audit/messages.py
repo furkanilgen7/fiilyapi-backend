@@ -1070,8 +1070,22 @@ def leave_request_deleted(full_name: str, type_name: str, start: date, end: date
 # kaydı silinirse (pending değil, ama bakiye turlarında) gerekçe yalnız burada kalır.
 
 
-def leave_request_approved(full_name: str, type_name: str, start: date, end: date) -> str:
-    return f"İzin talebi onaylandı: {full_name} · {type_name} · {start} - {end}"
+def leave_request_approved(
+    full_name: str, type_name: str, start: date, end: date, *, on_behalf: bool
+) -> str:
+    """İzin talebi onayi. `on_behalf` YALNIZ `admin`in KENDI talebinde True olur
+    (OK-1A T5, kullanici karari 2026-08-21).
+
+    Isaret `approval_step_approved` ile AYNI sabittir (`APPROVAL_ON_BEHALF_MARK`)
+    ve bu bilinclidir: iki ayri metin yazilsaydi denetimde "vekaleten verilmis
+    kararlar" tek bir aramayla bulunamazdi. 🔴 Yeni `AuditAction` uyesi ACILMADI —
+    ayrim METINDEDIR (T3 kanonu).
+
+    `on_behalf` KEYWORD-ONLY ve ZORUNLUDUR: varsayilani `False` olsaydi yeni bir
+    cagiran isareti sessizce DUSURUR ve istisna gunlukte gorunmez olurdu.
+    """
+    metin = f"İzin talebi onaylandı: {full_name} · {type_name} · {start} - {end}"
+    return f"{metin} · {APPROVAL_ON_BEHALF_MARK}" if on_behalf else metin
 
 
 def leave_request_rejected(

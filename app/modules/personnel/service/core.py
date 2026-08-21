@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.access import AccessLevel, satisfies
 from app.core.errors import (
     DuplicateError,
     NotFoundError,
@@ -24,7 +25,9 @@ from app.modules.personnel.schemas import (
     PersonnelUpdate,
 )
 from app.modules.projects import repository as projects_repository
+from app.modules.roles.repository import get_permission
 from app.modules.sites import repository as sites_repository
+from app.modules.users.models import User
 
 PERMISSION_MODULE = "personnel"
 
@@ -166,6 +169,44 @@ async def update_personnel(
     await session.flush()
     await session.refresh(personnel)
     return personnel
+
+
+# --- Aktör ↔ personel bağı: TEK YAZIM (İK-2 silme · OK-1A T5 onay) ---------
+
+
+async def has_personnel_admin(session: AsyncSession, actor: User) -> bool:
+    """Aktörün `personnel` modülünde `admin` seviyesi var mı?
+
+    İKİ kural bunu okur ve ikisi de AYNI kapıyı kasteder: izin talebi SİLME
+    istisnası (İK-2 spec §3) ve KENDİ izin talebini ONAYLAMA istisnası (OK-1A
+    T5). Ayrı yazılsalardı biri gün gelip `full`e gevşer, öteki `admin`de kalırdı.
+
+    🔴 `full` YETMEZ (`app/core/access.py`: "full silmeyi KAPSAMAZ"). `patron`
+    sistem rolü `personnel=full`dur; istisna ona da açılsaydı "tek kişilik ekipte
+    kilitlenmeyi önle" gerekçesi, kendi talebini onaylayan ikinci bir SINIFA
+    dönüşürdü. Aynı karar `approvals/service.py::_has_document_admin`te de var.
+
+    Seviye router kapısında DEĞİL burada okunur: router tek bir asgari seviye
+    zorlar, oysa buradaki kurallar İKİ ayrı yoldan (seviye VEYA sahiplik) açılıp
+    kapanır.
+    """
+    permission = await get_permission(session, actor.role_id, PERMISSION_MODULE)
+    return permission is not None and satisfies(permission.access_level, AccessLevel.admin)
+
+
+def is_own_personnel_record(personnel: Personnel, actor: User) -> bool:
+    """Personel kaydı AKTÖRÜN kendisi mi — `Personnel.user_id` köprüsünden.
+
+    🔴 ÖLÇÜLDÜ (`psql \\d personnel`): `user_id` **NULLABLE**dır (NOT NULL kısıtı yok)
+    ve **TEKİL DEĞİLDİR** (yalnız `ix_personnel_user_id`, UNIQUE değil). Açık
+    NULL denetimi bu yüzden ZORUNLUDUR: NULL'ı "eşleşti" saymak, login'i olmayan
+    TÜM saha personelini aktörün kendisi sayardı.
+
+    Tekillik BU YÖNDE sorun değildir — bir kaydın TEK `user_id`si vardır.
+    Belirsizlik ters yöndedir (kullanıcıdan personele) ve İK-2.1 orada zaten
+    FAIL-CLOSED 409 döner (`resolve_self_personnel`).
+    """
+    return personnel.user_id is not None and personnel.user_id == actor.id
 
 
 # İki liste tavanı (spec §3): en kritik 50 satır gösterilir, gerisi ekranı boğmaz.

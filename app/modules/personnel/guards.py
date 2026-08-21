@@ -163,6 +163,23 @@ SELF_PERSONNEL_AMBIGUOUS = (
     "self-servis izin talebi açılamaz."
 )
 
+# --- OK-1A T5: kendi izin talebini ONAYLAMA yasağı ------------------------
+
+# 403 — kimse KENDİ izin talebini onaylayamaz (kullanıcı kararı 2026-08-21).
+# TEK İSTİSNA `admin` seviyesidir ve o da denetim günlüğüne
+# `messages.APPROVAL_ON_BEHALF_MARK` ("vekâleten") işaretiyle geçer.
+#
+# 🔴 403'tür, 409 DEĞİL: kayıt DOĞRU durumdadır (`pending`) ve BAŞKA bir yetkili
+# aynı anda onaylayabilir — engelleyen şey AKTÖRÜN KİM OLDUĞUDUR. 422 de değil:
+# gövdede düzeltilecek bir alan yoktur (gövde zaten alan kabul etmez).
+#
+# 🔴 RED bu kapıdan ETKİLENMEZ: kullanıcı kararı yalnız "onaylayamaz" der ve
+# kendi talebini reddetmek bir yetki YÜKSELTMESİ değildir (kişi zaten talebi
+# `pending`ken silebilir/geri çekebilir — `LEAVE_DELETE_NOT_ALLOWED`).
+LEAVE_APPROVE_OWN_REQUEST = (
+    "Kendi izin talebinizi onaylayamazsınız; kararı başka bir yetkili vermelidir."
+)
+
 
 def validate_personnel_source(source: WorkerSource, subcontractor_id: uuid.UUID | None) -> None:
     """Kural BİRLEŞİK kayıt üzerinde koşar.
