@@ -35,30 +35,58 @@ oradaki numaralar ayni bicimde silinmez — o iki modul DEGISTIRILMEZ.
 Satir VAR OLDUGU icin `FOR UPDATE`in reddedilme gerekcesi de burada gecersizdir;
 satirin YOKLUGU sorunu UPSERT-SONRA-KILITLE ile kapanir (asagida).
 
-🔴 UPSERT-SONRA-KILITLE ve `DO NOTHING`in DELIGI (MU-2 kanonu)
---------------------------------------------------------------
+🔴 UPSERT-SONRA-KILITLE — ve BURADA NEDEN `DO NOTHING` DEGIL (MU-2 kanonu)
+---------------------------------------------------------------------------
 Kilitlenecek satirin **VARLIGI da kilidin parcasidir**: yilin ilk fisinde satir
 YOKTUR. `periods_service.lock_period` bunu `INSERT … ON CONFLICT DO NOTHING` +
-ayri bir `SELECT … FOR UPDATE` ile yapar. Burada **`DO NOTHING` KULLANILMAZ**,
-cunku bir DELIGI vardir:
+ayri bir `SELECT … FOR UPDATE` ile yapar; bu modul BASKA bir yol tutar.
 
-    `ON CONFLICT DO NOTHING` catisan satiri **KILITLEMEZ** ve **DONDURMEZ**.
-    Kaybeden islem, kazananin commit'ini bekledikten sonra bos eller doner;
-    arkasindan gelen `SELECT … FOR UPDATE` satiri gorur ama arada kilitsiz bir
-    an vardir ve kazanan ROLLBACK ederse `scalar_one()` hic satir bulamayip
-    `NoResultFound` (= ayrimsiz 500) uretebilir.
+🔴 SEBEP TEK CUMLEDIR: **`DO NOTHING` bir DEGER DONDURMEZ.** Bu uc, dagitilan
+sira numarasini dondurmek ZORUNDADIR; `DO NOTHING` catisma halinde sifir satir
+dondurur ve `RETURNING next_no` ile BIRLIKTE KULLANILAMAZ. Yani secim bir
+"kacinma" degil, ucun ISLEVINDEN gelen bir ZORUNLULUKTUR ve asagidaki
+eszamanlilik tartismasindan BAGIMSIZ olarak tek basina yeterlidir.
+`lock_period`in isi baskadir: o satiri KILITLER, degerini dondurmesi gerekmez —
+o yuzden orada `DO NOTHING` DOGRU secimdir.
+
+⚠️ ESKI GEREKCE GERI CEKILDI (TB9 olcumu, 2026-08-21). Bu bolum daha once
+`DO NOTHING`e bir "DELIK" atfediyordu: *catisan satiri ne kilitler ne dondurur;
+kaybeden, kazanani bekledikten sonra bos eller doner ve kazanan ROLLBACK ederse
+ardindan gelen `SELECT … FOR UPDATE` hic satir bulamayip `NoResultFound`
+uretebilir.* **Mekanizma OLCULDU ve boyle DAVRANMIYOR:**
+  * Catisan tuple HENUZ ACIKTA ise ifade `Lock/transactionid` uzerinde **BEKLER**;
+    kilitsiz gecip gitmez.
+  * Kazanan ABORT ederse ifade kendiliginden INSERT yoluna doner — kaybeden
+    satiri KENDISI yazar.
+  * Kazanan COMMIT ederse ardindan gelen `SELECT … FOR UPDATE` satiri **BULUR**.
+
+Yani "kaybeden bos eller doner → `NoResultFound`" hali HIC DOGMAZ ve
+**`periods_service.lock_period` KUSURLU DEGILDIR.** O iki ifade arasindaki tek
+gercek acik, satirin arada **DELETE** edilmesidir; `accounting_periods` icin bir
+DELETE yolu YOKTUR ve bu yokluk
+`tests/modules/accounting/test_tb9_periods_delete_path.py` ile bekcilenir.
+Olcumun ayrintisi (kosum bicimi, tanik, sayilar) o dosyanin modul
+docstring'indedir; buraya KOPYALANMAZ — iki kopya bir gun AYRISIR.
+Olcum **yerel PG 18.4** uzerindedir; **canlinin Postgres surumu AYRICA
+DOGRULANMADI**.
 
 Secilen yol **`ON CONFLICT (year) DO UPDATE SET next_no = journal_entry_counters
-.next_no RETURNING next_no`**tir. Gerekcesi tek cumledir: **no-op `DO UPDATE`
-satiri HER IKI YOLDA da KILITLER ve DONDURUR.**
+.next_no RETURNING next_no`**tir; no-op `DO UPDATE` satiri KILITLER **ve
+DONDURUR**:
   * Catisma YOKSA satir INSERT edilir ve zaten bizimdir.
   * Catisma VARSA Postgres catisan satira gercek bir `UPDATE` uygular; bu, satir
     kilidini alir ve `RETURNING` **kilitlenmis, en guncel** degeri dondurur
     (EvalPlanQual yeniden degerlendirmesi). Kayip guncelleme YOKTUR.
   * Kazanan islem HENUZ COMMIT ETMEDIYSE ikinci istek bu ifadede BLOKE olur —
     eszamanlilik bekcisinin `not done` bariyerinin gordugu sey tam olarak budur.
-  * Kazanan ROLLBACK ederse ifade kendiliginden INSERT yoluna doner; "SELECT
-    bos dondu" hali HIC DOGMAZ, dolayisiyla bir yeniden-deneme dali da gerekmez.
+  * Kazanan ROLLBACK ederse ifade kendiliginden INSERT yoluna doner.
+
+🔴 BEDELI BILEREK ODENIR: no-op `DO UPDATE` GERCEK bir `UPDATE`tir — sicak
+yolda cagri basina yeni bir satir surumu (ve WAL) uretir, `DO NOTHING` sifir
+uretir (TB9 turunda olculdu, yerel PG 18.4). Bu tablo TEK SATIRLIKTIR, sisme
+autovacuum'un topladigi olcektedir ve dondurulen DEGER olmadan uc zaten
+calisamaz; bedel pazarlik konusu degildir. Zaman damgasi da kaymaz: bu tabloda
+`year` ve `next_no` DISINDA kolon YOKTUR (`updated_at` hic acilmadi).
 
 Tek bir ifadeye ("`… DO UPDATE SET next_no = next_no + 1 RETURNING next_no`",
 sonra `- 1`) sikistirilabilirdi; SIKISTIRILMADI cunku dagitilan numaranin
@@ -135,8 +163,8 @@ async def generate_entry_no(session: AsyncSession, *, year: int) -> str:
     `test_EN_BUYUK_numara_silinse_bile_sayac_GERI_ALINMAZ` kilitler — en buyuk
     numarali fis silinse bile sonraki fis onun numarasini YENIDEN KULLANMAZ.
     """
-    # 1. KILIT + OKUMA. No-op `DO UPDATE` satiri her iki yolda da KILITLER ve
-    #    DONDURUR; `DO NOTHING` catisan satiri ne kilitler ne dondurur.
+    # 1. KILIT + OKUMA. No-op `DO UPDATE` satiri KILITLER ve DEGERI DONDURUR;
+    #    `DO NOTHING` catismada sifir satir dondurur (bkz. modul docstring'i).
     sequence = await session.scalar(
         pg_insert(_COUNTERS)
         .values(year=year, next_no=FIRST_SEQUENCE)
