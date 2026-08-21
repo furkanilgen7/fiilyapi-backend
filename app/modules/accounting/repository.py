@@ -38,6 +38,7 @@ from app.modules.accounting import codes
 from app.modules.accounting.balance import select_accounts_with_balance
 from app.modules.accounting.models import (
     AccountingPeriod,
+    AccountingPeriodStatus,
     ChartAccount,
     ChartAccountType,
     JournalEntry,
@@ -426,6 +427,45 @@ async def has_draft_entries(session: AsyncSession, year: int, month: int) -> boo
         )
     )
     return bool((await session.execute(stmt)).scalar_one())
+
+
+async def open_periods_among(
+    session: AsyncSession, periods: Iterable[tuple[int, int]]
+) -> set[tuple[int, int]]:
+    """Verilen dönemlerden **KAYITLI ve `open`** olanların kümesi — SIRA-B'nin
+    TEK "önceki dönem engel mi" tanımı.
+
+    🔴 **K10 — kapı da olgu da BURADAN okur.** `close_period` (409 kapısı) ile
+    liste ucundaki `previous_period_open` olgusu aynı fonksiyonu çağırır.
+    İkisi ayrı yazılsaydı biri gün gelip "kaydı yok" hâlini engel sayar, ekran
+    "kapatabilirsin" derken kapı 409 dönerdi — yani düzeltilmeye çalışılan
+    sorunun aynısı yeniden doğardı.
+
+    🔴 **Dönen şey AÇIK olanların kümesidir, satırlar değil.** Böylece
+    "kayıtsız" ile "kapalı" AYNI cevaba (kümede yok) düşer ve çağıran taraf
+    `None` ile `closed`ı ayrı ayrı ele almak zorunda kalmaz — K2'nin
+    ("kaydı olmayan ay ENGEL DEĞİLDİR") tam karşılığı budur.
+
+    🔴 **K11 — TEK sorgu, sayfa büyüklüğünden BAĞIMSIZ.** Anahtarlar
+    `tuple_(...).in_(...)` ile toplu sorulur; dönem başına tur ATILMAZ.
+    Sorulan anahtarlar sayfadaki satırlardan TÜRETİLMEZ, çağıran tarafından
+    hesaplanır — bu yüzden sayfada bulunmayan (hatta başka yıla ait) bir
+    önceki dönem de doğru çözülür.
+
+    Boş küme için sorgu HİÇ koşmaz: `IN ()` bazı sürücülerde uyarı üretir ve
+    zaten cevabı bilinen bir tur atmanın anlamı yoktur.
+
+    `FOR UPDATE` YOKTUR — gerekçe `periods_service.close_period` docstring'i
+    (burada eşik/sayaç yarışı yok; okunan şey komşu satırın DURUMUDUR).
+    """
+    anahtarlar = sorted(set(periods))
+    if not anahtarlar:
+        return set()
+    stmt = select(AccountingPeriod.year, AccountingPeriod.month).where(
+        tuple_(AccountingPeriod.year, AccountingPeriod.month).in_(anahtarlar),
+        AccountingPeriod.status == AccountingPeriodStatus.open,
+    )
+    return {(yil, ay) for yil, ay in (await session.execute(stmt)).all()}
 
 
 def _period_filtered(stmt: Select, *, year: int | None) -> Select:

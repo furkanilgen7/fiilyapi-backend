@@ -51,7 +51,7 @@ class AccountingPeriodResponse(BaseModel):
 
 class AccountingPeriodListItem(AccountingPeriodResponse):
     """DKAP-B — liste satırı, `AccountingPeriodResponse`e ÜÇ türetilmiş alan
-    EKLER. `close`/`reopen` cevabı hâlâ çıplak `AccountingPeriodResponse`dir
+    EKLER (SIRA-B ile DÖRT). `close`/`reopen` cevabı hâlâ çıplak `AccountingPeriodResponse`dir
     (görev emri kapsamı yalnız `GET /accounting-periods`); tek bir dönemi
     döndüren o iki uç için bu alanları hesaplamak GEREKSİZ bir sorgu turudur
     ve emrin "kod/uçlar DEĞİŞMEZ" maddesini ihlal ederdi.
@@ -77,6 +77,29 @@ class AccountingPeriodListItem(AccountingPeriodResponse):
     karar `periods_service`in kapısıdır; ikinci bir karar kopyası kapı bir gün
     değişince ekranı sessizce yanlış bırakırdı.
 
+    `previous_period_open` — SIRA-B: takvim olarak BİR ÖNCEKİ ayın
+    `accounting_periods`ta KAYITLI ve `open` olup olmadığı. 🔴 Anlamı bu kadar
+    DARDIR ve `draft_count` ile AYNI sınıftandır: bir OLGU taşır, bir KARAR
+    değil. Adı `can_close` DEĞİLDİR ve olmayacaktır — kapatılabilirlik
+    `status` + `draft_count` + bu olgunun BİRLEŞİMİDİR ve o birleşimi
+    `periods_service.close_period` tanımlar; kararın bir kopyası burada
+    dursaydı kapı bir gün değiştiğinde ekran SESSİZCE yanlış kalırdı
+    (DKAP-B kanonu).
+
+    🔴 Ekran bunu KENDİ listesinden türetemez, bu yüzden alan ŞART: Ocak'ın
+    öncesi bir önceki yılın Aralığıdır ve liste `year` süzgeciyle tek yıl
+    çeker — o satır sayfada HİÇ olmaz. Ayrıca sayfa sınırındaki dönemin
+    öncesi de sayfada olmayabilir.
+
+    🔴 K10 — olgu ile kapı AYNI iki yardımcıdan beslenir
+    (`periods_service.previous_period` + `repository.open_periods_among`);
+    "kaydı olmayan ay" ikisinde de `false`/engel-değil demektir (K2).
+
+    🔴 Bu alan YALNIZ liste satırındadır. `close`/`reopen` cevabı çıplak
+    `AccountingPeriodResponse` KALIR: tek bir dönem için fazladan bir sorgu
+    turudur ve o iki uç zaten kararı KENDİSİ vermiştir — cevabına "önceki
+    açık mı" iliştirmek, az önce geçilmiş bir kapıyı tekrar anlatmak olurdu.
+
     `closed_by_name` — `users.full_name` (K5: depodaki TEK ad kolonu,
     `audit/repository.py`nin `outerjoin(User, ...)` deseniyle AYNI yoldan
     okunur). NULL olabilir (K4): açık dönemde veya kapatan kullanıcı
@@ -86,6 +109,7 @@ class AccountingPeriodListItem(AccountingPeriodResponse):
     entry_count: int
     draft_count: int
     closed_by_name: str | None
+    previous_period_open: bool
 
 
 class AccountingPeriodListResponse(BaseModel):
