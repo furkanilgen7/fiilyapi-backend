@@ -71,8 +71,7 @@ YOKTUR; maliyet merkezi/proje kirilimi MU-3'un isidir.
 
 ACILMAYANLAR (spec §9, kasitli — "eksik" diye geri acilmaz): banka
 mutabakati · e-Fatura · fatura/hazine/bordro → otomatik fis (MU-3) ·
-`entry_no` + `numbering.py` (hicbir mockup sutununda fis numarasi yok; kimlik
-`id`dir) · `parent_id` FK · sinif KAYDI · Excel/disa aktarim · para birimi/kur
+`parent_id` FK · sinif KAYDI · Excel/disa aktarim · para birimi/kur
 (`₺` metne gomulu sabit) · fise belge eki · toplu ice aktarim / tekduzen hesap
 plani seed'i · `draft` icin onay akisi.
 
@@ -83,7 +82,11 @@ geri alindigi gorunur olsun): mizan + KDV beyani + donem kapanisi /
 MU-1 `257`in parantezini bir SUNUM kurali sayip kolonu acmamisti; MT-1'de
 sunucunun `Maddi Duran Varliklar (net)` kalemini FIILEN netlemesi gerektigi
 icin karar geri alindi · 🔑 **`ChartAccountType.equity` (ayni karar)** —
-Bilanco `III. OZKAYNAKLAR` bolumu dort uyeli kumeyle ifade edilemiyordu.
+Bilanco `III. OZKAYNAKLAR` bolumu dort uyeli kumeyle ifade edilemiyordu ·
+🔑 **`entry_no` + `numbering.py` (FIS-NO, kullanici karari 2026-08-21)** —
+MU-1 "hicbir mockup sutununda fis numarasi yok, kimlik `id`dir" gerekcesiyle
+acmamisti; dayanak iki mockup'ta FIILEN cizili oldugu icin karar geri alindi
+(bkz. `JournalEntry` sinif docstring'i).
 
 Serbest metin tavani: `description` kolonu `Text`tir (DB'de sinirsiz); 2000
 karakter tavani TB4/B4 standardi geregi SEMA katmanindadir
