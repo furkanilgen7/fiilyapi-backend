@@ -54,6 +54,7 @@ deseni). Revizyonlara ACIKCA cikilir; `head` / `-1` KULLANILMAZ.
 """
 
 import importlib.util
+import itertools
 import os
 import subprocess
 import sys
@@ -69,11 +70,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.modules.accounting import balance
 from app.modules.accounting.models import BALANCE_ENFORCED_STATUSES, POSTING_BALANCED_CHECK
+from app.modules.accounting.numbering import format_entry_no
 
 BACKEND_DIR = Path(__file__).parents[3]
 ALEMBIC_CMD = (sys.executable, "-m", "alembic")
 
-FIN1_REVISION = "d8e9f0a1b2c3"
+#: 🔴 EBEVEYN revizyon. Adi `PARENT_REVISION` DEGIL: re-parent sonrasi bu sabit
+#: FIS-NO'nun id'sini tutuyor ve eski ad YALAN soylerdi (P6 emsali:
+#: `PARENT_REVISION`). `tests/modules/treasury/test_fin1_migration.py`deki
+#: ayni isimli sabit FIN-1'IN KENDI testidir, o DOKUNULMADI.
+PARENT_REVISION = "f150c0117e42"
 TB6_REVISION = "e9f0a1b2c3d4"
 
 TABLE = "journal_entries"
@@ -113,15 +119,35 @@ COUNT_PREDICATE = str(MIG.COUNT_SQL).split(" WHERE ", 1)[1]
 # Kirli satirin degerleri — ayni zamanda SIZINTI BEKCISININ nisan tahtasi
 # --------------------------------------------------------------------------- #
 KIRLI_TARIH = "2026-07-17"
+KIRLI_YIL = 2026
 KIRLI_BORC = Decimal("500.00")
 KIRLI_ALACAK = Decimal("0.00")
+
+#: 🔴 FIS-NO RE-PARENT SONRASI ZORUNLU. Ebeveyn artik `f150c0117e42` ve o
+#: migration `journal_entries.entry_no`yu **NOT NULL + UNIQUE** yapar. Bu dosya
+#: fisleri HAM SQL ile yazar (servis katmani HIC devrede degil), yani sunucunun
+#: uretecisi kosmaz -> numarayi testin KENDISI vermek zorundadir. Verilmeseydi
+#: INSERT'ler `23502` ile patlar ve `NOT VALID` bekcileri `23514` bekledigi icin
+#: **YANLIS SEBEPLE** kirmiziya donerdi (sahte-yesilin aynadaki hâli).
+#:
+#: 🔴 UNIQUE **kolonun genelindedir** (`uq_journal_entries_entry_no`), yil bazli
+#: DEGIL -> sayac global ve monotondur. Bicim `numbering.format_entry_no`tan
+#: ITHAL EDILIR, elle yazilmaz: FIS-NO bicimi TEK yerde kurar (backfill, uretici
+#: ve testler ayni kurali okur); burada kopyalansaydi `SEQUENCE_WIDTH` degisimi
+#: bu dosyayi sessizce ayristirirdi.
+_entry_no_sayaci = itertools.count(1)
+
+
+def _yeni_entry_no() -> str:
+    return format_entry_no(KIRLI_YIL, next(_entry_no_sayaci))
+
 
 _INSERT_SQL = (
     "INSERT INTO journal_entries "
     "(id, entry_date, period_year, period_month, description, status, "
-    " total_debit, total_credit, created_by_id) "
-    f"VALUES (gen_random_uuid(), DATE '{KIRLI_TARIH}', 2026, 7, 'TB6 mig probu', "
-    "$1::journal_entry_status, $2::numeric, $3::numeric, $4)"
+    " total_debit, total_credit, created_by_id, entry_no) "
+    f"VALUES (gen_random_uuid(), DATE '{KIRLI_TARIH}', {KIRLI_YIL}, 7, 'TB6 mig probu', "
+    "$1::journal_entry_status, $2::numeric, $3::numeric, $4, $5)"
 )
 
 
@@ -200,13 +226,15 @@ async def _fis_yaz(
     borc: Decimal,
     alacak: Decimal,
 ) -> uuid.UUID:
-    return await conn.fetchval(_INSERT_SQL + " RETURNING id", status, borc, alacak, kullanici_id)
+    return await conn.fetchval(
+        _INSERT_SQL + " RETURNING id", status, borc, alacak, kullanici_id, _yeni_entry_no()
+    )
 
 
 async def _kirli_db_kur(database: str) -> uuid.UUID:
     """FIN-1'e cikar ve ESKI kisitin (yasal olarak) gecirdigi dengesiz bir
     `reversed` satir birakir — TB6'nin kapattigi delik tam olarak budur."""
-    _run_alembic("upgrade", FIN1_REVISION, database=database)
+    _run_alembic("upgrade", PARENT_REVISION, database=database)
     conn = await asyncpg.connect(_asyncpg_dsn(database))
     try:
         kullanici_id = await _kullanici_yaz(conn)
@@ -236,7 +264,7 @@ def test_migration_parent_is_the_expected_revision():
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(Config(str(BACKEND_DIR / "alembic.ini")))
-    assert script.get_revision(TB6_REVISION).down_revision == FIN1_REVISION
+    assert script.get_revision(TB6_REVISION).down_revision == PARENT_REVISION
     assert [h for h in script.get_heads()] == [TB6_REVISION]
 
 
@@ -358,10 +386,10 @@ async def test_upgrade_downgrade_upgrade_round_trip():
         finally:
             await conn.close()
 
-        _run_alembic("downgrade", FIN1_REVISION, database=database)
+        _run_alembic("downgrade", PARENT_REVISION, database=database)
         conn = await asyncpg.connect(_asyncpg_dsn(database))
         try:
-            assert await _current_revision(conn) == FIN1_REVISION
+            assert await _current_revision(conn) == PARENT_REVISION
             eski = await _constraint_sql(conn, OLD_NAME)
             assert eski is not None
             assert "reversed" not in eski
@@ -467,11 +495,23 @@ async def test_KIRLI_DB_de_NOT_VALID_KISIT_YENI_IHLALI_REDDEDER():
 
             # 1) Dengesiz `reversed` INSERT -> RED. TB6'nin kapattigi delik.
             await _reddedilir(
-                conn, _INSERT_SQL, "reversed", Decimal("500.00"), Decimal("0.00"), kullanici_id
+                conn,
+                _INSERT_SQL,
+                "reversed",
+                Decimal("500.00"),
+                Decimal("0.00"),
+                kullanici_id,
+                _yeni_entry_no(),
             )
             # 2) Dengesiz `posted` INSERT -> RED (eski kisitin kapsami KAYBOLMADI).
             await _reddedilir(
-                conn, _INSERT_SQL, "posted", Decimal("500.00"), Decimal("0.00"), kullanici_id
+                conn,
+                _INSERT_SQL,
+                "posted",
+                Decimal("500.00"),
+                Decimal("0.00"),
+                kullanici_id,
+                _yeni_entry_no(),
             )
 
             # 3) Dengeli `reversed` GECER — storno akisi TIKANMAZ.
@@ -525,12 +565,12 @@ async def test_KIRLI_DB_de_downgrade_PATLAMAZ_eski_kisit_TARANARAK_geri_gelir():
         kirli_id = await _kirli_db_kur(database)
         _run_alembic("upgrade", TB6_REVISION, database=database)
 
-        sonuc = _run_alembic("downgrade", FIN1_REVISION, database=database)
+        sonuc = _run_alembic("downgrade", PARENT_REVISION, database=database)
         assert sonuc.returncode == 0
 
         conn = await asyncpg.connect(_asyncpg_dsn(database))
         try:
-            assert await _current_revision(conn) == FIN1_REVISION
+            assert await _current_revision(conn) == PARENT_REVISION
             assert await _constraint_sql(conn, NEW_NAME) is None
             assert await _constraint_sql(conn, OLD_NAME) is not None
             assert await _convalidated(conn, OLD_NAME) is True

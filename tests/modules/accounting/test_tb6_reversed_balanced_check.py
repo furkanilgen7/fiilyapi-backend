@@ -31,7 +31,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.accounting import balance
+from app.modules.accounting import balance, numbering
 from app.modules.accounting.models import (
     BALANCE_ENFORCED_STATUSES,
     JournalEntry,
@@ -64,7 +64,15 @@ async def _yaz(
     debit: str,
     credit: str,
 ) -> None:
-    """Fişi DOĞRUDAN yazar — servis katmanı HİÇ devrede değildir."""
+    """Fişi DOĞRUDAN yazar — fiş SERVİSİ (`service.py`) HİÇ devrede değildir.
+
+    🔴 `entry_no` FIS-NO'dan sonra **NOT NULL + UNIQUE**tir (kolon geneli), o
+    yüzden burada da verilmek ZORUNDA. Sabit bir metin YAZILMAZ ve biçim elle
+    kurulmaz: kanonik `fis_fabrikasi` ile **aynı** üretici çağrılır
+    (`numbering.generate_entry_no`), böylece tekillik sayaçtan gelir ve biçim
+    tek yerde kalır. Bu, dosyanın amacını BOZMAZ — ölçülen şey hâlâ DB
+    düzeyindeki `ck_journal_entries_posting_balanced` kısıtıdır.
+    """
     session.add(
         JournalEntry(
             entry_date=date(2026, 7, 17),
@@ -75,6 +83,7 @@ async def _yaz(
             total_debit=Decimal(debit),
             total_credit=Decimal(credit),
             created_by_id=kullanici_id,
+            entry_no=await numbering.generate_entry_no(session, year=2026),
         )
     )
     await session.flush()

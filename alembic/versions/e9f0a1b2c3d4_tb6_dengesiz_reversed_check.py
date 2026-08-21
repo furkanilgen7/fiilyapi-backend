@@ -108,8 +108,16 @@ eski kisit DOGRULANMIS oldugu icin hic var olamaz.
 
 Elle yazilmistir (autogenerate DEGIL) — repo deseni.
 
+## RE-PARENT (2026-08-21)
+
+Ebeveyn `d8e9f0a1b2c3` (FIN-1) -> **`f150c0117e42`** (FIS-NO). Ikisi de AYNI
+ebeveynden dallanmisti; FIS-NO once merge edilince `alembic heads` IKI oldu ve
+`Dockerfile` acilista `alembic upgrade head && uvicorn ...` kostugu icin
+uygulama HIC ACILMAZDI (tam kesinti). Cift head OLCULDU, tahmin edilmedi.
+🔴 Kendi `revision` id'miz DEGISMEDI (dosya adi da) — degisen yalniz EBEVEYN.
+
 Revision ID: e9f0a1b2c3d4
-Revises: d8e9f0a1b2c3
+Revises: f150c0117e42
 Create Date: 2026-08-19
 
 """
@@ -128,7 +136,7 @@ logger = logging.getLogger("alembic.runtime.migration")
 
 # revision identifiers, used by Alembic.
 revision: str = "e9f0a1b2c3d4"
-down_revision: str | Sequence[str] | None = "d8e9f0a1b2c3"
+down_revision: str | Sequence[str] | None = "f150c0117e42"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
