@@ -545,7 +545,7 @@ async def test_bagli_odeme_silinince_durum_TURETIMI_bozulmadi(
 
 
 async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
-    """🔴 Kapsam: var olan İKİ uca ALAN eklenir, YENİ YOL AÇILMAZ (Kanon 3).
+    """🔴 Kapsam: TB6-T1 (`GET/PUT /payroll/tax-brackets`) İKİ YENİ YOL açtı.
 
     Sayı elle yazılmıştır ve bilinçlidir: bir uç eklendiğinde bu test kırmızı
     olur ve kapsam genişlemesi GÖRÜNÜR hâle gelir.
@@ -560,5 +560,5 @@ async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
         for metot in uc
         if metot in {"get", "post", "put", "patch", "delete"}
     )
-    assert len(yollar) == 224
-    assert operasyonlar == 331
+    assert len(yollar) == 226
+    assert operasyonlar == 333

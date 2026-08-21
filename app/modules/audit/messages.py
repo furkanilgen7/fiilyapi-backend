@@ -1145,6 +1145,20 @@ def payroll_rate_updated(year: int, source: str, rates: dict[str, object]) -> st
     return f"Bordro kesinti oranları güncellendi: {year}/{source} · {degerler}"
 
 
+# TB6 T1 — tarife de KULLANICININ KENDI GIRDISIDIR (turemez), o hâlde oran
+# satirinin ISTISNASI burada da gecerlidir: DEGERLER YAZILIR. "TUTAR metne
+# girmez" kurali TUREV paralar icindir; dilim esigi bir tutar degil, mevzuatin
+# kendisidir ve tabloda yalnizca SON hali durur.
+def payroll_tax_brackets_updated(
+    year: int, income_kind: str, brackets: list[tuple[int, object, object]], is_active: bool
+) -> str:
+    dilimler = " · ".join(
+        f"{ordinal}: {'üstü' if ust is None else ust} → %{oran}" for ordinal, ust, oran in brackets
+    )
+    durum = "aktif" if is_active else "pasif"
+    return f"Gelir vergisi tarifesi güncellendi: {year}/{income_kind} ({durum}) · {dilimler}"
+
+
 # --- FAT-1 T3: fatura çekirdeği ---
 #
 # Kimlik UUID DEĞİL kullanıcının GÖRDÜĞÜ değerdir: FATURA NUMARASI (giden'de

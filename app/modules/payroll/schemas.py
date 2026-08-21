@@ -16,11 +16,14 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.modules.payroll import income_tax
 from app.modules.payroll.models import (
+    BRACKET_BOUND_PRECISION,
     MONEY_PRECISION,
     MONEY_SCALE,
     RATE_PRECISION,
     RATE_SCALE,
+    IncomeKind,
     PayrollLineStatus,
     PayrollPeriodStatus,
 )
@@ -500,4 +503,99 @@ class PayrollRateListResponse(BaseModel):
     """
 
     items: list[PayrollRateResponse]
+    total: int
+
+
+# --- TB6 T1: gelir vergisi tarifesi (IK3-GV K2'nin ERTELENMİŞ ucu) ----------
+
+#: Dilimin üst eşiği — `Numeric(14,2)` ile AYNI ölçek (models.py). `> 0`:
+#: sıfır/eksi bir üst sınır hiçbir matrahı kapsamaz, dilim ÖLÜ olurdu
+#: (`ck_payroll_tax_brackets_upper_bound_positive`in şema karşılığı).
+BracketBound = Annotated[
+    Decimal, Field(gt=0, max_digits=BRACKET_BOUND_PRECISION, decimal_places=MONEY_SCALE)
+]
+
+
+class PayrollTaxBracketInput(BaseModel):
+    """Tarifenin BİR dilimi — gövdedeki hâli.
+
+    `is_active` burada YOKTUR: aktiflik SETİN özelliğidir, dilimin değil. Dilim
+    başına bırakılsaydı yarısı aktif bir tarife kurulabilir ve
+    `income_tax.normalize_brackets` onu "delikli" sayıp TÜM yılı fail-closed'a
+    düşürürdü — üstelik kullanıcı bunu hiçbir uçtan göremezdi.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ordinal: int = Field(ge=1)
+    #: 🔴 `null` = **SON dilim** ("üstü"), "sınır girilmedi" DEĞİL. Varsayılanı
+    #: `None`dır çünkü son dilimde alanın YOKLUĞU anlamın kendisidir.
+    upper_bound: BracketBound | None = None
+    rate_pct: Rate
+
+
+class PayrollTaxBracketSetUpdate(BaseModel):
+    """`PUT /payroll/tax-brackets/{year}/{income_kind}` gövdesi — **TAM KÜME**.
+
+    🔴 Kısmi güncelleme YOKTUR ve bu bir tercih değil, ZORUNLULUKTUR: tarife
+    birikimli okunur (`tax_for_base` dilimleri baştan tarar), yani tek bir
+    dilimi değiştirmek setin BÜTÜNÜNÜN anlamını değiştirir. Beş dilimli bir
+    setin 3.'sünü yamalayan bir uç, geri kalan dördünü sessizce eski mevzuatta
+    bırakırdı.
+
+    🔴 Küme doğrulaması `income_tax.normalize_brackets`e DEVREDİLİR — ikinci bir
+    kopya yazılsaydı hesap motoru ile uç iki farklı "geçerli tarife" tanımına
+    sahip olurdu ve uçtan geçen bir set motorda `uncomputed` üretebilirdi.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    brackets: list[PayrollTaxBracketInput] = Field(min_length=1)
+    #: Setin tamamı için: `false` = o yıl fail-closed (satır `uncomputed`
+    #: kalır), "vergi yok" DEĞİL. `payroll_rates`in `is_active`i ile aynı kural.
+    is_active: bool = True
+
+    @model_validator(mode="after")
+    def _kume_butunlugu(self) -> "PayrollTaxBracketSetUpdate":
+        """Boşluk/örtüşme/açık uç denetimi — motorun KENDİ kuralları.
+
+        `TaxBracketSetError` bir `ValueError`dür; Pydantic onu 422'ye çevirir ve
+        kullanıcı hangi kuralın kırıldığını METİNDEN okur.
+        """
+        income_tax.normalize_brackets(
+            [
+                income_tax.TaxBracket(
+                    ordinal=dilim.ordinal, upper_bound=dilim.upper_bound, rate_pct=dilim.rate_pct
+                )
+                for dilim in self.brackets
+            ]
+        )
+        return self
+
+
+class PayrollTaxBracketResponse(BaseModel):
+    """Bir dilim — `(yıl, gelir türü, sıra)` anahtarlı (models.py)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    year: int
+    income_kind: IncomeKind
+    ordinal: int
+    #: 🔴 `null` = son dilim ("üstü") — 0 ile KARIŞTIRILMAZ.
+    upper_bound: Decimal | None
+    rate_pct: Decimal
+    is_active: bool
+
+
+class PayrollTaxBracketListResponse(BaseModel):
+    """Dilimler — **sayfalama YOKTUR ve bu bilinçlidir** (`PayrollRateListResponse` emsali).
+
+    Tablo yılda en çok bir avuç satır büyür (2026 ücret tarifesi BEŞ dilim);
+    TB3 sayfalama korkuluğu sınırsız büyüyen listeler içindir. `limit`
+    eklenseydi kullanıcı bir yılın tarifesini PARÇA PARÇA görür ve setin
+    bütünlüğünü (deliği olup olmadığını) ekrandan hiç okuyamazdı.
+    """
+
+    items: list[PayrollTaxBracketResponse]
     total: int

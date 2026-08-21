@@ -64,6 +64,12 @@ RATE_SCALE = 3
 MONEY_PRECISION = 12
 MONEY_SCALE = 2
 
+#: Tarife EŞİĞİNİN hassasiyeti — para kolonundan İKİ HANE BÜYÜK (IK3-GV K2):
+#: 5.300.000 eşiği kuruşuyla 12 haneye sığar ama tarife yıllar içinde büyür.
+#: Şema tarafı (`schemas.BracketBound`) BU sabitten okur — ayrı yazılsaydı bir
+#: gün kolon büyür, şema kalır ve uç sessizce daha darını kabul ederdi.
+BRACKET_BOUND_PRECISION = 14
+
 
 class IncomeKind(str, enum.Enum):
     """Gelir türü — GVK m.103 tarifesinin HANGİ tablosu (K5).
@@ -426,9 +432,17 @@ class PayrollTaxBracket(Base):
     `is_active`: `payroll_rates` ile aynı kural — eski yılın tarifesi SİLİNMEZ
     (geçmiş bordronun hesabı okunabilir kalmalıdır), pasifleştirilir.
 
-    🔴 **OKUMA/YAZMA UCU YOKTUR (K8).** Tarife migration'da tohumlanır; openapi
-    215 yolda KALIR. `payroll_rates`in bile ekranı yokken dilimin ucu gerekmez;
-    `GET/PUT /payroll/tax-brackets` ayrı ve ERTELENMİŞ bir dilimdir.
+    🔴 **UÇLARI TB6 T1'DE AÇILDI** (IK3-GV'de ERTELENMİŞTİ): `GET
+    /payroll/tax-brackets` (`payroll:view`) + `PUT
+    /payroll/tax-brackets/{year}/{income_kind}` (`payroll:admin`). Gerekçe:
+    tarife YILLIKTIR ve tohum yalnız 2026'yı basar — uç açılmasaydı 2027'nin
+    ilk dönemi K3 gereği `uncomputed` döner, bordro HESAPLANAMAZ hâle gelirdi.
+
+    🔴 **PUT TAM KÜME DEĞİŞTİRMEDİR ve satırları SİLER.** Pasifleştirme yolu
+    burada YOKTUR çünkü `uq_payroll_tax_brackets_year_kind_ordinal` yeni setin
+    `ordinal`lerini eskilerin üstüne çarpar; iki set aynı `(yıl, tür)` altında
+    YAN YANA DURAMAZ. Yıl bazında saklama kuralı (eski YILIN tarifesi silinmez)
+    bundan etkilenmez.
     """
 
     __tablename__ = "payroll_tax_brackets"
@@ -461,7 +475,9 @@ class PayrollTaxBracket(Base):
     #: Dilimin üst eşiği; **`NULL` = son dilim** ("üstü").
     #: `Numeric(14,2)`: matrah 12 hanelik para kolonundan BÜYÜK olabilir
     #: (5.300.000 eşiği kuruşuyla sığar ama tarife yıllar içinde büyür).
-    upper_bound: Mapped[Decimal | None] = mapped_column(Numeric(14, MONEY_SCALE), nullable=True)
+    upper_bound: Mapped[Decimal | None] = mapped_column(
+        Numeric(BRACKET_BOUND_PRECISION, MONEY_SCALE), nullable=True
+    )
     #: Oran YÜZDEDİR (`15.000` = %15) — `payroll_rates` ile AYNI ölçek.
     rate_pct: Mapped[Decimal] = mapped_column(Numeric(RATE_PRECISION, RATE_SCALE), nullable=False)
     is_active: Mapped[bool] = mapped_column(
