@@ -1,5 +1,4 @@
 import uuid
-from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +12,11 @@ from app.core.errors import (
 )
 from app.core.timezone import today
 from app.modules.projects import cost_cards, messages, repository
+from app.modules.projects.cards import (
+    _contracting_card,
+    _investment_card,
+    _land_share_card,
+)
 from app.modules.projects.cost_cards import ProjectCardCosts
 from app.modules.projects.models import (
     Employer,
@@ -25,13 +29,8 @@ from app.modules.projects.models import (
     ProjectType,
 )
 from app.modules.projects.schemas import (
-    ContractingCard,
-    CountPlaceholder,
     EmployerCreate,
     EmployerResponse,
-    InvestmentCard,
-    LandShareCard,
-    MetricPlaceholder,
     ProjectBudgetLines,
     ProjectContractInput,
     ProjectContractResponse,
@@ -45,8 +44,6 @@ from app.modules.projects.schemas import (
     ProjectSiteInput,
     ProjectUpdate,
     ShareholderInput,
-    ShareholderResponse,
-    metric,
 )
 from app.modules.roles.repository import get_permission
 
@@ -59,15 +56,6 @@ from app.modules.sites.models import Site  # noqa: F401
 # karari (icinde bulunulan ay) ve DISTINCT kurali orada gerekcelenmistir.
 from app.modules.timesheet import counts as timesheet_counts
 from app.modules.users.models import User
-
-# Spec §2: bos durum alanlari ve bagli olduklari dilim anahtarlari.
-_PROGRESS_PAYMENTS = "progress_payments"
-_TIMESHEET = "timesheet"
-_SUBCONTRACTS = "subcontracts"
-_UNITS = "units"
-_PROJECT_COSTS = "project_costs"
-
-_LAND_COST_FIXED = Decimal("0")  # kat karsiliginda tanim geregi 0 (spec §3.3)
 
 _DUPLICATE_TAX_NUMBER = "Bu VKN ile kayıtlı bir işveren zaten var."
 _EMPLOYER_NOT_FOUND = "İşveren bulunamadı"
@@ -95,102 +83,6 @@ async def create_employer(session: AsyncSession, data: EmployerCreate) -> Employ
         contact_person=data.contact_person,
     )
     return await repository.add_employer(session, employer)
-
-
-def _metric(pending_module: str) -> MetricPlaceholder:
-    return MetricPlaceholder(pending_module=pending_module)
-
-
-def _count(pending_module: str) -> CountPlaceholder:
-    return CountPlaceholder(pending_module=pending_module)
-
-
-def _worker_count(value: int) -> CountPlaceholder:
-    """T4 — `_TIMESHEET` yer tutucusunun BAGLANMIS hali (puantaj spec §4).
-
-    Zarf KORUNUR, yalnizca doldurulur (`available=True` + gercek `count`):
-    taahhut kartinin diger sayaclari hâlâ yer tutucudur ve ayni serit iki farkli
-    sozlesme tasimamalidir. Sayim `timesheet.counts`tadir — bu modul kendi
-    `SELECT`ini yazmaz.
-    """
-    return CountPlaceholder(available=True, count=value, pending_module=_TIMESHEET)
-
-
-def _contracting_card(worker_count: int, card_costs: ProjectCardCosts) -> ContractingCard:
-    """E4 181/206/231/256 "Harcanan" P10 T4'te ZARFIN ICINDE gercege baglandi.
-
-    Kaynak TASERON hakedisidir (spec §2), isveren hakedisi DEGIL: taahhut
-    projesinde isveren hakedisi GELIRDIR — alanin eski `_PROGRESS_PAYMENTS`
-    etiketi P1'den kalan yanlis etiketti ve etiket de `_PROJECT_COSTS`a dondu.
-    Serit uzerindeki diger iki alan (fiziksel ilerleme / son hakedis) HALA
-    isveren hakedisi dilimini bekler, o yuzden `_PROGRESS_PAYMENTS` KALIR.
-    """
-    return ContractingCard(
-        spent=metric(card_costs.spent, _PROJECT_COSTS),
-        physical_progress=_metric(_PROGRESS_PAYMENTS),
-        final_progress_payment=_metric(_PROGRESS_PAYMENTS),
-        worker_count=_worker_count(worker_count),
-        subcontractor_count=_count(_SUBCONTRACTS),
-    )
-
-
-def _investment_card(project: Project, card_costs: ProjectCardCosts) -> InvestmentCard:
-    """KY 182/187-188 üç alanı P10 T3'te ZARFIN İÇİNDE gerçeğe baglandi.
-
-    `total_cost` E4 122'dir ve KULLANICI KARARI 2026-08-09 ile **HARCANAN**dir
-    (arsa + taşeron hakedişi; `costs.total_spent`) — kanıt KY hero ikilisi
-    ("₺20,3M / ₺29,8M bütçe"). `estimated_profit`/`margin` ise BÜTÇE tabanlı
-    KALIR (`costs.card_projection`): kartın bu karışımı mockup'ın kendi
-    okumasidir, backend iki tabani da tasir.
-
-    Bagli olmayan alanlar (satis/ünite tarafi) yer tutucu KALIR: bu dilim yalniz
-    maliyet/kâr türevlerini baglar (`_worker_count`un P-T4'teki kismi baglama
-    deseninin aynisi).
-    """
-    investment = project.investment
-    return InvestmentCard(
-        sales_target=investment.sales_target if investment else None,
-        land_cost=investment.land_cost if investment else None,
-        sold_amount=_metric(_UNITS),
-        sales_ratio=_metric(_UNITS),
-        unit_summary=_count(_UNITS),
-        total_cost=metric(card_costs.total_cost, _PROJECT_COSTS),
-        estimated_profit=metric(card_costs.profit, _PROJECT_COSTS),
-        margin=metric(card_costs.margin_pct, _PROJECT_COSTS),
-    )
-
-
-def _land_share_card(project: Project, card_costs: ProjectCardCosts) -> LandShareCard | None:
-    land_share = project.land_share
-    if land_share is None:
-        return None
-    return LandShareCard(
-        landowner_name=land_share.landowner_name,
-        our_share_pct=land_share.our_share_pct,
-        owner_share_pct=land_share.owner_share_pct,
-        land_cost=_LAND_COST_FIXED,
-        contract_no=land_share.contract_no,
-        notary_date=land_share.notary_date,
-        land_area_m2=land_share.land_area_m2,
-        construction_area_m2=land_share.construction_area_m2,
-        delivery_date=land_share.delivery_date,
-        daily_penalty=land_share.daily_penalty,
-        guarantee_amount=land_share.guarantee_amount,
-        shareholder_count=len(project.shareholders),
-        shareholders=[ShareholderResponse.model_validate(s) for s in project.shareholders],
-        our_unit_count=_count(_UNITS),
-        owner_unit_count=_count(_UNITS),
-        # KK 121 "BİZİM PAY": kaynak modül (`units`) CANLI olduğu için değer
-        # daima bilinir — ünitesi olmayan projede 0,00 gerçek cevaptır.
-        our_share_value=metric(card_costs.our_share_value, _UNITS),
-        # KK 135 BÜTÇEDIR (kâr projeksiyonunun tabani, spec §2) — kendi yatirim
-        # kartinin HARCANAN `total_cost`u ile ayni sayi DEGILDIR (kullanici karari
-        # 2026-08-09); iki alanin bagi `ProjectCardCosts`ta KOPARILDI.
-        construction_cost=metric(card_costs.construction_cost, _PROJECT_COSTS),
-        estimated_profit=metric(card_costs.profit, _PROJECT_COSTS),
-        margin=metric(card_costs.margin_pct, _PROJECT_COSTS),
-        construction_progress=_metric(_PROGRESS_PAYMENTS),
-    )
 
 
 def _to_item(

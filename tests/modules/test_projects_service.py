@@ -151,7 +151,14 @@ async def test_land_share_item_is_real_where_data_exists(seeded_db, user_factory
     assert item.land_share.land_cost == Decimal("0")
     assert item.land_share.shareholder_count == 3
     assert item.land_share.construction_cost.pending_module == "project_costs"
+    # DEGISTI (KK-TARAF): `pending_module` iddiasi KORUNDU (dolu CountPlaceholder
+    # modul adini tasimaya devam eder — `_worker_count` emsali), yanina bugunku
+    # gercek eklendi: bu projenin hic unitesi yok ve iki sayac da DOLU zarf
+    # icinde `0` doner ("bilinmiyor" degil, "bizim payimizda sifir unite").
     assert item.land_share.our_unit_count.pending_module == "units"
+    assert item.land_share.our_unit_count.available is True
+    assert item.land_share.our_unit_count.count == 0
+    assert item.land_share.owner_unit_count.count == 0
 
 
 async def test_detail_outside_visible_set_raises_not_found(
