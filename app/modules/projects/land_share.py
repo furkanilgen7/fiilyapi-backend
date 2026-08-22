@@ -57,7 +57,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
 from app.modules.projects import land_share_balance as balance
-from app.modules.projects import service
+from app.modules.projects import service, unit_sides
 from app.modules.projects.land_share_schemas import (
     LandShareBalance,
     LandShareContract,
@@ -71,7 +71,7 @@ from app.modules.projects.land_share_schemas import (
 )
 from app.modules.projects.models import Project
 from app.modules.units import repository as units_repository
-from app.modules.units.models import Unit, UnitOwnerSide, UnitSalesStatus
+from app.modules.units.models import Unit, UnitSalesStatus
 from app.modules.units.schemas import UnitOwnerSideFilter
 from app.modules.units.summary import VALUE_BASIS_BY_TYPE, basis_value
 from app.modules.users.models import User
@@ -176,29 +176,29 @@ async def get_summary(
     basis = VALUE_BASIS_BY_TYPE[project.project_type]
 
     # Üç küme AYRIKTIR ve toplamları TÜM üniteye eşittir: atanmamış üniteler
-    # (`owner_side IS NULL`) ne bizim paya ne arsa payına sayılır.
-    ours = [u for u in units if u.owner_side is UnitOwnerSide.contractor]
-    owner = [u for u in units if u.owner_side is UnitOwnerSide.landowner]
-    unassigned = [u for u in units if u.owner_side is None]
+    # (`owner_side IS NULL`) ne bizim paya ne arsa payına sayılır. Ayrımın kendisi
+    # `unit_sides`tedir — E4 kartının taraf sayaçları ile AYNI yüklemi kullanır,
+    # aksi hâlde kart ve bu uç aynı proje için farklı sayı söyleyebilirdi.
+    sides = unit_sides.partition(units)
 
-    our_side = _our_side(ours, basis)
-    owner_value = _sum_values(owner, basis)
+    our_side = _our_side(sides.ours, basis)
+    owner_value = _sum_values(sides.owner, basis)
     return LandShareSummaryResponse(
         project_id=project.id,
         project_name=project.name,
         contract=_contract(project),
         totals=LandSharePartition(unit_count=len(units), value_total=_sum_values(units, basis)),
         our_side=our_side,
-        owner_side=LandShareOwnerSide(unit_count=len(owner), value_total=owner_value),
-        shareholders=_shareholder_rows(project, owner, basis),
+        owner_side=LandShareOwnerSide(unit_count=len(sides.owner), value_total=owner_value),
+        shareholders=_shareholder_rows(project, sides.owner, basis),
         unassigned=LandSharePartition(
-            unit_count=len(unassigned), value_total=_sum_values(unassigned, basis)
+            unit_count=len(sides.unassigned), value_total=_sum_values(sides.unassigned, basis)
         ),
         balance=LandShareBalance(
             count_balance=balance.count_balance(
                 total_unit_count=len(units),
-                our_assigned_count=len(ours),
-                owner_assigned_count=len(owner),
+                our_assigned_count=len(sides.ours),
+                owner_assigned_count=len(sides.owner),
                 our_share_pct=project.land_share.our_share_pct,
             ),
             value_balance=balance.value_balance(
@@ -218,9 +218,11 @@ def _matches(unit: Unit, block_name: str, side: UnitOwnerSideFilter | None, q: s
     sözlüğü — ikinci bir filtre dili icat edilmez).
     """
     if side is UnitOwnerSideFilter.unassigned:
-        if unit.owner_side is not None:
+        if not unit_sides.is_unassigned(unit):
             return False
-    elif side is not None and (unit.owner_side is None or unit.owner_side.value != side.value):
+    elif side is not None and (
+        unit_sides.is_unassigned(unit) or unit.owner_side.value != side.value
+    ):
         return False
     if q is not None:
         needle = q.casefold()

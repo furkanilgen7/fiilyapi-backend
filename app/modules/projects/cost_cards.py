@@ -40,7 +40,8 @@ sorgusudur ve yalnız ilgili tipte hiç proje varsa koşar:
 # Çemberi kırmanın en az müdahaleli yolu, yaprak olmayan iki bağı gecikmeli
 # yapmaktır — `service._write_inline_sites`in `sites.service` importunda kullandığı
 # desenin aynısı. Bu modülün modül düzeyi bağları yalnız YAPRAKLARDIR
-# (`projects.models`).
+# (`projects.models` · `projects.unit_sides` — ikincisi de yalnız `units.models`e
+# bağlı bir yapraktır, çember açmaz).
 
 import uuid
 from collections.abc import Sequence
@@ -50,6 +51,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.projects import unit_sides
 from app.modules.projects.models import Project, ProjectType
 
 if TYPE_CHECKING:  # yalnız tip anotasyonu için — çalışma zamanında import YOK
@@ -97,6 +99,21 @@ class ProjectCardCosts:
     Kartın "Toplam Maliyet = harcanan" + "Tahmini Kâr = bütçe bazlı" karışımı
     MOCKUP'IN KENDİ OKUMASIDIR (E4 122 harcananı, 124 bütçe bazlı kârı basar);
     backend iki tabanı da aynı kartta taşır.
+
+    ## Para OLMAYAN iki alan: taraf ünite sayaçları
+
+    `our_unit_count` / `owner_unit_count` → E4 148-149 paylaşım şeridi ("Biz %55 ·
+    23 ünite" / "Arsa %45 · 19"), düz `owner_side` sayımı. Bunlar `Decimal`
+    değil `int`tir ve `None` hâli DİĞER alanlardan farklı okunur:
+
+    * **kat karşılığı projede `None` DÖNMEZ** — ünitesi olmayan projede `0`
+      GERÇEK cevaptır (`units` modülü canlıdır), bilinmeyen değil;
+    * **başka tiplerde `None`** — o tipin kartında böyle bir alan zaten YOKTUR,
+      yani "sıfır ünite" değil "soru sorulmadı" demektir.
+
+    Sayaçlar buradan taşınır çünkü üniteler kart okumasında ZATEN yüklüdür
+    (`by_projects`); ayrı bir `SELECT count(*)` N+1 kuralını (modül notu §4)
+    kırardı.
     """
 
     total_cost: Decimal | None = None
@@ -105,6 +122,8 @@ class ProjectCardCosts:
     profit: Decimal | None = None
     margin_pct: Decimal | None = None
     spent: Decimal | None = None
+    our_unit_count: int | None = None
+    owner_unit_count: int | None = None
 
 
 EMPTY = ProjectCardCosts()
@@ -118,12 +137,17 @@ def _for_project(
     Kendi yatırımda `total_cost` HARCANANDIR (`costs.total_spent`), kat
     karşılığında `construction_cost` BÜTÇEDİR — iki alanın ayrımı için bkz.
     `ProjectCardCosts`. Kâr/marj İKİ TİPTE DE bütçe tabanlıdır (`card_projection`).
+
+    Taraf sayaçları AYNI `units` listesinden türer (ek sorgu YOK) ve yalnız kat
+    karşılığında doldurulur — paylaşım şeridi (E4 148-149) yalnız o kartta vardır.
     """
     from app.modules.projects import costs
 
     projection = costs.card_projection(project, units)
     spent = _ZERO if totals is None else totals.spent
     is_investment = project.project_type is ProjectType.kendi_yatirim
+    is_land_share = project.project_type is ProjectType.kat_karsiligi
+    sides = unit_sides.partition(units)
     return ProjectCardCosts(
         total_cost=costs.total_spent(project, spent) if is_investment else None,
         construction_cost=None if is_investment else projection.cost,
@@ -132,6 +156,9 @@ def _for_project(
         our_share_value=costs.our_share_value(units, project.project_type),
         profit=projection.profit,
         margin_pct=projection.margin_pct,
+        # `0` GERÇEK cevaptır (aynı gerekçe); alanın hiç olmadığı tipte `None`.
+        our_unit_count=len(sides.ours) if is_land_share else None,
+        owner_unit_count=len(sides.owner) if is_land_share else None,
     )
 
 

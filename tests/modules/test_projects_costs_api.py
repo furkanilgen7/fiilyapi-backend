@@ -30,6 +30,7 @@ from app.core.access import AccessLevel
 from app.modules.contracts.models import SubcontractorContract, SubcontractorContractItem
 from app.modules.customers.models import Customer, CustomerType
 from app.modules.projects.models import Project, ProjectInvestment
+from app.modules.projects.schemas import SubcontractorCostRow, SubcontractorCostSummary
 from app.modules.roles.models import Module, Role, RolePermission
 from app.modules.sales.models import SaleType, UnitSale, UnitSaleStatus
 from app.modules.sites.models import Site
@@ -171,7 +172,11 @@ async def _contract(
     item_quantity: str = "1",
     item_price: str | None = "0",
     contract_no: str | None = None,
+    with_item: bool = True,
 ) -> SubcontractorContract:
+    """`with_item=False`: KALEMSİZ sözleşme — üretimde ERİŞİLEBİLİR bir durumdur
+    (`SubcontractorContractCreate.items` `default_factory=list`, yani her sözleşme
+    kalemleri girilmeden ÖNCE bu hâlden geçer) ve bedeli `0.00` olur."""
     contract = SubcontractorContract(
         project_id=project.id,
         subcontractor_name=name,
@@ -181,6 +186,8 @@ async def _contract(
     )
     session.add(contract)
     await session.flush()
+    if not with_item:
+        return contract
     session.add(
         SubcontractorContractItem(
             contract_id=contract.id,
@@ -682,6 +689,173 @@ async def test_sozlesme_nosuz_satirlar_da_deterministik_siralanir(
     assert len(kimlikler) == 3
     assert kimlikler == sorted(kimlikler)
     assert kimlikler == [row["contract_id"] for row in ikinci["subcontractors"]]
+
+
+# --- İlerleme sütunu (KY 214/222/230 · KK 217/223/229) ---
+
+
+async def test_ilerleme_ODENEN_bolu_SOZLESME_yuzdesidir(
+    client, db_session, user_factory, project_factory
+):
+    """ "İlerleme" sütunu = `Ödenen / Sözleşme × 100`, iki ondalık.
+
+    Beklenen değerler ELDE hesaplandı; üretim ifadesi testte YENİDEN
+    KOŞTURULMADI (aksi hâlde test formülü değil kendini doğrulardı):
+
+    * 5.700.000 / 8.400.000 × 100 = 67,857142… → **67.86** (KY 214'ün `%68`
+      bar genişliğinin iki haneli hâli; yuvarlama ISIRIR).
+    * 1.200.000 / 2.400.000 × 100 = 50 TAM → **50.00** (KY 222 `%50`).
+    * 24.690 / 200.000 × 100 = 12,345 → TAM YARIM, yuvarlama MODUNU ayırt eder:
+      `quantize2` ROUND_HALF_UP'tır ve **12.35** verir; ROUND_HALF_EVEN olsaydı
+      12.34 gelirdi (4 çift olduğu için aşağı yuvarlardı).
+    """
+    kurucu = await user_factory(email="ilerleme@p10.co", password="parola1234", role_key="patron")
+    project = await project_factory(code="IL-1", project_type="taahhut")
+    akin = await _contract(
+        db_session,
+        project,
+        kurucu,
+        name="Akın İnşaat",
+        work_category="Betonarme",
+        item_quantity="8400",
+        item_price="1000",
+    )
+    yilmaz = await _contract(
+        db_session,
+        project,
+        kurucu,
+        name="Yılmaz Elektrik",
+        work_category="Elektrik",
+        item_quantity="2400",
+        item_price="1000",
+    )
+    yarim = await _contract(
+        db_session,
+        project,
+        kurucu,
+        name="Zeta Yuvarlama",
+        work_category="Mekanik",
+        item_quantity="200",
+        item_price="1000",
+    )
+    await _payment(db_session, akin, kurucu, SubcontractorPaymentStatus.paid, quantity="5700")
+    await _payment(db_session, yilmaz, kurucu, SubcontractorPaymentStatus.paid, quantity="1200")
+    await _payment(db_session, yarim, kurucu, SubcontractorPaymentStatus.paid, quantity="24.69")
+    token = await _login(client, user_factory, "system_admin")
+
+    body = (await client.get(f"/projects/{project.id}/costs", headers=_auth(token))).json()
+
+    rows = {row["subcontractor_name"]: row for row in body["subcontractors"]}
+    # Payda/pay gerçekten kurulmuş mu — oran doğru çıksın diye önce girdiler ölçülür.
+    assert Decimal(rows["Akın İnşaat"]["contract_amount"]) == Decimal("8400000.00")
+    assert Decimal(rows["Akın İnşaat"]["paid"]) == Decimal("5700000.00")
+    assert Decimal(rows["Akın İnşaat"]["progress_pct"]) == Decimal("67.86")
+    assert Decimal(rows["Yılmaz Elektrik"]["progress_pct"]) == Decimal("50.00")
+    assert Decimal(rows["Zeta Yuvarlama"]["contract_amount"]) == Decimal("200000.00")
+    assert Decimal(rows["Zeta Yuvarlama"]["paid"]) == Decimal("24690.00")
+    assert Decimal(rows["Zeta Yuvarlama"]["progress_pct"]) == Decimal("12.35")
+
+
+async def test_ilerleme_GERCEK_SIFIRI_TANIMSIZDAN_ayirir(
+    client, db_session, user_factory, project_factory
+):
+    """İki "sıfır görünümlü" durum AYNI DEĞERE ÇÖKMEZ (NULL-EŞİK kanonu):
+
+    * bedeli olan ama hiç ödeme görmemiş sözleşme → `0.00` = GERÇEK %0. Mockup
+      bunu harfiyen basar (KY 236-243 "Demirci Alüminyum ₺1,8M / ₺0" → `%0`).
+    * bedeli `0.00` olan sözleşme → payda TANIMSIZ → `None`. Uydurma bir %0
+      basmak "veri yok"u "ilerleme yok" gibi gösterirdi; kullanıcı ekranda
+      taşeronun hiç çalışmadığını sanardı. Bu hâl üretimde ERİŞİLEBİLİRDİR ve
+      MEŞRUDUR: kalemsiz sözleşme (`items` `default_factory=list`) ile bütün
+      kalemlerinin `unit_price`ı NULL olan sözleşme aynı `0.00` bedeli üretir.
+    """
+    kurucu = await user_factory(email="sifir@p10.co", password="parola1234", role_key="patron")
+    project = await project_factory(code="IL-2", project_type="taahhut")
+    await _contract(
+        db_session,
+        project,
+        kurucu,
+        name="Demirci Alüminyum",
+        work_category="Doğrama",
+        item_quantity="1800",
+        item_price="1000",
+    )
+    await _contract(db_session, project, kurucu, name="Kalemsiz Ltd", with_item=False)
+    await _contract(db_session, project, kurucu, name="Fiyatsiz Ltd", item_price=None)
+    token = await _login(client, user_factory, "system_admin")
+
+    body = (await client.get(f"/projects/{project.id}/costs", headers=_auth(token))).json()
+
+    rows = {row["subcontractor_name"]: row for row in body["subcontractors"]}
+    gercek_sifir = rows["Demirci Alüminyum"]
+    assert Decimal(gercek_sifir["contract_amount"]) == Decimal("1800000.00")
+    assert Decimal(gercek_sifir["paid"]) == Decimal("0.00")
+    assert Decimal(gercek_sifir["progress_pct"]) == Decimal("0.00")
+    for tanimsiz_ad in ("Kalemsiz Ltd", "Fiyatsiz Ltd"):
+        tanimsiz = rows[tanimsiz_ad]
+        assert Decimal(tanimsiz["contract_amount"]) == Decimal("0.00"), tanimsiz_ad
+        assert tanimsiz["progress_pct"] is None, tanimsiz_ad
+    # AYRIŞMA: ikisi tek değere çökerse test anlamsızlaşır.
+    assert gercek_sifir["progress_pct"] != rows["Kalemsiz Ltd"]["progress_pct"]
+
+
+async def test_ilerleme_payi_ODENENDIR_BEKLEYEN_paya_GIRMEZ(
+    client, db_session, user_factory, project_factory
+):
+    """AYRIŞMA NOKTASI: `Ödenen / Sözleşme` ile `(Ödenen + Bekleyen) / Sözleşme`
+    burada FARKLI cevap verir; bekleyeni 0 olan bir kurulumda test hiçbir şey
+    kanıtlamazdı.
+
+    Ölçüm (KY tablosu, iki bağımsız mockup 6/6 satırda aynı formülde buluşuyor):
+    5,7/8,4 = %68 basılır, (5,7+0,84)/8,4 = %77,9 basılmaz. Burada da
+    5.000.000 / 10.000.000 = **%50.00** beklenir, 8.000.000 / 10.000.000 = %80.00
+    DEĞİL.
+    """
+    kurucu = await user_factory(email="ayrisma@p10.co", password="parola1234", role_key="patron")
+    project = await project_factory(code="IL-3", project_type="taahhut")
+    akin = await _contract(
+        db_session,
+        project,
+        kurucu,
+        name="Akın İnşaat",
+        work_category="Betonarme",
+        item_quantity="10000",
+        item_price="1000",
+    )
+    await _payment(db_session, akin, kurucu, SubcontractorPaymentStatus.paid, quantity="5000")
+    await _payment(
+        db_session,
+        akin,
+        kurucu,
+        SubcontractorPaymentStatus.approved,
+        quantity="3000",
+        sequence_no=2,
+    )
+    token = await _login(client, user_factory, "system_admin")
+
+    body = (await client.get(f"/projects/{project.id}/costs", headers=_auth(token))).json()
+
+    (row,) = body["subcontractors"]
+    assert Decimal(row["contract_amount"]) == Decimal("10000000.00")
+    assert Decimal(row["paid"]) == Decimal("5000000.00")
+    # Bekleyen GERÇEKTEN doludur: iki formülü ayıran şey budur.
+    assert Decimal(row["pending"]) == Decimal("3000000.00")
+    assert Decimal(row["progress_pct"]) == Decimal("50.00")
+    assert Decimal(row["progress_pct"]) != Decimal("80.00")
+
+
+def test_tfoot_ILERLEME_TASIMAZ_satir_TASIR():
+    """KY 244-248 tfoot'unun "İlerleme" hücresi HARFİYEN BOŞTUR (`<td></td>`),
+    KK tablosunun ise tfoot'u hiç yoktur.
+
+    Toplam bir ilerleme yüzdesi eklemek mockup'ın İSTEMEDİĞİ bir sayıyı icat
+    etmek olurdu (üstelik "hangi ortalama" sorusunun cevabı da yoktur: satır
+    ortalaması ile Σödenen/Σbedel farklı sayılardır). Sütun SATIR düzeyinde
+    yaşar, tfoot'ta yaşamaz.
+    """
+    assert "progress_pct" in SubcontractorCostRow.model_fields
+    assert "progress_pct" not in SubcontractorCostSummary.model_fields
+    assert set(SubcontractorCostSummary.model_fields) == {"contract_amount", "paid", "pending"}
 
 
 # --- Yetki ve IDOR ---

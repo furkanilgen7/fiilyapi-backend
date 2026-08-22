@@ -48,6 +48,7 @@ from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.progress_payments.calculations import gross_total, quantize2
+from app.modules.projects import unit_sides
 from app.modules.projects.models import Project, ProjectType
 from app.modules.sales.models import UnitSale
 from app.modules.sales.summary import _SOLD_STATUSES as REALIZED_SALE_STATUSES
@@ -56,7 +57,7 @@ from app.modules.subcontractor_progress_payments.models import (
     SubcontractorPaymentStatus,
     SubcontractorProgressPayment,
 )
-from app.modules.units.models import Unit, UnitOwnerSide, UnitSalesStatus
+from app.modules.units.models import Unit, UnitSalesStatus
 from app.modules.units.summary import VALUE_BASIS_BY_TYPE, basis_value
 
 _ZERO = Decimal("0.00")
@@ -241,16 +242,17 @@ def unit_list_price_total(units: Sequence[Unit]) -> Decimal:
 
 
 def our_share_value(units: Sequence[Unit], project_type: ProjectType) -> Decimal:
-    """KK 121 "BİZİM PAY" değeri: yalnız `owner_side=contractor` üniteler.
+    """KK 121 "BİZİM PAY" değeri: yalnız BİZİM PAY üniteleri.
+
+    Taraf yüklemi `unit_sides`tedir (TEK kopya): kart sayacı, `land-share/summary`
+    ucu ve bu değer toplamı aynı üniteyi aynı tarafta görmek ZORUNDADIR.
 
     Değer sütunu proje tipine göre seçilir ve seçim `units.summary`de TEK
     kopyadır (kat karşılığında `appraisal_value`, diğerlerinde `list_price`) —
     aksi hâlde aynı proje iki ekranda iki farklı "pay değeri" gösterirdi.
     """
     basis = VALUE_BASIS_BY_TYPE[project_type]
-    return money_total(
-        basis_value(unit, basis) for unit in units if unit.owner_side is UnitOwnerSide.contractor
-    )
+    return money_total(basis_value(unit, basis) for unit in unit_sides.ours(units))
 
 
 def realized_sales_total(sales: Sequence[UnitSale]) -> Decimal:
