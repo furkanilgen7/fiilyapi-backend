@@ -19,6 +19,8 @@ from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
 from app.modules.approvals import service as approvals_service
+from app.modules.approvals.gate import require_permission_or_chain_step
+from app.modules.approvals.models import ApprovalDocumentType
 from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
@@ -42,6 +44,15 @@ _VIEW = require_permission("progress_payments", AccessLevel.view)
 _DRAFT = require_permission("progress_payments", AccessLevel.draft)
 _APPROVE = require_permission("progress_payments", AccessLevel.approve)
 _ADMIN = require_permission("progress_payments", AccessLevel.admin)
+#: OK-1C — `approve`/`reject`in kapısı. Modül seviyesi AYNEN `approve`tır;
+#: seviye yetmediğinde zincirin SIRADAKİ adımının onay rolü onu İKAME EDER
+#: (`approvals/gate.py`). `mark-paid`/`unapprove` DEĞİŞMEDİ — kapsam DAR.
+_CHAIN_APPROVE = require_permission_or_chain_step(
+    "progress_payments",
+    AccessLevel.approve,
+    document_type=ApprovalDocumentType.progress_payment,
+    document_id_param="payment_id",
+)
 
 
 @router.get(
@@ -268,7 +279,7 @@ async def submit_progress_payment_endpoint(
 @router.post(
     "/progress-payments/{payment_id}/approve",
     response_model=ProgressPaymentDetail,
-    dependencies=[_APPROVE],
+    dependencies=[_CHAIN_APPROVE],
 )
 async def approve_progress_payment_endpoint(
     request: Request,
@@ -310,7 +321,7 @@ async def approve_progress_payment_endpoint(
 @router.post(
     "/progress-payments/{payment_id}/reject",
     response_model=ProgressPaymentDetail,
-    dependencies=[_APPROVE],
+    dependencies=[_CHAIN_APPROVE],
 )
 async def reject_progress_payment_endpoint(
     request: Request,

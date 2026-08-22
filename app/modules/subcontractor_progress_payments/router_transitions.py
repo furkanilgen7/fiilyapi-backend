@@ -11,8 +11,10 @@ KAPIYI seçmek ve denetim satırını yazmaktır — durum kontrolü BURADA
 TEKRARLANMAZ (işveren `progress_payments/router.py` deseninin birebiri).
 
 Kapı seviyeleri işverenle AYNIDIR (aynı izin modülü, aynı ekran ailesi):
-`submit` → `_DRAFT` · `approve`/`reject`/`mark-paid` → `_APPROVE` ·
-`unapprove` → `_ADMIN`.
+`submit` → `_DRAFT` · `mark-paid` → `_APPROVE` · `unapprove` → `_ADMIN`.
+`approve`/`reject` de AYNI seviyeyi ister ama kapıları `_CHAIN_APPROVE`dir
+(OK-1C): seviye yetmediğinde zincirin SIRADAKİ adımının onay rolü modül
+kapısını İKAME EDER. Diğer üç uç DEĞİŞMEDİ — genişleme DARDIR.
 """
 
 import uuid
@@ -28,6 +30,8 @@ from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
 from app.modules.approvals import service as approvals_service
+from app.modules.approvals.gate import require_permission_or_chain_step
+from app.modules.approvals.models import ApprovalDocumentType
 from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
@@ -44,6 +48,14 @@ router = APIRouter(tags=["subcontractor-progress-payments"], responses=COMMON_ER
 _DRAFT = require_permission("progress_payments", AccessLevel.draft)
 _APPROVE = require_permission("progress_payments", AccessLevel.approve)
 _ADMIN = require_permission("progress_payments", AccessLevel.admin)
+#: OK-1C — `approve`/`reject`in kapısı. Modül seviyesi AYNEN `approve`tır;
+#: yalnız YEDEK bir dal eklenir (`approvals/gate.py`).
+_CHAIN_APPROVE = require_permission_or_chain_step(
+    "progress_payments",
+    AccessLevel.approve,
+    document_type=ApprovalDocumentType.subcontractor_progress_payment,
+    document_id_param="payment_id",
+)
 
 _PATH = "/subcontractor-progress-payments/{payment_id}"
 
@@ -83,7 +95,9 @@ async def submit_subcontractor_progress_payment_endpoint(
 
 
 @router.post(
-    f"{_PATH}/approve", response_model=SubcontractorProgressPaymentDetail, dependencies=[_APPROVE]
+    f"{_PATH}/approve",
+    response_model=SubcontractorProgressPaymentDetail,
+    dependencies=[_CHAIN_APPROVE],
 )
 async def approve_subcontractor_progress_payment_endpoint(
     request: Request,
@@ -123,7 +137,9 @@ async def approve_subcontractor_progress_payment_endpoint(
 
 
 @router.post(
-    f"{_PATH}/reject", response_model=SubcontractorProgressPaymentDetail, dependencies=[_APPROVE]
+    f"{_PATH}/reject",
+    response_model=SubcontractorProgressPaymentDetail,
+    dependencies=[_CHAIN_APPROVE],
 )
 async def reject_subcontractor_progress_payment_endpoint(
     request: Request,
