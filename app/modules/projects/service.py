@@ -116,6 +116,25 @@ def _worker_count(value: int) -> CountPlaceholder:
     return CountPlaceholder(available=True, count=value, pending_module=_TIMESHEET)
 
 
+def _side_unit_count(value: int | None) -> CountPlaceholder:
+    """E4 148-149 paylasim seridinin iki sayaci — `_worker_count` emsalinin AYNISI.
+
+    Zarf SEKLI degismez: dolu `CountPlaceholder` `pending_module` TASIMAYA DEVAM
+    EDER (`MetricPlaceholder`in "dolu zarf modul tasimaz" kurali `CountPlaceholder`a
+    UYGULANMAZ — bkz. o sinifin notu). Ayni serit uzerindeki diger ünite alanlari
+    (`unit_summary`, `sold_amount`) hâlâ yer tutucudur ve ekran seridin kaynagini
+    oradan okur.
+
+    `None` yalnizca kart maliyetleri HIC OKUNMADAN kurulan saf donusturucu
+    yolunda (`to_detail`in varsayilan `cost_cards.EMPTY`i) gelir; o hâl "sayi
+    bilinmiyor"dur ve bos zarf doner. Kat karsiligi projede sayac ASLA `None`
+    olmaz — ünitesi olmayan projede `0` GERCEK cevaptir.
+    """
+    if value is None:
+        return _count(_UNITS)
+    return CountPlaceholder(available=True, count=value, pending_module=_UNITS)
+
+
 def _contracting_card(worker_count: int, card_costs: ProjectCardCosts) -> ContractingCard:
     """E4 181/206/231/256 "Harcanan" P10 T4'te ZARFIN ICINDE gercege baglandi.
 
@@ -161,6 +180,18 @@ def _investment_card(project: Project, card_costs: ProjectCardCosts) -> Investme
 
 
 def _land_share_card(project: Project, card_costs: ProjectCardCosts) -> LandShareCard | None:
+    """KK karti — E4 148-149 paylasim seridinin iki ünite sayaci ARTIK GERCEKTIR.
+
+    `units` modülü CANLIDIR: `our_unit_count`/`owner_unit_count` duz `owner_side`
+    sayimidir ve `GET /projects/{id}/land-share/summary` ucunun
+    `our_side.unit_count` / `owner_side.unit_count` alanlariyla AYNI SAYILARDIR —
+    ayrimi yapan yüklem artik TEK dosyada (`projects.unit_sides`) yasar, bu üc
+    yüzey birbirinden kayamaz. Sayaclar ek sorgu ACMAZ: üniteler kart okumasinda
+    zaten yüklüdür ve `ProjectCardCosts` üzerinden gelir.
+
+    Atanmamis (`owner_side IS NULL`) ünite iki sayacin HICBIRINE girmez; onun
+    görünürlügü `land-share/summary` ucunun `unassigned` bölümündedir.
+    """
     land_share = project.land_share
     if land_share is None:
         return None
@@ -178,8 +209,8 @@ def _land_share_card(project: Project, card_costs: ProjectCardCosts) -> LandShar
         guarantee_amount=land_share.guarantee_amount,
         shareholder_count=len(project.shareholders),
         shareholders=[ShareholderResponse.model_validate(s) for s in project.shareholders],
-        our_unit_count=_count(_UNITS),
-        owner_unit_count=_count(_UNITS),
+        our_unit_count=_side_unit_count(card_costs.our_unit_count),
+        owner_unit_count=_side_unit_count(card_costs.owner_unit_count),
         # KK 121 "BİZİM PAY": kaynak modül (`units`) CANLI olduğu için değer
         # daima bilinir — ünitesi olmayan projede 0,00 gerçek cevaptır.
         our_share_value=metric(card_costs.our_share_value, _UNITS),

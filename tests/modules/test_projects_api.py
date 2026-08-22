@@ -175,7 +175,16 @@ async def test_create_kat_karsiligi_and_audit(client, db_session, user_factory):
     assert body["land_share"]["landowner_name"] == "Yılmaz Ailesi"
     assert body["land_share"]["land_cost"] == "0"
     assert body["land_share"]["shareholder_count"] == 2
+    # DEGISTI (KK-TARAF): `pending_module` KORUNDU — dolu `CountPlaceholder`in
+    # modul adini tasimasi `_worker_count` emsaliyle BILINCLIDIR, bu yuzden eski
+    # iddia AYNEN kalir. Yanina eklenen iki satir bugunku gercegi olcer: `units`
+    # modulu CANLI, yeni acilan projede henuz unite yok ve `0` GERCEK cevaptir —
+    # bos yer tutucu degil. Eski hâlinde bu test `available=False`u da sessizce
+    # geciriyordu.
     assert body["land_share"]["our_unit_count"]["pending_module"] == "units"
+    assert body["land_share"]["our_unit_count"]["available"] is True
+    assert body["land_share"]["our_unit_count"]["count"] == 0
+    assert body["land_share"]["owner_unit_count"]["count"] == 0
     assert body["contracting"] is None
     assert body["investment"] is None
 
