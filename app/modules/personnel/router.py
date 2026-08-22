@@ -530,9 +530,11 @@ async def approve_leave_request_endpoint(
     """Talebi onaylar (TEK adım). Karar alanları SUNUCU damgasıdır — gövde ALAN
     KABUL ETMEZ (gönderilirse 422).
 
-    Talep yok → 404 · `pending` değil → 409 · çakışan ONAYLI izin → 409 (K3) ·
-    hak aşımı → 409 (K5) · **kalan hak hesaplanamıyor → 409** (🔴 fail-closed:
-    kıdem 1 yılı doldurmadı ya da `hire_date` boş). RED bu kapılardan etkilenmez.
+    Talep yok → 404 · `pending` değil → 409 · 🔴 **KENDİ talebi → 403** (OK-1A T5,
+    kullanıcı kararı 2026-08-21; TEK istisna `admin` ve o da denetime "vekâleten"
+    işaretiyle geçer) · çakışan ONAYLI izin → 409 (K3) · hak aşımı → 409 (K5) ·
+    **kalan hak hesaplanamıyor → 409** (🔴 fail-closed: kıdem 1 yılı doldurmadı
+    ya da `hire_date` boş). RED bu kapılardan HİÇBİRİNDEN etkilenmez — 403 dâhil.
     """
     response, detail = await service.approve_leave_request(session, user, request_id)
     await record_audit(

@@ -17,6 +17,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.config import settings
 from app.core.db import Base
+from app.modules.approvals.definitions import DEFAULT_APPROVAL_THRESHOLD_TRY
 
 
 class Company(Base):
@@ -55,6 +56,24 @@ class Company(Base):
     )
     auto_einvoice: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
+    )
+    # OK-1A K3 — cok adimli onayin ₺ esigi. Kolon BASINA AYAR deseni
+    # (`default_vat_rate` emsali): ayri bir "ayarlar" tablosu ACILMADI, cunku
+    # tek satirlik sirket kaydi zaten sirket geneli ayarlarin yeridir.
+    #
+    # 🔴 `CompanyUpdate` semasina EKLENMEZ ve `PUT /company` bu kolona
+    # DOKUNMAZ (R7): sirket formu `settings: full` seviyesindedir, esik ise
+    # `approvals: admin` ister. Tek govdede birlesselerdi dusuk kapidan gecen
+    # istek yuksek kapinin ardindaki degeri yazardi. Tek yazma yolu
+    # `PUT /approvals/settings`tir.
+    #
+    # 🔴 Bu deger ZINCIR KURULURKEN DONAR: acik zincirler sonradan degisen
+    # esikten ETKILENMEZ (`approval_chains.threshold_snapshot`).
+    approval_threshold_try: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2),
+        nullable=False,
+        default=DEFAULT_APPROVAL_THRESHOLD_TRY,
+        server_default="500000.00",
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

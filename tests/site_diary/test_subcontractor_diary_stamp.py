@@ -510,6 +510,37 @@ async def _damgali_hakedis(
     return hakedis["id"], str(tk1)
 
 
+async def _zincir_onaycilari(
+    client: AsyncClient, seeded_db: AsyncSession, user_factory
+) -> list[dict[str, str]]:
+    """OK-1A T3 — taşeron zincirinin ÜÇ adımını atacak ÜÇ ayrı aktör.
+
+    Her aktörün İKİSİ birden gerekir: uç kapısı (`progress_payments ≥ approve`,
+    matriste `project_manager`/`accounting` = `_APR`) ve adımın ONAY ROLÜ.
+    `site_chief` SİSTEM rolü `progress_payments=_DRF`tir, yani gerçek şantiye
+    şefi uçtan geçemez — o ADIM burada `project_manager` sistem rolündeki bir
+    aktör tarafından atılır ve bu, onay rolü ≠ sistem rolü ayrımının kendisidir.
+    """
+    from app.modules.approvals.models import ApprovalRole, UserApprovalRole
+    from app.modules.users.models import UserProjectAccess
+
+    tanimlar = (
+        ("sd-sef@ok1a.co", "project_manager", ApprovalRole.site_chief),
+        ("sd-pm@ok1a.co", "project_manager", ApprovalRole.project_manager),
+        ("sd-muhasebe@ok1a.co", "accounting", ApprovalRole.accounting),
+    )
+    basliklar: list[dict[str, str]] = []
+    for email, sistem_rolu, onay_rolu in tanimlar:
+        user = await user_factory(email=email, password="parola1234", role_key=sistem_rolu)
+        seeded_db.add(UserProjectAccess(user_id=user.id, project_id=None, all_projects=True))
+        seeded_db.add(UserApprovalRole(user_id=user.id, approval_role=onay_rolu))
+        await seeded_db.flush()
+        giris = await client.post("/auth/login", json={"email": email, "password": "parola1234"})
+        assert giris.status_code == 200, giris.text
+        basliklar.append({"Authorization": f"Bearer {giris.json()['access_token']}"})
+    return basliklar
+
+
 async def test_sozlesme_BASKA_santiyeye_TASININCA_diary_damgasi_DUSER(
     client: AsyncClient, seeded_db: AsyncSession, admin_headers, tasima_kurulumu, gunluk_api
 ) -> None:
@@ -566,10 +597,23 @@ async def test_sozlesme_GUNLUGU_OLAN_santiyeye_tasininca_damga_BASILIR(
 
 
 async def test_ONAYLI_hakedisin_damgasi_santiye_degisse_bile_DONMUSTUR(
-    client: AsyncClient, seeded_db: AsyncSession, admin_headers, tasima_kurulumu, gunluk_api
+    client: AsyncClient,
+    seeded_db: AsyncSession,
+    admin_headers,
+    user_factory,
+    tasima_kurulumu,
+    gunluk_api,
 ) -> None:
     """Donmuş evrak prensibi (S9/2): aynı sözleşmenin onaylı hakedişi tazelemeden
-    ETKİLENMEZ, yanındaki taslak ETKİLENİR."""
+    ETKİLENMEZ, yanındaki taslak ETKİLENİR.
+
+    🔴 OK-1A T3 UYARLAMASI: hakedişi `approved` yapmak artık TEK bir `/approve`
+    çağrısı DEĞİL, taşeron zincirinin ÜÇ adımıdır (Şantiye Şefi → Proje Müdürü
+    → Muhasebe) ve GÖREVLER AYRILIĞI yüzünden üçünü de aynı kişi atamaz. Testin
+    iddiası (donmuş damga) değişmedi; yalnız "onaylı hâle getirme" yolu
+    gerçekçileşti — ve bu, damganın onay ZİNCİRİNDEN de etkilenmediğini
+    kanıtlıyor.
+    """
     (site_a, poz_a), (site_b, _), contract = tasima_kurulumu
     await gunluk_api(
         admin_headers,
@@ -578,11 +622,16 @@ async def test_ONAYLI_hakedisin_damgasi_santiye_degisse_bile_DONMUSTUR(
         [{"boq_item_id": str(poz_a.id), "quantity": "12"}],
     )
     onayli_id, tk1 = await _damgali_hakedis(client, seeded_db, admin_headers, contract, "diary")
-    for gecis in ("submit", "approve"):
+    gonder = await client.post(
+        f"/subcontractor-progress-payments/{onayli_id}/submit", headers=admin_headers
+    )
+    assert gonder.status_code == 200, gonder.text
+    for basliklar in await _zincir_onaycilari(client, seeded_db, user_factory):
         yanit = await client.post(
-            f"/subcontractor-progress-payments/{onayli_id}/{gecis}", headers=admin_headers
+            f"/subcontractor-progress-payments/{onayli_id}/approve", headers=basliklar
         )
         assert yanit.status_code == 200, yanit.text
+    assert yanit.json()["status"] == "approved", yanit.text
     taslak_id, _ = await _damgali_hakedis(client, seeded_db, admin_headers, contract, "diary")
 
     yama = await _sozlesme_yamasi(client, admin_headers, contract.id, site_id=str(site_b.id))

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import timezone
 from app.core.errors import (
+    ApprovalNotAllowedError,
     ConflictError,
     NotFoundError,
 )
@@ -29,7 +30,11 @@ from app.modules.personnel.schemas import (
     LeaveRejectRequest,
     LeaveRequestResponse,
 )
-from app.modules.personnel.service.core import get_personnel
+from app.modules.personnel.service.core import (
+    get_personnel,
+    has_personnel_admin,
+    is_own_personnel_record,
+)
 from app.modules.personnel.service.leave_requests import (
     _leave_response,
     find_overlapping_approved_leave,
@@ -176,6 +181,42 @@ def _assert_decidable(request: LeaveRequest) -> None:
         raise ConflictError(guards.LEAVE_DECISION_NOT_PENDING)
 
 
+async def _assert_approver_is_not_owner(
+    session: AsyncSession, actor: User, personnel: Personnel
+) -> bool:
+    """🔴 OK-1A T5 — kimse KENDİ izin talebini ONAYLAYAMAZ. Döner: "vekâleten" mi.
+
+    Kullanıcı kararı (2026-08-21). **TEK İSTİSNA `admin`dir** ve o da denetim
+    günlüğüne `messages.APPROVAL_ON_BEHALF_MARK` işaretiyle geçer — istisna
+    GÖRÜNÜR olmadan verilirse denetim onu bir daha bulamaz.
+
+    ## Kapsam — bu bir KAPI, onay ZİNCİRİ değil
+
+    İzin talebi `approvals` motoruna BAĞLANMADI (K4): zincirin adımlarını ₺ tutarı
+    ve eşik belirler, izin talebinde ikisi de YOKTUR. Onay hâlâ TEK ADIMDIR
+    (İK-2 spec §5 K4); buraya konan yalnızca bir 403'tür.
+
+    ## Sıra: `_assert_decidable`ten SONRA, `_assert_approvable`ten ÖNCE
+
+    Durum (409) önce koşar çünkü karara bağlanmış bir talep kimse için açık
+    değildir — sahibine "onaylayamazsın" demek, asıl olguyu (karar zaten
+    verilmiş) gizlerdi. İş kuralı kapıları (çakışma/hak aşımı, 409) ise SONRA
+    koşar: yetkisi olmayana önce "hak aşımı" demek, gerçek engeli gizlerdi
+    (`approvals/service.py::reject_chain` ile aynı gerekçe).
+
+    ## RED bu kapıdan GEÇMEZ
+
+    Kullanıcı kararı yalnız "onaylayamaz" der. Kendi talebini reddetmek bir yetki
+    YÜKSELTMESİ değildir (kişi zaten `pending` talebini SİLEBİLİR) ve ret'e kapı
+    konsaydı, kendi talebini geri çevirmek isteyen kullanıcı kilitlenirdi.
+    """
+    if not is_own_personnel_record(personnel, actor):
+        return False
+    if not await has_personnel_admin(session, actor):
+        raise ApprovalNotAllowedError(guards.LEAVE_APPROVE_OWN_REQUEST)
+    return True
+
+
 async def _assert_approvable(
     session: AsyncSession,
     request: LeaveRequest,
@@ -241,9 +282,12 @@ async def approve_leave_request(
 ) -> tuple[LeaveRequestResponse, str]:
     """Talebi onaylar — TEK adım (spec §5 K4), kapı `personnel` **full+**.
 
-    Sıra: kayıt (404) → **satır kilidi** → durum (409) → çakışma (409) → hak aşımı
-    / fail-closed (409) → damga. TÜM denetimler yazmadan ÖNCE koşar: yarı
-    onaylanmış bir kayıt bırakılmaz.
+    Sıra: kayıt (404) → **satır kilidi** → durum (409) → **KENDİ TALEBİ (403,
+    OK-1A T5)** → çakışma (409) → hak aşımı / fail-closed (409) → damga. TÜM
+    denetimler yazmadan ÖNCE koşar: yarı onaylanmış bir kayıt bırakılmaz.
+
+    403 kapısının `admin` istisnası kararı "vekâleten" yapar ve bu, denetim
+    metnine `on_behalf` ile taşınır (`_assert_approver_is_not_owner`).
 
     Kilit denetimlerden ÖNCE ve AYNI transaction içinde alınır
     (`_lock_decision_scope`): kilitsiz hâlde iki eşzamanlı onay aynı `used`
@@ -253,6 +297,7 @@ async def approve_leave_request(
     request, personnel, leave_type = await get_leave_request_row(session, request_id)
     await _lock_decision_scope(session, request, personnel)
     _assert_decidable(request)
+    on_behalf = await _assert_approver_is_not_owner(session, actor, personnel)
     await _assert_approvable(session, request, personnel, leave_type, today)
 
     _stamp_decision(request, actor, LeaveStatus.approved, None)
@@ -260,7 +305,11 @@ async def approve_leave_request(
     await session.refresh(request)
 
     detail = messages.leave_request_approved(
-        personnel.full_name, leave_type.name, request.start_date, request.end_date
+        personnel.full_name,
+        leave_type.name,
+        request.start_date,
+        request.end_date,
+        on_behalf=on_behalf,
     )
     return _leave_response(request, personnel, leave_type), detail
 

@@ -178,6 +178,7 @@ async def test_her_durum_gecisi_yazar(
     client: AsyncClient,
     admin_headers: dict[str, str],
     muhasebe_headers: dict[str, str],
+    zincir_onaycilari: None,
     db_session: AsyncSession,
     hakedis_fabrikasi,
 ) -> None:
@@ -187,12 +188,22 @@ async def test_her_durum_gecisi_yazar(
     →(reject) draft →(submit) pending →(approve) approved →(mark-paid) paid.
     `reject` yalnız `pending_approval`dan çalıştığı için `unapprove` ARADA
     çağrılır (spec §7 tablosu — `approved → draft` doğrudan yol YOKTUR).
+
+    🔴 OK-1A T3 UYARLAMASI: zincir artık UÇTAN kurulduğu için aktörün ONAY
+    ROLÜ de gerekir (`zincir_onaycilari`) ve `reject` GEREKÇE ister (K2).
+    Zincirin ilginç ayrıntısı burada da ölçülür: `unapprove` son adımı GERİ
+    SARDIĞI için aynı muhasebeci sonraki `reject`i yapabilir — geri sarılan
+    adımda artık onun bir kararı YOKTUR, dolayısıyla görevler ayrılığı bekçisi
+    ona kapı kapatmaz.
     """
     payment_id = await hakedis_fabrikasi(ProgressPaymentStatus.draft)
 
     async def _adim(uc: str, headers: dict[str, str]) -> None:
         onceki = await _mevcut_kimlikler(db_session)
-        yanit = await client.post(f"/progress-payments/{payment_id}/{uc}", headers=headers)
+        govde = {"reason": "Metrajlar eksik"} if uc == "reject" else None
+        yanit = await client.post(
+            f"/progress-payments/{payment_id}/{uc}", json=govde, headers=headers
+        )
         assert yanit.status_code == 200, yanit.text
         await _yeni_kaydin_metni(db_session, onceki)
 
@@ -216,19 +227,39 @@ async def test_submit_mesaji_dogru_metni_tasir(
 
 
 async def test_approve_mesaji_dogru_metni_tasir(
-    client: AsyncClient, admin_headers: dict[str, str], db_session: AsyncSession, gecerli_taslak
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    zincir_onaycilari: None,
+    db_session: AsyncSession,
+    gecerli_taslak,
 ) -> None:
+    """🔴 OK-1A T3 UYARLAMASI: metin artık İKİ olguyu birden taşır.
+
+    Evrağın kendi cümlesi ("Hakediş onaylandı: …") KORUNDU — zayıflatılmadı,
+    üstüne zincirin SON adımı eklendi. İkisinden biri düşseydi günlükte ya "ne
+    oldu" ya da "hangi imza" sorusu yanıtsız kalırdı.
+    """
     submit = await client.post(f"/progress-payments/{gecerli_taslak}/submit", headers=admin_headers)
     assert submit.status_code == 200, submit.text
     onceki = await _mevcut_kimlikler(db_session)
     yanit = await client.post(f"/progress-payments/{gecerli_taslak}/approve", headers=admin_headers)
     assert yanit.status_code == 200, yanit.text
+    assert yanit.json()["status"] == "approved"
     detay = await _yeni_kaydin_metni(db_session, onceki)
-    assert detay == messages.progress_payment_approved("Hakedişli Proje", 1)
+    assert detay == (
+        f"{messages.progress_payment_approved('Hakedişli Proje', 1)} · "
+        + messages.approval_step_approved("progress_payment", 1, 1, "accounting", on_behalf=False)
+    )
+    assert messages.progress_payment_approved("Hakedişli Proje", 1) in detay
+    assert "adım 1/1" in detay
 
 
 async def test_mark_paid_mesaji_dogru_metni_tasir(
-    client: AsyncClient, admin_headers: dict[str, str], db_session: AsyncSession, gecerli_taslak
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    zincir_onaycilari: None,
+    db_session: AsyncSession,
+    gecerli_taslak,
 ) -> None:
     await client.post(f"/progress-payments/{gecerli_taslak}/submit", headers=admin_headers)
     await client.post(f"/progress-payments/{gecerli_taslak}/approve", headers=admin_headers)
@@ -245,9 +276,16 @@ async def test_mark_paid_mesaji_dogru_metni_tasir(
 
 
 async def test_reject_reason_mesaja_girer(
-    client: AsyncClient, admin_headers: dict[str, str], db_session: AsyncSession, gecerli_taslak
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    zincir_onaycilari: None,
+    db_session: AsyncSession,
+    gecerli_taslak,
 ) -> None:
-    """K12: `reason` kolonu YOK — TEK kalıcı iz denetim metnidir."""
+    """Gerekçenin DEPOLANDIĞI yer DEĞİŞMEDİ: bu ailede `rejection_reason` kolonu
+    YOK ve AÇILMADI — tek kalıcı iz denetim metnidir (K2 "zorunlu metin" der,
+    "kolon" demez). Değişen tek şey ZORUNLULUK ve metnin artık zincirin hangi
+    adımında reddedildiğini de taşıması."""
     await client.post(f"/progress-payments/{gecerli_taslak}/submit", headers=admin_headers)
     onceki = await _mevcut_kimlikler(db_session)
     yanit = await client.post(
@@ -257,19 +295,28 @@ async def test_reject_reason_mesaja_girer(
     )
     assert yanit.status_code == 200, yanit.text
     detay = await _yeni_kaydin_metni(db_session, onceki)
-    assert detay == messages.progress_payment_rejected("Hakedişli Proje", 1, "Eksik metraj")
+    assert messages.progress_payment_rejected("Hakedişli Proje", 1, "Eksik metraj") in detay
     assert "Eksik metraj" in detay
+    assert "adım 1/1" in detay
 
 
-async def test_reject_gerekcesiz_de_yazar(
+async def test_reject_GEREKCESIZ_422_ve_denetim_satiri_YAZILMAZ(
     client: AsyncClient, admin_headers: dict[str, str], db_session: AsyncSession, gecerli_taslak
 ) -> None:
+    """🔴 KIRICI UYARLAMA (OK-1A K2, kullanıcı kararı 2026-08-21).
+
+    Eski adı `test_reject_gerekcesiz_de_yazar`dı ve gerekçesiz retin de bir
+    günlük satırı yazdığını iddia ediyordu; o davranış K12'nin ("mockup'ta ret
+    formu yok") çıkarımıydı. K2 onun YERİNE GEÇTİ: gerekçe artık ZORUNLU
+    metindir. İddia ZAYIFLATILMADI, TERSİNE ÇEVRİLDİ — ve üstüne bir de
+    ATOMİKLİK eklendi: reddedilen istek HİÇBİR denetim satırı bırakmamalıdır
+    (yarım bir kayıt, olmamış bir reddi olmuş gibi gösterirdi).
+    """
     await client.post(f"/progress-payments/{gecerli_taslak}/submit", headers=admin_headers)
     onceki = await _mevcut_kimlikler(db_session)
     yanit = await client.post(f"/progress-payments/{gecerli_taslak}/reject", headers=admin_headers)
-    assert yanit.status_code == 200, yanit.text
-    detay = await _yeni_kaydin_metni(db_session, onceki)
-    assert detay == messages.progress_payment_rejected("Hakedişli Proje", 1, None)
+    assert yanit.status_code == 422, yanit.text
+    assert await _mevcut_kimlikler(db_session) == onceki
 
 
 # --- 7. H6'dan devredilen ZORUNLULUK: unapprove eski damgaları taşır ---
@@ -278,6 +325,7 @@ async def test_reject_gerekcesiz_de_yazar(
 async def test_unapprove_denetim_kaydi_eski_onay_damgalarini_tasir(
     client: AsyncClient,
     admin_headers: dict[str, str],
+    zincir_onaycilari: None,
     db_session: AsyncSession,
     gecerli_taslak: uuid.UUID,
 ) -> None:
@@ -307,9 +355,14 @@ async def test_unapprove_denetim_kaydi_eski_onay_damgalarini_tasir(
         await db_session.execute(select(User).where(User.email == "admin@pp-crud.co"))
     ).scalar_one()
     eski_dt = datetime.fromisoformat(eski_approved_at)
-    assert detay == messages.progress_payment_unapproved(
-        "Hakedişli Proje", 1, admin.full_name, eski_dt
+    # 🔴 OK-1A Y4: ESKİ iz KORUNDU (eşitlik değil KAPSAMA ile iddia edilir),
+    # üstüne geri sarılan ADIMIN ROLÜ eklendi. Zincir SİLİNMEZ — o RET'in işidir.
+    assert (
+        messages.progress_payment_unapproved("Hakedişli Proje", 1, admin.full_name, eski_dt)
+        in detay
     )
+    assert detay.endswith(messages.approval_step_rewound(1, "accounting"))
+    assert messages.APPROVAL_ROLE_LABELS["accounting"] in detay
     # H10 denetimi Y1: `messages.<fn>(...)` eşitliği fonksiyonun KENDİ İÇİNDEKİ
     # bir mutasyonu (örn. `previous_approver_name` sabit metne çevrilmesi)
     # YAKALAMAZ — gerçek onaylayan adı ve gerçek eski onay tarihi fonksiyondan

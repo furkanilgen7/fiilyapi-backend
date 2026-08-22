@@ -393,12 +393,21 @@ def progress_payment_deleted(
     return f"Hakediş silindi: {project_name} · #{sequence_no} · {status_label} · {amount:,.2f} TL"
 
 
+def progress_payment_label(project_name: str, sequence_no: int) -> str:
+    """Isveren hakedisinin KIMLIGI (`subcontractor_payment_label` esdegeri).
+
+    OK-1A T3: zincirin ARA ADIM metni evragin cumlesini kullanamaz ama kimliksiz
+    de kalamaz — bu etiket oraya eklenir.
+    """
+    return f"{project_name} · #{sequence_no}"
+
+
 def progress_payment_submitted(project_name: str, sequence_no: int) -> str:
-    return f"Hakediş onaya gönderildi: {project_name} · #{sequence_no}"
+    return f"Hakediş onaya gönderildi: {progress_payment_label(project_name, sequence_no)}"
 
 
 def progress_payment_approved(project_name: str, sequence_no: int) -> str:
-    return f"Hakediş onaylandı: {project_name} · #{sequence_no}"
+    return f"Hakediş onaylandı: {progress_payment_label(project_name, sequence_no)}"
 
 
 def progress_payment_rejected(project_name: str, sequence_no: int, reason: str | None) -> str:
@@ -445,37 +454,44 @@ def progress_payment_prices_refreshed(project_name: str, sequence_no: int, count
 # başına kaydı adreslemez — "#1" aynı projede birden çok sözleşmede vardır.
 
 
-def _subcontractor_payment_label(
+def subcontractor_payment_label(
     project_name: str, subcontractor_name: str | None, sequence_no: int
 ) -> str:
+    """Taseron hakedisinin KIMLIGI. 🔴 OK-1A T3'te GORUNUR yapildi (`_` kalkti):
+
+    zincirin ARA ADIM denetim metni evragin kendi cumlesini KULLANAMAZ ("onaylandi"
+    demek olurdu, oysa evrak hâlâ onay bekliyor) — ama kimliksiz bir "adim 1/3
+    onaylandi" satiri gunlukte HANGI evrak sorusunu yanitsiz birakirdi. Bu yuzden
+    ara adim metnine bu ETIKET eklenir.
+    """
     return f"{project_name} · {subcontractor_name or 'taşeron seçilmedi'} · #{sequence_no}"
 
 
 def subcontractor_progress_payment_created(
     project_name: str, subcontractor_name: str | None, sequence_no: int
 ) -> str:
-    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    label = subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
     return f"Taşeron hakedişi oluşturuldu: {label}"
 
 
 def subcontractor_progress_payment_updated(
     project_name: str, subcontractor_name: str | None, sequence_no: int
 ) -> str:
-    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    label = subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
     return f"Taşeron hakedişi güncellendi: {label}"
 
 
 def subcontractor_progress_payment_lines_saved(
     project_name: str, subcontractor_name: str | None, sequence_no: int, count: int
 ) -> str:
-    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    label = subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
     return f"Taşeron hakediş satırları kaydedildi: {label} · {count} satır"
 
 
 def subcontractor_progress_payment_prices_refreshed(
     project_name: str, subcontractor_name: str | None, sequence_no: int, count: int
 ) -> str:
-    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    label = subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
     return f"Taşeron hakediş fiyatları tazelendi: {label} · {count} kalem"
 
 
@@ -490,7 +506,7 @@ def subcontractor_progress_payment_deleted(
 
     ÖNCESİNDE çıkarılmalıdır — kayıt gittiğinde durum/tutar bir daha okunamaz.
     """
-    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    label = subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
     return f"Taşeron hakedişi silindi: {label} · {status_label} · {amount:,.2f} TL"
 
 
@@ -500,14 +516,14 @@ def subcontractor_progress_payment_deleted(
 def subcontractor_progress_payment_submitted(
     project_name: str, subcontractor_name: str | None, sequence_no: int
 ) -> str:
-    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    label = subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
     return f"Taşeron hakedişi onaya gönderildi: {label}"
 
 
 def subcontractor_progress_payment_approved(
     project_name: str, subcontractor_name: str | None, sequence_no: int
 ) -> str:
-    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    label = subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
     return f"Taşeron hakedişi onaylandı: {label}"
 
 
@@ -517,14 +533,14 @@ def subcontractor_progress_payment_rejected(
     """İşverenin `reason`ı OPSİYONELDİR; burada ZORUNLUDUR (spec §5) — gerekçe
     `rejection_reason` kolonuna da yazılır, günlük onun İKİNCİ değil KALICI
     kopyasıdır (kolon güncellenebilir, günlük satırı değişmez)."""
-    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    label = subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
     return f"Taşeron hakedişi reddedildi: {label} · Gerekçe: {reason}"
 
 
 def subcontractor_progress_payment_paid(
     project_name: str, subcontractor_name: str | None, sequence_no: int
 ) -> str:
-    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    label = subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
     return f"Taşeron hakedişi ödendi olarak işaretlendi: {label}"
 
 
@@ -538,7 +554,7 @@ def subcontractor_progress_payment_unapproved(
     """`progress_payment_unapproved` ile AYNI ZORUNLULUK: bu iki değer
     `transitions._stamp` onları NULL'lamadan ÖNCE okunmalıdır, sonra okunursa
     `unapprove` sessiz bir tarih silme işlemi olur."""
-    label = _subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
+    label = subcontractor_payment_label(project_name, subcontractor_name, sequence_no)
     approver = previous_approver_name or BILINMIYOR
     when = _damga(previous_approved_at)
     return f"Taşeron hakediş onayı geri çekildi: {label} · Önceki onay: {approver} · {when}"
@@ -1054,8 +1070,22 @@ def leave_request_deleted(full_name: str, type_name: str, start: date, end: date
 # kaydı silinirse (pending değil, ama bakiye turlarında) gerekçe yalnız burada kalır.
 
 
-def leave_request_approved(full_name: str, type_name: str, start: date, end: date) -> str:
-    return f"İzin talebi onaylandı: {full_name} · {type_name} · {start} - {end}"
+def leave_request_approved(
+    full_name: str, type_name: str, start: date, end: date, *, on_behalf: bool
+) -> str:
+    """İzin talebi onayi. `on_behalf` YALNIZ `admin`in KENDI talebinde True olur
+    (OK-1A T5, kullanici karari 2026-08-21).
+
+    Isaret `approval_step_approved` ile AYNI sabittir (`APPROVAL_ON_BEHALF_MARK`)
+    ve bu bilinclidir: iki ayri metin yazilsaydi denetimde "vekaleten verilmis
+    kararlar" tek bir aramayla bulunamazdi. 🔴 Yeni `AuditAction` uyesi ACILMADI —
+    ayrim METINDEDIR (T3 kanonu).
+
+    `on_behalf` KEYWORD-ONLY ve ZORUNLUDUR: varsayilani `False` olsaydi yeni bir
+    cagiran isareti sessizce DUSURUR ve istisna gunlukte gorunmez olurdu.
+    """
+    metin = f"İzin talebi onaylandı: {full_name} · {type_name} · {start} - {end}"
+    return f"{metin} · {APPROVAL_ON_BEHALF_MARK}" if on_behalf else metin
 
 
 def leave_request_rejected(
@@ -1517,3 +1547,98 @@ def financial_instrument_deleted(serial_no: str, drawer_name: str) -> str:
     """Metin `session.delete`ten ONCE kurulur — sonra kurulsaydi numara ve
     keside guvenilir okunamaz, silinenin NE OLDUGU kaybolurdu."""
     return f"Çek/senet kaydı silindi: {financial_instrument_label(serial_no, drawer_name)}"
+
+
+# --------------------------------------------------------------------------- #
+# OK-1A — onay zinciri motoru
+# --------------------------------------------------------------------------- #
+#
+# 🔴 YENI `AuditAction` UYESI ACILMADI (TB3/T3 kanonu): adim onayi
+# `AuditAction.approve`, ret/geri-alma/atama/ayar ise `AuditAction.update`tir.
+# Ayrim METINDEDIR.
+#
+# 🔴 Etiket sozlukleri ENUM SINIFINI ITHAL ETMEZ, duz `str` anahtar kullanir
+# (`FINANCIAL_INSTRUMENT_STATUS_LABELS` emsali). Denetim gunlugu bir SUNUM
+# katmanidir; ozellik modullerini ithal ederse katman yonu tersine doner.
+#
+# 🔴 TUTAR metne GIRMEZ. Onay esigi de bir TUTARDIR: eski ve yeni degeri
+# gunluge yazsaydik, ayar degistiginde gunlukte donmus bir para kopyasi ikinci
+# bir gercek olarak yasamaya devam ederdi (`bank_account_*` / `payment_*`
+# kanonu). `COMPANY_UPDATED` de ayni sebeple hicbir alan degeri tasimaz.
+
+#: "Kendi evragini onaylama" istisnasinin GORUNUR izi (K1, kullanici karari
+#: 2026-08-21). Kolon DEGIL metindir: istisnanin kendisi bir olay niteligidir,
+#: kaydin kalici bir ozelligi degil.
+APPROVAL_ON_BEHALF_MARK = "admin vekâleten"
+
+APPROVAL_THRESHOLD_UPDATED = "Onay eşiği güncellendi"
+
+#: Onay ROLU etiketleri — `roles/seed_data.py` ROLES adlariyla BIREBIR ayni
+#: Turkce karsiliklar (ayni kavramin iki adi olmasin diye).
+APPROVAL_ROLE_LABELS: dict[str, str] = {
+    "site_chief": "Şantiye Şefi",
+    "project_manager": "Proje Müdürü",
+    "accounting": "Muhasebe",
+    "patron": "Patron",
+    "procurement": "Satınalma",
+}
+
+#: Evrak ailesi etiketleri (mockup `Onay Kutusu.dc.html` kart başlıkları).
+APPROVAL_DOCUMENT_TYPE_LABELS: dict[str, str] = {
+    "subcontractor_progress_payment": "Taşeron hakedişi",
+    "purchase_request": "Satın alma talebi",
+    "progress_payment": "İşveren hakedişi",
+}
+
+
+def _approval_label(document_type: str, step_no: int, total_steps: int, role: str) -> str:
+    """Dort denetim metninin TEK kimlik kaynagi.
+
+    Ayri ayri kurulsalardi biri adim sirasini, oteki rolu unutur ve gunlukte
+    "hangi imza" sorusu yanitsiz kalirdi. Bilinmeyen bir enum degeri HAM hâliyle
+    basilir: sozlukte bulunamayan bir uye metni PATLATMAMALI ama gorunur de
+    olmalidir.
+    """
+    evrak = APPROVAL_DOCUMENT_TYPE_LABELS.get(document_type, document_type)
+    rol = APPROVAL_ROLE_LABELS.get(role, role)
+    return f"{evrak} · adım {step_no}/{total_steps} · {rol}"
+
+
+def approval_step_approved(
+    document_type: str, step_no: int, total_steps: int, role: str, *, on_behalf: bool
+) -> str:
+    """Adim onayi. `on_behalf` yalnizca `admin`in KENDI evraginda True olur."""
+    metin = f"Onay adımı onaylandı: {_approval_label(document_type, step_no, total_steps, role)}"
+    return f"{metin} · {APPROVAL_ON_BEHALF_MARK}" if on_behalf else metin
+
+
+def approval_chain_rejected(
+    document_type: str, step_no: int, total_steps: int, role: str, reason: str, *, on_behalf: bool
+) -> str:
+    """Ret. Gerekce ZORUNLUDUR (K2) ve zincir silindigi icin TEK kalici izdir."""
+    metin = (
+        f"Onay zinciri reddedildi: {_approval_label(document_type, step_no, total_steps, role)}"
+        f" · Gerekçe: {reason}"
+    )
+    return f"{metin} · {APPROVAL_ON_BEHALF_MARK}" if on_behalf else metin
+
+
+def approval_roles_assigned(name: str, roles: list[str]) -> str:
+    """Atama TAM KUMEDIR; metin de son durumu yazar, farki degil."""
+    etiketler = ", ".join(APPROVAL_ROLE_LABELS.get(rol, rol) for rol in roles)
+    return f"Onay rolleri güncellendi: {name} · {etiketler or 'Yok'}"
+
+
+def approval_step_rewound(step_no: int, role: str) -> str:
+    """Onay adiminin GERI SARILMASI (`/unapprove`, sozlesme Y4).
+
+    Evragin KENDI geri-alma metnine EKLENIR, onun YERINE GECMEZ: mevcut metin
+    ESKI ONAYLAYANI ve onay zamanini tasir (H10 dersi) ve o iz KORUNUR — buraya
+    yalnizca "hangi imza geri alindi" bilgisi eklenir.
+
+    `_approval_label` KULLANILMAZ: geri alma bir evrak ailesine degil TEK bir
+    adima bakar; evrak adi zaten cumlenin ilk yarisindadir ve iki kez yazilmasi
+    gunlugu okunmaz yapardi.
+    """
+    rol = APPROVAL_ROLE_LABELS.get(role, role)
+    return f"Geri sarılan onay adımı: {step_no}. adım · {rol}"

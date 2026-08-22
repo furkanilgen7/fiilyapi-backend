@@ -259,13 +259,32 @@ async def _reddedilir(conn: asyncpg.Connection, sql: str, *args: object) -> None
 
 
 def test_migration_parent_is_the_expected_revision():
-    """Iki head = canlida deploy kilitlenmesi (`alembic upgrade head` patlar)."""
+    """Iki head = canlida deploy kilitlenmesi (`alembic upgrade head` patlar).
+
+    🔴 **UYARLANDI (OK-1A T2).** Eski hâlin ikinci iddiasi
+    `script.get_heads() == [TB6_REVISION]` idi, yani "TB6 head'dir". Bu iddia
+    TB6'nin uzerine BIR MIGRATION DAHA indigi anda kirilir ve OK-1A'da kirildi
+    — ama kirilma bir KUSURU degil, ZAMANIN GECMESINI gosteriyordu.
+
+    Korunmasi gereken invariant "TB6 head'dir" DEGIL, **"head TEKTIR"**dir:
+    canliyi kilitleyen sey cift head'tir. Yeni hâl bunu iddia eder ve ustune
+    TB6'nin zincirde HALA DURDUGUNU (head'in atalari arasinda oldugunu)
+    ekler — yani bu dilimin migration'i sessizce zincir disi kalmaz.
+
+    Ebeveyn iddiasi (`down_revision == PARENT_REVISION`) AYNEN korundu: TB6'nin
+    kendi baglantisi bu dilimin sorumlulugudur ve re-parent gerekirse burasi
+    yine kirilir.
+    """
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(Config(str(BACKEND_DIR / "alembic.ini")))
     assert script.get_revision(TB6_REVISION).down_revision == PARENT_REVISION
-    assert [h for h in script.get_heads()] == [TB6_REVISION]
+
+    heads = list(script.get_heads())
+    assert len(heads) == 1, f"tek head bekleniyordu: {heads}"
+    ataler = {rev.revision for rev in script.iterate_revisions(heads[0], "base")}
+    assert TB6_REVISION in ataler, "TB6 migration'i zincirden dusmus"
 
 
 def test_migration_SQL_i_modelin_SQL_i_ile_AYNI():

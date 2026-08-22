@@ -14,6 +14,7 @@ from app.modules.accounting.accounts_router import router as accounting_accounts
 from app.modules.accounting.periods_router import router as accounting_periods_router
 from app.modules.accounting.reports_router import router as accounting_reports_router
 from app.modules.accounting.router import router as accounting_journal_router
+from app.modules.approvals.router import router as approvals_router
 from app.modules.audit.router import router as audit_router
 from app.modules.auth.router import router as auth_router
 from app.modules.boq.router import router as boq_router
@@ -125,6 +126,12 @@ app.include_router(accounting_periods_router)
 # yapısal olarak imkânsızdır. Sıra bu yüzden serbesttir; öteki muhasebe
 # router'larının yanında durur, çünkü dördü de `accounting` iznini paylaşır.
 app.include_router(accounting_reports_router)
+# `approvals_router` yalniz `/approvals` kokunu tasir. 🔴 ROTA SIRASI TUZAGI
+# DEGERLENDIRILDI ve YOKTUR: bu kokte `/approvals/{param}` BICIMINDE HICBIR
+# rota acilmamistir, dolayisiyla `/approvals/settings` ve `/approvals/roles`
+# sabit yollarinin UUID sanilmasi yapisal olarak imkansizdir (bekci testi:
+# `test_modulun_ROTA_KUMESI_tam_olarak_bes_yoldur`).
+app.include_router(approvals_router)
 app.include_router(audit_router)
 app.include_router(auth_router)
 app.include_router(boq_router)

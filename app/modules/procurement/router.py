@@ -365,7 +365,7 @@ async def submit_purchase_request_endpoint(
     koşar ve engellerin HEPSİ tek 422'de döner — uzun bir formda eksikleri
     birer birer keşfettirmek kabul edilemez. Engel varsa durum DEĞİŞMEZ.
     """
-    purchase_request = await service.visible_request(session, user, request_id)
+    purchase_request = await service.visible_request_locked(session, user, request_id)
     purchase_request, detail = await service.perform_request_action(
         session, user, purchase_request, transitions.RequestAction.submit
     )
@@ -391,11 +391,18 @@ async def approve_purchase_request_endpoint(
 ) -> PurchaseRequestResponse:
     """`pending_approval → quote_wait` (§3: onay ARA durum üretmez).
 
+    🔴 **OK-1A T3: YOL ve KAPI KORUNDU, ANLAM DEĞİŞTİ.** Uç artık onay
+    ZİNCİRİNİN sıradaki adımını ilerletir (mockup `Onay Kutusu.dc.html:150-178`:
+    Satınalma → Proje Müdürü → Muhasebe, eşik üstünde + Patron). Talep ancak SON
+    adımda `quote_wait`e geçer; ara adımlarda `pending_approval`da KALIR ve
+    damga ATILMAZ. Zincirsiz ESKİ kayıtlarda bugünkü tek adımlı davranış sürer.
+
     **₺500K eşiği BURADA ve ONAY ANINDA koşar** (`transitions`): tutar o anki
-    kalemlerden yeniden hesaplanır, kayıtta donmuş bir toplam okunmaz.
-    `approved_by_user_id`/`approved_at` damgalanır.
+    kalemlerden yeniden hesaplanır, kayıtta donmuş bir toplam okunmaz. Bu izin
+    kapısı zincirle DEĞİŞMEDİ — iki katman birbirinin yedeğidir.
+    `approved_by_user_id`/`approved_at` SON adımda damgalanır.
     """
-    purchase_request = await service.visible_request(session, user, request_id)
+    purchase_request = await service.visible_request_locked(session, user, request_id)
     purchase_request, detail = await service.perform_request_action(
         session, user, purchase_request, transitions.RequestAction.approve
     )
@@ -425,8 +432,13 @@ async def reject_purchase_request_endpoint(
     gösterir) — `sale_cancelled`ın denetim-günlüğü kararının aksine burada
     kalıcı bir yer vardır. `rejected` TERMİNALDİR: diriltme geçişi yoktur,
     ihtiyaç sürüyorsa YENİ talep açılır.
+
+    🔴 **OK-1A T3:** ret onay zincirini de BİTİRİR (`approval_chains` satırı
+    SİLİNİR, adımlar CASCADE). Hakediş ikilisinden FARK: orada evrak `draft`a
+    döner ve yeniden gönderilince YENİ bir zincir açılır; burada `rejected`
+    TERMİNAL olduğu için ikinci bir zincir HİÇ açılmaz.
     """
-    purchase_request = await service.visible_request(session, user, request_id)
+    purchase_request = await service.visible_request_locked(session, user, request_id)
     purchase_request, detail = await service.perform_request_action(
         session, user, purchase_request, transitions.RequestAction.reject, reason=data.reason
     )
