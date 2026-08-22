@@ -104,8 +104,20 @@ def test_leave_requests_fk_davranislari():
 
 
 def test_leave_status_enum_tek_adimli_onay():
-    """Spec §5 K4: onay TEK adim — ara durum (`in_review` vb.) YOK."""
-    assert [s.value for s in LeaveStatus] == ["pending", "approved", "rejected"]
+    """Spec §5 K4: onay TEK adim — ara durum (`in_review` vb.) YOK.
+
+    🔴 İK-2.2 `withdrawn` uyesini ekledi. Bu bir ARA durum DEGILDIR ve K4'u
+    bozmaz: onay hala TEK adimdir. `withdrawn` TERMINAL bir durumdur ve karari
+    ONAYLAYAN degil talebin SAHIBI verir (`pending -> withdrawn`, geri donusu
+    YOK — vazgecen kisi yeni talep acar).
+
+    🔴 SIRA IDDIA EDILIR ve uye SONA eklenir: Postgres enum'unda `enum_range`
+    sirasi migration'daki `ADD VALUE`nun yeridir. Python tarafi ile DB tarafi
+    ayrisirsa bu test kirmizi olur — `test_ik22_migration_round.py` ayni sirayi
+    DB'de olcer, ikisi birlikte iki katmani da civiler.
+    """
+    assert [s.value for s in LeaveStatus] == ["pending", "approved", "rejected", "withdrawn"]
+    assert list(LeaveStatus)[-1] is LeaveStatus.withdrawn
 
 
 # --- DB kisitlari -----------------------------------------------------------

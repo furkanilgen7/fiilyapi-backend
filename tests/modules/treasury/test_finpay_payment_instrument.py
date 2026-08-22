@@ -567,6 +567,12 @@ async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
     5 operasyon" diye bağlamıştı; ÖLÇÜM onu çürüttü. `/approvals/settings`
     **TEK YOLDUR** ve üzerinde İKİ operasyon (GET + PUT) taşır. Yani
     226→**230** · 333→**338**. Sayılar ölçülerek yazıldı, sayılarak değil.
+
+    🔴 **İK-2.2 (+1 yol / +1 operasyon):** `POST /leave-requests/{request_id}/withdraw`
+    — kullanıcının KENDİ bekleyen izin talebini geri çekmesi. Yeni bir YOLDUR
+    (mevcut `{request_id}` yolunun altına ayrı bir alt-yol açar) ve üzerinde TEK
+    operasyon (POST) taşır; `approve`/`reject` emsalinin birebir kardeşi. Yani
+    230→**231** · 338→**339**.
     """
     from app.main import app
 
@@ -578,5 +584,5 @@ async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
         for metot in uc
         if metot in {"get", "post", "put", "patch", "delete"}
     )
-    assert len(yollar) == 230
-    assert operasyonlar == 338
+    assert len(yollar) == 231
+    assert operasyonlar == 339
