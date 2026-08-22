@@ -19,10 +19,10 @@ import uuid
 from decimal import Decimal
 
 import pytest
-from app.modules.approvals import guards, service
-from app.modules.approvals.models import ApprovalDocumentType, ApprovalRole
 
 from app.core.errors import ApprovalNotAllowedError, ConflictError
+from app.modules.approvals import guards, service
+from app.modules.approvals.models import ApprovalDocumentType, ApprovalRole
 from app.modules.audit import messages
 
 _TASERON = ApprovalDocumentType.subcontractor_progress_payment
@@ -260,8 +260,9 @@ async def test_GOREVLER_AYRILIGI_ADMINE_de_uygulanir(seeded_db, aktor_fabrikasi)
 
 
 async def test_onaylanan_adim_KARAR_BILGISINI_yazar(seeded_db, aktor_fabrikasi):
-    from app.modules.approvals.models import ApprovalChain, ApprovalStep
     from sqlalchemy import select
+
+    from app.modules.approvals.models import ApprovalChain, ApprovalStep
 
     yaratan = await aktor_fabrikasi("damga-yaratan@ok1a.co")
     sef = await aktor_fabrikasi(

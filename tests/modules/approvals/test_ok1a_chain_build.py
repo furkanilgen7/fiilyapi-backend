@@ -12,10 +12,10 @@ import uuid
 from decimal import Decimal
 
 import pytest
-from app.modules.approvals import definitions, guards, service
-from app.modules.approvals.models import ApprovalDocumentType, ApprovalRole
 
 from app.core.errors import ConflictError
+from app.modules.approvals import definitions, guards, service
+from app.modules.approvals.models import ApprovalDocumentType, ApprovalRole
 from tests.modules.approvals.conftest import adim_rolleri
 
 _TASERON = ApprovalDocumentType.subcontractor_progress_payment
@@ -173,8 +173,9 @@ async def test_ayni_evraga_IKINCI_acik_zincir_kurulamaz(seeded_db, aktor_fabrika
 
 
 async def test_adim_numaralari_BIRDEN_baslar_ve_bosluksuzdur(seeded_db, aktor_fabrikasi):
-    from app.modules.approvals.models import ApprovalStep
     from sqlalchemy import select
+
+    from app.modules.approvals.models import ApprovalStep
 
     yaratan = await aktor_fabrikasi("adim-no@ok1a.co")
     zincir = await _zincir(seeded_db, yaratan, amount=Decimal("900000.00"))

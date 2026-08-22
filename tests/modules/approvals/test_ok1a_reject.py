@@ -12,16 +12,16 @@ import uuid
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import func, select
+
+from app.core.errors import ApprovalNotAllowedError, ApprovalValidationError
+from app.core.text import FREE_TEXT_MAX_LENGTH
 from app.modules.approvals import guards, service
 from app.modules.approvals.models import (
     ApprovalDocumentType,
     ApprovalRole,
     ApprovalStep,
 )
-from sqlalchemy import func, select
-
-from app.core.errors import ApprovalNotAllowedError, ApprovalValidationError
-from app.core.text import FREE_TEXT_MAX_LENGTH
 from tests.modules.approvals.conftest import adim_rolleri, zincir_getir
 
 _TASERON = ApprovalDocumentType.subcontractor_progress_payment
