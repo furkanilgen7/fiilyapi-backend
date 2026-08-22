@@ -282,9 +282,12 @@ async def approve_leave_request(
 ) -> tuple[LeaveRequestResponse, str]:
     """Talebi onaylar — TEK adım (spec §5 K4), kapı `personnel` **full+**.
 
-    Sıra: kayıt (404) → **satır kilidi** → durum (409) → çakışma (409) → hak aşımı
-    / fail-closed (409) → damga. TÜM denetimler yazmadan ÖNCE koşar: yarı
-    onaylanmış bir kayıt bırakılmaz.
+    Sıra: kayıt (404) → **satır kilidi** → durum (409) → **KENDİ TALEBİ (403,
+    OK-1A T5)** → çakışma (409) → hak aşımı / fail-closed (409) → damga. TÜM
+    denetimler yazmadan ÖNCE koşar: yarı onaylanmış bir kayıt bırakılmaz.
+
+    403 kapısının `admin` istisnası kararı "vekâleten" yapar ve bu, denetim
+    metnine `on_behalf` ile taşınır (`_assert_approver_is_not_owner`).
 
     Kilit denetimlerden ÖNCE ve AYNI transaction içinde alınır
     (`_lock_decision_scope`): kilitsiz hâlde iki eşzamanlı onay aynı `used`
