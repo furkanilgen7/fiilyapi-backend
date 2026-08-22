@@ -43,6 +43,12 @@ olgudur, satınalma damgası yüzünden reddedilemez.
 "bunu KİM onaylayabilir" sorusunu. Bu yüzden ikisi ayrı modüldedir ve eşik
 `submit`te DEĞİL `approve`ta koşar.
 
+🔴 **OK-1C K1 — zinciri OLAN talepte eşiğin YETKİ kapısı İKAME EDİLİR.** Eşiğin
+karşılığı orada zincirin `patron` ADIMIDIR; `full` seviyesini AYRICA aramak aynı
+kuralı iki kez uygulamak ve zinciri 2. adımda (Proje Müdürü, `approve`) ölü
+bırakmaktı. Kural KAYBOLMAZ, YER DEĞİŞTİRİR. Zincirsiz (eski) talepte kapı
+AYNEN durur.
+
 **Eşik AYARDAN okunur (OK-1A R6).** Sihirli sayı burada DEĞİL
 `company.approval_threshold_try`dedir; onay zincirinin Patron adımı da AYNI
 değerden türer. İki eşik bir arada yaşasaydı sessizce ayrışırlardı.
@@ -179,6 +185,12 @@ OPEN_REQUEST_STATUSES: frozenset[PurchaseRequestStatus] = frozenset(
 #: yönetilir, biri ötekinden saparadı.
 APPROVAL_THRESHOLD_LEVEL = AccessLevel.full
 
+#: Bu evrak ailesinin onay zincirindeki kimligi (mockup `Onay Kutusu.dc.html:150-178`).
+#: 🔴 OK-1C'de YUKARI TASINDI: esik kapisi de zincirin varligini sorar ve
+#: sabit fonksiyondan SONRA duruyordu (calisma zamaninda cozuluyordu ama
+#: okuyan kisi tanimi arkada aramak zorunda kaliyordu).
+_DOCUMENT_TYPE = ApprovalDocumentType.purchase_request
+
 
 def _next_status(request: PurchaseRequest, action: RequestAction) -> PurchaseRequestStatus:
     new_status = REQUEST_TRANSITIONS.get((request.status, action))
@@ -225,12 +237,37 @@ async def _assert_approver_level(
     dokunmadan en düşük yetkiliden geçerdi. `submit` bunu zaten engeller
     (`validation.LINE_PRICE_REQUIRED`) — buradaki kontrol İKİNCİ KATMANDIR ve
     ona DAYANMAZ: eski/elle girmiş fiyatsız satır da onaycısını şaşırtmamalıdır.
+
+    🔴 **OK-1C K1 — ZİNCİRİ OLAN EVRAKTA BU KAPI İKAME EDİLİR.** Eşik denetimi
+    zincirli bir talepte ZATEN zincirin kendi mekanizmasıdır:
+    `approvals.definitions.step_roles` eşik aşılınca zincirin SONUNA bir
+    **`patron`** adımı EKLER ve talep o imza atılmadan `quote_wait`e GEÇEMEZ.
+    Burada ayrıca `full` aramak, aynı kuralı İKİ KEZ uygulamak ve zinciri fiilen
+    ölü bırakmaktır: eşik üstü zincirin 2. adımı Proje Müdürü'nündür ve onun
+    seviyesi `approve`tır — yani zincir tam orada, `APPROVAL_THRESHOLD_EXCEEDED`
+    403'üne çarpıp KİLİTLENİYORDU (ölçüldü, 2026-08-22).
+
+    🔴 **YETKİ NET OLARAK ZAYIFLAMAZ, YER DEĞİŞTİRİR.** Üst seviye imza koşulu
+    kaybolmaz; `full` kapısından zincirin `patron` ADIMINA taşınır ve orada
+    GÖREVLER AYRILIĞI ile birlikte uygulanır (aynı kişi iki adımı imzalayamaz),
+    yani zincirli yolda koşul DAHA sıkıdır. Bekçisi
+    `test_esik_USTU_talep_PATRON_adimi_imzalanmadan_TAMAMLANMAZ`tır.
+
+    🔴 **SINIR: yalnız ZİNCİRİ OLAN evrak.** Zincirsiz (eski) bir talepte tek
+    satır değişmez ve `full` aranmaya devam eder — orada `patron` adımı YOKTUR,
+    dolayısıyla eşiği koruyan TEK katman budur.
+
+    ⚠️ Sorgu maliyeti ≈ 0: bu dal YALNIZ eşik üstü (ya da tutarı bilinmeyen)
+    taleplerde koşar ve zincir bulunduğunda `repository.actor_level` sorgusu
+    HİÇ koşmaz — bir sorgu eklenmez, yer değiştirir.
     """
     lines = await repository.load_request_lines(session, request.id)
     total = await repository.request_estimated_total(session, request.id)
     tutar_bilinmiyor = validation.lines_missing_price(lines)
     threshold = await approvals_service.get_threshold(session)
     if total < threshold and not tutar_bilinmiyor:
+        return
+    if await approvals_service.open_chain(session, _DOCUMENT_TYPE, request.id) is not None:
         return
     level = await repository.actor_level(session, actor)
     if not satisfies(level, APPROVAL_THRESHOLD_LEVEL):
@@ -254,10 +291,6 @@ def _stamp(
     elif action is RequestAction.reject:
         request.rejected_at = now
         request.rejection_reason = reason
-
-
-#: Bu evrak ailesinin onay zincirindeki kimligi (mockup `Onay Kutusu.dc.html:150-178`).
-_DOCUMENT_TYPE = ApprovalDocumentType.purchase_request
 
 
 async def chain_amount(session: AsyncSession, request: PurchaseRequest) -> Decimal | None:
@@ -347,8 +380,12 @@ async def apply_request_transition(
     zincirin SIRADAKİ adımını ilerletir ve talep ancak SON adımda `quote_wait`e
     geçer; ara adımlarda `pending_approval`da KALIR ve HİÇBİR damga atılmaz
     (`approved_at`/`approved_by_user_id` boş kalır — yarım bir onay "onaylandı"
-    görünmemelidir). Eşiğin izin kapısı (`_assert_approver_level`) DEĞİŞMEDİ ve
-    zincirin ÜSTÜNE değil ALTINA gelir: iki katman birbirinin yedeğidir.
+    görünmemelidir).
+
+    🔴 **OK-1C K1:** eşiğin izin kapısı (`_assert_approver_level`) zinciri OLAN
+    talepte artık İKAME EDİLİR — iki katman birbirinin yedeği DEĞİL, aynı
+    kuralın iki kopyasıydı ve zinciri 2. adımda kilitliyordu. Zincirsiz talepte
+    kapı AYNEN durur; gerekçe o fonksiyonun docstring'indedir.
     """
     new_status = _next_status(request, action)
 

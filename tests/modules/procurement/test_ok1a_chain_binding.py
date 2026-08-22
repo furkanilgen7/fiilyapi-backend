@@ -9,8 +9,11 @@ Mockup zinciri (`projedesign/Onay Kutusu.dc.html:150-178`):
    (SA §3). Yani zincir silinir ve YENİ bir zincir de açılamaz: ihtiyaç
    sürüyorsa YENİ talep açılır.
 2. **İzin kapısı ÇİFT KATMANLIDIR:** uç `procurement ≥ approve` ister, eşik
-   üstü ayrıca `full` ister (`transitions.APPROVAL_THRESHOLD_LEVEL`). Zincir bu
-   iki katmanın ÜSTÜNE gelir, onları DEĞİŞTİRMEZ.
+   üstü ayrıca `full` ister (`transitions.APPROVAL_THRESHOLD_LEVEL`).
+   🔴 **OK-1C K1 bunu DARALTTI:** zinciri OLAN bir talepte ikinci katman
+   (`full`) İKAME EDİLİR, çünkü eşiğin karşılığı zincirin `patron` ADIMIDIR ve
+   iki kez uygulanması zinciri 2. adımda kilitliyordu. Zincirsiz talepte
+   katman AYNEN durur.
 
 🔴 Onay rolü ≠ sistem rolü: matriste `accounting` sistem rolünün
 `procurement` izni `_N`dir, yani gerçek muhasebeci bu uçtan GEÇEMEZ. Zincirin
@@ -317,7 +320,7 @@ async def test_ZINCIRSIZ_eski_talep_BUGUNKU_yolla_onaylanir(
     assert yanit.json()["status"] == "quote_wait"
 
 
-async def test_ESIK_KAPISI_zincirle_birlikte_KORUNUR(
+async def test_ESIK_KAPISI_zincirli_talepte_PATRON_ADIMINA_TASINIR(
     client: AsyncClient,
     sef_headers: dict[str, str],
     seeded_db: AsyncSession,
@@ -325,8 +328,25 @@ async def test_ESIK_KAPISI_zincirle_birlikte_KORUNUR(
     talep_fabrikasi,
     user_factory,
 ) -> None:
-    """Zincir eşik KAPISINI değiştirmez: eşik üstü talebi `_APR` seviyeli bir
-    aktör, onay ROLÜ taşısa BİLE ilerletemez (403, `full` ister)."""
+    """🔴 **OK-1C K1 İLE DEĞİŞTİ** (kullanıcı kararı 2026-08-22).
+
+    ESKİ İDDİA (OK-1A): "zincir eşik kapısını değiştirmez; eşik üstü talebi
+    `approve` seviyeli bir aktör onay ROLÜ taşısa bile ilerletemez (403)".
+    ÖLÇÜM bunun bir kusur olduğunu gösterdi: eşik üstü zincirin 2. adımı Proje
+    Müdürü'nündür ve onun seviyesi tam olarak `approve`tır — yani zincir kendi
+    2. adımında KİLİTLENİYOR, dördüncü (`patron`) adımı hiç denenemiyordu.
+
+    YENİ İDDİA — ve eskisinden GEVŞEK DEĞİL: "üst seviye yetki" koşulu
+    KAYBOLMAZ, `full` KAPISINDAN zincirin `patron` ADIMINA taşınır. Yani eşik
+    üstü talep hâlâ `approve` seviyeli bir aktör tarafından TEK BAŞINA
+    tamamlanamaz; üstelik zincirli yolda koşul DAHA SIKIDIR (görevler ayrılığı
+    aynı kişinin iki adımı imzalamasını da yasaklar).
+
+    Kuralın SINIRI (zincirsiz talepte `full` kapısı AYNEN durur) kardeş dosyada
+    ölçülür: `test_ok1c_esik_zinciri.py::test_ZINCIRSIZ_esik_ustu_talepte_FULL_
+    kapisi_KORUNUR`. Patron adımı olmadan tamamlanamadığı da orada
+    (`test_esik_USTU_talep_PATRON_adimi_imzalanmadan_TAMAMLANMAZ`).
+    """
     talep = await talep_fabrikasi(gorunen_proje, lines=[("1.000", "900000.00")])
     pm_rollu = await _onaycı(
         client,
@@ -337,8 +357,26 @@ async def test_ESIK_KAPISI_zincirle_birlikte_KORUNUR(
         approval_roles=(ApprovalRole.procurement,),
     )
     await _gonder(client, sef_headers, talep.id)
+    zincir = await zincir_getir(seeded_db, _TIP, talep.id)
+    assert zincir is not None
+    assert await adim_rolleri(seeded_db, zincir.id) == [
+        ApprovalRole.procurement,
+        ApprovalRole.project_manager,
+        ApprovalRole.accounting,
+        ApprovalRole.patron,
+    ], "eşik üstü zincire PATRON adımı eklenmemiş — kural taşınmadı, KAYBOLDU"
 
     yanit = await client.post(f"{_YOL}/{talep.id}/approve", headers=pm_rollu)
 
-    assert yanit.status_code == 403, yanit.text
-    assert yanit.json()["detail"] != approval_guards.APPROVAL_ROLE_MISSING
+    assert yanit.status_code == 200, yanit.text
+    assert yanit.json()["status"] == "pending_approval", "tek imza talebi ilerletti"
+    assert yanit.json()["approved_at"] is None, "yarım onay talebi DAMGALADI"
+    assert await adim_durumlari(seeded_db, zincir.id) == [True, False, False, False]
+
+    # 🔴 TEK BAŞINA TAMAMLANAMAZ: aynı aktör ikinci kez denediğinde sıradaki
+    # adım BAŞKA bir rolündür (`project_manager`) ve bekçi 4 daha görevler
+    # ayrılığından ÖNCE ateşler — ölçüldü, varsayılmadı.
+    tekrar = await client.post(f"{_YOL}/{talep.id}/approve", headers=pm_rollu)
+    assert tekrar.status_code == 403, tekrar.text
+    assert tekrar.json()["detail"] == approval_guards.APPROVAL_ROLE_MISSING
+    assert await adim_durumlari(seeded_db, zincir.id) == [True, False, False, False]

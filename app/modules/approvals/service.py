@@ -54,6 +54,7 @@ __all__ = [
     "approve_next_step",
     "assignment_page",
     "audit_detail",
+    "chain_step_substitutes_permission",
     "clean_reject_reason",
     "create_chain",
     "get_threshold",
@@ -240,6 +241,43 @@ async def open_chain(
 ) -> ApprovalChain | None:
     """Evragin ACIK zinciri (kilitsiz OKUMA) — cagiran ekranlar icin."""
     return await repository.get_chain(session, document_type, document_id)
+
+
+async def chain_step_substitutes_permission(
+    session: AsyncSession,
+    *,
+    actor_id: uuid.UUID,
+    document_type: ApprovalDocumentType,
+    document_id: uuid.UUID,
+) -> bool:
+    """OK-1C — ikame kapisi acilir mi (katman yonu: gate -> service -> repository).
+
+    Kural IKI dallidir ve ikincisi bir SIZINTI KAPATIR:
+
+    * **aktor SIRADAKI adimin onay rolunu tasiyor** -> kapi acilir. Karar
+      degil, yalnizca kapi: otorite hâlâ kilit altindaki `_assert_can_decide`tir.
+    * **aktor ADAY IMZACI (en az bir onay rolu var) ve evrak HIC YOK** -> kapi
+      yine acilir. 🔴 OLCULDU (T2): acilmasaydi var OLMAYAN bir kimlik 403,
+      GORUNMEYEN (kapsam disi) bir kayit ise 404 verirdi ve elinde kimlik olan
+      bir aday imzaci kaydin VARLIGINI ogrenirdi
+      (`test_KAPSAMI_OLMAYAN_adim_sahibi_404_alir_ve_VAR_OLMAYANDAN_AYIRT_
+      EDILEMEZ`). Kapinin acilmasi HICBIR yetki vermez — var olmayan evrak
+      ucta zaten 404'tur; yalnizca iki cevap AYNILASIR.
+
+    🔴 Ikinci dal ADAY IMZACIYLA SINIRLIDIR ve bu bilinclidir: kosulsuz
+    acilsaydi onay rolu HIC OLMAYAN her kullanici da var olan (403) ile var
+    olmayan (404) kimligi ayirt edebilir, yani bugun HIC OLMAYAN bir varlik
+    kesif yuzeyi butun kullanicilara acilirdi. Bu hâliyle ayrim yalnizca
+    ikamenin zaten muhatabi olan kumede kalir.
+
+    Olgularin kendisi ve SQL gerekcesi `repository.chain_gate_facts`tedir.
+    """
+    olgular = await repository.chain_gate_facts(
+        session, actor_id=actor_id, document_type=document_type, document_id=document_id
+    )
+    if olgular.holds_next_step_role:
+        return True
+    return olgular.actor_is_candidate and not olgular.document_exists
 
 
 def _current_step(steps: list[ApprovalStep], step_no: int | None) -> ApprovalStep:
