@@ -913,3 +913,141 @@ def test_taraf_KUMESININ_KENDISI_bekcilidir_yeni_enum_uyesi_sessizce_gecmez() ->
 
     with pytest.raises(ValueError, match="Bilinmeyen taraf"):
         unit_sides.partition([SimpleNamespace(owner_side="ortak_alan")])
+
+
+# --- YER TUTUCU DENETİMİ 2026-08-22: gerekçeler ÇÜRÜMESİN diye çakılır ---
+#
+# Denetimin bulgusu: `pending_module` artık "modül yok" DEMİYOR — sahaya çıkan
+# 13 anahtarın hepsi CANLI bir kaynağı adlandırıyor (`service._metric`
+# docstring'i). Kalan yer tutucuların GERÇEK engelleri çağrı yerlerine yazıldı;
+# aşağıdaki iki bekçi o yazıların hâlâ doğru olduğunu ölçer.
+
+
+def test_projects_progress_pct_sutununun_YAZMA_YOLU_YOKTUR() -> None:
+    """🔴 Denetimin BAŞ BULGUSU: `projects.progress_pct` YAZIMI ÖLÜ bir fosildir.
+
+    Bu bir DİLEK değil, ÖLÇÜLMÜŞ durumdur. `construction_progress` yer tutucusunun
+    (`service._land_share_card`) en tehlikeli tuzağı, bu sütunun apaçık bir kaynak
+    gibi görünmesidir: `Numeric(5,2), nullable=False, default=0` (models.py:143),
+    zaten HAM servis ediliyor (`ProjectListItem.progress_pct` zarf DEĞİL düz
+    `Decimal`) — ama hiçbir HTTP isteği onu SET EDEMEZ, çünkü ne `ProjectCreate`
+    ne `ProjectUpdate` böyle bir alan taşır. Buna rağmen daima 0 da değildir:
+    `alembic/versions/795d6498e4da_projects_seed.py` üç demo projeye 42.50/15.00/
+    100.00 yazar ve o revizyon head'in atasıdır. Yani sütun, kullanıcının açtığı
+    her projede kalıcı 0; üç tohum satırında ise hiçbir formdan düzeltilemeyen
+    donmuş bir değer.
+
+    ⚠️ BU TEST KIRMIZIYA DÖNERSE: biri yazma yolu açmış demektir ve
+    `construction_progress` tuzak yorumu (service.py, `_land_share_card`)
+    YENİDEN KARARA BAĞLANMALIDIR — fosil artık fosil değildir.
+    """
+    from app.modules.projects.schemas import ProjectCreate, ProjectUpdate
+
+    assert "progress_pct" not in ProjectCreate.model_fields, (
+        "`ProjectCreate`e `progress_pct` eklenmis: `construction_progress` fosil "
+        "gerekcesi artik gecerli olmayabilir, yeniden karara baglayin."
+    )
+    assert "progress_pct" not in ProjectUpdate.model_fields, (
+        "`ProjectUpdate`e `progress_pct` eklenmis: `construction_progress` fosil "
+        "gerekcesi artik gecerli olmayabilir, yeniden karara baglayin."
+    )
+
+
+async def test_govdeye_konan_progress_pct_POST_ve_PATCH_te_YOK_SAYILIR(client, user_factory):
+    """Yapısal iddianın DAVRANIŞ tarafı: gövdeye elle yazmak da işe yaramaz.
+
+    Pydantic varsayılanı `extra="ignore"`tır (`ProjectCreate`te `extra=` ayarı
+    YOKTUR), bu yüzden fazladan anahtar 422 vermez — SESSİZCE DÜŞER. Sessiz
+    düşüş tam da tehlikeli olan hâldir: istemci "gönderdim" sanır, sütun 0 kalır.
+    Bu yüzden hem yaratma hem güncelleme yolu ölçülür.
+    """
+    token = await _login(client, user_factory)
+
+    created = await client.post(
+        "/projects",
+        json={
+            "code": "T3-FOSIL",
+            "name": "Fosil Sütun Testi",
+            "project_type": "taahhut",
+            "is_draft": True,
+            "progress_pct": "42.50",
+        },
+        headers=_auth(token),
+    )
+    assert created.status_code == 201, created.text
+    assert Decimal(created.json()["progress_pct"]) == Decimal("0")
+
+    project_id = created.json()["id"]
+    patched = await client.patch(
+        f"/projects/{project_id}",
+        json={"name": "Fosil Sütun Testi 2", "progress_pct": "99.00"},
+        headers=_auth(token),
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["name"] == "Fosil Sütun Testi 2"  # PATCH GERÇEKTEN koştu
+    assert Decimal(patched.json()["progress_pct"]) == Decimal("0")
+
+
+# Denetimin SINIFLANDIRMASI (kart, alan, anahtar, sınıf) — gerekçelerin TAM
+# metni `service.py`deki çağrı yerlerindedir, burada yalnız ÇAKILIR:
+#
+#   (A) BAYAT  — kaynak CANLI, alan yalnızca henüz bağlanmadı (toplu okuyucu
+#                ve/veya süzgeç kararı eksik).
+#   (C) TUZAK  — bağlamak AKTİF OLARAK YANLIŞ olurdu: ya mockup kendi etiketiyle
+#                çelişiyor, ya zarfın ŞEKLİ alanı ifade edemiyor, ya da anahtar
+#                yapısal olarak karşılanamaz.
+_DENETIM_2026_08_22 = (
+    ("contracting", "physical_progress", "progress_payments", "C"),
+    ("contracting", "final_progress_payment", "progress_payments", "C"),
+    ("contracting", "subcontractor_count", "subcontracts", "A"),
+    ("investment", "sold_amount", "units", "A"),
+    ("investment", "sales_ratio", "units", "C"),
+    ("investment", "unit_summary", "units", "C"),
+    ("land_share", "construction_progress", "progress_payments", "C"),
+)
+
+_KART_TIPI = {
+    "contracting": "taahhut",
+    "investment": "kendi_yatirim",
+    "land_share": "kat_karsiligi",
+}
+
+
+async def test_denetimin_YEDI_yer_tutucusu_hala_BOS_ve_anahtarini_TASIYOR(
+    client, db_session, user_factory, project_factory
+):
+    """🔴 Gerekçe ÇÜRÜME bekçisi — yedi alanın hepsi tek tabloda çakılı.
+
+    Bu test alanların bağlanmasını YASAKLAMAZ; bağlayanı, kaydedilmiş gerekçeyi
+    OKUMAYA ZORLAR. Biri `service.py`deki tuzak/bayat notunu okumadan bir alanı
+    doldurursa burası kırmızıya döner ve o notu güncellemek zorunda kalır.
+
+    Anahtarın kendisi de çakılıdır: `pending_module` artık "modül yok" demiyor,
+    "veri hangi modülün mülkiyetinde" diyor — anahtarı sessizce değiştirmek,
+    çağrı yerindeki gerekçeyi de geçersiz kılar.
+    """
+    await _kk_projesi(db_session, project_factory, code="T3-DEN-KK")
+    await project_factory(code="T3-DEN-TA", project_type="taahhut")
+    await project_factory(code="T3-DEN-KY", project_type="kendi_yatirim")
+    token = await _login(client, user_factory)
+
+    body = (await client.get("/projects", headers=_auth(token))).json()
+    kartlar = {
+        kart: next(
+            row[kart]
+            for row in body["items"]
+            if row["project_type"] == tip and row["code"].startswith("T3-DEN-")
+        )
+        for kart, tip in _KART_TIPI.items()
+    }
+
+    for kart, alan, anahtar, sinif in _DENETIM_2026_08_22:
+        zarf = kartlar[kart][alan]
+        assert zarf["available"] is False, (
+            f"{kart}.{alan} BAGLANMIS: `service.py`deki SINIF ({sinif}) gerekcesi "
+            f"okunup guncellenmeli (bu testin satiri da silinmeli)."
+        )
+        assert zarf["pending_module"] == anahtar, (
+            f"{kart}.{alan} anahtari degismis ({zarf['pending_module']!r} != "
+            f"{anahtar!r}): cagri yerindeki gerekce de gozden gecirilmeli."
+        )

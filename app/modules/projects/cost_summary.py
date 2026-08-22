@@ -67,11 +67,30 @@ from app.modules.users.models import User
 
 # Yer tutucu kalemlerin kaynak modülleri (KY 134-154, spec §2). Anahtar
 # kullanıcıya gösterilecek metin DEĞİL, izin modülü anahtarıdır (B6 zarf
-# sözleşmesi): ekran "Muhasebe modülü gelince dolacak" bilgisini buradan alır.
+# sözleşmesi): ekran kalemin hangi modülün MÜLKİYETİNDE olduğunu buradan okur.
+#
+# ⚠️ 2026-08-22 DENETİMİ — ESKİ GEREKÇE ("modül gelince dolacak") ARTIK YANLIŞ:
+# `accounting` de `treasury` de CANLIDIR (router'ları `app/main.py`de kayıtlı;
+# muhasebe dört router ile, hazine kendi router'ı + `instruments` ile). Yani üç
+# kalemi bekleten şey MODÜLÜN YOKLUĞU değildir.
+#
+# GERÇEKTEN EKSİK OLAN: gideri bu üç kategoride BİR PROJEYE bağlayan veri.
+# Kategorinin KENDİSİ kısmen var — hesap planında `760/631 Pazarlama Giderleri`,
+# `780/66 Finansman Giderleri`, `795 Vergi, Resim ve Harçlar` (chart_seed_data.py)
+# duruyor. Olmayan şey PROJE KIRILIMI: muhasebenin üç tablosunda da
+# `project_id`/`site_id` KOLONU YOKTUR ve bu unutulmuş değil YAPISALDIR —
+# `accounting/models.py:67-72` bunu açıkça yazar ve maliyet merkezi/proje
+# kırılımını MU-3'e bırakır (`journal_entries`te `project_id` yokluğu a.g.e.
+# 613-614'te bir kez daha teyit edilir). Hazine tarafı da aynı: `payments`
+# tablosunda `project_id`/`site_id` yoktur (`treasury/repository.py:7-9`).
+# Yani fiş de ödeme de yazılabiliyor, ama "bu kayıt X PROJESİNİN ruhsat/
+# finansman/pazarlama gideridir" DENEMİYOR. Kısacası: **modül CANLI, kategori
+# kısmen var, KATEGORİLENMİŞ-VE-PROJEYE-BAĞLI VERİ yok.** Bu yüzden alanlar 0
+# değil "kaynak yok" döner (uydurma 0 yasağı, `_pending`) ve yer tutucunun
+# KALMASI doğru sonuçtur.
 #
 # * Ruhsat & Harçlar + Pazarlama & Satış → `accounting`: ikisi de gider fişidir,
-#   proje maliyetine muhasebe kaydından girer. Bu modül henüz hiçbir satır
-#   yazmıyor, bu yüzden 0 değil "kaynak yok" döner.
+#   proje maliyetine muhasebe kaydından girecektir.
 # * Finansman (Kredi Faizi) → `treasury`: kredi ve faiz Hazine modülünün
 #   konusudur (KY 145 "₺6M kredi · Kalan faiz: ₺890K").
 _ACCOUNTING = "accounting"
@@ -151,6 +170,8 @@ def _breakdown(project: Project, construction_spent: Decimal) -> ProjectCostBrea
         land_cost=land,
         construction_spent=construction_spent,
         construction_budget=construction_budget,
+        # Üçü de YER TUTUCU KALIR — doğru sonuç. Engel modül değil, gideri bu üç
+        # kategoriye bağlayan verinin hiç olmaması (gerekçe: `_ACCOUNTING` notu).
         permits=_pending(_ACCOUNTING),
         financing=_pending(_TREASURY),
         marketing=_pending(_ACCOUNTING),
