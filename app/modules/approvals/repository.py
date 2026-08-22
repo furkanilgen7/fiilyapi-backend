@@ -1,9 +1,11 @@
 """Onay motorunun veri erisimi. Is kurali YOKTUR — o `service.py`dedir."""
 
 import uuid
+from dataclasses import dataclass
 
-from sqlalchemy import Select, and_, distinct, func, or_, select
+from sqlalchemy import Select, and_, distinct, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.modules.approvals import documents
 from app.modules.approvals.models import (
@@ -16,7 +18,9 @@ from app.modules.approvals.models import (
 from app.modules.users.models import User
 
 __all__ = [
+    "ChainGateFacts",
     "assignment_page",
+    "chain_gate_facts",
     "chain_steps",
     "get_chain",
     "get_chain_for_update",
@@ -60,6 +64,102 @@ async def get_chain_for_update(
         )
         .with_for_update()
         .execution_options(populate_existing=True)
+    )
+
+
+@dataclass(frozen=True)
+class ChainGateFacts:
+    """Ikame kapisinin OLGULARI — karari kapinin kendisi kurar (kanon E).
+
+    Uc olgu TEK sorgudan gelir; repository burada bir POLITIKA yazmaz, cunku
+    "kapi acilir mi" sorusu uc katmanindadir ve degisirse tek yerde degismelidir.
+    """
+
+    document_exists: bool
+    actor_is_candidate: bool
+    holds_next_step_role: bool
+
+
+async def chain_gate_facts(
+    session: AsyncSession,
+    *,
+    actor_id: uuid.UUID,
+    document_type: ApprovalDocumentType,
+    document_id: uuid.UUID,
+) -> ChainGateFacts:
+    """Ikame kapisinin (OK-1C, `approvals/gate.py`) TEK sorgusu — UC olgu, TEK gidis.
+
+    1. `document_exists` — evrak satiri VAR MI (aile tablosunda).
+    2. `actor_is_candidate` — aktor EN AZ BIR onay rolu tasiyor mu (ADAY IMZACI).
+    3. `holds_next_step_role` — evragin ACIK zincirinin SIRADAKI adiminin onay
+       rolu aktorun kumesinde mi.
+
+    Ucu de ayri sorgu olsaydi soguk yolda uc gidis-donus olurdu; ustelik
+    "siradaki adim" karari Python'a tasinirdi — ayni karar `_pending_filter`da
+    ZATEN SQL'dedir ve iki kopya sessizce ayrisirdi.
+
+    🔴 **K2 — YALNIZ SIRADAKI ADIM.** `step_no`, o zincirin karara baglanmamis
+    adimlarinin EN KUCUGUNE esit olmak zorundadir; gecmis ya da gelecek bir
+    adimin rolunu tasimak hicbir kapi acmaz.
+
+    🔴 **FAIL-CLOSED.** Zincir yoksa, acik adim yoksa ya da rol eslesmiyorsa
+    satir DONMEZ ve olgu `False` cikar — ikame YOKTUR, bugunku modul kapisi
+    gecerlidir. Istisna YUTULMAZ: `try/except -> False` yazilsaydi gercek bir
+    veritabani arizasi kullaniciya "yetkiniz yok" diye gorunur ve arizanin
+    kendisi denetim yuzeyinden kaybolurdu.
+
+    🔴 **KILITSIZDIR ve bu bilinclidir.** Kapi bir KARAR DEGIL, yalnizca
+    genisletici bir OR'dur. Otorite hâlâ kilit altindaki
+    `service._assert_can_decide`tir (`get_chain_for_update` zincir satirini
+    kilitledikten SONRA kosar). Kapi ile karar arasinda zincir ilerlerse karar
+    katmani 403/409 verir; yetki genislemesi YOKTUR.
+    """
+    id_kolonu, _proje_kolonu = documents.DOCUMENT_PROJECT_COLUMNS[document_type]
+    belge_var = select(id_kolonu).where(id_kolonu == document_id).exists()
+    aday_imzaci = select(UserApprovalRole.id).where(UserApprovalRole.user_id == actor_id).exists()
+    onceki = aliased(ApprovalStep)
+    siradaki_step_no = (
+        select(func.min(onceki.step_no))
+        .where(onceki.chain_id == ApprovalChain.id, onceki.decided_at.is_(None))
+        .scalar_subquery()
+    )
+    siradaki_adim_bende = (
+        select(literal(1))
+        .select_from(ApprovalChain)
+        .join(
+            ApprovalStep,
+            and_(
+                ApprovalStep.chain_id == ApprovalChain.id,
+                ApprovalStep.decided_at.is_(None),
+                ApprovalStep.step_no == siradaki_step_no,
+            ),
+        )
+        .join(
+            UserApprovalRole,
+            and_(
+                UserApprovalRole.user_id == actor_id,
+                UserApprovalRole.approval_role == ApprovalStep.approval_role,
+            ),
+        )
+        .where(
+            ApprovalChain.document_type == document_type,
+            ApprovalChain.document_id == document_id,
+        )
+        .exists()
+    )
+    satir = (
+        await session.execute(
+            select(
+                belge_var.label("document_exists"),
+                aday_imzaci.label("actor_is_candidate"),
+                siradaki_adim_bende.label("holds_next_step_role"),
+            )
+        )
+    ).one()
+    return ChainGateFacts(
+        document_exists=satir.document_exists,
+        actor_is_candidate=satir.actor_is_candidate,
+        holds_next_step_role=satir.holds_next_step_role,
     )
 
 

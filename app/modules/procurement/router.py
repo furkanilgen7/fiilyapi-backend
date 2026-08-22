@@ -58,6 +58,8 @@ from app.core.deps import get_current_user
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
+from app.modules.approvals.gate import require_permission_or_chain_step
+from app.modules.approvals.models import ApprovalDocumentType
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
 from app.modules.procurement import export, service, summary, transitions
@@ -93,8 +95,17 @@ router = APIRouter(tags=["procurement"], responses=COMMON_ERROR_RESPONSES)
 
 _VIEW = require_permission(service.PERMISSION_MODULE, AccessLevel.view)
 _REQUEST = require_permission(service.PERMISSION_MODULE, AccessLevel.request)
-_APPROVE = require_permission(service.PERMISSION_MODULE, AccessLevel.approve)
 _FULL = require_permission(service.PERMISSION_MODULE, AccessLevel.full)
+#: OK-1C — `approve`/`reject`in kapısı. `_APPROVE` sabiti SİLİNDİ: bu iki uç
+#: onun TEK çağıranıydı ve ölü sabit bırakmak yanıltıcı olurdu. Modül seviyesi
+#: AYNEN `approve`tır; seviye yetmediğinde zincirin SIRADAKİ adımının onay rolü
+#: onu İKAME EDER (`approvals/gate.py`). Diğer 21 uç DEĞİŞMEDİ.
+_CHAIN_APPROVE = require_permission_or_chain_step(
+    service.PERMISSION_MODULE,
+    AccessLevel.approve,
+    document_type=ApprovalDocumentType.purchase_request,
+    document_id_param="request_id",
+)
 
 # TB3 sayfalama standardı: varsayılan 50, tavan 200 — tavan aşımı sessizce
 # KIRPILMAZ, 422 döner (ST T2 ile birebir).
@@ -381,7 +392,7 @@ async def submit_purchase_request_endpoint(
         404: {"description": "Talep bulunamadı"},
         409: {"description": "Talep bu işleme uygun durumda değil"},
     },
-    dependencies=[_APPROVE],
+    dependencies=[_CHAIN_APPROVE],
 )
 async def approve_purchase_request_endpoint(
     request: Request,
@@ -417,7 +428,7 @@ async def approve_purchase_request_endpoint(
         404: {"description": "Talep bulunamadı"},
         409: {"description": "Talep bu işleme uygun durumda değil"},
     },
-    dependencies=[_APPROVE],
+    dependencies=[_CHAIN_APPROVE],
 )
 async def reject_purchase_request_endpoint(
     request: Request,
