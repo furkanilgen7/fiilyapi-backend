@@ -47,6 +47,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.contracts import repository as contracts_repository
 from app.modules.contracts.models import SubcontractorContract
 from app.modules.contracts.service import _subcontractor_amount
+from app.modules.progress_payments.summary import progress_pct as financial_progress_pct
 from app.modules.projects import costs, service
 from app.modules.projects.models import Project, ProjectType
 from app.modules.projects.schemas import (
@@ -118,17 +119,51 @@ def _row(
 
     Ödenen/bekleyen `costs.subcontractor_totals` ile hesaplanır — brüt ve durum
     süzgeci tek kopyadır, bu dosya ikinci bir "harcanan" tanımı yazmaz.
+
+    ## "İlerleme" sütunu = `ÖDENEN / SÖZLEŞME × 100` (bekleyen PAYA GİRMEZ)
+
+    Formül MOCKUP ARİTMETİĞİNDEN okundu. Normalde bu repoda mockup RAKAMLARI
+    göstermeliktir ve kural mockup'ın YAPISINDAN okunur; burada aritmetiğe
+    güvenilmesinin sebebi, tabloyu taşıyan İKİ mockup'ın SÜTUN KÜMELERİNİN
+    FARKLI olmasına rağmen 6 satırın 6'sının da TEK bir formülde buluşmasıdır —
+    bu dekorasyon değil TASARIM NİYETİDİR:
+
+    * KY 209-251 (Taşeron·İş Kalemi·Sözleşme·Ödenen·**Bekleyen**·İlerleme):
+      5,7/8,4 → %68 · 1,2/2,4 → %50 · 0/1,8 → %0
+    * KK 213-246 (Taşeron·İş Kalemi·Sözleşme·Ödenen·İlerleme·**Durum**):
+      2,9/6,8 → %42 · 0,380/1,9 → %20 · 0/1,4 → %0
+
+    Rakip formül `(Ödenen + Bekleyen) / Sözleşme` KY satırlarının HİÇBİRİNİ
+    tutturmaz (ilk satır %77,9 ederdi, mockup %68 basar). Bu yüzden pay YALNIZ
+    `paid`tir.
+
+    ## Formül neden BURADA YAZILMIYOR (K3)
+
+    `progress_payments.summary.progress_pct` bu hesabın TEK kopyasıdır (işveren
+    tarafındaki ikiz "İlerleme" göstergesi); payda `None`/`<= 0` iken sahte %0
+    yerine `None` döndüren bekçi de oradadır. Kopyalamak, iki "İlerleme"
+    yüzeyinin zamanla ayrışmasına izin verirdi — bu yüzden ÇAĞRILIYOR. Modül
+    sınırının aşılması yeni değil: `projects/costs.py` de
+    `progress_payments.calculations`tan `gross_total`/`quantize2` çeker.
+
+    Buradan gelen payda ASLA `None` değildir (`_subcontractor_amount` her zaman
+    `Decimal` döner), yani gerçekte çalışan bekçi `<= 0` dalıdır: kalemsiz
+    sözleşme ya da bütün kalemleri `unit_price IS NULL` olan sözleşme `0.00`
+    bedel üretir ve satır `None` ilerleme ile döner. Bedeli olup hiç ödeme
+    görmemiş sözleşme ise GERÇEK `0.00` alır (KY 236-243).
     """
     totals = costs.subcontractor_totals(payments_by_contract.get(contract.id, []))
+    contract_amount = _subcontractor_amount(contract)
     return SubcontractorCostRow(
         contract_id=contract.id,
         contract_no=contract.contract_no,
         subcontractor_id=contract.subcontractor_id,
         subcontractor_name=contract.subcontractor_name,
         work_category=contract.work_category,
-        contract_amount=_subcontractor_amount(contract),
+        contract_amount=contract_amount,
         paid=totals.paid,
         pending=totals.pending,
+        progress_pct=financial_progress_pct(totals.paid, contract_amount),
     )
 
 
@@ -155,7 +190,11 @@ def _rows(
 
 
 def _total(rows: list[SubcontractorCostRow]) -> SubcontractorCostSummary:
-    """tfoot = satırların toplamı (KY 244-248), ikinci bir sorgu KOŞMADAN."""
+    """tfoot = satırların toplamı (KY 244-248), ikinci bir sorgu KOŞMADAN.
+
+    İLERLEME TOPLAMI YOKTUR: KY tfoot'unun "İlerleme" hücresi harfiyen boştur
+    (`<td></td>`), KK'nın tfoot'u ise hiç yoktur — şema notundaki gerekçe.
+    """
     return SubcontractorCostSummary(
         contract_amount=costs.money_total(row.contract_amount for row in rows),
         paid=costs.money_total(row.paid for row in rows),
