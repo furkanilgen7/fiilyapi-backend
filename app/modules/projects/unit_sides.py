@@ -73,6 +73,15 @@ def partition(units: Sequence[Unit]) -> UnitSides:
 
     Üç ayrı list comprehension yerine tek döngü: ayrımın hepsi burada olduğu için
     kümeler arasındaki "ayrık ve tüketici" ilişkisi de tek yerde okunur.
+
+    🔴 **ÜÇÜNCÜ KÜME `else` İLE YAKALANMAZ — `NULL` AÇIKÇA SORULUR.** `unassigned`
+    ekranda *"noter paylaşımı henüz yapılmadı"* diye okunur; bu bir OLGU
+    iddiasıdır. `else` yazılsaydı `UnitOwnerSide`a ileride eklenecek bir üye
+    (ör. ortak alan payı) sessizce o kümeye düşer ve ekran **atanmış** bir
+    üniteyi *"atanmamış"* diye basardı — kimse de fark etmezdi, çünkü sayılar
+    yine toplanırdı. Bilinmeyen üye bu yüzden `ValueError` ile PATLAR: bir
+    kümeyle çalışan bekçi, kümenin KENDİSİNİ de sınamak zorundadır (MT-2 final
+    review kanonu, "eleme çalışıyor mu" ≠ "eleme LİSTESİ tam mı").
     """
     ours: list[Unit] = []
     owner: list[Unit] = []
@@ -82,8 +91,13 @@ def partition(units: Sequence[Unit]) -> UnitSides:
             ours.append(unit)
         elif is_owner(unit):
             owner.append(unit)
-        else:
+        elif is_unassigned(unit):
             unassigned.append(unit)
+        else:  # pragma: no cover - bugunku enum iki uyeli; bekci ileriye donuktur
+            raise ValueError(
+                f"Bilinmeyen taraf: {unit.owner_side!r}. `UnitOwnerSide`a uye eklendiyse "
+                "`unit_sides` uc kumesi de birlikte karara baglanmalidir."
+            )
     return UnitSides(ours=ours, owner=owner, unassigned=unassigned)
 
 

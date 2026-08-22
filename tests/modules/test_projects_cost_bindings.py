@@ -884,3 +884,32 @@ async def test_taraf_sayaclari_unite_sayisi_arttikca_SORGU_ACMAZ(
     assert (cok.items[0].land_share.owner_unit_count.count) == 6
     assert az_sayim == cok_sayim, (az_sayim, cok_sayim)
     assert cok_sayim <= 1, cok_sayim
+
+
+def test_taraf_KUMESININ_KENDISI_bekcilidir_yeni_enum_uyesi_sessizce_gecmez() -> None:
+    """🔴 Bir kümeyle çalışan bekçi, KÜMENİN KENDİSİNİ de sınamalıdır (MT-2 kanonu).
+
+    `unit_sides.partition` üç kümeye ayırır ve üçüncüsü (`unassigned`) ekranda
+    *"noter paylaşımı henüz yapılmadı"* diye okunur — yani bir OLGU iddiasıdır.
+    Ayrım `else` ile yazılsaydı `UnitOwnerSide`a eklenecek DÖRDÜNCÜ bir hâl
+    sessizce "atanmamış" sayılır ve ekran ATANMIŞ bir üniteyi atanmamış diye
+    basardı; sayılar yine tutacağı için hiçbir davranış testi de görmezdi.
+
+    Bu bekçi iki katmanlıdır:
+    1. enum'un BUGÜNKÜ üye kümesi çakılır — üye eklenirse bu test kırmızı olur
+       ve geliştirici `unit_sides`ı karara bağlamak zorunda kalır;
+    2. bilinmeyen bir taraf değeri `ValueError` ile PATLAR (sessizce bir kümeye
+       düşmez) — sahte bir `Unit` ile doğrudan sınanır.
+    """
+    from types import SimpleNamespace
+
+    from app.modules.projects import unit_sides
+    from app.modules.units.models import UnitOwnerSide
+
+    assert {uye.value for uye in UnitOwnerSide} == {"contractor", "landowner"}, (
+        "`UnitOwnerSide` genisledi: `unit_sides.partition` uc kumesi ve bu testin "
+        "beklentisi birlikte karara baglanmalidir."
+    )
+
+    with pytest.raises(ValueError, match="Bilinmeyen taraf"):
+        unit_sides.partition([SimpleNamespace(owner_side="ortak_alan")])
