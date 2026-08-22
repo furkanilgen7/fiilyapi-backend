@@ -576,6 +576,38 @@ async def reject_leave_request_endpoint(
     return response
 
 
+@router.post("/leave-requests/{request_id}/withdraw", response_model=LeaveRequestResponse)
+async def withdraw_leave_request_endpoint(
+    request: Request,
+    request_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> LeaveRequestResponse:
+    """Talebi SAHİBİ geri çeker (İK-2.2, kullanıcı kararı 2026-08-22).
+
+    🔴 **Kapıda `_VIEW`/`_FULL` YOKTUR ve bu ZORUNLUDUR** — `/leave-requests/self`
+    ile aynı gerekçe: yetkinin kaynağı `personnel` modül izni DEĞİL kaydın
+    SAHİPLİĞİdir. Matriste `personnel=none` olan `procurement` rolündeki bir
+    çalışan kendi talebini AÇABİLİYOR; `_VIEW` konsaydı onu GERİ ÇEKEMEZ ve bu
+    dilim hiçbir şey çözmezdi.
+
+    🔴 **`admin` istisnası YOKTUR**: admin başkasının talebini geri çekemez (404).
+    Vazgeçme yetki yükseltmesi değildir — admin zaten `reject`/`DELETE` edebilir.
+
+    Talep yok **ya da sahibi değilsin** → 404 (ayırt edilemez) · `pending` değil
+    → 409. Kayıt SİLİNMEZ: `pending -> withdrawn` durum geçişidir.
+    """
+    response, detail = await service.withdraw_leave_request(session, user, request_id)
+    await record_audit(
+        session,
+        action=AuditAction.update,
+        detail=detail,
+        actor_user_id=user.id,
+        ip_address=client_ip(request),
+    )
+    return response
+
+
 # `year` sınırı: bakiye takvim yılıdır ve serbest bir tam sayı olarak bırakılırsa
 # `9999` gibi bir değer anlamsız bir kıdem penceresi hesaplatırdı. Aralık İZ'in
 # gerçekçi kullanım ömrüdür.

@@ -66,11 +66,21 @@ class LeaveStatus(str, enum.Enum):
     """İZ talep tablosu durumu (İK-2 spec §1). Onay TEK adimdir (spec §5 K4) —
 
     cok-asamali onay MOTORU ACILMAZ, bu yuzden ara durum (`in_review` vb.) YOK.
+
+    🔴 İK-2.2 `withdrawn` uyesini ekledi ve bu K4'u BOZMAZ: onay hala TEK
+    adimdir. `withdrawn` bir onay ASAMASI DEGIL, talebin SAHIBININ
+    VAZGECMESIdir — karari onaylayan degil, talebi ACAN kisi verir ve durum
+    TERMINALdir (geri donusu yok; vazgecen kisi yeni talep acar).
     """
 
     pending = "pending"
     approved = "approved"
     rejected = "rejected"
+    # 🔴 İK-2.2 (kullanıcı kararı 2026-08-22): talebi AÇAN kişi kendi BEKLEYEN
+    # talebini geri çeker. Silme DEĞİL durum geçişidir — denetim izi kalır,
+    # `days` ve izin istatistiği bozulmaz, DELETE'in yetki kapısı gevşetilmez.
+    # Üye SONA eklenir: `enum_range` sırası migration `a2b3c4d5e6f7` ile kilitli.
+    withdrawn = "withdrawn"
 
 
 class Personnel(Base):

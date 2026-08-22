@@ -105,6 +105,9 @@ from app.modules.personnel.service.leave_decisions import (
     _assert_decidable as _assert_decidable,
 )
 from app.modules.personnel.service.leave_decisions import (
+    _assert_withdrawable as _assert_withdrawable,
+)
+from app.modules.personnel.service.leave_decisions import (
     _balance_response as _balance_response,
 )
 from app.modules.personnel.service.leave_decisions import (
@@ -127,6 +130,9 @@ from app.modules.personnel.service.leave_decisions import (
 )
 from app.modules.personnel.service.leave_decisions import (
     upsert_leave_balance as upsert_leave_balance,
+)
+from app.modules.personnel.service.leave_decisions import (
+    withdraw_leave_request as withdraw_leave_request,
 )
 from app.modules.personnel.service.leave_requests import (
     _assert_date_order as _assert_date_order,
