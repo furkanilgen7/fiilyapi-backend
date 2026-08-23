@@ -399,13 +399,16 @@ def test_gerekce_pending_modules_anahtarlari_FOSIL_OLAMAZ() -> None:
         )
 
 
-async def test_gerekce_belge_tablosunda_SOZLESME_BAGI_YOKTUR(seeded_db, ornek_proje) -> None:
+def test_gerekce_belge_tablosunda_SOZLESME_BAGI_YOKTUR() -> None:
     """`documents` CANLI ama sözleşmeye BAĞLANAMAZ — yer tutucunun GERÇEK engeli.
 
     Eski gerekçe "belgeler modülü yazılmadı" diyordu; BC dilimi 20. izin modülünü
     açtı. Kalan engel BAĞ eksikliğidir: künyede yalnız `project_id`/`site_id`/
     `folder_id` var. Bu bekçi kolonun eklendiği anda kırmızıya döner ve gerekçeyi
     yeniden okumaya zorlar.
+
+    İddia ŞEMA METADATA'sıdır, veri değil — bu yüzden DB fixture'ı ALMAZ
+    (kardeş `test_gerekce_milestone_*` ile aynı desen).
     """
     kolonlar = set(Document.__table__.columns.keys())
     assert "contract_id" not in kolonlar and "subcontractor_contract_id" not in kolonlar, (
