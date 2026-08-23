@@ -587,6 +587,31 @@ async def get_order(session: AsyncSession, order_id: uuid.UUID) -> PurchaseOrder
     return await session.get(PurchaseOrder, order_id)
 
 
+async def get_order_locked(session: AsyncSession, order_id: uuid.UUID) -> PurchaseOrder | None:
+    """🔴 SA-KILIT — siparisin DURUM GECISLERI icin `SELECT … FOR UPDATE`.
+
+    `get_request_locked`in siparis tarafindaki ikizi ve gerekcesi AYNIDIR:
+    `transitions.assert_order_transition` kararini BELLEKTEKI `status` uzerinden
+    verir. Satir kilitlenmeden okunursa iki es zamanli yazici da ayni bayat
+    durumu gorur; ikincisi bloke olsa bile karar YENIDEN sorulmaz.
+
+    Olculdu (2026-08-23): stok girisinin `delivered` damgasi ile es zamanli bir
+    `PATCH {"status": "in_transit"}` ayni siparise gelince siparis
+    **`in_transit`**, bagli talep **`delivered`** kaliyordu — teslim damgasi
+    KAYBOLUYOR ve ikili CELISKILI oluyordu.
+
+    `populate_existing=True` sarttir: satir session'da ZATEN yukluyse
+    `with_for_update` tek basina TAZE degeri geri YAZMAZ ve kilit alinmis
+    olmasina ragmen yine BAYAT durum uzerinden karar verilirdi.
+    """
+    return await session.scalar(
+        select(PurchaseOrder)
+        .where(PurchaseOrder.id == order_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+
+
 # --- T4: ozet sayaclari (SAT 69-86 / SIP 38-43) ---
 #
 # UC sorgu kosar ve sayisi DURUM SAYISINDAN BAGIMSIZDIR: talep sayimlari ·
@@ -711,6 +736,7 @@ __all__ = [
     "current_stock_by_item",
     "existing_stock_item_ids",
     "get_order",
+    "get_order_locked",
     "get_order_row",
     "get_quote_in_request",
     "get_request",

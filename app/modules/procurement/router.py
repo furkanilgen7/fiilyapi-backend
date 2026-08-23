@@ -312,7 +312,7 @@ async def update_purchase_request_endpoint(
     `lines` gönderilirse kalemler REPLACE edilir (tek atomik işlem); hiç
     göndermemek onlara DOKUNMAZ, boş liste hepsini SİLER.
     """
-    purchase_request = await service.visible_request(session, user, request_id)
+    purchase_request = await service.visible_request_locked(session, user, request_id)
     purchase_request, detail = await service.update_request(session, user, purchase_request, data)
     await _audit(request, session, user, AuditAction.update, detail)
     return await service.build_request_detail(session, user, purchase_request)
@@ -341,7 +341,7 @@ async def delete_purchase_request_endpoint(
 
     Yanıt `204 No Content`, gövdesizdir.
     """
-    purchase_request = await service.visible_request(session, user, request_id)
+    purchase_request = await service.visible_request_locked(session, user, request_id)
     detail = await service.delete_request(session, user, purchase_request)
     await _audit(request, session, user, AuditAction.delete, detail)
 
@@ -539,7 +539,7 @@ async def create_quote_endpoint(
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> PurchaseQuoteResponse:
     """Yalnız `quote_wait` (aksi **409**). `delivery_time` SERBEST metindir."""
-    purchase_request = await service.visible_request(session, user, request_id)
+    purchase_request = await service.visible_request_locked(session, user, request_id)
     quote, detail = await service.create_quote(session, purchase_request, data)
     await _audit(request, session, user, AuditAction.create, detail)
     return quote
@@ -565,7 +565,7 @@ async def update_quote_endpoint(
     """Kısmi güncelleme. Nakliye kuralı BİRLEŞİK değerlerde koşar (**422**):
     gövde yalnız `shipping_cost` taşısa bile DB'deki `shipping_included`
     hesaba katılır."""
-    purchase_request = await service.visible_request(session, user, request_id)
+    purchase_request = await service.visible_request_locked(session, user, request_id)
     quote, detail = await service.update_quote(session, purchase_request, quote_id, data)
     await _audit(request, session, user, AuditAction.update, detail)
     return quote
@@ -593,7 +593,7 @@ async def delete_quote_endpoint(
     giren kullanıcı değil TEDARİKÇİDİR ve kayıtta `created_by` kolonu yoktur.
     Kapı bu yüzden düz `full`dur.
     """
-    purchase_request = await service.visible_request(session, user, request_id)
+    purchase_request = await service.visible_request_locked(session, user, request_id)
     detail = await service.delete_quote(session, purchase_request, quote_id)
     await _audit(request, session, user, AuditAction.delete, detail)
 
@@ -621,8 +621,32 @@ async def select_and_order_endpoint(
     (`SP-YYYY-NNNN`, tutar = teklif × talebin toplam miktarı + nakliye) · talep
     `ordered` olur. Ara adımda hata çıkarsa HİÇBİRİ kalmaz (servisteki açık
     SAVEPOINT). Denetime TEK satır düşer: kullanıcının yaptığı tek bir eylemdir.
+
+    🔴 **SA-KILIT — kapı `visible_request_locked`TİR, `visible_request` DEĞİL.**
+    Bu bir DURUM GEÇİŞİDİR (`quote_wait → ordered`) ve
+    `transitions.apply_request_transition` kendi sözleşmesinde talep satırının
+    ÇAĞIRAN tarafından ZATEN kilitlenmiş olmasını şart koşar — `submit`/
+    `approve`/`reject` de aynı kapıdan geçer. Kilitsiz açıldığında CANLIDA tek
+    talebe İKİ SİPARİŞ yazılıyordu ve tedarikçiye para İKİ KEZ taahhüt
+    ediliyordu (ölçüldü: 2 sipariş / ₺500.000, beklenen ₺250.000).
+
+    🔴 **BEKLEMEK YENİDEN-DOĞRULAMA DEĞİLDİR** — kusurun asıl dersi budur.
+    İkinci istek kilitsiz kapıda da BEKLİYORDU (`apply_request_transition`
+    içindeki `UPDATE`, birincinin satır kilidine çarpıyordu); ama geçiş matrisi
+    o `UPDATE`ten ÖNCE, BELLEKTEKİ **bayat** `quote_wait` üzerinde koşmuştu.
+    Bloke çözülünce karar YENİDEN sorulmuyordu. Kilit kapıya alınınca ikinci
+    istek matristen ÖNCE bekler ve satırı TAZE okur (`populate_existing=True`),
+    `(ordered, select-and-order)` çifti tabloda olmadığı için **409** alır.
+
+    🔴 **KİLİT SIRASI** (deadlock): `purchase_requests` satırı HER ZAMAN İLK
+    kilittir — `submit`/`approve`/`reject` yolundaki sıranın aynısı. Bu uçta
+    sıra: talep satırı → teklif satırları → `pg_advisory_xact_lock(82502)`
+    (numara). Ters sırada ilerleyen bir yol YOKTUR: doğrudan sipariş
+    (`create_order`) danışma kilidini alır ama talep satırını HİÇ kilitlemez.
+
+    Bekçiler `tests/modules/procurement/test_select_and_order_yarisi.py`dedir.
     """
-    purchase_request = await service.visible_request(session, user, request_id)
+    purchase_request = await service.visible_request_locked(session, user, request_id)
     order, detail = await service.select_and_order(session, user, purchase_request, quote_id)
     await _audit(request, session, user, AuditAction.create, detail)
     return order
@@ -720,8 +744,17 @@ async def update_order_endpoint(
     bir STOK GİRİŞİ atar (§7 S4, T4'ün zinciri). Elle açık olsaydı hiç mal
     girmemiş bir sipariş teslim görünür, stok bakiyesiyle satınalma kaydı
     sessizce ayrışırdı. `total_amount` da düzeltilemez (şema gerekçesi).
+
+    🔴 **SA-KILIT T3 — kapı `visible_order_locked`TİR.** Bu da bir DURUM
+    GEÇİŞİDİR ve `transitions.assert_order_transition` kararını BELLEKTEKİ
+    `status` üzerinden verir. Kilitsiz açıkken ÖLÇÜLDÜ (2026-08-23): stok
+    girişinin `delivered` damgasıyla eş zamanlı bir `PATCH {"status":
+    "in_transit"}` geldiğinde sipariş **`in_transit`**, bağlı talep
+    **`delivered`** kalıyordu — teslim damgası KAYBOLUYOR ve ikili ÇELİŞKİLİ
+    oluyordu (mal girmiş ama sipariş "yolda"). Aynı kilitsizlik iki eş zamanlı
+    `PATCH`in İKİSİNİ birden geçiriyordu; şimdi ikincisi **409** alır.
     """
-    order = await service.visible_order(session, user, order_id)
+    order = await service.visible_order_locked(session, user, order_id)
     order_response, detail = await service.update_order(session, order, data)
     await _audit(request, session, user, AuditAction.update, detail)
     return order_response
