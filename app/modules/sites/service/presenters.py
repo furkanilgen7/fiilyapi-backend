@@ -27,9 +27,45 @@ from app.modules.sites.schemas import (
 
 # Spec §3: bos durum alanlari ve bagli olduklari dilim anahtarlari. Bunlar
 # MODUL ANAHTARIDIR, kullaniciya gosterilecek metin degil (B6 §2.3).
+#
+# 🔴 P-YT2 DENETIMI (2026-08-23) — IKI AYRI SEY OLCULDU.
+#
+# (1) ANAHTAR ARTIK "MODUL YOK" DEMEK DEGIL: adlandirilan modullerin hepsi
+#     CANLI. Bekleyen sey modul degil, o modulden turemesi gereken DEGER ya da
+#     bir URUN KARARIDIR.
+# (2) 🔴 ANAHTAR UZAYI IZIN MODULU UZAYINDAN AYRISMIS. Asagidaki yorum
+#     *"Bunlar MODUL ANAHTARIDIR"* diyor, ama ALTI anahtarin IKISI tohumlanmis
+#     modul kaydinda (`roles/seed_data.py:MODULES`, 21 anahtar) YOKTUR:
+#     `subcontracts` (hic olmadi; canlisi `contracts`) ve `project_costs`
+#     (KAVRAMSAL anahtar — `projects/cards.py` de ayni adi kullanir).
+#     Ikisi de DEGISTIRILMEDI (deger yanittadir) ve bir bekciyle cakildi:
+#     `test_anahtar_uzayi_IZIN_MODULU_uzayindan_AYRISMIS`.
+#
+# Olculen tablo (12 yer tutucu CAGRI YERI: 3'u BAGLI, 9'u bos):
+#
+# | anahtar | modul canli mi | sinif | tek cumlelik gerekce |
+# |---|---|---|---|
+# | `_TIMESHEET`   | ✅ | **(A)** | T4'te BAGLANDI (`_worker_count`, 3 yerde) |
+# | `_PROGRESS_PAYMENTS` | ✅ | **(B)** ilerleme | turevin KENDISI besleyende de yer tutucu |
+# | `_PROGRESS_PAYMENTS` | ✅ | **(C)** hakedis | santiye kirilimi YARIM (bkz. `to_detail`) |
+# | `_BOQ`         | ✅ | **(C)** | sayac IKI sayi ister, bedel IKINCI para formulu dogurur |
+# | `_CONTRACTS`   | ✅ | **(C)** | SANTIYE duzeyinde sozlesme bedeli SEMADA YOK |
+# | `_PROJECT_COSTS` | ⚠️ kavramsal | **(C)** | "ortalama marj" TANIMSIZ (bkz. `_totals`) |
+# | `_SUBCONTRACTS`| ❌ | **(C)** | 🔴 BOYLE BIR MODUL YOK — canlisi `contracts` |
+#
+# Gerekcelerin TAMAMI alanlarin kuruldugu yerdedir (`to_section`, `to_detail`,
+# `_totals`), burada degil: bir alan baglandiginda gerekcesi de onunla gider.
 _PROGRESS_PAYMENTS = "progress_payments"
 _TIMESHEET = "timesheet"
+#: 🔴 BAYAT ETIKET, BILINCLI OLARAK DEGISTIRILMEDI. `subcontracts` diye bir
+#: modul YOKTUR ve hic olmadi; taseron sozlesmeleri `contracts` modulunde
+#: yasiyor (`SubcontractorContract`). Etiket yanittaki `pending_module`
+#: DEGERIDIR — frontend ona dallanabilir, degistirmek sozlesme kirmasidir.
+#: Duzeltmesi F-OK ile birlikte gitmelidir (P-YT2 raporu).
 _SUBCONTRACTS = "subcontracts"
+#: ⚠️ IZIN MODULU DEGILDIR (`MODULES`te yok) — KAVRAMSAL bir kaynak adidir ve
+#: `projects/cards.py` de ayni adi kullanir. Ayrisma bilincli olarak
+#: KORUNDU; tek anahtar uzayina cekmek frontend devriyle gitmelidir.
 _PROJECT_COSTS = "project_costs"
 _CONTRACTS = "contracts"
 _BOQ = "boq"
@@ -114,6 +150,41 @@ def _to_milestone(row: SectionMilestone) -> SectionMilestoneResponse:
 
 
 def to_section(section: Section, worker_count: int) -> SectionResponse:
+    """Bolum satiri. DORT yer tutucusunun UCU P-YT2'de denetlendi ve KALDI.
+
+    🔴 `progress_pct` — **(B) GECERLI**, anahtar dogru ama ANLAMI TAZELENDI.
+    `progress_payments` modulu CANLI; bekleyen sey modul degil, o modulden
+    turemesi gereken FIZIKSEL ILERLEME yuzdesidir — ve o turev BESLEYENIN
+    KENDISINDE de hâlâ yer tutucudur: `boq/schemas.py:51-52`
+    `BoqItemResponse.progress_pct` "hakediş (P7) yer tutucusudur" diye
+    yaziyor, `BoqTotals.grand_progress_pct` de yer tutucu. Burada bir yuzde
+    uretmek, BOQ'nun bilerek acik biraktigi formulu ikinci bir yerde ve daha
+    dar bir baglamda ICAT etmek olurdu; iki ekran ayni bolum icin farkli "%"
+    basardi. Mockup ("Bölüm Detay.dc.html:71-73" %62) bu yuzdeyi BoQ tablosunun
+    "Gerç. %" toplamiyla AYNI sayi olarak cizer — yani tek kaynak BOQ'dur.
+
+    🔴 `boq_item_count` — **(C) TUZAK**. BOQ canli ve bolum tahsisleri
+    SAYILABILIR (`boq/repository.py:132`), ama mockup bu kutuya TEK sayi
+    basmiyor: "16 / 26" (`Şantiye Detay.dc.html:174`, `Bölüm Detay.dc.html:86`)
+    yani TAMAMLANAN / TOPLAM. `CountPlaceholder.count` tek `int` tasir; `26`
+    basmak ekranin cift okudugu bir yuvaya tek sayi koymaktir (P-YT1'in
+    `sales_ratio` bulgusunun ayni sinifi). Ustelik PAYIN KAYNAGI DA YOK:
+    `BoqItemSectionAllocation`ta "tamamlandi" bayragi yoktur ve gerceklesen
+    taraf (yukaridaki `progress_pct`) zaten yer tutucudur.
+
+    🔴 `budget` — **(C) TUZAK**, ve engeli PARA FORMULUDUR. Deger ilkece
+    hesaplanabilir (bolume tahsis edilmis miktar × pozun birim fiyati), ama o
+    carpimin repodaki TEK kopyasi `boq/schemas.py:76`dir ve KALEM BASINA
+    yuvarlar; grup toplami (`:90`) o yuvarlanmis tutarlari toplar. SQL'de
+    `SUM(quantity * unit_price)` yazmak BIR KEZ yuvarlar ve BOQ ekraninin
+    kendi toplamindan KURUS FARKLI bir "Bölüm Bedeli" uretir — ayni paranin
+    iki formulu (K3). Tek kopyayi kullanmak `boq/`de refactor ister; bu dilim
+    `sites/` + `dashboard/`e tahsislidir. Ayrica toplu okuyucu da YOK:
+    `section_allocations_for_site` BOLUM BASINA sorgudur, santiye detayindaki
+    N bolum icin N+1 olurdu.
+
+    ✅ `worker_count` — T4'te BAGLANDI (`_worker_count`).
+    """
     return SectionResponse(
         id=section.id,
         code=section.code,
@@ -160,6 +231,13 @@ def to_section_detail(section: Section, worker_count: int) -> SectionDetailRespo
 
 
 def _card_fields(site: Site, project: Project, worker_count: int) -> dict:
+    """Santiye kartinin ortak alanlari (`to_card` + `to_detail`).
+
+    🔴 `progress_pct` — **(B) GECERLI**, `to_section`taki AYNI gerekce: bekleyen
+    sey `progress_payments` modulu degil, BOQ'nun kendi yer tutucusu olan
+    gerceklesme yuzdesidir. Bolum ile santiye ayni turevden beslenmelidir;
+    burada ayri bir formul acmak ikisini ilk gunden ayristirirdi.
+    """
     city, city_inherited = _resolve_city(site, project)
     return {
         "id": site.id,
@@ -207,6 +285,33 @@ def to_detail(
     worker_count: int,
     section_worker_counts: Mapping[uuid.UUID, int],
 ) -> SiteDetailResponse:
+    """Santiye detayi. IKI yer tutucusu P-YT2'de denetlendi, IKISI de **(C)**.
+
+    🔴 `total_progress_payment` — **(C) TUZAK: SANTIYE KIRILIMI YARIM.**
+    Modul canli ama santiye duzeyinde bir "toplam hakediş" ancak YARIM
+    olabilir, cunku iki hakediş ailesi santiyeyi FARKLI derinlikte tanir:
+      * isveren hakedişi PROJEYE baglidir, santiye yalniz SATIR duzeyindedir
+        (`ProgressPaymentLine.site_id`) — toplanabilir;
+      * taseron hakedişinin KENDISINDE `site_id` YOKTUR (`project_id` + bilgi
+        amacli `section_id`); santiyeye ancak SOZLESME uzerinden inilebilir ve
+        `SubcontractorContract.site_id` NULLABLE'dir.
+    Yani buraya yazilacak sayi hem "hangi yarisi?" sorusunu cevapsiz birakir,
+    hem de 🔴 K2'ye carpar: sozlesmesi santiyesiz acilmis bir santiyede sonuc
+    `0` cikar ve "hakediş YOK" ile "hakediş BU SANTIYEYE BAGLANMAMIS" ayni
+    sayiyi uretir. Yer tutucu bu ikisini ayirmaya devam eder.
+    Mockup (`Şantiye Detay.dc.html:123-127`) tek kutu cizer ve altina
+    `/ ₺11,2M` koyar — yani asagidaki `contract_amount`la BIRLIKTE anlamlidir;
+    ikisinden biri uydurulursa oran da uydurulmus olur.
+
+    🔴 `contract_amount` — **(C) TUZAK: KAYNAK SEMADA YOK.** "Santiyenin
+    sozlesme bedeli" diye bir buyukluk bu semada BULUNMUYOR:
+      * `ProjectContract` PROJE duzeyindedir ve santiyelere bolunmez;
+      * `SubcontractorContract`in `amount` KOLONU HIC YOKTUR (bedel kalemlerden
+        turer, modelin kendi notu) ve `site_id`si NULLABLE'dir.
+    Bir sayi basmak, var olmayan bir DAGITIM KURALI icat etmek olurdu (projenin
+    bedelini santiyelere hangi olcute gore boleriz?). Bu bir toplu okuyucu
+    eksigi degil, bir URUN KARARI eksigidir.
+    """
     sections = list(site.sections)
     return SiteDetailResponse(
         **_card_fields(site, project, worker_count),
@@ -219,8 +324,40 @@ def to_detail(
 
 
 def _totals(active_worker_count: int) -> SiteListTotals:
-    """Alt KPI seridi. T4'te YALNIZ `active_worker_count` baglandi; gerisi hâlâ
-    yer tutucudur (spec §4.1) ve kendi dilimlerini bekler."""
+    """Alt KPI seridi (mockup `Proje Detay - Şantiyeler.dc.html:176-193`).
+
+    T4'te YALNIZ `active_worker_count` baglandi. P-YT2 kalan UCUNU denetledi;
+    UCU DE **(C)** olarak KALDI — "kendi dilimini bekliyor" ifadesi ARTIK
+    DOGRU DEGIL, cunku uc modul de canli; bekleyen sey karardir.
+
+    🔴 `total_progress_payment` — `to_detail`teki AYNI yarim kirilim; ustelik
+    bu serit SANTIYE DEGIL PROJE kapsamlidir (bu fonksiyon proje toplamini
+    alir), yani "santiyelerin toplami" ile "projenin toplami" ayrimi da
+    cevaplanmis olmali.
+
+    🔴 `subcontractor_count` — **CIFT KUSUR.**
+    (1) Anahtar (`_SUBCONTRACTS = "subcontracts"`) VAR OLMAYAN bir modulu
+        gosteriyor; canlisi `contracts`.
+    (2) Mockup "18 firma" basiyor (`:183`) — yani AYRIK FIRMA sayisi, sozlesme
+        sayisi DEGIL (ayni ekran ailesinde "Aktif Sözleşme" AYRI bir KPI'dir,
+        `Taşeron Listesi.dc.html:35-36`). Ama `SubcontractorContract`ta
+        `subcontractor_id` NULLABLE'dir ve yanina serbest metin
+        `subcontractor_name` konur. `COUNT(DISTINCT subcontractor_id)` serbest
+        metinle acilmis HER sozlesmeyi SESSIZCE DUSURUR.
+        🔴 K2 tam burada isirir: sozlesmelerinin tamami serbest metinle
+        acilmis bir projede sonuc `0` cikar — "taseron YOK" ile "taseronlar
+        KAYIT ALTINDA DEGIL" ayni sayiyi uretir. Yer tutucu bu ikisini
+        ayirmaya devam eder, bagli bir `0` ayirmaz.
+
+    🔴 `average_margin` — modul canli (`projects/cost_cards.py:174`) ve marj
+    formulu tek kopya (`projects/costs.py:112`), ama ORTALAMA TANIMSIZDIR:
+    `margin_pct` TAAHHUT projelerinde YAPISAL OLARAK `None`dur (kart
+    izdusumunde taahhut dali yoktur), butcesi girilmemis projelerde de `None`.
+    Taahhut agirlikli bir portfoyde "ortalama", projelerin sessiz bir
+    azinligindan hesaplanirdi. `None`lari 0 saymak uydurma sifir yasagina
+    carpar; elemek ise "hicbir projenin marji yok" ile "ortalama %0"i ayni
+    sayiya cevirir (yine K2).
+    """
     return SiteListTotals(
         total_progress_payment=_metric(_PROGRESS_PAYMENTS),
         subcontractor_count=_count(_SUBCONTRACTS),

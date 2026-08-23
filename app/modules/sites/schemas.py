@@ -228,7 +228,12 @@ class SiteCounts(BaseModel):
 
 
 class SiteListTotals(BaseModel):
-    """Alt KPI seridi — bu dilimde TAMAMI yer tutucu (spec §4.1)."""
+    """Alt KPI seridi (spec §4.1).
+
+    🔴 "TAMAMI yer tutucu" ARTIK DOGRU DEGIL: `active_worker_count` T4'te
+    baglandi. Kalan uc alanin P-YT2 denetimi ve gerekceleri zarfin KURULDUGU
+    yerdedir — `sites/service/presenters.py:_totals`.
+    """
 
     total_progress_payment: MetricPlaceholder
     subcontractor_count: CountPlaceholder
