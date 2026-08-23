@@ -137,6 +137,12 @@ def _cagri_matrisi(fn: Any) -> list[dict[str, Any]]:
         taban[ad] = _deger(p.annotation, ad, sira)
         if p.annotation is bool:
             dalli.append((ad, False))
+        elif p.annotation is int:
+            # `int` de BAYRAK olabilir: `units_imported(skipped=0)` ve
+            # `unit_allocation_updated(shareholder_count=0)` sifirda AYRI bir
+            # cumle kuruyor. Yalniz sifirdan farkli bir deger uretilseydi o iki
+            # metin anlik goruntude HIC gorunmez, yani DONMAMIS olurdu.
+            dalli.append((ad, 0))
         elif get_origin(p.annotation) is types.UnionType and type(None) in get_args(p.annotation):
             dalli.append((ad, None))
         elif get_origin(p.annotation) is list:
