@@ -338,6 +338,35 @@ async def test_panelin_sorgu_sayisi_SATIR_SAYISINDAN_BAGIMSIZ(seeded_db, aktor, 
     )
 
 
+async def test_onay_rolu_OLAN_aktorun_panel_MALIYETI_CAKILDI(seeded_db, aktor, project_factory):
+    """🔴 MUTASYON TURUNUN ACTIGI DELIK. `limit=0` -> `limit=50` mutasyonu
+    DAVRANISI HIC DEGISTIRMEZ (`total` ayni sayidir) ama satir
+    zenginlestirmesini (adimlar · adlar · UC EVRAK AILESI) bosuna kostururur.
+    N+1 bekcisi bunu GOREMEZ: o iki olcumu AYNI `limit` ile karsilastirir ve
+    sabit bir carpani sabit birakir.
+
+    Bu yuzden burada MUTLAK bir tavan cakilir. Sayi elle yazilmistir:
+      8  — panelin `limit=0` oncesi olculmus tabani
+      +1 — onay rolu sorgusu
+      +2 — `_admin_document_types` (izin modulu basina; bugun iki)
+      +3 — `visible_projects` (izin + proje + iliskiler)
+      +7 — proje `selectin` bagintilarinin motor tarafindaki TEKRARI
+      +2 — sayim + (bos) sayfa
+    Tavanin gevsemesi bir SEBEP ister; sessizce gevsememeli."""
+    yaratan = await aktor("pyt2-y10@d.co", approval_roles=())
+    sef = await aktor("pyt2-sef10@d.co", approval_roles=[ApprovalRole.site_chief])
+    await _zincirler(seeded_db, project_factory, yaratan, ["PYT2-K1", "PYT2-K2"])
+
+    with _sorgu_sayaci() as sorgular:
+        ozet = await build_summary(seeded_db, sef)
+
+    assert ozet.pending_approvals.count == 2
+    assert len(sorgular) == 21, (
+        f"onay rolu tasiyan aktorun panel maliyeti {len(sorgular)} sorgu oldu (beklenen 21) — "
+        "rozet icin sayfa GOVDESI de cekiliyor olabilir (`limit` degisti mi?)"
+    )
+
+
 async def test_onay_rolu_YOKSA_panel_TEK_ek_sorgu_oder(seeded_db, aktor, project_factory):
     """⚠️ Maliyet ölçümü kanona bağlandı: onay rolü OLMAYAN aktör (çoğunluk)
     yalnız BİR ek sorgu öder — motor rol kümesi boşken erkenden döner.
