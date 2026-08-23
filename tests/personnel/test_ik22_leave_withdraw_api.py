@@ -318,10 +318,18 @@ def test_geri_cekme_409_metni_AYRI_bir_SABITTIR():
     reddedilebilir" cümlesi, talebini geri çekmeye çalışan çalışana onun
     yapamayacağı bir işi tarif eder. T2 hazır bir sabite bağlanırsa kod/metin
     testleri yine yeşil kalırdı — bu test onu yakalar.
+
+    🔴 T3 MUTASYON BULGUSU (şef ölçümü): sabitin METNİ bu dosyada HİÇBİR YERDE
+    çakılı değildi. `LEAVE_WITHDRAW_NOT_PENDING` gövdesi anlamsız bir dizeyle
+    değiştirildiğinde 12 testin 12'si de YEŞİL kaldı (409 iddiaları üretim
+    sabitini üretim sabitiyle karşılaştırıyordu) ve başka hiçbir katman metni
+    korumuyordu. Beklenen metin bu yüzden — denetim satırı testindeki gibi —
+    ELLE yazılır: kullanıcının GÖRDÜĞÜ cümle üretimden kopyalanarak değil,
+    bağımsız olarak kilitlenir.
     """
     assert guards.LEAVE_WITHDRAW_NOT_PENDING != guards.LEAVE_NOT_PENDING
     assert guards.LEAVE_WITHDRAW_NOT_PENDING != guards.LEAVE_DECISION_NOT_PENDING
-    assert guards.LEAVE_WITHDRAW_NOT_PENDING.strip(), "sabit BOŞ olamaz"
+    assert guards.LEAVE_WITHDRAW_NOT_PENDING == "Yalnız bekleyen izin talebi geri çekilebilir"
 
 
 # --- 6. Kimlik ------------------------------------------------------------
