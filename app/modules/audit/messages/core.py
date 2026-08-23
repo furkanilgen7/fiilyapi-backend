@@ -8,14 +8,8 @@ burada toplandi (`auth` 1 · `company` 3 · `projects` 6 · `users` 11 · `roles
 from app.core.access import AccessLevel
 
 LOGIN_DETAIL = "Sisteme giriş yapıldı"
-
-
 COMPANY_UPDATED = "Şirket bilgileri güncellendi"
-
-
 COMPANY_LOGO_UPDATED = "Şirket logosu güncellendi"
-
-
 COMPANY_LOGO_REMOVED = "Şirket logosu kaldırıldı"
 
 
