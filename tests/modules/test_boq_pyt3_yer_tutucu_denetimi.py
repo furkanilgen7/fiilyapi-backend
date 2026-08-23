@@ -225,9 +225,7 @@ async def test_zarflar_ALTISI_DE_BOS__anahtar_ve_durum_alan_alan(
     degisikligidir ve tam burada kirilir.
     """
     site = await _bos_boq(seeded_db, project_factory, "YT3-1")
-    headers = await _login_with_access(
-        client, seeded_db, user_factory, "patron", "yt3a@t.co"
-    )
+    headers = await _login_with_access(client, seeded_db, user_factory, "patron", "yt3a@t.co")
 
     resp = await client.get(f"/sites/{site.id}/boq", headers=headers)
     assert resp.status_code == 200, resp.text
@@ -265,9 +263,7 @@ async def test_zarflar_ALTISI_DE_BOS__anahtar_ve_durum_alan_alan(
     )
 
 
-async def test_VERI_VARKEN_DE_zarflar_BOS_KALIR(
-    client, seeded_db, user_factory, project_factory
-):
+async def test_VERI_VARKEN_DE_zarflar_BOS_KALIR(client, seeded_db, user_factory, project_factory):
     """🔑 DENETIMIN EN GUCLU BEKCISI.
 
     Sozlesme kalemi + ona BAGLI BOQ satiri + ONAYLANMIS hakedis satiri kurulur.
@@ -358,9 +354,7 @@ async def test_VERI_VARKEN_DE_zarflar_BOS_KALIR(
         )
     ) == 1, "BOQ satiri sozlesme kalemine BAGLANMAMIS — birlestirme anahtari yok"
 
-    headers = await _login_with_access(
-        client, seeded_db, user_factory, "patron", "yt3b@t.co"
-    )
+    headers = await _login_with_access(client, seeded_db, user_factory, "patron", "yt3b@t.co")
     govde = (await client.get(f"/sites/{site.id}/boq", headers=headers)).json()
 
     kalem = govde["groups"][0]["items"][0]
@@ -421,9 +415,7 @@ async def test_sozlesme_BEDELI_boq_yanitinda_HICBIR_ALANDA_gecmez(
     )
     await seeded_db.flush()
 
-    headers = await _login_with_access(
-        client, seeded_db, user_factory, "patron", "yt3c@t.co"
-    )
+    headers = await _login_with_access(client, seeded_db, user_factory, "patron", "yt3c@t.co")
     ham = (await client.get(f"/sites/{site.id}/boq", headers=headers)).text
 
     assert "3000.00" not in ham, "sozlesme birim fiyati BOQ yanitina sizdi"
@@ -439,13 +431,9 @@ async def test_boq_ucunu_okuyan_procurement_rolu_HÂLÂ_200_alir(
     ayagini yere basmasini saglar.
     """
     site = await _bos_boq(seeded_db, project_factory, "YT3-4")
-    rol = (
-        await seeded_db.execute(select(Role).where(Role.key == "procurement"))
-    ).scalar_one()
+    rol = (await seeded_db.execute(select(Role).where(Role.key == "procurement"))).scalar_one()
     assert rol is not None
-    headers = await _login_with_access(
-        client, seeded_db, user_factory, "procurement", "yt3d@t.co"
-    )
+    headers = await _login_with_access(client, seeded_db, user_factory, "procurement", "yt3d@t.co")
 
     resp = await client.get(f"/sites/{site.id}/boq", headers=headers)
 
