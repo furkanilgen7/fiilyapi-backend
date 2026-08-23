@@ -1,0 +1,99 @@
+DAILY_HOURS_EXCEEDED = 'Aynı ekipmanın aynı gündeki kayıtları toplamı 24 saati aşamaz (mevcut {mevcut} saat + girilen {girilen} saat).'
+EQUIPMENT_MISSING = 'Ekipman bulunamadı.'
+class EquipmentSummary(tuple)
+  EquipmentSummary.working: <class 'int'>
+  EquipmentSummary.broken: <class 'int'>
+  EquipmentSummary.maintenance: <class 'int'>
+  EquipmentSummary.idle: <class 'int'>
+  EquipmentSummary.monthly_cost: <class 'decimal.Decimal'>
+  EquipmentSummary.monthly_cost_unknown_count: <class 'int'>
+  EquipmentSummary._fields = ('working', 'broken', 'maintenance', 'idle', 'monthly_cost', 'monthly_cost_unknown_count')
+FUEL_LOG_MISSING = 'Yakıt kaydı bulunamadı.'
+HOURS_IS_SERVER_COMPUTED = "Başlangıç ve bitiş saati verildiğinde çalışma süresi sunucu tarafından hesaplanır; 'hours' alanı gönderilemez. Süreyi doğrudan yazmak için saat aralığını boşaltın."
+HOURS_REQUIRED = "Saat aralığı verilmediğinde çalışma süresi ('hours') zorunludur (arıza kaydı gibi)."
+MAX_DAILY_HOURS = Decimal('24')
+OPERATOR_MISSING = 'Seçilen operatör bulunamadı.'
+OVERNIGHT_NOT_SUPPORTED = 'Bitiş saati başlangıç saatinden önce olamaz. Gece yarısını geçen vardiya bu sürümde desteklenmiyor; vardiyayı iki güne iki ayrı kayıt olarak girin.'
+PERMISSION_MODULE = 'equipment'
+PURCHASE_AMOUNT_REQUIRED = 'Şirkete ait (sahip olunan) ekipmanda alış bedeli zorunludur. Kiralık ekipmanda bu alan boş bırakılabilir.'
+SITE_MISSING = 'Seçilen şantiye bulunamadı.'
+SUPPLIER_MISSING = 'Seçilen tedarikçi bulunamadı.'
+TIME_PAIR_REQUIRED = 'Başlangıç ve bitiş saati birlikte verilmelidir: ikisini de girin ya da ikisini de boş bırakın.'
+WORK_LOG_MISSING = 'Çalışma kaydı bulunamadı.'
+_HOURS_INPUTS = frozenset(["'end_time'", "'hours'", "'start_time'"])
+_HOURS_QUANTUM = Decimal('0.01')
+_SECONDS_PER_HOUR = Decimal('3600')
+_UNIT_PRICE_QUANTUM = Decimal('0.0001')
+async def _assert_daily_cap(session: sqlalchemy.ext.asyncio.session.AsyncSession, *, equipment_id: uuid.UUID, work_date: datetime.date, hours: decimal.Decimal, exclude_log_id: uuid.UUID | None = None) -> None
+def _assert_purchase_amount(ownership: app.modules.equipment.models.EquipmentOwnership, purchase_amount: decimal.Decimal | None) -> None
+async def _assert_references(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, *, site_id: uuid.UUID | None, operator_id: uuid.UUID | None, supplier_id: uuid.UUID | None) -> None
+async def _is_visible_site(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, site_id: uuid.UUID | None) -> bool
+async def _lock_equipment(session: sqlalchemy.ext.asyncio.session.AsyncSession, *equipment_ids: uuid.UUID) -> None
+def _monday(gun: datetime.date) -> datetime.date
+def _month_bounds(bugun: datetime.date) -> tuple[datetime.date, datetime.date]
+def _quantize_unit_price(value: decimal.Decimal) -> decimal.Decimal
+def _resolve_hours(*, start_time: datetime.time | None, end_time: datetime.time | None, hours: decimal.Decimal | None) -> decimal.Decimal
+async def _visible_project_ids(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User) -> list[uuid.UUID]
+def _week_buckets(ilk: datetime.date, son: datetime.date, gunluk: list[sqlalchemy.engine.row.Row]) -> list[app.modules.equipment.schemas.WorkSummaryWeek]
+async def create_equipment(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, data: app.modules.equipment.schemas.EquipmentCreate) -> tuple[app.modules.equipment.models.Equipment, str]
+async def create_fuel_log(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, data: app.modules.equipment.schemas.FuelLogCreate) -> tuple[app.modules.equipment.models.EquipmentFuelLog, str]
+async def create_work_log(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, data: app.modules.equipment.schemas.WorkLogCreate) -> tuple[app.modules.equipment.models.EquipmentWorkLog, str]
+async def delete_fuel_log(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, log_id: uuid.UUID) -> str
+async def delete_work_log(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, log_id: uuid.UUID) -> str
+async def fuel_summary(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, *, year: int, month: int, equipment_id: uuid.UUID | None) -> app.modules.equipment.schemas.FuelSummaryResponse
+async def get_equipment_or_404(session: sqlalchemy.ext.asyncio.session.AsyncSession, equipment_id: uuid.UUID) -> app.modules.equipment.models.Equipment
+async def list_equipment(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, *, status: app.modules.equipment.models.EquipmentStatus | None, category: app.modules.equipment.models.EquipmentCategory | None, site_id: uuid.UUID | None, ownership: app.modules.equipment.models.EquipmentOwnership | None, q: str | None, is_active: bool | None, limit: int, offset: int) -> tuple[list[app.modules.equipment.models.Equipment], int]
+async def list_fuel_logs(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, *, equipment_id: uuid.UUID | None, site_id: uuid.UUID | None, date_from: datetime.date | None, date_to: datetime.date | None, limit: int, offset: int) -> tuple[list[app.modules.equipment.models.EquipmentFuelLog], int]
+async def list_work_logs(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, *, equipment_id: uuid.UUID | None, site_id: uuid.UUID | None, date_from: datetime.date | None, date_to: datetime.date | None, record_type: app.modules.equipment.models.WorkLogType | None, limit: int, offset: int) -> tuple[list[app.modules.equipment.models.EquipmentWorkLog], int]
+def month_bounds(year: int, month: int) -> tuple[datetime.date, datetime.date]
+async def summarize(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User) -> app.modules.equipment.service.EquipmentSummary
+async def update_equipment(session: sqlalchemy.ext.asyncio.session.AsyncSession, equipment: app.modules.equipment.models.Equipment, actor: app.modules.users.models.User, data: app.modules.equipment.schemas.EquipmentUpdate) -> tuple[app.modules.equipment.models.Equipment, str]
+async def update_fuel_log(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, log: app.modules.equipment.models.EquipmentFuelLog, data: app.modules.equipment.schemas.FuelLogUpdate) -> tuple[app.modules.equipment.models.EquipmentFuelLog, str]
+async def update_work_log(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, log: app.modules.equipment.models.EquipmentWorkLog, data: app.modules.equipment.schemas.WorkLogUpdate) -> tuple[app.modules.equipment.models.EquipmentWorkLog, str]
+async def visible_equipment(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, equipment_id: uuid.UUID) -> app.modules.equipment.models.Equipment
+async def visible_fuel_log(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, log_id: uuid.UUID) -> app.modules.equipment.models.EquipmentFuelLog
+async def visible_work_log(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, log_id: uuid.UUID) -> app.modules.equipment.models.EquipmentWorkLog
+async def work_summary(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, *, year: int, month: int, site_id: uuid.UUID | None) -> app.modules.equipment.schemas.WorkSummaryResponse
+
+# --- saf yardımcı çıktıları ---
+_month_bounds(datetime.date(2026, 1, 15)) = (datetime.date(2026, 1, 1), datetime.date(2026, 1, 31))
+_month_bounds(datetime.date(2026, 2, 1)) = (datetime.date(2026, 2, 1), datetime.date(2026, 2, 28))
+_month_bounds(datetime.date(2024, 2, 29)) = (datetime.date(2024, 2, 1), datetime.date(2024, 2, 29))
+_month_bounds(datetime.date(2026, 11, 30)) = (datetime.date(2026, 11, 1), datetime.date(2026, 11, 30))
+_month_bounds(datetime.date(2026, 12, 31)) = (datetime.date(2026, 12, 1), datetime.date(2026, 12, 31))
+month_bounds(2026, 1) = (datetime.date(2026, 1, 1), datetime.date(2026, 1, 31))
+month_bounds(2026, 2) = (datetime.date(2026, 2, 1), datetime.date(2026, 2, 28))
+month_bounds(2024, 2) = (datetime.date(2024, 2, 1), datetime.date(2024, 2, 29))
+month_bounds(2026, 4) = (datetime.date(2026, 4, 1), datetime.date(2026, 4, 30))
+month_bounds(2026, 12) = (datetime.date(2026, 12, 1), datetime.date(2026, 12, 31))
+_monday(datetime.date(2026, 5, 4)) = datetime.date(2026, 5, 4)
+_monday(datetime.date(2026, 5, 5)) = datetime.date(2026, 5, 4)
+_monday(datetime.date(2026, 5, 6)) = datetime.date(2026, 5, 4)
+_monday(datetime.date(2026, 5, 7)) = datetime.date(2026, 5, 4)
+_monday(datetime.date(2026, 5, 8)) = datetime.date(2026, 5, 4)
+_monday(datetime.date(2026, 5, 9)) = datetime.date(2026, 5, 4)
+_monday(datetime.date(2026, 5, 10)) = datetime.date(2026, 5, 4)
+_week_buckets(2026-05) = [(1, datetime.date(2026, 5, 1), datetime.date(2026, 5, 3), Decimal('11.50'), <WorkLogType.worked: 'worked'>), (2, datetime.date(2026, 5, 4), datetime.date(2026, 5, 10), Decimal('10.00'), <WorkLogType.worked: 'worked'>), (3, datetime.date(2026, 5, 11), datetime.date(2026, 5, 17), Decimal('10.00'), <WorkLogType.breakdown: 'breakdown'>), (4, datetime.date(2026, 5, 18), datetime.date(2026, 5, 24), Decimal('0'), None), (5, datetime.date(2026, 5, 25), datetime.date(2026, 5, 31), Decimal('2.25'), <WorkLogType.worked: 'worked'>)]
+_week_buckets(2026-05, BOS) = [(1, datetime.date(2026, 5, 1), datetime.date(2026, 5, 3), Decimal('0'), None), (2, datetime.date(2026, 5, 4), datetime.date(2026, 5, 10), Decimal('0'), None), (3, datetime.date(2026, 5, 11), datetime.date(2026, 5, 17), Decimal('0'), None), (4, datetime.date(2026, 5, 18), datetime.date(2026, 5, 24), Decimal('0'), None), (5, datetime.date(2026, 5, 25), datetime.date(2026, 5, 31), Decimal('0'), None)]
+_resolve_hours(start_time=datetime.time(8, 0), end_time=datetime.time(17, 30), hours=None) = Decimal('9.50')
+_resolve_hours(start_time=datetime.time(8, 0), end_time=datetime.time(8, 0), hours=None) = Decimal('0.00')
+_resolve_hours(start_time=datetime.time(17, 0), end_time=datetime.time(8, 0), hours=None) = !EquipmentValidationError: Bitiş saati başlangıç saatinden önce olamaz. Gece yarısını geçen vardiya bu sürümde desteklenmiyor; vardiyayı iki güne iki ayrı kayıt olarak girin.
+_resolve_hours(start_time=datetime.time(8, 0), end_time=None, hours=None) = !EquipmentValidationError: Başlangıç ve bitiş saati birlikte verilmelidir: ikisini de girin ya da ikisini de boş bırakın.
+_resolve_hours(start_time=None, end_time=datetime.time(8, 0), hours=None) = !EquipmentValidationError: Başlangıç ve bitiş saati birlikte verilmelidir: ikisini de girin ya da ikisini de boş bırakın.
+_resolve_hours(start_time=datetime.time(8, 0), end_time=datetime.time(17, 0), hours=Decimal('9')) = !EquipmentValidationError: Başlangıç ve bitiş saati verildiğinde çalışma süresi sunucu tarafından hesaplanır; 'hours' alanı gönderilemez. Süreyi doğrudan yazmak için saat aralığını boşaltın.
+_resolve_hours(start_time=None, end_time=None, hours=Decimal('8')) = Decimal('8.00')
+_resolve_hours(start_time=None, end_time=None, hours=Decimal('7.126')) = Decimal('7.13')
+_resolve_hours(start_time=None, end_time=None, hours=None) = !EquipmentValidationError: Saat aralığı verilmediğinde çalışma süresi ('hours') zorunludur (arıza kaydı gibi).
+_resolve_hours(start_time=datetime.time(0, 0), end_time=datetime.time(23, 59), hours=None) = Decimal('23.98')
+_assert_purchase_amount(<EquipmentOwnership.owned: 'owned'>, None) = !EquipmentValidationError: Şirkete ait (sahip olunan) ekipmanda alış bedeli zorunludur. Kiralık ekipmanda bu alan boş bırakılabilir.
+_assert_purchase_amount(<EquipmentOwnership.owned: 'owned'>, Decimal('0')) = None
+_assert_purchase_amount(<EquipmentOwnership.owned: 'owned'>, Decimal('125000.50')) = None
+_assert_purchase_amount(<EquipmentOwnership.rented: 'rented'>, None) = None
+_assert_purchase_amount(<EquipmentOwnership.rented: 'rented'>, Decimal('0')) = None
+_assert_purchase_amount(<EquipmentOwnership.rented: 'rented'>, Decimal('125000.50')) = None
+_quantize_unit_price(Decimal('41.12345')) = Decimal('41.1235')
+_quantize_unit_price(Decimal('41.12355')) = Decimal('41.1236')
+_quantize_unit_price(Decimal('41.1')) = Decimal('41.1000')
+_quantize_unit_price(Decimal('0')) = Decimal('0.0000')
+_quantize_unit_price(Decimal('-41.12345')) = Decimal('-41.1235')
+DAILY_HOURS_EXCEEDED.format = 'Aynı ekipmanın aynı gündeki kayıtları toplamı 24 saati aşamaz (mevcut 20.5 saat + girilen 4.5 saat).'
