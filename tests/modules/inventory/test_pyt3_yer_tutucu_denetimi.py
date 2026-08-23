@@ -210,16 +210,17 @@ async def test_PLAN_ve_TALEP_VARKEN_DE_zarflar_BOS_KALIR(
         "items"
     ][0]
 
-    assert satir["monthly_need"] == {
-        "available": False,
-        "value": None,
-        "pending_module": "site_planning",
-    }, "(B) — plan satiri VAR ama malzeme ihtiyaci TASIMAZ; uydurma sayi basilmaz"
-    assert satir["section"] == {
-        "available": False,
-        "items": [],
-        "pending_module": "site_planning",
-    }, "(C) — talep bolumu 'stogun bolumu' DEGILDIR; makul gorunen yanlis basilmaz"
+    # 🔴 TAM KUME: iki sutun ayri `assert`lerde olsaydi ilkinin kirilmasi
+    # ikincisini HIC KOSTURMAZDI ve tablo yarim gorunurdu.
+    assert {
+        "monthly_need": satir["monthly_need"],
+        "section": satir["section"],
+    } == {
+        # (B) — plan satiri VAR ama malzeme ihtiyaci TASIMAZ; uydurma sayi basilmaz
+        "monthly_need": {"available": False, "value": None, "pending_module": "site_planning"},
+        # (C) — talep bolumu "stogun bolumu" DEGILDIR; makul gorunen yanlis basilmaz
+        "section": {"available": False, "items": [], "pending_module": "site_planning"},
+    }, "ŞS yer tutucu tablosu KAYDI — schemas.SiteStockRow docstring'i bayatladi"
 
 
 async def test_bekleyen_siparis_KPI_si_HÂLÂ_BAGLI(

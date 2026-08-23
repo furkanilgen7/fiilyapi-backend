@@ -179,17 +179,18 @@ async def test_satis_yanitinda_maliyet_GERCEK__pending_modules_maliyeti_ANMAZ(
     assert resp.status_code == 201, resp.text
     govde = resp.json()
 
-    assert govde["unit_cost"] == {
-        "available": True,
-        "value": "800000.00",
-        "pending_module": None,
-    }, "maliyet zarfi BAGLI degil — premise curutmesi yeniden olculmelidir"
-    assert govde["sale_profit"] == {
-        "available": True,
-        "value": "200000.00",
-        "pending_module": None,
-    }
-    assert "project_costs" not in govde["pending_modules"], (
-        "yanit kendi icinde celisiyor: maliyet DOLU ama etiket 'bekleniyor' diyor"
+    # 🔴 TAM KUME: uc olgu (maliyet · kâr · etiket) TEK karsilastirmada. Art
+    # arda dizilmis `assert`lerde ilki kirilsa digerleri HIC KOSMAZ ve "zarf
+    # dolu AMA etiket hâlâ bekliyor" celiskisi gorunmezdi.
+    assert {
+        "unit_cost": govde["unit_cost"],
+        "sale_profit": govde["sale_profit"],
+        "pending_modules": govde["pending_modules"],
+    } == {
+        "unit_cost": {"available": True, "value": "800000.00", "pending_module": None},
+        "sale_profit": {"available": True, "value": "200000.00", "pending_module": None},
+        "pending_modules": ["documents", "invoicing"],
+    }, (
+        "maliyet BAGLI degil ya da etiket onu hâlâ 'bekleniyor' sayiyor — "
+        "P-YT3'un premise curutmesi yeniden olculmelidir"
     )
-    assert govde["pending_modules"] == ["documents", "invoicing"]

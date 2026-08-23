@@ -223,6 +223,11 @@ async def test_zarflar_ALTISI_DE_BOS__anahtar_ve_durum_alan_alan(
     """🔴 `available is False` TEK BASINA zayif iddiadir (alan zaten oyle dogar)
     — her satirda ANAHTAR da ELLE yazilir. Anahtari degistirmek bir SOZLESME
     degisikligidir ve tam burada kirilir.
+
+    🔴 ALTI ALAN AYRI AYRI DEGIL, **TAM KUME** olarak karsilastirilir: art arda
+    dizilmis alti `assert`te ilki kirilirsa digerleri HIC KOSMAZ ve denetim
+    tablosunun yalniz bir satiri gorunur. Tek karsilastirma alti sapmayi da
+    ayni anda basar.
     """
     site = await _bos_boq(seeded_db, project_factory, "YT3-1")
     headers = await _login_with_access(client, seeded_db, user_factory, "patron", "yt3a@t.co")
@@ -233,30 +238,28 @@ async def test_zarflar_ALTISI_DE_BOS__anahtar_ve_durum_alan_alan(
     totals = govde["totals"]
     kalem = govde["groups"][0]["items"][0]
 
-    assert (kalem["progress_pct"]["available"], kalem["progress_pct"]["pending_module"]) == (
-        False,
-        "progress_payments",
-    ), "(C) — hakedis verisi VAR ama `procurement` icin izin kapisi atlanirdi (K4)"
-    assert (totals["contract_total"]["available"], totals["contract_total"]["pending_module"]) == (
-        False,
-        "contracts",
-    ), "(C) — sozlesme bedeli hesaplanabilir; `site_chief`/`procurement` gormemeli (K4)"
-    assert (totals["realized_total"]["available"], totals["realized_total"]["pending_module"]) == (
-        False,
-        "progress_payments",
-    ), "(C) — K4"
-    assert (
-        totals["remaining_total"]["available"],
-        totals["remaining_total"]["pending_module"],
-    ) == (False, "progress_payments"), "(C) — K4"
-    assert (totals["revision_total"]["available"], totals["revision_total"]["pending_module"]) == (
-        False,
-        "contracts",
-    ), "(B) — repoda REVIZYON KAVRAMI HIC YOK; modul canli, kaynak degil"
-    assert (
-        totals["grand_progress_pct"]["available"],
-        totals["grand_progress_pct"]["pending_module"],
-    ) == (False, "progress_payments"), "(C) — K4"
+    pp = kalem["progress_pct"]
+    olculen = {"progress_pct": (pp["available"], pp["pending_module"])}
+    for alan in (
+        "contract_total",
+        "realized_total",
+        "remaining_total",
+        "revision_total",
+        "grand_progress_pct",
+    ):
+        olculen[alan] = (totals[alan]["available"], totals[alan]["pending_module"])
+
+    assert olculen == {
+        # (C) TUZAK — hakedis verisi VAR, engel `procurement` icin izin kapisi (K4)
+        "progress_pct": (False, "progress_payments"),
+        # (C) TUZAK — sozlesme bedeli hesaplanabilir; site_chief/procurement gormemeli
+        "contract_total": (False, "contracts"),
+        "realized_total": (False, "progress_payments"),
+        "remaining_total": (False, "progress_payments"),
+        # (B) GECERLI — repoda REVIZYON KAVRAMI HIC YOK; modul canli, kaynak degil
+        "revision_total": (False, "contracts"),
+        "grand_progress_pct": (False, "progress_payments"),
+    }, "P-YT3 siniflandirma tablosu KAYDI — schemas.BoqTotals docstring'i bayatladi"
 
     assert govde["totals"]["grand_total"] == "250000.00", (
         "GERCEK olan tek toplam bozulmus — 100.000 × 2.500,00"
@@ -358,16 +361,21 @@ async def test_VERI_VARKEN_DE_zarflar_BOS_KALIR(client, seeded_db, user_factory,
     govde = (await client.get(f"/sites/{site.id}/boq", headers=headers)).json()
 
     kalem = govde["groups"][0]["items"][0]
-    assert kalem["progress_pct"] == {
-        "available": False,
-        "value": None,
-        "pending_module": "progress_payments",
-    }, "hakedis satiri VAR ama zarf DOLMAMALI — engel veri degil izin kapisi (K4)"
-    for alan in ("contract_total", "realized_total", "remaining_total", "grand_progress_pct"):
-        assert govde["totals"][alan]["available"] is False, (
-            f"`{alan}` veri varken doldu — K4 kapisi atlandi"
-        )
-        assert govde["totals"][alan]["value"] is None, f"`{alan}` deger sizdirdi"
+    # TAM KUME karsilastirmasi (art arda `assert` maskelemesi yok): veri varken
+    # DOLAN her alan tek seferde gorunur.
+    dolanlar = {
+        alan: govde["totals"][alan]
+        for alan in ("contract_total", "realized_total", "remaining_total", "grand_progress_pct")
+        if govde["totals"][alan]["available"] or govde["totals"][alan]["value"] is not None
+    }
+    if kalem["progress_pct"]["available"] or kalem["progress_pct"]["value"] is not None:
+        dolanlar["progress_pct"] = kalem["progress_pct"]
+
+    assert dolanlar == {}, (
+        f"veri KURULUYKEN su zarflar doldu: {sorted(dolanlar)} — engel veri degil "
+        "izin kapisidir (K4); baglama karari once matris ayrismasini kapatmalidir"
+    )
+    assert kalem["progress_pct"]["pending_module"] == "progress_payments"
 
 
 async def test_sozlesme_BEDELI_boq_yanitinda_HICBIR_ALANDA_gecmez(
