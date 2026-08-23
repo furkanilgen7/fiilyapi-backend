@@ -292,9 +292,13 @@ def to_detail(
     olabilir, cunku iki hakediş ailesi santiyeyi FARKLI derinlikte tanir:
       * isveren hakedişi PROJEYE baglidir, santiye yalniz SATIR duzeyindedir
         (`ProgressPaymentLine.site_id`) — toplanabilir;
-      * taseron hakedişinde `site_id` HIC YOKTUR (`project_id` + bilgi amacli
-        `section_id`) — santiyeye DUSURULEMEZ.
-    Yani buraya yazilacak her sayi "hangi yarisi?" sorusunu cevapsiz birakir.
+      * taseron hakedişinin KENDISINDE `site_id` YOKTUR (`project_id` + bilgi
+        amacli `section_id`); santiyeye ancak SOZLESME uzerinden inilebilir ve
+        `SubcontractorContract.site_id` NULLABLE'dir.
+    Yani buraya yazilacak sayi hem "hangi yarisi?" sorusunu cevapsiz birakir,
+    hem de 🔴 K2'ye carpar: sozlesmesi santiyesiz acilmis bir santiyede sonuc
+    `0` cikar ve "hakediş YOK" ile "hakediş BU SANTIYEYE BAGLANMAMIS" ayni
+    sayiyi uretir. Yer tutucu bu ikisini ayirmaya devam eder.
     Mockup (`Şantiye Detay.dc.html:123-127`) tek kutu cizer ve altina
     `/ ₺11,2M` koyar — yani asagidaki `contract_amount`la BIRLIKTE anlamlidir;
     ikisinden biri uydurulursa oran da uydurulmus olur.
