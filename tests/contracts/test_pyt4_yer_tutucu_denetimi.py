@@ -307,14 +307,15 @@ async def test_N1_ilerleme_baglamasi_sozlesme_basina_SORGU_ACMAZ(
 ):
     """🔴 Bağlama EK SORGU AÇMADI: kümülatif sözlük ZATEN okunuyordu.
 
-    Üç sözleşme + üç hakedişle koşulan sorgu sayısı, tek sözleşmeliyle AYNI
-    olmalı. Sözleşme başına bir sorgu açan naif bağlama burada kırmızıya döner.
+    DÖRT sözleşme + dört hakedişle koşulan sorgu sayısı, TEK sözleşmeliyle AYNI
+    olmalı. Sözleşme başına `cumulative_gross_by_contracts` çağıran naif bağlama
+    (bu bekçi yazılırken mutasyonla denendi) burada kırmızıya döner.
     """
     from sqlalchemy import event
 
     ifadeler: list[str] = []
 
-    def _kaydet(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+    def _kaydet(conn, cursor, statement, parameters, context, executemany):
         ifadeler.append(statement)
 
     tek = await _sozlesme(seeded_db, ornek_proje, contract_no="TSD-N1-1", miktar=Decimal("10"))

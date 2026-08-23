@@ -172,17 +172,20 @@ def _subcontractor_item(
     """
     from app.modules.progress_payments import summary as progress_payments_summary
 
+    # Bedel TEK KEZ hesaplanir: hem "Bedel" sutunu hem yuzdenin paydasidir ve
+    # iki kez cagirmak, ileride biri degistiginde ikisinin AYRISMASINA acik kapi
+    # birakirdi (satir ici kurus yuvarlamasi `_subcontractor_amount`tadir).
+    amount = _subcontractor_amount(contract)
+
     return ContractListItem(
         id=contract.id,
         title=_subcontractor_title(contract),
         contract_no=contract.contract_no,
         counterparty_name=contract.subcontractor_name,
-        amount=_subcontractor_amount(contract),
+        amount=amount,
         start_date=contract.start_date,
         end_date=contract.end_date,
-        progress_pct=progress_payments_summary.progress_pct(
-            cumulative_gross, _subcontractor_amount(contract)
-        ),
+        progress_pct=progress_payments_summary.progress_pct(cumulative_gross, amount),
         status=contract.status,
         is_draft=contract.is_draft,
     )
