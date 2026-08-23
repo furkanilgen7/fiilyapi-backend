@@ -312,8 +312,6 @@ async def test_N1_ilerleme_baglamasi_sozlesme_basina_SORGU_ACMAZ(
     """
     from sqlalchemy import event
 
-    from app.core.db import engine as _engine  # noqa: F401  (yalnız modül varlığı)
-
     ifadeler: list[str] = []
 
     def _kaydet(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
