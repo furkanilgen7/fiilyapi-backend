@@ -19,8 +19,17 @@ _MODULES_DIR = _REPO_ROOT / "app" / "modules"
 
 
 def _modules_with_models() -> set[str]:
-    """Diskteki gercek: `app/modules/<ad>/models.py` tasiyan her modul."""
-    return {path.parent.name for path in _MODULES_DIR.glob("*/models.py")}
+    """Diskteki gercek: model tasiyan her modul — TEK DOSYA da PAKET de olur.
+
+    🔴 TB-EQUIP olcumu: yalniz `*/models.py` aranirsa bir modul `models.py`den
+    `models/` PAKETINE cevrildigi anda bu kumeden SESSIZCE dusuyor. `eksik`
+    kumesi (disk - env.py) bos kalir, test YESIL gecer ve o modulu artik
+    BEKCILEMEZ — env.py'den silinse bile kimse gormez. Kor bekci tam olarak
+    bu dosyanin uyardigi sessiz borcun ta kendisi olurdu.
+    """
+    tek_dosya = {path.parent.name for path in _MODULES_DIR.glob("*/models.py")}
+    paket = {path.parent.parent.name for path in _MODULES_DIR.glob("*/models/__init__.py")}
+    return tek_dosya | paket
 
 
 def _modules_imported_by_env() -> set[str]:
