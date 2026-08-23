@@ -37,6 +37,7 @@ hiçliğe çevirir; yüzeyi bilerek değiştiren bir dilim referansı
 from __future__ import annotations
 
 import ast
+import importlib
 import inspect
 from collections import defaultdict
 from datetime import date, time
@@ -97,20 +98,34 @@ def _imza(nesne: object) -> str:
     return _normalize(f"{damga} {nesne.__name__}{imza}")
 
 
-#: 🔴 Modülün KENDİ İÇİNDEKİ alt paket yolu tek bir cepheye indirgenir.
-#: `inspect.signature` bir sınıf anotasyonunu `modul.QualName` olarak basar;
-#: `EquipmentSummary` bölmede bir alt modüle taşındığında bu metin
-#: `...service.EquipmentSummary` -> `...service.core.EquipmentSummary` olur.
-#: Bu, DAVRANIŞ değil YERLEŞİM farkıdır (sınıf nesnesi aynı nesnedir, cepheden
-#: aynen okunur) ve tam da bu dilimin yaptığı şeydir. Normalizasyon YALNIZ bu
-#: öneki kapsar: başka bir modüle (`schemas`, `models`) kayan bir anotasyon
-#: normalize EDİLMEZ ve bekçide kırmızı verir.
-_CEPHE = "app.modules.equipment.service"
+#: 🔴 CEPHEYE İNDİRGENEN paket yolları — `service` VE `models`.
+#:
+#: `inspect.signature` bir sınıf anotasyonunu `modul.QualName` olarak basar.
+#: Bir sınıf cephesi aynı kalarak bir alt modüle taşındığında bu METİN değişir
+#: (`...models.Equipment` -> `...models.core.Equipment`) ama DAVRANIŞ değişmez:
+#: sınıf AYNI nesnedir, cepheden aynen okunur ve `openapi.json` çıktısı
+#: (ölçüldü: iki ayrı yorumlayıcıda da) BAYT BAYT aynı kalır.
+#:
+#: Normalizasyon YALNIZ bu iki paketin GERÇEK parça adlarını kapsar; adlar
+#: diskten okunur, elle yazılmaz. Bir anotasyon BAŞKA bir modüle kayarsa
+#: (`schemas`, `repository`, başka bir modülün `models`i) normalize EDİLMEZ ve
+#: bekçi kırmızı verir — kanıtı `test_normalizasyon_baska_modulu_YUTMAZ`.
+_CEPHELER = ("app.modules.equipment.service", "app.modules.equipment.models")
+
+
+def _paket_parcalari(paket_yolu: str) -> list[str]:
+    """Bir cephenin disk üzerindeki parça adları (`__init__.py` hariç)."""
+    modul = importlib.import_module(paket_yolu)
+    kaynak = Path(inspect.getfile(modul))
+    if kaynak.name != "__init__.py":
+        return []
+    return sorted(p.stem for p in kaynak.parent.glob("*.py") if p.name != "__init__.py")
 
 
 def _normalize(metin: str) -> str:
-    for parca in sorted({p.stem for p in _paket_dosyalari()}, key=len, reverse=True):
-        metin = metin.replace(f"{_CEPHE}.{parca}.", f"{_CEPHE}.")
+    for cephe in _CEPHELER:
+        for parca in sorted(_paket_parcalari(cephe), key=len, reverse=True):
+            metin = metin.replace(f"{cephe}.{parca}.", f"{cephe}.")
     return metin
 
 
@@ -329,6 +344,29 @@ def test_saf_yardimci_ciktilari_gercekten_kosuyor() -> None:
     hatalar = [s for s in ciktilar if "!EquipmentValidationError" in s]
     assert len(hatalar) == 6, f"beklenen 6 doğrulama hatası, {len(hatalar)} bulundu"
     assert issubclass(EquipmentValidationError, Exception)
+
+
+def test_normalizasyon_baska_modulu_YUTMAZ() -> None:
+    """🔴 `_normalize`ın POZİTİF KONTROLÜ.
+
+    Normalizasyon iki cephenin KENDİ parçalarını yutar. Kör bir `replace`
+    olsaydı gerçek bir kayma da (bir tipin `schemas`a ya da başka bir modüle
+    taşınması) sessizce yutulur ve bekçi hiçbir şey bekçilemezdi.
+    """
+    assert _normalize("app.modules.equipment.service.core.EquipmentSummary") == (
+        "app.modules.equipment.service.EquipmentSummary"
+    )
+    assert _normalize("app.modules.equipment.models.core.Equipment") == (
+        "app.modules.equipment.models.Equipment"
+    )
+    # BAŞKA modüller DOKUNULMADAN geçer:
+    for yabanci in (
+        "app.modules.equipment.schemas.EquipmentCreate",
+        "app.modules.equipment.repository.Foo",
+        "app.modules.personnel.models.core.Personnel",
+        "app.modules.equipment.rental_service.Bar",
+    ):
+        assert _normalize(yabanci) == yabanci, f"normalizasyon YUTTU: {yabanci}"
 
 
 def test_paylasilan_yardimcilarin_tek_kopyasi_var() -> None:
