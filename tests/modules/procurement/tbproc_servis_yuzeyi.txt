@@ -1,0 +1,177 @@
+# TB-PROC anlik goruntusu — `app.modules.procurement.service`
+# Uretim: tests/modules/procurement/test_tbproc_servis_yuzeyi.py :: build_surface()
+
+## A. MODUL YUZEYI (ad + imza + varsayilanlar)
+
+class AsyncSession <- sqlalchemy.ext.asyncio.session.AsyncSession
+class ConflictError <- app.core.errors.ConflictError
+class Decimal <- decimal.Decimal
+class DeleteNotAllowedError <- app.core.errors.DeleteNotAllowedError
+class NotFoundError <- app.core.errors.NotFoundError
+other PERMISSION_MODULE: builtins.str = 'procurement'
+class ProcurementValidationError <- app.core.errors.ProcurementValidationError
+class PurchaseOrder <- app.modules.procurement.models.PurchaseOrder
+class PurchaseOrderCreate <- app.modules.procurement.schemas.PurchaseOrderCreate
+class PurchaseOrderListResponse <- app.modules.procurement.schemas.PurchaseOrderListResponse
+class PurchaseOrderResponse <- app.modules.procurement.schemas.PurchaseOrderResponse
+class PurchaseOrderStatus <- app.modules.procurement.models.PurchaseOrderStatus
+class PurchaseOrderUpdate <- app.modules.procurement.schemas.PurchaseOrderUpdate
+class PurchasePriority <- app.modules.procurement.models.PurchasePriority
+class PurchaseQuote <- app.modules.procurement.models.PurchaseQuote
+class PurchaseQuoteCard <- app.modules.procurement.schemas.PurchaseQuoteCard
+class PurchaseQuoteCreate <- app.modules.procurement.schemas.PurchaseQuoteCreate
+class PurchaseQuoteListResponse <- app.modules.procurement.schemas.PurchaseQuoteListResponse
+class PurchaseQuoteResponse <- app.modules.procurement.schemas.PurchaseQuoteResponse
+class PurchaseQuoteUpdate <- app.modules.procurement.schemas.PurchaseQuoteUpdate
+class PurchaseRequest <- app.modules.procurement.models.PurchaseRequest
+class PurchaseRequestCreate <- app.modules.procurement.schemas.PurchaseRequestCreate
+class PurchaseRequestLine <- app.modules.procurement.models.PurchaseRequestLine
+class PurchaseRequestLineCreate <- app.modules.procurement.schemas.PurchaseRequestLineCreate
+class PurchaseRequestLineResponse <- app.modules.procurement.schemas.PurchaseRequestLineResponse
+class PurchaseRequestListResponse <- app.modules.procurement.schemas.PurchaseRequestListResponse
+class PurchaseRequestListRow <- app.modules.procurement.schemas.PurchaseRequestListRow
+class PurchaseRequestResponse <- app.modules.procurement.schemas.PurchaseRequestResponse
+class PurchaseRequestStatus <- app.modules.procurement.models.PurchaseRequestStatus
+class PurchaseRequestUpdate <- app.modules.procurement.schemas.PurchaseRequestUpdate
+class Row <- sqlalchemy.engine.row.Row
+class StockItem <- app.modules.inventory.models.StockItem
+class Supplier <- app.modules.procurement.models.Supplier
+class SupplierCard <- app.modules.procurement.schemas.SupplierCard
+class SupplierCreate <- app.modules.procurement.schemas.SupplierCreate
+class SupplierResponse <- app.modules.procurement.schemas.SupplierResponse
+class SupplierUpdate <- app.modules.procurement.schemas.SupplierUpdate
+class User <- app.modules.users.models.User
+class _DeletableRequest <- <service>._DeletableRequest
+    __init__(self, request: app.modules.procurement.models.PurchaseRequest) -> None
+    __slots__ = ('created_by', 'is_draft')
+dict _TRANSITION_MESSAGES:
+    <RequestAction.submit: 'submit'>: app.modules.audit.messages.procurement.purchase_request_submitted
+    <RequestAction.approve: 'approve'>: app.modules.audit.messages.procurement.purchase_request_approved
+    <RequestAction.reject: 'reject'>: app.modules.audit.messages.procurement.purchase_request_rejected
+def _assert_draft(request: app.modules.procurement.models.PurchaseRequest) -> None
+async def _assert_quote_wait(request: app.modules.procurement.models.PurchaseRequest) -> None
+async def _assert_scope(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, project_id: uuid.UUID, site_id: uuid.UUID | None, section_id: uuid.UUID | None) -> None
+def _assert_shipping_rule(shipping_included: bool, shipping_cost: decimal.Decimal | None) -> None
+async def _assert_stock_items_exist(session: sqlalchemy.ext.asyncio.session.AsyncSession, lines: list[app.modules.procurement.schemas.PurchaseRequestLineCreate]) -> None
+def _base_fields(request: app.modules.procurement.models.PurchaseRequest) -> dict
+def _line_total(line: app.modules.procurement.models.PurchaseRequestLine) -> decimal.Decimal | None
+def _new_lines(request_id: uuid.UUID, lines: list[app.modules.procurement.schemas.PurchaseRequestLineCreate]) -> list[app.modules.procurement.models.PurchaseRequestLine]
+async def _order_response(session: sqlalchemy.ext.asyncio.session.AsyncSession, order_id: uuid.UUID) -> app.modules.procurement.schemas.PurchaseOrderResponse
+def _quote_fields(quote: app.modules.procurement.models.PurchaseQuote) -> dict
+async def _quote_response(session: sqlalchemy.ext.asyncio.session.AsyncSession, quote: app.modules.procurement.models.PurchaseQuote) -> app.modules.procurement.schemas.PurchaseQuoteResponse
+def _strip(deger: str | None) -> str | None
+def _to_line_response(line: app.modules.procurement.models.PurchaseRequestLine, item: app.modules.inventory.models.StockItem | None, balances: dict[uuid.UUID, decimal.Decimal]) -> app.modules.procurement.schemas.PurchaseRequestLineResponse
+def _to_order_response(row: sqlalchemy.engine.row.Row) -> app.modules.procurement.schemas.PurchaseOrderResponse
+def _to_supplier_card(row: sqlalchemy.engine.row.Row) -> app.modules.procurement.schemas.SupplierCard
+async def _visible_project_ids(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User) -> list[uuid.UUID]
+async def _visible_quote(session: sqlalchemy.ext.asyncio.session.AsyncSession, request: app.modules.procurement.models.PurchaseRequest, quote_id: uuid.UUID) -> app.modules.procurement.models.PurchaseQuote
+module approvals_service -> app.modules.approvals.service
+async def build_request_detail(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, request: app.modules.procurement.models.PurchaseRequest) -> app.modules.procurement.schemas.PurchaseRequestResponse
+def can_delete(actor_id: uuid.UUID, level: app.core.access.AccessLevel, record: app.core.access.Deletable) -> bool
+async def can_delete_request(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, request: app.modules.procurement.models.PurchaseRequest) -> bool
+async def create_order(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, data: app.modules.procurement.schemas.PurchaseOrderCreate) -> tuple[app.modules.procurement.schemas.PurchaseOrderResponse, str]
+async def create_quote(session: sqlalchemy.ext.asyncio.session.AsyncSession, request: app.modules.procurement.models.PurchaseRequest, data: app.modules.procurement.schemas.PurchaseQuoteCreate) -> tuple[app.modules.procurement.schemas.PurchaseQuoteResponse, str]
+async def create_request(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, data: app.modules.procurement.schemas.PurchaseRequestCreate) -> tuple[app.modules.procurement.models.PurchaseRequest, str]
+async def create_supplier(session: sqlalchemy.ext.asyncio.session.AsyncSession, data: app.modules.procurement.schemas.SupplierCreate) -> tuple[app.modules.procurement.models.Supplier, str]
+async def delete_quote(session: sqlalchemy.ext.asyncio.session.AsyncSession, request: app.modules.procurement.models.PurchaseRequest, quote_id: uuid.UUID) -> str
+async def delete_request(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, request: app.modules.procurement.models.PurchaseRequest) -> str
+async def get_order_detail(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, order_id: uuid.UUID) -> app.modules.procurement.schemas.PurchaseOrderResponse
+async def get_supplier(session: sqlalchemy.ext.asyncio.session.AsyncSession, supplier_id: uuid.UUID) -> app.modules.procurement.models.Supplier
+async def get_supplier_card(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, supplier_id: uuid.UUID) -> app.modules.procurement.schemas.SupplierCard
+module guards -> app.modules.procurement.guards
+async def list_orders(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, *, status: app.modules.procurement.models.PurchaseOrderStatus | None, project_id: uuid.UUID | None, supplier_id: uuid.UUID | None, q: str | None, limit: int, offset: int) -> app.modules.procurement.schemas.PurchaseOrderListResponse
+async def list_quotes(session: sqlalchemy.ext.asyncio.session.AsyncSession, request: app.modules.procurement.models.PurchaseRequest) -> app.modules.procurement.schemas.PurchaseQuoteListResponse
+async def list_requests(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, *, status: app.modules.procurement.models.PurchaseRequestStatus | None, project_id: uuid.UUID | None, priority: app.modules.procurement.models.PurchasePriority | None, q: str | None, limit: int, offset: int) -> app.modules.procurement.schemas.PurchaseRequestListResponse
+async def list_suppliers(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, *, q: str | None, category: str | None, is_active: bool | None, limit: int, offset: int) -> tuple[list[app.modules.procurement.schemas.SupplierCard], int]
+module messages -> app.modules.audit.messages
+module numbering -> app.modules.procurement.numbering
+async def perform_request_action(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, request: app.modules.procurement.models.PurchaseRequest, action: app.modules.procurement.transitions.RequestAction, *, reason: str | None = None) -> tuple[app.modules.procurement.models.PurchaseRequest, str]
+module repository -> app.modules.procurement.repository
+async def select_and_order(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, request: app.modules.procurement.models.PurchaseRequest, quote_id: uuid.UUID) -> tuple[app.modules.procurement.schemas.PurchaseOrderResponse, str]
+module sites_repository -> app.modules.sites.repository
+def today() -> datetime.date
+module transitions -> app.modules.procurement.transitions
+async def update_order(session: sqlalchemy.ext.asyncio.session.AsyncSession, order: app.modules.procurement.models.PurchaseOrder, data: app.modules.procurement.schemas.PurchaseOrderUpdate) -> tuple[app.modules.procurement.schemas.PurchaseOrderResponse, str]
+async def update_quote(session: sqlalchemy.ext.asyncio.session.AsyncSession, request: app.modules.procurement.models.PurchaseRequest, quote_id: uuid.UUID, data: app.modules.procurement.schemas.PurchaseQuoteUpdate) -> tuple[app.modules.procurement.schemas.PurchaseQuoteResponse, str]
+async def update_request(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, request: app.modules.procurement.models.PurchaseRequest, data: app.modules.procurement.schemas.PurchaseRequestUpdate) -> tuple[app.modules.procurement.models.PurchaseRequest, str]
+async def update_supplier(session: sqlalchemy.ext.asyncio.session.AsyncSession, supplier_id: uuid.UUID, data: app.modules.procurement.schemas.SupplierUpdate) -> tuple[app.modules.procurement.models.Supplier, str]
+module uuid -> uuid
+async def visible_order(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, order_id: uuid.UUID) -> app.modules.procurement.models.PurchaseOrder
+async def visible_projects(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User) -> list[app.modules.projects.models.Project]
+async def visible_request(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, request_id: uuid.UUID) -> app.modules.procurement.models.PurchaseRequest
+async def visible_request_locked(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, request_id: uuid.UUID) -> app.modules.procurement.models.PurchaseRequest
+
+## B. SAF YARDIMCI CIKTILARI (deger + hata metni)
+
+PERMISSION_MODULE = 'procurement'
+_strip(None) = None
+_strip('') = None
+_strip('   ') = None
+_strip(' Demirsan ') = 'Demirsan'
+_strip('Demirsan') = 'Demirsan'
+_line_total(fiyatli=True) = Decimal('503.12500')
+_line_total(fiyatli=False) = None
+_base_fields[approved_at] = None
+_base_fields[approved_by_user_id] = None
+_base_fields[created_at] = datetime.datetime(2026, 3, 4, 5, 6, 7, tzinfo=datetime.timezone.utc)
+_base_fields[created_by_user_id] = UUID('55555555-5555-5555-5555-555555555555')
+_base_fields[id] = UUID('11111111-1111-1111-1111-111111111111')
+_base_fields[justification] = 'Kalip iskelesi eksigi'
+_base_fields[needed_by] = datetime.date(2026, 3, 4)
+_base_fields[priority] = <PurchasePriority.urgent: 'urgent'>
+_base_fields[project_id] = UUID('22222222-2222-2222-2222-222222222222')
+_base_fields[quote_deadline] = datetime.date(2026, 3, 4)
+_base_fields[rejected_at] = None
+_base_fields[rejection_reason] = None
+_base_fields[request_date] = datetime.date(2026, 3, 4)
+_base_fields[request_no] = 'SAT-2026-0001'
+_base_fields[section_id] = UUID('44444444-4444-4444-4444-444444444444')
+_base_fields[site_id] = UUID('33333333-3333-3333-3333-333333333333')
+_base_fields[status] = <PurchaseRequestStatus.draft: 'draft'>
+_quote_fields[created_at] = datetime.datetime(2026, 3, 4, 5, 6, 7, tzinfo=datetime.timezone.utc)
+_quote_fields[delivery_time] = '10 gun'
+_quote_fields[id] = UUID('11111111-1111-1111-1111-111111111111')
+_quote_fields[is_selected] = False
+_quote_fields[payment_terms] = <PaymentTerms.days_60: 'days_60'>
+_quote_fields[request_id] = UUID('22222222-2222-2222-2222-222222222222')
+_quote_fields[shipping_cost] = Decimal('500.00')
+_quote_fields[shipping_included] = False
+_quote_fields[supplier_id] = UUID('33333333-3333-3333-3333-333333333333')
+_quote_fields[unit_price] = Decimal('1250.75')
+_quote_fields[warranty_note] = '2 yil'
+_to_line_response(kartli=True, fiyatli=True) = {'id': UUID('11111111-1111-1111-1111-111111111111'), 'sort_order': 3, 'stock_item_id': UUID('33333333-3333-3333-3333-333333333333'), 'stock_item_code': 'CMT-042', 'free_text_name': None, 'free_text_unit': None, 'name': 'Cimento CEM I', 'unit': 'Ton', 'quantity': Decimal('12.500'), 'estimated_unit_price': Decimal('40.25'), 'line_total': Decimal('503.12500'), 'current_stock': Decimal('7.250')}
+_to_line_response(kartli=True, fiyatli=False) = {'id': UUID('11111111-1111-1111-1111-111111111111'), 'sort_order': 3, 'stock_item_id': UUID('33333333-3333-3333-3333-333333333333'), 'stock_item_code': 'CMT-042', 'free_text_name': None, 'free_text_unit': None, 'name': 'Cimento CEM I', 'unit': 'Ton', 'quantity': Decimal('12.500'), 'estimated_unit_price': None, 'line_total': None, 'current_stock': Decimal('7.250')}
+_to_line_response(kartli=False, fiyatli=True) = {'id': UUID('11111111-1111-1111-1111-111111111111'), 'sort_order': 3, 'stock_item_id': None, 'stock_item_code': None, 'free_text_name': 'Serbest kalem', 'free_text_unit': 'Adet', 'name': 'Serbest kalem', 'unit': 'Adet', 'quantity': Decimal('12.500'), 'estimated_unit_price': Decimal('40.25'), 'line_total': Decimal('503.12500'), 'current_stock': None}
+_to_line_response(kartli=False, fiyatli=False) = {'id': UUID('11111111-1111-1111-1111-111111111111'), 'sort_order': 3, 'stock_item_id': None, 'stock_item_code': None, 'free_text_name': 'Serbest kalem', 'free_text_unit': 'Adet', 'name': 'Serbest kalem', 'unit': 'Adet', 'quantity': Decimal('12.500'), 'estimated_unit_price': None, 'line_total': None, 'current_stock': None}
+_to_line_response(bakiyesiz) = {'id': UUID('11111111-1111-1111-1111-111111111111'), 'sort_order': 3, 'stock_item_id': UUID('33333333-3333-3333-3333-333333333333'), 'stock_item_code': 'CMT-042', 'free_text_name': None, 'free_text_unit': None, 'name': 'Cimento CEM I', 'unit': 'Ton', 'quantity': Decimal('12.500'), 'estimated_unit_price': Decimal('40.25'), 'line_total': Decimal('503.12500'), 'current_stock': Decimal('0')}
+_to_supplier_card = {'id': UUID('11111111-1111-1111-1111-111111111111'), 'name': 'Demirsan A.S.', 'category': 'Hirdavat', 'tax_no': '1234567890', 'phone': '0312 000 00 00', 'payment_terms': <PaymentTerms.days_30: 'days_30'>, 'is_active': True, 'created_at': datetime.datetime(2026, 3, 4, 5, 6, 7, tzinfo=datetime.timezone.utc), 'orders_total_this_year': Decimal('125000.00'), 'orders_count_this_year': 4}
+_to_order_response = {'id': UUID('11111111-1111-1111-1111-111111111111'), 'order_no': 'SIP-2026-0007', 'request_id': UUID('22222222-2222-2222-2222-222222222222'), 'request_no': 'SAT-2026-0001', 'quote_id': UUID('33333333-3333-3333-3333-333333333333'), 'supplier_id': UUID('44444444-4444-4444-4444-444444444444'), 'supplier_name': 'Demirsan A.S.', 'project_id': UUID('55555555-5555-5555-5555-555555555555'), 'total_amount': Decimal('98765.43'), 'expected_delivery': datetime.date(2026, 3, 4), 'status': <PurchaseOrderStatus.approved: 'approved'>, 'note': 'Sahaya teslim', 'created_by_user_id': UUID('55555555-5555-5555-5555-555555555555'), 'created_at': datetime.datetime(2026, 3, 4, 5, 6, 7, tzinfo=datetime.timezone.utc)}
+_new_lines[] = {'request_id': UUID('22222222-2222-2222-2222-222222222222'), 'stock_item_id': UUID('33333333-3333-3333-3333-333333333333'), 'free_text_name': None, 'free_text_unit': None, 'quantity': Decimal('2.000'), 'estimated_unit_price': None, 'sort_order': 0}
+_new_lines[] = {'request_id': UUID('22222222-2222-2222-2222-222222222222'), 'stock_item_id': None, 'free_text_name': 'Serbest', 'free_text_unit': 'Adet', 'quantity': Decimal('1.500'), 'estimated_unit_price': Decimal('10.00'), 'sort_order': 1}
+_assert_draft(draft) -> OK
+_DeletableRequest(draft) = created_by=UUID('55555555-5555-5555-5555-555555555555') is_draft=True
+_assert_quote_wait(draft) -> ConflictError: Teklifler yalnızca teklif bekleyen talebe eklenebilir
+_assert_draft(pending_approval) -> ConflictError: Yalnızca taslak talep düzenlenebilir veya silinebilir
+_DeletableRequest(pending_approval) = created_by=UUID('55555555-5555-5555-5555-555555555555') is_draft=False
+_assert_quote_wait(pending_approval) -> ConflictError: Teklifler yalnızca teklif bekleyen talebe eklenebilir
+_assert_draft(quote_wait) -> ConflictError: Yalnızca taslak talep düzenlenebilir veya silinebilir
+_DeletableRequest(quote_wait) = created_by=UUID('55555555-5555-5555-5555-555555555555') is_draft=False
+_assert_quote_wait(quote_wait) -> OK
+_assert_draft(ordered) -> ConflictError: Yalnızca taslak talep düzenlenebilir veya silinebilir
+_DeletableRequest(ordered) = created_by=UUID('55555555-5555-5555-5555-555555555555') is_draft=False
+_assert_quote_wait(ordered) -> ConflictError: Teklifler yalnızca teklif bekleyen talebe eklenebilir
+_assert_draft(delivered) -> ConflictError: Yalnızca taslak talep düzenlenebilir veya silinebilir
+_DeletableRequest(delivered) = created_by=UUID('55555555-5555-5555-5555-555555555555') is_draft=False
+_assert_quote_wait(delivered) -> ConflictError: Teklifler yalnızca teklif bekleyen talebe eklenebilir
+_assert_draft(rejected) -> ConflictError: Yalnızca taslak talep düzenlenebilir veya silinebilir
+_DeletableRequest(rejected) = created_by=UUID('55555555-5555-5555-5555-555555555555') is_draft=False
+_assert_quote_wait(rejected) -> ConflictError: Teklifler yalnızca teklif bekleyen talebe eklenebilir
+_assert_shipping_rule(included=True, cost=None) -> OK
+_assert_shipping_rule(included=True, cost=Decimal('0.00')) -> ProcurementValidationError: Nakliye dahilse ayrıca nakliye tutarı girilemez
+_assert_shipping_rule(included=True, cost=Decimal('500.00')) -> ProcurementValidationError: Nakliye dahilse ayrıca nakliye tutarı girilemez
+_assert_shipping_rule(included=False, cost=None) -> OK
+_assert_shipping_rule(included=False, cost=Decimal('0.00')) -> OK
+_assert_shipping_rule(included=False, cost=Decimal('500.00')) -> OK
+_TRANSITION_MESSAGES[submit] = 'Satın alma talebi onaya gönderildi: SAT-2026-0001'
+_TRANSITION_MESSAGES[approve] = 'Satın alma talebi onaylandı: SAT-2026-0001'
+_TRANSITION_MESSAGES[reject] = 'Satın alma talebi reddedildi: SAT-2026-0001'
