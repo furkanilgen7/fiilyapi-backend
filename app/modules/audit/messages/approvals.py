@@ -5,6 +5,23 @@
 
 from app.modules.audit.messages.shared import APPROVAL_ON_BEHALF_MARK
 
+# --------------------------------------------------------------------------- #
+# OK-1A — onay zinciri motoru
+# --------------------------------------------------------------------------- #
+#
+# 🔴 YENI `AuditAction` UYESI ACILMADI (TB3/T3 kanonu): adim onayi
+# `AuditAction.approve`, ret/geri-alma/atama/ayar ise `AuditAction.update`tir.
+# Ayrim METINDEDIR.
+#
+# 🔴 Etiket sozlukleri ENUM SINIFINI ITHAL ETMEZ, duz `str` anahtar kullanir
+# (`FINANCIAL_INSTRUMENT_STATUS_LABELS` emsali). Denetim gunlugu bir SUNUM
+# katmanidir; ozellik modullerini ithal ederse katman yonu tersine doner.
+#
+# 🔴 TUTAR metne GIRMEZ. Onay esigi de bir TUTARDIR: eski ve yeni degeri
+# gunluge yazsaydik, ayar degistiginde gunlukte donmus bir para kopyasi ikinci
+# bir gercek olarak yasamaya devam ederdi (`bank_account_*` / `payment_*`
+# kanonu). `COMPANY_UPDATED` de ayni sebeple hicbir alan degeri tasimaz.
+
 APPROVAL_THRESHOLD_UPDATED = "Onay eşiği güncellendi"
 
 
