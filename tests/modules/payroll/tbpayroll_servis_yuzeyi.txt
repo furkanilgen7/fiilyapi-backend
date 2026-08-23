@@ -1,0 +1,173 @@
+# TB-PAYROLL anlik goruntusu — `app.modules.payroll.service`
+# Uretim: tests/modules/payroll/test_tbpayroll_servis_yuzeyi.py :: build_surface()
+
+## A. MODUL YUZEYI (ad + imza + varsayilanlar)
+
+class AsyncSession <- sqlalchemy.ext.asyncio.session.AsyncSession
+class ConflictError <- app.core.errors.ConflictError
+class Decimal <- decimal.Decimal
+class DuplicateError <- app.core.errors.DuplicateError
+class IncomeKind <- app.modules.payroll.models.IncomeKind
+set LOCKED_LINE_STATUSES = {<PayrollLineStatus.approved: 'approved'>, <PayrollLineStatus.paid: 'paid'>}
+set LOCKED_PERIOD_STATUSES = {<PayrollPeriodStatus.approved: 'approved'>, <PayrollPeriodStatus.paid: 'paid'>}
+set MAN_DAY_CODES = {<TimesheetCode.overtime: 'overtime'>, <TimesheetCode.worked: 'worked'>}
+class NotFoundError <- app.core.errors.NotFoundError
+other PERMISSION_MODULE: builtins.str = 'payroll'
+class PayrollComputeResult <- app.modules.payroll.schemas.PayrollComputeResult
+class PayrollLine <- app.modules.payroll.models.PayrollLine
+class PayrollLineStatus <- app.modules.payroll.models.PayrollLineStatus
+class PayrollMinimumWage <- app.modules.payroll.models.PayrollMinimumWage
+class PayrollPeriod <- app.modules.payroll.models.PayrollPeriod
+class PayrollPeriodStatus <- app.modules.payroll.models.PayrollPeriodStatus
+class PayrollRate <- app.modules.payroll.models.PayrollRate
+class PayrollTaxBracket <- app.modules.payroll.models.PayrollTaxBracket
+class PayrollValidationError <- app.core.errors.PayrollValidationError
+class Personnel <- app.modules.personnel.models.Personnel
+set SCHEDULE_LOCKED_PERIOD_STATUSES = {<PayrollPeriodStatus.approved: 'approved'>, <PayrollPeriodStatus.paid: 'paid'>}
+other SECTION_ORDER: builtins.tuple = (<WorkerSource.company: 'company'>, <WorkerSource.subcontractor: 'subcontractor'>, <WorkerSource.freelance: 'freelance'>, <WorkerSource.intern: 'intern'>, <WorkerSource.general: 'general'>)
+class TimesheetEntry <- app.modules.timesheet.models.TimesheetEntry
+other UTC: datetime.timezone = datetime.timezone.utc
+class WorkerSource <- app.modules.site_diary.models.WorkerSource
+def _apply(line: app.modules.payroll.models.PayrollLine, source: app.modules.site_diary.models.WorkerSource, hesap: app.modules.payroll.compute.ComputedLine) -> None
+async def _apply_gross_override(session: sqlalchemy.ext.asyncio.session.AsyncSession, period: app.modules.payroll.models.PayrollPeriod, line: app.modules.payroll.models.PayrollLine, actor_id: uuid.UUID, gross_amount: decimal.Decimal) -> None
+def _apply_split(line: app.modules.payroll.models.PayrollLine, bank_amount: decimal.Decimal, cash_amount: decimal.Decimal) -> None
+def _assert_line_decidable(period: app.modules.payroll.models.PayrollPeriod, line: app.modules.payroll.models.PayrollLine) -> None
+def _assert_line_editable(period: app.modules.payroll.models.PayrollPeriod, line: app.modules.payroll.models.PayrollLine) -> None
+async def _existing_lines(session: sqlalchemy.ext.asyncio.session.AsyncSession, period_id: uuid.UUID) -> dict[uuid.UUID, app.modules.payroll.models.PayrollLine]
+async def _full_name(session: sqlalchemy.ext.asyncio.session.AsyncSession, personnel_id: uuid.UUID) -> str
+def _line_response(line: app.modules.payroll.models.PayrollLine, full_name: str) -> app.modules.payroll.schemas.PayrollLineResponse
+async def _lines_with_names(session: sqlalchemy.ext.asyncio.session.AsyncSession, period_ids: list[uuid.UUID]) -> list[tuple[app.modules.payroll.models.PayrollLine, str]]
+async def _lock_period(session: sqlalchemy.ext.asyncio.session.AsyncSession, period_id: uuid.UUID) -> app.modules.payroll.models.PayrollPeriod
+async def _locked_line(session: sqlalchemy.ext.asyncio.session.AsyncSession, line_id: uuid.UUID) -> tuple[app.modules.payroll.models.PayrollPeriod, app.modules.payroll.models.PayrollLine]
+async def _locked_period_lines(session: sqlalchemy.ext.asyncio.session.AsyncSession, period_id: uuid.UUID) -> list[app.modules.payroll.models.PayrollLine]
+async def _man_day_counts(session: sqlalchemy.ext.asyncio.session.AsyncSession, year: int, month: int) -> dict[uuid.UUID, int]
+async def _minimum_wage_gross(session: sqlalchemy.ext.asyncio.session.AsyncSession, year: int) -> decimal.Decimal | None
+async def _missing_prior_period_count(session: sqlalchemy.ext.asyncio.session.AsyncSession, year: int, month: int) -> int
+def _opening_tax_base(person: app.modules.personnel.models.Personnel, year: int) -> decimal.Decimal
+async def _payroll_personnel(session: sqlalchemy.ext.asyncio.session.AsyncSession) -> list[app.modules.personnel.models.Personnel]
+async def _personnel_with_timesheet_records(session: sqlalchemy.ext.asyncio.session.AsyncSession, year: int, month: int) -> set[uuid.UUID]
+async def _prior_cumulative_bases(session: sqlalchemy.ext.asyncio.session.AsyncSession, year: int, month: int) -> dict[uuid.UUID, decimal.Decimal]
+def _promote_period_after_compute(period: app.modules.payroll.models.PayrollPeriod, lines: list[app.modules.payroll.models.PayrollLine]) -> None
+async def _tax_brackets(session: sqlalchemy.ext.asyncio.session.AsyncSession, year: int) -> tuple[app.modules.payroll.income_tax.TaxBracket, ...] | None
+async def _tax_context_for_line(session: sqlalchemy.ext.asyncio.session.AsyncSession, period: app.modules.payroll.models.PayrollPeriod, person: app.modules.personnel.models.Personnel) -> app.modules.payroll.compute.TaxContext
+async def approve_line(session: sqlalchemy.ext.asyncio.session.AsyncSession, line_id: uuid.UUID) -> tuple[app.modules.payroll.schemas.PayrollLineResponse, str]
+async def approve_period(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor_id: uuid.UUID, period_id: uuid.UUID) -> tuple[app.modules.payroll.schemas.PayrollPeriodApproveResult, str]
+module calendar -> calendar
+module compute -> app.modules.payroll.compute
+async def compute_period(session: sqlalchemy.ext.asyncio.session.AsyncSession, period_id: uuid.UUID) -> app.modules.payroll.schemas.PayrollComputeResult
+async def create_period(session: sqlalchemy.ext.asyncio.session.AsyncSession, data: app.modules.payroll.schemas.PayrollPeriodCreate) -> tuple[app.modules.payroll.models.PayrollPeriod, str]
+class date <- datetime.date
+class datetime <- datetime.datetime
+other func: sqlalchemy.sql.functions._FunctionGenerator = <sqlalchemy.sql.functions._FunctionGenerator object at 0xADRES>
+async def get_period(session: sqlalchemy.ext.asyncio.session.AsyncSession, period_id: uuid.UUID) -> app.modules.payroll.models.PayrollPeriod
+async def get_period_detail(session: sqlalchemy.ext.asyncio.session.AsyncSession, period_id: uuid.UUID) -> app.modules.payroll.schemas.PayrollPeriodDetailResponse
+module guards -> app.modules.payroll.guards
+module income_tax -> app.modules.payroll.income_tax
+async def list_periods(session: sqlalchemy.ext.asyncio.session.AsyncSession, *, limit: int, offset: int) -> app.modules.payroll.schemas.PayrollPeriodListResponse
+async def list_rates(session: sqlalchemy.ext.asyncio.session.AsyncSession, year: int | None = None) -> app.modules.payroll.schemas.PayrollRateListResponse
+module messages -> app.modules.audit.messages
+def month_bounds(year: int, month: int) -> tuple[datetime.date, datetime.date]
+async def pay_period(session: sqlalchemy.ext.asyncio.session.AsyncSession, period_id: uuid.UUID) -> tuple[app.modules.payroll.schemas.PayrollPeriodPayResult, str]
+async def rates_by_source(session: sqlalchemy.ext.asyncio.session.AsyncSession, year: int) -> dict[app.modules.site_diary.models.WorkerSource, app.modules.payroll.models.PayrollRate]
+async def reject_line(session: sqlalchemy.ext.asyncio.session.AsyncSession, line_id: uuid.UUID) -> tuple[app.modules.payroll.schemas.PayrollLineResponse, str]
+module schemas -> app.modules.payroll.schemas
+def select(*entities: '_ColumnsClauseArgument[Any]', **__kw: 'Any') -> 'Select[Any]'
+module sgk -> app.modules.payroll.sgk
+async def sgk_summary(session: sqlalchemy.ext.asyncio.session.AsyncSession, period_id: uuid.UUID) -> app.modules.payroll.schemas.PayrollSgkSummaryResponse
+async def submit_sgk(session: sqlalchemy.ext.asyncio.session.AsyncSession, period_id: uuid.UUID) -> tuple[app.modules.payroll.schemas.PayrollSgkSubmitResult, str]
+module summary -> app.modules.payroll.summary
+module transitions -> app.modules.payroll.transitions
+async def update_line(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor_id: uuid.UUID, line_id: uuid.UUID, data: app.modules.payroll.schemas.PayrollLineUpdate) -> tuple[app.modules.payroll.schemas.PayrollLineResponse, str]
+async def update_period(session: sqlalchemy.ext.asyncio.session.AsyncSession, period_id: uuid.UUID, data: app.modules.payroll.schemas.PayrollPeriodUpdate) -> tuple[app.modules.payroll.models.PayrollPeriod, str]
+async def upsert_rate(session: sqlalchemy.ext.asyncio.session.AsyncSession, year: int, source: app.modules.site_diary.models.WorkerSource, data: app.modules.payroll.schemas.PayrollRateUpdate) -> tuple[app.modules.payroll.models.PayrollRate, str]
+module uuid -> uuid
+async def year_has_locked_period(session: sqlalchemy.ext.asyncio.session.AsyncSession, year: int) -> bool
+
+## B. SAF YARDIMCI CIKTILARI (deger + hata metni)
+
+PERMISSION_MODULE = 'payroll'
+SECTION_ORDER = ('company', 'subcontractor', 'freelance', 'intern', 'general')
+month_bounds(2026, 1) = (datetime.date(2026, 1, 1), datetime.date(2026, 1, 31))
+month_bounds(2026, 2) = (datetime.date(2026, 2, 1), datetime.date(2026, 2, 28))
+month_bounds(2024, 2) = (datetime.date(2024, 2, 1), datetime.date(2024, 2, 29))
+month_bounds(2026, 4) = (datetime.date(2026, 4, 1), datetime.date(2026, 4, 30))
+month_bounds(2026, 12) = (datetime.date(2026, 12, 1), datetime.date(2026, 12, 31))
+month_bounds(2027, 7) = (datetime.date(2027, 7, 1), datetime.date(2027, 7, 31))
+_opening_tax_base(devir_yili=None, yil=2026) = Decimal('0.00')
+_opening_tax_base(devir_yili=None, yil=2027) = Decimal('0.00')
+_opening_tax_base(devir_yili=2025, yil=2026) = Decimal('0.00')
+_opening_tax_base(devir_yili=2025, yil=2027) = Decimal('0.00')
+_opening_tax_base(devir_yili=2026, yil=2026) = Decimal('125000.00')
+_opening_tax_base(devir_yili=2026, yil=2027) = Decimal('0.00')
+_opening_tax_base(devir_yili=2027, yil=2026) = Decimal('0.00')
+_opening_tax_base(devir_yili=2027, yil=2027) = Decimal('125000.00')
+_apply(hesap.status=uncomputed) = {'personnel_source': <WorkerSource.freelance: 'freelance'>, 'days': 19, 'gross_amount': Decimal('41000.00'), 'deduction_amount': Decimal('10561.19'), 'net_amount': Decimal('30438.81'), 'bank_amount': Decimal('30438.81'), 'cash_amount': Decimal('0.00'), 'tax_base_amount': Decimal('34850.00'), 'cumulative_tax_base': Decimal('243950.00'), 'income_tax_amount': Decimal('5227.50'), 'status': <PayrollLineStatus.uncomputed: 'uncomputed'>, 'excluded_reason': None, 'is_overridden': False, 'previous_gross_amount': None}
+_apply(hesap.status=pending) = {'personnel_source': <WorkerSource.freelance: 'freelance'>, 'days': 19, 'gross_amount': Decimal('41000.00'), 'deduction_amount': Decimal('10561.19'), 'net_amount': Decimal('30438.81'), 'bank_amount': Decimal('30438.81'), 'cash_amount': Decimal('0.00'), 'tax_base_amount': Decimal('34850.00'), 'cumulative_tax_base': Decimal('243950.00'), 'income_tax_amount': Decimal('5227.50'), 'status': <PayrollLineStatus.pending: 'pending'>, 'excluded_reason': None, 'is_overridden': False, 'previous_gross_amount': None}
+_apply(hesap.status=approved) = {'personnel_source': <WorkerSource.freelance: 'freelance'>, 'days': 19, 'gross_amount': Decimal('41000.00'), 'deduction_amount': Decimal('10561.19'), 'net_amount': Decimal('30438.81'), 'bank_amount': Decimal('30438.81'), 'cash_amount': Decimal('0.00'), 'tax_base_amount': Decimal('34850.00'), 'cumulative_tax_base': Decimal('243950.00'), 'income_tax_amount': Decimal('5227.50'), 'status': <PayrollLineStatus.approved: 'approved'>, 'excluded_reason': None, 'is_overridden': False, 'previous_gross_amount': None}
+_apply(hesap.status=paid) = {'personnel_source': <WorkerSource.freelance: 'freelance'>, 'days': 19, 'gross_amount': Decimal('41000.00'), 'deduction_amount': Decimal('10561.19'), 'net_amount': Decimal('30438.81'), 'bank_amount': Decimal('30438.81'), 'cash_amount': Decimal('0.00'), 'tax_base_amount': Decimal('34850.00'), 'cumulative_tax_base': Decimal('243950.00'), 'income_tax_amount': Decimal('5227.50'), 'status': <PayrollLineStatus.paid: 'paid'>, 'excluded_reason': None, 'is_overridden': False, 'previous_gross_amount': None}
+_apply(hesap.status=excluded) = {'personnel_source': <WorkerSource.freelance: 'freelance'>, 'days': 19, 'gross_amount': Decimal('41000.00'), 'deduction_amount': Decimal('10561.19'), 'net_amount': Decimal('30438.81'), 'bank_amount': Decimal('30438.81'), 'cash_amount': Decimal('0.00'), 'tax_base_amount': Decimal('34850.00'), 'cumulative_tax_base': Decimal('243950.00'), 'income_tax_amount': Decimal('5227.50'), 'status': <PayrollLineStatus.excluded: 'excluded'>, 'excluded_reason': 'Taseron iscisi', 'is_overridden': False, 'previous_gross_amount': None}
+_promote_period_after_compute(draft, bos) -> draft
+_promote_period_after_compute(draft, pending_var) -> pending_approval
+_promote_period_after_compute(draft, pending_yok) -> draft
+_promote_period_after_compute(pending_approval, bos) -> pending_approval
+_promote_period_after_compute(pending_approval, pending_var) -> pending_approval
+_promote_period_after_compute(pending_approval, pending_yok) -> pending_approval
+_promote_period_after_compute(approved, bos) -> approved
+_promote_period_after_compute(approved, pending_var) -> approved
+_promote_period_after_compute(approved, pending_yok) -> approved
+_promote_period_after_compute(paid, bos) -> paid
+_promote_period_after_compute(paid, pending_var) -> paid
+_promote_period_after_compute(paid, pending_yok) -> paid
+_line_response(uncomputed) = {'id': UUID('22222222-2222-2222-2222-222222222222'), 'personnel_id': UUID('33333333-3333-3333-3333-333333333333'), 'personnel_name': 'Ayse Yilmaz', 'personnel_source': <WorkerSource.company: 'company'>, 'days': 22, 'gross_amount': Decimal('50000.00'), 'deduction_amount': Decimal('12879.50'), 'net_amount': Decimal('37120.50'), 'bank_amount': Decimal('37120.50'), 'cash_amount': Decimal('0.00'), 'tax_base_amount': Decimal('42500.00'), 'cumulative_tax_base': Decimal('297500.00'), 'income_tax_amount': Decimal('8500.00'), 'status': <PayrollLineStatus.uncomputed: 'uncomputed'>, 'excluded_reason': None, 'is_overridden': False, 'overridden_at': None, 'previous_gross_amount': None}
+_line_response(pending) = {'id': UUID('22222222-2222-2222-2222-222222222222'), 'personnel_id': UUID('33333333-3333-3333-3333-333333333333'), 'personnel_name': 'Ayse Yilmaz', 'personnel_source': <WorkerSource.company: 'company'>, 'days': 22, 'gross_amount': Decimal('50000.00'), 'deduction_amount': Decimal('12879.50'), 'net_amount': Decimal('37120.50'), 'bank_amount': Decimal('37120.50'), 'cash_amount': Decimal('0.00'), 'tax_base_amount': Decimal('42500.00'), 'cumulative_tax_base': Decimal('297500.00'), 'income_tax_amount': Decimal('8500.00'), 'status': <PayrollLineStatus.pending: 'pending'>, 'excluded_reason': None, 'is_overridden': False, 'overridden_at': None, 'previous_gross_amount': None}
+_line_response(approved) = {'id': UUID('22222222-2222-2222-2222-222222222222'), 'personnel_id': UUID('33333333-3333-3333-3333-333333333333'), 'personnel_name': 'Ayse Yilmaz', 'personnel_source': <WorkerSource.company: 'company'>, 'days': 22, 'gross_amount': Decimal('50000.00'), 'deduction_amount': Decimal('12879.50'), 'net_amount': Decimal('37120.50'), 'bank_amount': Decimal('37120.50'), 'cash_amount': Decimal('0.00'), 'tax_base_amount': Decimal('42500.00'), 'cumulative_tax_base': Decimal('297500.00'), 'income_tax_amount': Decimal('8500.00'), 'status': <PayrollLineStatus.approved: 'approved'>, 'excluded_reason': None, 'is_overridden': False, 'overridden_at': None, 'previous_gross_amount': None}
+_line_response(paid) = {'id': UUID('22222222-2222-2222-2222-222222222222'), 'personnel_id': UUID('33333333-3333-3333-3333-333333333333'), 'personnel_name': 'Ayse Yilmaz', 'personnel_source': <WorkerSource.company: 'company'>, 'days': 22, 'gross_amount': Decimal('50000.00'), 'deduction_amount': Decimal('12879.50'), 'net_amount': Decimal('37120.50'), 'bank_amount': Decimal('37120.50'), 'cash_amount': Decimal('0.00'), 'tax_base_amount': Decimal('42500.00'), 'cumulative_tax_base': Decimal('297500.00'), 'income_tax_amount': Decimal('8500.00'), 'status': <PayrollLineStatus.paid: 'paid'>, 'excluded_reason': None, 'is_overridden': False, 'overridden_at': None, 'previous_gross_amount': None}
+_line_response(excluded) = {'id': UUID('22222222-2222-2222-2222-222222222222'), 'personnel_id': UUID('33333333-3333-3333-3333-333333333333'), 'personnel_name': 'Ayse Yilmaz', 'personnel_source': <WorkerSource.company: 'company'>, 'days': 22, 'gross_amount': Decimal('50000.00'), 'deduction_amount': Decimal('12879.50'), 'net_amount': Decimal('37120.50'), 'bank_amount': Decimal('37120.50'), 'cash_amount': Decimal('0.00'), 'tax_base_amount': Decimal('42500.00'), 'cumulative_tax_base': Decimal('297500.00'), 'income_tax_amount': Decimal('8500.00'), 'status': <PayrollLineStatus.excluded: 'excluded'>, 'excluded_reason': None, 'is_overridden': False, 'overridden_at': None, 'previous_gross_amount': None}
+_line_response(netsiz) = {'id': UUID('22222222-2222-2222-2222-222222222222'), 'personnel_id': UUID('33333333-3333-3333-3333-333333333333'), 'personnel_name': 'X', 'personnel_source': <WorkerSource.company: 'company'>, 'days': 22, 'gross_amount': None, 'deduction_amount': None, 'net_amount': None, 'bank_amount': None, 'cash_amount': None, 'tax_base_amount': None, 'cumulative_tax_base': None, 'income_tax_amount': None, 'status': <PayrollLineStatus.uncomputed: 'uncomputed'>, 'excluded_reason': None, 'is_overridden': False, 'overridden_at': None, 'previous_gross_amount': None}
+_assert_line_editable(draft, uncomputed) -> OK
+_assert_line_editable(draft, pending) -> OK
+_assert_line_editable(draft, approved) -> ConflictError: Onaylanmış veya ödenmiş bordro satırı değiştirilemez
+_assert_line_editable(draft, paid) -> ConflictError: Onaylanmış veya ödenmiş bordro satırı değiştirilemez
+_assert_line_editable(draft, excluded) -> ConflictError: Taşeron satırı bordrodan ödenmez: tutarı ve ödeme bölüşümü düzenlenemez, ödemesi taşeron hakedişi üzerinden yapılır
+_assert_line_editable(pending_approval, uncomputed) -> OK
+_assert_line_editable(pending_approval, pending) -> OK
+_assert_line_editable(pending_approval, approved) -> ConflictError: Onaylanmış veya ödenmiş bordro satırı değiştirilemez
+_assert_line_editable(pending_approval, paid) -> ConflictError: Onaylanmış veya ödenmiş bordro satırı değiştirilemez
+_assert_line_editable(pending_approval, excluded) -> ConflictError: Taşeron satırı bordrodan ödenmez: tutarı ve ödeme bölüşümü düzenlenemez, ödemesi taşeron hakedişi üzerinden yapılır
+_assert_line_editable(approved, uncomputed) -> ConflictError: Onaylanmış veya ödenmiş dönemin satırları değiştirilemez
+_assert_line_editable(approved, pending) -> ConflictError: Onaylanmış veya ödenmiş dönemin satırları değiştirilemez
+_assert_line_editable(approved, approved) -> ConflictError: Onaylanmış veya ödenmiş dönemin satırları değiştirilemez
+_assert_line_editable(approved, paid) -> ConflictError: Onaylanmış veya ödenmiş dönemin satırları değiştirilemez
+_assert_line_editable(approved, excluded) -> ConflictError: Onaylanmış veya ödenmiş dönemin satırları değiştirilemez
+_assert_line_editable(paid, uncomputed) -> ConflictError: Onaylanmış veya ödenmiş dönemin satırları değiştirilemez
+_assert_line_editable(paid, pending) -> ConflictError: Onaylanmış veya ödenmiş dönemin satırları değiştirilemez
+_assert_line_editable(paid, approved) -> ConflictError: Onaylanmış veya ödenmiş dönemin satırları değiştirilemez
+_assert_line_editable(paid, paid) -> ConflictError: Onaylanmış veya ödenmiş dönemin satırları değiştirilemez
+_assert_line_editable(paid, excluded) -> ConflictError: Onaylanmış veya ödenmiş dönemin satırları değiştirilemez
+_assert_line_decidable(draft, uncomputed) -> OK
+_assert_line_decidable(draft, pending) -> OK
+_assert_line_decidable(draft, approved) -> OK
+_assert_line_decidable(draft, paid) -> OK
+_assert_line_decidable(draft, excluded) -> ConflictError: Taşeron satırı bordrodan ödenmez: tutarı ve ödeme bölüşümü düzenlenemez, ödemesi taşeron hakedişi üzerinden yapılır
+_assert_line_decidable(pending_approval, uncomputed) -> OK
+_assert_line_decidable(pending_approval, pending) -> OK
+_assert_line_decidable(pending_approval, approved) -> OK
+_assert_line_decidable(pending_approval, paid) -> OK
+_assert_line_decidable(pending_approval, excluded) -> ConflictError: Taşeron satırı bordrodan ödenmez: tutarı ve ödeme bölüşümü düzenlenemez, ödemesi taşeron hakedişi üzerinden yapılır
+_assert_line_decidable(approved, uncomputed) -> ConflictError: Onaylanmış veya ödenmiş dönemin satır onayları değiştirilemez
+_assert_line_decidable(approved, pending) -> ConflictError: Onaylanmış veya ödenmiş dönemin satır onayları değiştirilemez
+_assert_line_decidable(approved, approved) -> ConflictError: Onaylanmış veya ödenmiş dönemin satır onayları değiştirilemez
+_assert_line_decidable(approved, paid) -> ConflictError: Onaylanmış veya ödenmiş dönemin satır onayları değiştirilemez
+_assert_line_decidable(approved, excluded) -> ConflictError: Onaylanmış veya ödenmiş dönemin satır onayları değiştirilemez
+_assert_line_decidable(paid, uncomputed) -> ConflictError: Onaylanmış veya ödenmiş dönemin satır onayları değiştirilemez
+_assert_line_decidable(paid, pending) -> ConflictError: Onaylanmış veya ödenmiş dönemin satır onayları değiştirilemez
+_assert_line_decidable(paid, approved) -> ConflictError: Onaylanmış veya ödenmiş dönemin satır onayları değiştirilemez
+_assert_line_decidable(paid, paid) -> ConflictError: Onaylanmış veya ödenmiş dönemin satır onayları değiştirilemez
+_assert_line_decidable(paid, excluded) -> ConflictError: Onaylanmış veya ödenmiş dönemin satır onayları değiştirilemez
+_apply_split(net=37120.50, banka=37120.50, elden=0.00) -> OK | banka=Decimal('37120.50') elden=Decimal('0.00')
+_apply_split(net=37120.50, banka=20000.00, elden=17120.50) -> OK | banka=Decimal('20000.00') elden=Decimal('17120.50')
+_apply_split(net=37120.50, banka=20000.00, elden=17120.49) -> PayrollValidationError: Banka (20000.00) + elden (17120.49) toplamı net tutara (37120.50) eşit olmalıdır | banka=Decimal('37120.50') elden=Decimal('0.00')
+_apply_split(net=37120.50, banka=0.00, elden=0.00) -> PayrollValidationError: Banka (0.00) + elden (0.00) toplamı net tutara (37120.50) eşit olmalıdır | banka=Decimal('37120.50') elden=Decimal('0.00')
+_apply_split(net=37120.50, banka=37120.51, elden=0.00) -> PayrollValidationError: Banka (37120.51) + elden (0.00) toplamı net tutara (37120.50) eşit olmalıdır | banka=Decimal('37120.50') elden=Decimal('0.00')
+_apply_split(netsiz) -> PayrollValidationError: Hesaplanamamış satırda ödeme bölüşümü yapılamaz; önce brüt tutarı girin
+
