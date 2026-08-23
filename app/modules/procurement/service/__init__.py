@@ -131,6 +131,9 @@ from app.modules.procurement.service.orders import list_orders as list_orders
 from app.modules.procurement.service.orders import select_and_order as select_and_order
 from app.modules.procurement.service.orders import update_order as update_order
 from app.modules.procurement.service.orders import visible_order as visible_order
+from app.modules.procurement.service.orders import (
+    visible_order_locked as visible_order_locked,
+)
 from app.modules.procurement.service.quotes import _assert_quote_wait as _assert_quote_wait
 from app.modules.procurement.service.quotes import _assert_shipping_rule as _assert_shipping_rule
 from app.modules.procurement.service.quotes import _quote_fields as _quote_fields

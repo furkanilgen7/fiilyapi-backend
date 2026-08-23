@@ -129,6 +129,32 @@ async def visible_order(session: AsyncSession, actor: User, order_id: uuid.UUID)
     return order
 
 
+async def visible_order_locked(
+    session: AsyncSession, actor: User, order_id: uuid.UUID
+) -> PurchaseOrder:
+    """Kapsam suzgeci + `SELECT … FOR UPDATE` — SIPARIS gecislerinin giris kapisi.
+
+    `request_access.visible_request_locked`in siparis tarafindaki ikizi; ayni
+    sozlesme, ayni sira. OKUMA uclari kilit ALMAZ (`visible_order` orada kalir):
+    gereksiz satir kilidi listeleri ve detay okumalarini yazmalarin arkasinda
+    bekletirdi.
+
+    Kapsam karari (404) kilitten ONCE verilir: gorunmeyen bir kaydin satiri
+    bosuna kilitlenmez ve govde var OLMAYAN kimliginkiyle BIREBIR AYNIDIR.
+
+    🔴 KILIT SIRASI: siparis satiri -> (varsa) talep satiri. `stock_link.
+    stamp_delivery` de bu sirayla ilerler. Ters yonde ilerleyen yol YOKTUR:
+    `select_and_order` talebi kilitler ama siparisi YAZAR (yeni satir, cekisme
+    olamaz), MEVCUT bir siparis satirini hicbir zaman kilitlemez.
+    """
+    order = await visible_order(session, actor, order_id)
+    locked = await repository.get_order_locked(session, order.id)
+    if locked is None:
+        # Yarista silinmis olabilir — var olmayan kayitla AYNI 404.
+        raise NotFoundError(guards.ORDER_MISSING)
+    return locked
+
+
 async def get_order_detail(
     session: AsyncSession, actor: User, order_id: uuid.UUID
 ) -> PurchaseOrderResponse:

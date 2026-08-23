@@ -52,6 +52,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
@@ -361,9 +362,41 @@ class PurchaseOrder(Base):
     `total_amount` KOLONDUR, turev DEGILDIR — bilincli: siparis, teklifin o
     andaki fiyatinin DONMUS halidir; teklif sonradan duzeltilse bile verilen
     siparisin tutari degismemelidir.
+
+    ## 🔴 SA-KILIT — `request_id` TEKILDIR (`uq_purchase_orders_request_id`)
+
+    Bir talep EN COK BIR siparise donusur ve bu artik DB'de zorlanir. Kural
+    uydurulmadi, urunden OLCULDU:
+
+    * `request_id`i NULL-DISI yazan TEK yer `service.orders.select_and_order`;
+      dogrudan siparis (`create_order`) her zaman `None` yazar,
+    * `PurchaseOrderCreate` semasinda `request_id` YOKTUR (govdede gonderilse
+      yok sayilir — `test_govdedeki_request_id_YOK_SAYILIR`),
+    * `PurchaseOrderUpdate`te de YOKTUR: bag sonradan KURULAMAZ/DEGISTIRILEMEZ,
+    * `REQUEST_TRANSITIONS`ta `ordered` hicbir ciftte KAYNAK degildir -> ayni
+      talep ikinci kez `select-and-order` edilemez,
+    * siparis durumlari `approved/in_transit/delivered`tir; **IPTAL durumu
+      YOKTUR** ve `DELETE /purchase-orders/{id}` de yoktur (405, bekci testli)
+      -> "iptal edip yeniden siparis" akisi da YOKTUR.
+
+    Yani bugun bir talebin BOLUNEREK birden cok siparise donmesinin MESRU bir
+    yolu yoktur; kisit hicbir akisi kirmaz. Kirilirsa (kismi/bolunmus siparis
+    urune eklenirse) dogru hamle kisiti kismilastirmak ya da dusurmektir —
+    sessizce cift kayda donmek DEGIL.
+
+    🔴 **NULL'lar kisittan ETKILENMEZ:** Postgres UNIQUE coklu NULL'a izin
+    verir, dolayisiyla TALEPSIZ (SIP 35) siparisler sinirsizdir. Bu davranis
+    varsayilmadi, olculdu ve `test_DB_katmani_da_cift_siparisi_reddeder`de
+    ACIKCA bekcilenir.
+
+    Kisit UYGULAMA kilidinin YEDEGIDIR, yerine gecmez: asil savunma ucun
+    `service.visible_request_locked` kapisidir (`router.select_and_order_
+    endpoint`). Iki katman bilinclidir — `select_and_order`i cagirmayan yeni
+    bir yazma yolu yarin acilirsa kusur DB'de durur.
     """
 
     __tablename__ = "purchase_orders"
+    __table_args__ = (UniqueConstraint("request_id", name="uq_purchase_orders_request_id"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     order_no: Mapped[str] = mapped_column(String(20), nullable=False, unique=True)

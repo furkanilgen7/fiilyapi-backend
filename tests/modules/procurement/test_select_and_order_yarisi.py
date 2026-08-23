@@ -51,9 +51,14 @@ from starlette.requests import Request as StarletteRequest
 from app.core.config import settings
 from app.core.db import Base
 from app.core.errors import ConflictError
-from app.modules.procurement import guards, service
+from app.modules.procurement import guards, service, stock_link
 from app.modules.procurement import router as procurement_router
-from app.modules.procurement.models import PurchaseRequest, PurchaseRequestStatus
+from app.modules.procurement.models import (
+    PurchaseOrderStatus,
+    PurchaseRequest,
+    PurchaseRequestStatus,
+)
+from app.modules.procurement.schemas import PurchaseOrderUpdate
 from app.modules.users.models import User
 
 # Talebin miktari ve teklifin birim fiyati — siparis tutari bunlarin CARPIMIDIR
@@ -506,3 +511,152 @@ def test_siparis_ucu_KILITLI_kapiyi_kullanir():
 
     assert "service.visible_request_locked(" in govde
     assert "service.visible_request(" not in govde
+
+
+# --------------------------------------------------------------------------- #
+# T3 — SIPARIS tarafi: `update_order` AYNI SINIFTAN MI? (olculdu: EVET)
+# --------------------------------------------------------------------------- #
+#
+# TB-PROC "etkisi dusuk gorunuyor ama OLCMEDIM" demisti. Olculdu ve etki dusuk
+# DEGIL: stok girisinin `delivered` damgasi ile es zamanli bir PATCH, teslim
+# damgasini KAYBEDIYOR ve siparis/talep ikilisini CELISKILI birakiyordu.
+#
+# Olculen uc siralama (338697d tabani):
+#   A) s1=STOK TESLIMI      || s2=PATCH{in_transit} -> SIPARIS=in_transit
+#                                                      TALEP=delivered   🔴 CELISKI
+#   B) s1=PATCH{in_transit} || s2=STOK TESLIMI      -> SIPARIS=delivered
+#                                                      TALEP=delivered   ✅ dogru
+#   C) s1=PATCH{in_transit} || s2=PATCH{in_transit} -> IKISI de BASARILI 🔴 409 yok
+#
+# B dogru sonuclandigi icin `stock_link.resolve_order` KILITLENMEDI (olcum yok,
+# degisiklik yok — KAPSAM DISI). Kapatilan A ve C'dir: kapi
+# `service.visible_order_locked`a alindi.
+
+
+async def _siparis_kur(database: str, z: _Zemin) -> uuid.UUID:
+    """Talebe bagli, `approved` bir siparis + talebi `ordered` yap."""
+    order_id = uuid.uuid4()
+    raw = await asyncpg.connect(_asyncpg_dsn(database))
+    try:
+        await raw.execute(
+            "INSERT INTO purchase_orders (id, order_no, request_id, supplier_id, project_id, "
+            "total_amount, status, created_by_user_id) "
+            "VALUES ($1, 'SP-2026-0500', $2, $3, $4, 1000, 'approved', $5)",
+            order_id,
+            z.request_id,
+            z.supplier_id,
+            z.project_id,
+            z.user_id,
+        )
+        await raw.execute(
+            "UPDATE purchase_requests SET status = 'ordered' WHERE id = $1", z.request_id
+        )
+    finally:
+        await raw.close()
+    return order_id
+
+
+async def _patch_in_transit(session: AsyncSession, z: _Zemin, order_id: uuid.UUID) -> None:
+    """PATCH ucunun KENDISI — testte yeniden yazilmaz (sahte-yesil olmasin)."""
+    kullanici = await _kullanici(session, z.user_id)
+    await procurement_router.update_order_endpoint(
+        request=_sahte_istek(),
+        order_id=order_id,
+        data=PurchaseOrderUpdate(status=PurchaseOrderStatus.in_transit),
+        user=kullanici,
+        session=session,
+    )
+
+
+async def _durumlar(database: str, z: _Zemin, order_id: uuid.UUID) -> tuple[str, str]:
+    raw = await asyncpg.connect(_asyncpg_dsn(database))
+    try:
+        return (
+            await raw.fetchval("SELECT status::text FROM purchase_orders WHERE id = $1", order_id),
+            await raw.fetchval(
+                "SELECT status::text FROM purchase_requests WHERE id = $1", z.request_id
+            ),
+        )
+    finally:
+        await raw.close()
+
+
+async def test_stok_teslimiyle_es_zamanli_PATCH_teslim_damgasini_SILEMEZ(yaris_zemini):
+    """🔴 T3-A: teslim damgasinin kaybolmasi (OLCULDU, dusuk etki DEGIL).
+
+    Stok girisi siparisi (ve talebi) `delivered` damgalarken es zamanli bir
+    `PATCH {"status": "in_transit"}` geliyordu. PATCH kapisi kilitsizken bayat
+    `approved`i okuyup matristen geciyor, bloke cozulunce `in_transit` yaziyordu:
+    **mal girmis ama siparis "yolda"**, bagli talep ise `delivered`. Ikisi
+    CELISKILI ve teslim damgasi KAYIP.
+
+    Kapi kilitli oldugunda ikinci istek TAZE `delivered` okur ve
+    `(delivered, in_transit)` matriste olmadigi icin **409** alir.
+    """
+    database, Session, z = yaris_zemini
+    order_id = await _siparis_kur(database, z)
+
+    async with Session() as birinci, Session() as ikinci:
+        ikinci_pid = await ikinci.scalar(select(func.pg_backend_pid()))
+
+        kullanici_bir = await _kullanici(birinci, z.user_id)
+        siparis = await stock_link.resolve_order(birinci, kullanici_bir, order_id)
+        await stock_link.stamp_delivery(birinci, siparis)
+
+        async def _ikinci_akis() -> None:
+            await _patch_in_transit(ikinci, z, order_id)
+            await ikinci.commit()
+
+        gorev = asyncio.create_task(_ikinci_akis())
+        await _kilit_beklemesini_bekle(database, ikinci_pid)
+
+        await birinci.commit()
+        with pytest.raises(ConflictError) as hata:
+            await asyncio.wait_for(gorev, timeout=15)
+
+    assert str(hata.value.args[0]) == guards.INVALID_ORDER_TRANSITION
+
+    siparis_durumu, talep_durumu = await _durumlar(database, z, order_id)
+    assert siparis_durumu == "delivered", "teslim damgasi SILINDI"
+    assert talep_durumu == "delivered", "siparis teslim ama talep degil — CELISKI"
+
+
+async def test_iki_es_zamanli_PATCH_ikincisi_409_alir(yaris_zemini):
+    """🔴 T3-C: ayni gecisi iki kez uygulayan yaris.
+
+    Matris `(in_transit, in_transit)` ciftini TANIMAZ; yani ikinci istek 409
+    ALMALIDIR. Kilitsiz kapida IKISI de basariliydi — `assert_order_transition`
+    bayat `approved` uzerinde kosuyordu.
+    """
+    database, Session, z = yaris_zemini
+    order_id = await _siparis_kur(database, z)
+
+    async with Session() as birinci, Session() as ikinci:
+        ikinci_pid = await ikinci.scalar(select(func.pg_backend_pid()))
+        await _patch_in_transit(birinci, z, order_id)
+
+        async def _ikinci_akis() -> None:
+            await _patch_in_transit(ikinci, z, order_id)
+            await ikinci.commit()
+
+        gorev = asyncio.create_task(_ikinci_akis())
+        await _kilit_beklemesini_bekle(database, ikinci_pid)
+
+        await birinci.commit()
+        with pytest.raises(ConflictError):
+            await asyncio.wait_for(gorev, timeout=15)
+
+    siparis_durumu, _ = await _durumlar(database, z, order_id)
+    assert siparis_durumu == "in_transit"
+
+
+def test_siparis_PATCH_ucu_KILITLI_kapiyi_kullanir():
+    """Ucuz yapisal bekci — T3 onariminin sessizce geri alinmasini yakalar."""
+    from pathlib import Path
+
+    kaynak = Path(service.__file__).resolve().parent.parent / "router.py"
+    metin = kaynak.read_text(encoding="utf-8")
+    govde = metin.split("async def update_order_endpoint")[1].split("\n@router")[0]
+
+    assert "service.visible_order_locked(" in govde
+    assert "service.visible_order(" not in govde
