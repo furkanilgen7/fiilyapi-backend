@@ -143,17 +143,49 @@ def _subcontractor_title(contract: SubcontractorContract) -> str:
     return name or category
 
 
-def _subcontractor_item(contract: SubcontractorContract) -> ContractListItem:
+def _subcontractor_item(
+    contract: SubcontractorContract, cumulative_gross: Decimal
+) -> ContractListItem:
+    """SZL 44-51 taşeron satırı. `progress_pct` P-YT4'te BAĞLANDI (2026-08-23).
+
+    Eski hâli `None` idi ve gerekçesi *"taşeron hakedişi AYRI dilim (spec §1.2)"*
+    yazıyordu. **Gerekçe ölçüldü ve BAYAT çıktı:** dilim TH ile yazıldı, modülün
+    router'ı `app/main.py`de kayıtlı ve `subcontractor_progress_payments.summary.
+    cumulative_gross_by_contracts` CANLI. Dahası `list_contracts` o sözlüğü
+    ZATEN okuyordu (şerit KPI'ı `progress_payment_total` için) ve yalnızca
+    satırlara geçirmiyordu — bağlama bu yüzden **EK SORGU AÇMAZ**.
+
+    Yüzde işveren dalıyla AYNI formülden geçer (`progress_payments.summary.
+    progress_pct`): payda sözleşme bedeli (`Σ line_total`), pay `approved|paid`
+    kümülatif brüt. İkinci bir formül yazılsaydı SZL'nin TEK "İlerleme" sütunu
+    sekmeye göre başka bir şey ölçerdi.
+
+    🔴 Bu depoda İKİNCİ bir "ilerleme" tanımı daha vardır ve BURAYA UYMAZ:
+    `projects/cost_summary.py::_row` yalnız `paid` sayar (mockup aritmetiğinden
+    okundu, KY 209-251 / KK 213-246). O sütun proje maliyet ekranınındır;
+    buradaki sütun SZL'nindir ve işveren sekmesiyle hizalı kalmak zorundadır.
+    Bekçi: `tests/contracts/test_pyt4_yer_tutucu_denetimi.py::test_taban_*`.
+
+    Hakedişi olmayan sözleşmede yüzde `0.00`dır (bilinmiyor değil, gerçekten
+    sıfır); bedeli olmayan sözleşmede `None` KALIR — `progress_pct` sıfır/negatif
+    paydada bölme yapmaz.
+    """
+    from app.modules.progress_payments import summary as progress_payments_summary
+
+    # Bedel TEK KEZ hesaplanir: hem "Bedel" sutunu hem yuzdenin paydasidir ve
+    # iki kez cagirmak, ileride biri degistiginde ikisinin AYRISMASINA acik kapi
+    # birakirdi (satir ici kurus yuvarlamasi `_subcontractor_amount`tadir).
+    amount = _subcontractor_amount(contract)
+
     return ContractListItem(
         id=contract.id,
         title=_subcontractor_title(contract),
         contract_no=contract.contract_no,
         counterparty_name=contract.subcontractor_name,
-        amount=_subcontractor_amount(contract),
+        amount=amount,
         start_date=contract.start_date,
         end_date=contract.end_date,
-        # Taşeron hakedişi AYRI dilim (spec §1.2): sahte 0 yerine `None`.
-        progress_pct=None,
+        progress_pct=progress_payments_summary.progress_pct(cumulative_gross, amount),
         status=contract.status,
         is_draft=contract.is_draft,
     )
@@ -239,13 +271,20 @@ async def list_contracts(
             status_filter=status_filter,
             q=q,
         )
-        items = [_subcontractor_item(contract) for contract in contracts]
         # Kümülatif brütler TEK toplu sorguda (sözleşme başına ayrı sorgu YOK) —
         # işveren dalının BİREBİR eşleniği, yalnız anahtar proje değil SÖZLEŞME
         # kimliğidir (bir projede N taşeron sözleşmesi olabilir).
+        #
+        # 🔴 SIRA ÖNEMLİ (P-YT4): sözlük satırlardan ÖNCE okunur, çünkü artık
+        # yalnız şerit KPI'ını değil `progress_pct` sütununu da besliyor. İşveren
+        # dalındaki `_employer_item(..., cumulative.get(...))` deseninin aynısı.
         cumulative = await subcontractor_summary.cumulative_gross_by_contracts(
             session, [contract.id for contract in contracts]
         )
+        items = [
+            _subcontractor_item(contract, cumulative.get(contract.id, Decimal("0.00")))
+            for contract in contracts
+        ]
         progress_payment_total = _quantize_money(
             sum(
                 (cumulative.get(contract.id, Decimal("0")) for contract in contracts),

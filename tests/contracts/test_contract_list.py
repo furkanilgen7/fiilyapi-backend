@@ -206,9 +206,12 @@ async def test_taseron_bedeli_turevdir_ve_fiyatsiz_satir_katkisiz(
     assert len(items) == 1
     # Σ(quantity × unit_price) = 100*50 = 5000.00; unit_price IS NULL satır 0 katkı.
     assert items[0]["amount"] == "5000.00"
-    # Taşeron hakedişi AYRI dilimdir (spec §1.2): P7/H9 sonrası alan düz
-    # `Decimal | None` olduğu için burada `None` döner — sahte 0 gösterilmez.
-    assert items[0]["progress_pct"] is None
+    # P-YT4 (2026-08-23): alan taşeron sekmesinde de BAĞLANDI. Bu sözleşmenin
+    # hiç hakedişi yok ⇒ `%0,00` GERÇEK cevaptır (bilinmiyor değil). Eski iddia
+    # `None`'dı ve gerekçesi "taşeron hakedişi AYRI dilim"di; dilim yazıldı.
+    # `None` yalnız BEDELSİZ sözleşmede döner
+    # (`test_pyt4_yer_tutucu_denetimi.py::test_baglandi_bedelsiz_*`).
+    assert items[0]["progress_pct"] == "0.00"
 
 
 @pytest.mark.asyncio

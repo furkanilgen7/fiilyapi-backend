@@ -299,7 +299,11 @@ def test_employer_contract_detail_kapsam_disi_alanlar_acik_doner():
     assert detay.milestones is None
     assert detay.documents is None
     assert "progress_payments" not in detay.pending_modules
-    assert detay.pending_modules == ["project_schedule", "documents"]
+    # P-YT4 (2026-08-23): `"project_schedule"` bir FOSİLDİ — depoda o ada sahip
+    # ne izin modülü ne paket ne dosya vardı. Milestone'ın gerçek sahibi
+    # `sites` (`SectionMilestone`) ve CANLI; anahtar ona döndü. Fosil anahtar
+    # yasağının bekçisi: `test_pyt4_yer_tutucu_denetimi.py`.
+    assert detay.pending_modules == ["sites", "documents"]
 
 
 def test_employer_contract_detail_hakedis_ozeti_zorunludur():

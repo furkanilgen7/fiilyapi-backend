@@ -67,8 +67,14 @@ from app.modules.units.models import Unit
 from app.modules.users.models import User
 
 # Yer tutucu kalemlerin kaynak modülleri (KY 134-154, spec §2). Anahtar
-# kullanıcıya gösterilecek metin DEĞİL, izin modülü anahtarıdır (B6 zarf
-# sözleşmesi): ekran kalemin hangi modülün MÜLKİYETİNDE olduğunu buradan okur.
+# kullanıcıya gösterilecek metin DEĞİL, verinin hangi modülün MÜLKİYETİNDE
+# olduğunu söyleyen kimliktir (`projects/cards.py::_metric` kanonu).
+#
+# ⚠️ "izin modülü anahtarıdır" cümlesi P-YT4'te (2026-08-23) DÜZELTİLDİ: zarf
+# ailesinin anahtarları izin modülü kümesiyle ÖRTÜŞMEZ — `project_costs`,
+# `subcontracts`, `units`, `site_planning` 21 izin modülünden HİÇBİRİ değildir.
+# BU DOSYANIN iki anahtarı (`accounting`, `treasury`) tesadüfen izin modülüdür;
+# kural olarak yazmak, başka bir modülde yanlış bir doğrulama doğururdu.
 #
 # ⚠️ 2026-08-22 DENETİMİ — ESKİ GEREKÇE ("modül gelince dolacak") ARTIK YANLIŞ:
 # `accounting` de `treasury` de CANLIDIR (router'ları `app/main.py`de kayıtlı;
@@ -82,8 +88,23 @@ from app.modules.users.models import User
 # `project_id`/`site_id` KOLONU YOKTUR ve bu unutulmuş değil YAPISALDIR —
 # `accounting/models.py:67-72` bunu açıkça yazar ve maliyet merkezi/proje
 # kırılımını MU-3'e bırakır (`journal_entries`te `project_id` yokluğu a.g.e.
-# 613-614'te bir kez daha teyit edilir). Hazine tarafı da aynı: `payments`
-# tablosunda `project_id`/`site_id` yoktur (`treasury/repository.py:7-9`).
+# 613-614'te bir kez daha teyit edilir).
+#
+# 🔴 **P-YT4 (2026-08-23) — HAZİNE CÜMLESİ DÜZELTİLDİ.** Eski metin *"Hazine
+# tarafı da aynı: `payments` tablosunda `project_id`/`site_id` yoktur
+# (`treasury/repository.py:7-9`)"* diyordu. İKİ kusur ölçüldü:
+#   (a) ATIF YANLIŞTI — `treasury/repository.py:7-9` `bank_accounts` tablosunu
+#       anlatır, `payments`i değil.
+#   (b) İDDİA ARTIK KATEGORİK DEĞİL — `financial_instruments` (HZ-2, çek/senet)
+#       `project_id` KOLONU TAŞIR (`treasury/models.py`, üstelik indeksli).
+#       Yani "hazinede proje kırılımı yok" cümlesi bugün yanlıştır.
+# SONUÇ DEĞİŞMEDİ ve sebebi şudur: proje bağı olan tek hazine tablosu ÇEK/SENET
+# portföyüdür (`FinancialInstrumentKind` = `cheque | promissory_note`); kıymetli
+# evrak bir KREDİ FAİZİ GİDERİ değildir. KY 145'in istediği "₺6M kredi · Kalan
+# faiz: ₺890K" için kredi/faiz tablosu depoda HİÇ YOKTUR — `treasury`nin üç
+# tablosu `bank_accounts` · `payments` · `financial_instruments`tır ve `payments`
+# de proje taşımaz.
+#
 # Yani fiş de ödeme de yazılabiliyor, ama "bu kayıt X PROJESİNİN ruhsat/
 # finansman/pazarlama gideridir" DENEMİYOR. Kısacası: **modül CANLI, kategori
 # kısmen var, KATEGORİLENMİŞ-VE-PROJEYE-BAĞLI VERİ yok.** Bu yüzden alanlar 0

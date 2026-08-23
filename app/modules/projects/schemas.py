@@ -126,7 +126,13 @@ def metric(value: Decimal | None, pending_module: str) -> MetricPlaceholder:
 
 
 class CountPlaceholder(BaseModel):
-    """Veri kaynagi henuz yazilmamis sayac alani ("48 isci", "3 hissedar" gibi).
+    """Sayac alaninin zarfi ("48 isci", "3 hissedar" gibi).
+
+    ⚠️ Eski baslik *"veri kaynagi henuz YAZILMAMIS sayac alani"* diyordu;
+    2026-08-22 denetimi bunu OLCEREK curuttu ve P-YT4 (2026-08-23) burada da
+    duzeltti: `pending_module` "modul yok" DEMEZ, "veri hangi modulun
+    MULKIYETINDE" der (`projects/cards.py::_metric` kanonu). Bos kalmanin
+    gercek sebebi her CAGRI YERINDE yazilidir.
 
     `MetricPlaceholder`in P10 T3'te kazandigi "dolu zarf `pending_module`
     TASIMAZ" kurali BURAYA UYGULANMAZ: puantaj sayaci (`_worker_count`)
@@ -214,8 +220,15 @@ class ProjectCostBreakdown(BaseModel):
     yer tutucu değildir, kaynağı VARDIR.
 
     Üç kalem (`permits` KY 134-140 · `financing` 141-147 · `marketing` 148-154)
-    ise zarflıdır: kaynak modül henüz veri YAZMIYOR ve mockup'ta rakam
-    göründüğü için 0 basmak sahte bilgi üretmek olurdu (spec §2).
+    ise zarflıdır ve mockup'ta rakam göründüğü için 0 basmak sahte bilgi
+    üretmek olurdu (spec §2).
+
+    ⚠️ **P-YT4 (2026-08-23):** eski cümle *"kaynak modül henüz veri YAZMIYOR"*
+    idi ve BAYAT. `accounting` da `treasury` de CANLIDIR ve İKİSİ DE veri
+    yazar — yazamadıkları şey PROJE KIRILIMIDIR (muhasebenin üç tablosunda da
+    `project_id` yoktur; hazinede proje bağı yalnız çek/senet portföyündedir ve
+    o bir kredi faizi gideri değildir). Tam ölçüm `cost_summary.py`nin
+    `_ACCOUNTING`/`_TREASURY` notundadır — tek kopya orada yaşar.
     """
 
     land_cost: Decimal | None
