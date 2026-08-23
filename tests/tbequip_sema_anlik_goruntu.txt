@@ -1,0 +1,175 @@
+TABLO equipment
+  equipment.id: tur=UUID() null=False pk=True varsayilan=uuid4 sunucu=None
+  equipment.name: tur=String(length=200) null=False pk=False varsayilan=None sunucu=None
+  equipment.category: tur=Enum('crane', 'machinery', 'truck', 'concrete', 'compressor', 'hand_tool', name='equipment_category') null=False pk=False varsayilan=None sunucu=None
+  equipment.brand: tur=String(length=100) null=True pk=False varsayilan=None sunucu=None
+  equipment.model: tur=String(length=100) null=True pk=False varsayilan=None sunucu=None
+  equipment.serial_no: tur=String(length=100) null=True pk=False varsayilan=None sunucu=None
+  equipment.plate_no: tur=String(length=30) null=True pk=False varsayilan=None sunucu=None
+  equipment.model_year: tur=Integer() null=True pk=False varsayilan=None sunucu=None
+  equipment.ownership: tur=Enum('owned', 'rented', name='equipment_ownership') null=False pk=False varsayilan=<EquipmentOwnership.owned: 'owned'> sunucu=sql:'owned'::equipment_ownership
+  equipment.purchase_amount: tur=Numeric(precision=18, scale=2) null=True pk=False varsayilan=None sunucu=None
+  equipment.purchase_date: tur=Date() null=True pk=False varsayilan=None sunucu=None
+  equipment.depreciation_years: tur=Integer() null=True pk=False varsayilan=None sunucu=None
+  equipment.supplier_id: tur=UUID() null=True pk=False varsayilan=None sunucu=None
+  equipment.financing: tur=Enum('cash', 'bank_loan', 'leasing', name='equipment_financing') null=True pk=False varsayilan=None sunucu=None
+  equipment.market_value: tur=Numeric(precision=18, scale=2) null=True pk=False varsayilan=None sunucu=None
+  equipment.rate_amount: tur=Numeric(precision=18, scale=2) null=True pk=False varsayilan=None sunucu=None
+  equipment.rate_period: tur=Enum('hourly', 'daily', 'monthly', name='equipment_rate_period', metadata=MetaData()) null=True pk=False varsayilan=None sunucu=None
+  equipment.site_id: tur=UUID() null=True pk=False varsayilan=None sunucu=None
+  equipment.operator_id: tur=UUID() null=True pk=False varsayilan=None sunucu=None
+  equipment.status: tur=Enum('working', 'maintenance', 'broken', 'idle', name='equipment_status') null=False pk=False varsayilan=<EquipmentStatus.working: 'working'> sunucu=sql:'working'::equipment_status
+  equipment.status_note: tur=Text() null=True pk=False varsayilan=None sunucu=None
+  equipment.status_expected_date: tur=Date() null=True pk=False varsayilan=None sunucu=None
+  equipment.fuel_type: tur=Enum('diesel', 'gasoline', 'electric', 'none', name='equipment_fuel_type') null=True pk=False varsayilan=None sunucu=None
+  equipment.norm_consumption: tur=Numeric(precision=10, scale=2) null=True pk=False varsayilan=None sunucu=None
+  equipment.norm_unit: tur=Enum('lt_hour', 'lt_km', name='equipment_norm_unit') null=True pk=False varsayilan=None sunucu=None
+  equipment.maintenance_period: tur=Enum('hours_250', 'hours_500', 'hours_1000', 'monthly', name='equipment_maintenance_period') null=True pk=False varsayilan=None sunucu=None
+  equipment.monthly_capacity_hours: tur=Integer() null=False pk=False varsayilan=200 sunucu=sql:200
+  equipment.is_company_asset: tur=Boolean() null=False pk=False varsayilan=True sunucu=sql:true
+  equipment.is_active: tur=Boolean() null=False pk=False varsayilan=True sunucu=sql:true
+  equipment.created_at: tur=DateTime(timezone=True) null=False pk=False varsayilan=None sunucu=sql:now()
+  equipment.updated_at: tur=DateTime(timezone=True) null=False pk=False varsayilan=None sunucu=sql:now()
+  KISIT CheckConstraint ck_equipment_depreciation_years_positive [] sql=depreciation_years IS NULL OR depreciation_years > 0
+  KISIT CheckConstraint ck_equipment_market_value_non_negative [] sql=market_value IS NULL OR market_value >= 0
+  KISIT CheckConstraint ck_equipment_monthly_capacity_non_negative [] sql=monthly_capacity_hours >= 0
+  KISIT CheckConstraint ck_equipment_norm_consumption_positive [] sql=norm_consumption IS NULL OR norm_consumption > 0
+  KISIT CheckConstraint ck_equipment_purchase_amount_non_negative [] sql=purchase_amount IS NULL OR purchase_amount >= 0
+  KISIT CheckConstraint ck_equipment_rate_amount_non_negative [] sql=rate_amount IS NULL OR rate_amount >= 0
+  KISIT ForeignKeyConstraint None ['operator_id'] -> personnel.id(ondelete=SET NULL,onupdate=None)
+  KISIT ForeignKeyConstraint None ['site_id'] -> sites.id(ondelete=SET NULL,onupdate=None)
+  KISIT ForeignKeyConstraint None ['supplier_id'] -> suppliers.id(ondelete=SET NULL,onupdate=None)
+  KISIT PrimaryKeyConstraint None ['id']
+  INDEKS ix_equipment_category ['category'] unique=False
+  INDEKS ix_equipment_site_id ['site_id'] unique=False
+  INDEKS ix_equipment_status ['status'] unique=False
+TABLO equipment_document_types
+  equipment_document_types.id: tur=UUID() null=False pk=True varsayilan=uuid4 sunucu=None
+  equipment_document_types.code: tur=String(length=50) null=False pk=False varsayilan=None sunucu=None
+  equipment_document_types.name: tur=String(length=150) null=False pk=False varsayilan=None sunucu=None
+  equipment_document_types.is_required: tur=Boolean() null=False pk=False varsayilan=False sunucu=sql:false
+  equipment_document_types.sort_order: tur=Integer() null=False pk=False varsayilan=0 sunucu=sql:0
+  equipment_document_types.created_at: tur=DateTime(timezone=True) null=False pk=False varsayilan=None sunucu=sql:now()
+  KISIT PrimaryKeyConstraint None ['id']
+  KISIT UniqueConstraint None ['code'] UQ
+TABLO equipment_documents
+  equipment_documents.id: tur=UUID() null=False pk=True varsayilan=uuid4 sunucu=None
+  equipment_documents.equipment_id: tur=UUID() null=False pk=False varsayilan=None sunucu=None
+  equipment_documents.type_id: tur=UUID() null=False pk=False varsayilan=None sunucu=None
+  equipment_documents.filename: tur=String(length=255) null=False pk=False varsayilan=None sunucu=None
+  equipment_documents.mime_type: tur=String(length=100) null=False pk=False varsayilan=None sunucu=None
+  equipment_documents.size_bytes: tur=BigInteger() null=False pk=False varsayilan=None sunucu=None
+  equipment_documents.content: tur=LargeBinary() null=False pk=False varsayilan=None sunucu=None
+  equipment_documents.document_no: tur=String(length=100) null=True pk=False varsayilan=None sunucu=None
+  equipment_documents.issued_at: tur=Date() null=True pk=False varsayilan=None sunucu=None
+  equipment_documents.note: tur=Text() null=True pk=False varsayilan=None sunucu=None
+  equipment_documents.valid_until: tur=Date() null=True pk=False varsayilan=None sunucu=None
+  equipment_documents.created_at: tur=DateTime(timezone=True) null=False pk=False varsayilan=None sunucu=sql:now()
+  equipment_documents.updated_at: tur=DateTime(timezone=True) null=False pk=False varsayilan=None sunucu=sql:now()
+  KISIT CheckConstraint ck_equipment_documents_size_non_negative [] sql=size_bytes >= 0
+  KISIT ForeignKeyConstraint None ['equipment_id'] -> equipment.id(ondelete=CASCADE,onupdate=None)
+  KISIT ForeignKeyConstraint None ['type_id'] -> equipment_document_types.id(ondelete=RESTRICT,onupdate=None)
+  KISIT PrimaryKeyConstraint None ['id']
+  INDEKS ix_equipment_documents_equipment_id ['equipment_id'] unique=False
+  INDEKS ix_equipment_documents_equipment_type ['equipment_id', 'type_id'] unique=False
+  INDEKS ix_equipment_documents_type_id ['type_id'] unique=False
+  INDEKS ix_equipment_documents_valid_until ['valid_until'] unique=False
+TABLO equipment_fuel_logs
+  equipment_fuel_logs.id: tur=UUID() null=False pk=True varsayilan=uuid4 sunucu=None
+  equipment_fuel_logs.equipment_id: tur=UUID() null=False pk=False varsayilan=None sunucu=None
+  equipment_fuel_logs.fuel_date: tur=Date() null=False pk=False varsayilan=None sunucu=None
+  equipment_fuel_logs.site_id: tur=UUID() null=True pk=False varsayilan=None sunucu=None
+  equipment_fuel_logs.liters: tur=Numeric(precision=10, scale=2) null=False pk=False varsayilan=None sunucu=None
+  equipment_fuel_logs.unit_price: tur=Numeric(precision=10, scale=4) null=False pk=False varsayilan=None sunucu=None
+  equipment_fuel_logs.entered_by_id: tur=UUID() null=True pk=False varsayilan=None sunucu=None
+  equipment_fuel_logs.note: tur=Text() null=True pk=False varsayilan=None sunucu=None
+  equipment_fuel_logs.created_at: tur=DateTime(timezone=True) null=False pk=False varsayilan=None sunucu=sql:now()
+  equipment_fuel_logs.updated_at: tur=DateTime(timezone=True) null=False pk=False varsayilan=None sunucu=sql:now()
+  KISIT CheckConstraint ck_equipment_fuel_logs_liters_positive [] sql=liters > 0
+  KISIT CheckConstraint ck_equipment_fuel_logs_unit_price_positive [] sql=unit_price > 0
+  KISIT ForeignKeyConstraint None ['entered_by_id'] -> users.id(ondelete=SET NULL,onupdate=None)
+  KISIT ForeignKeyConstraint None ['equipment_id'] -> equipment.id(ondelete=RESTRICT,onupdate=None)
+  KISIT ForeignKeyConstraint None ['site_id'] -> sites.id(ondelete=SET NULL,onupdate=None)
+  KISIT PrimaryKeyConstraint None ['id']
+  INDEKS ix_equipment_fuel_logs_equipment_id ['equipment_id'] unique=False
+  INDEKS ix_equipment_fuel_logs_fuel_date ['fuel_date'] unique=False
+  INDEKS ix_equipment_fuel_logs_site_id ['site_id'] unique=False
+TABLO equipment_rental_invoice_lines
+  equipment_rental_invoice_lines.id: tur=UUID() null=False pk=True varsayilan=uuid4 sunucu=None
+  equipment_rental_invoice_lines.invoice_id: tur=UUID() null=False pk=False varsayilan=None sunucu=None
+  equipment_rental_invoice_lines.equipment_id: tur=UUID() null=False pk=False varsayilan=None sunucu=None
+  equipment_rental_invoice_lines.line_kind: tur=Enum('rented', 'owned', 'breakdown', name='rental_line_kind') null=False pk=False varsayilan=None sunucu=None
+  equipment_rental_invoice_lines.site_id: tur=UUID() null=True pk=False varsayilan=None sunucu=None
+  equipment_rental_invoice_lines.worked_hours: tur=Numeric(precision=8, scale=2) null=False pk=False varsayilan=None sunucu=None
+  equipment_rental_invoice_lines.breakdown_hours: tur=Numeric(precision=8, scale=2) null=False pk=False varsayilan=Decimal('0') sunucu=sql:0
+  equipment_rental_invoice_lines.rate_amount: tur=Numeric(precision=18, scale=2) null=True pk=False varsayilan=None sunucu=None
+  equipment_rental_invoice_lines.invoiced_hours: tur=Numeric(precision=8, scale=2) null=True pk=False varsayilan=None sunucu=None
+  equipment_rental_invoice_lines.capacity_hours: tur=Integer() null=True pk=False varsayilan=None sunucu=None
+  equipment_rental_invoice_lines.created_at: tur=DateTime(timezone=True) null=False pk=False varsayilan=None sunucu=sql:now()
+  equipment_rental_invoice_lines.updated_at: tur=DateTime(timezone=True) null=False pk=False varsayilan=None sunucu=sql:now()
+  KISIT CheckConstraint ck_equipment_rental_invoice_lines_breakdown_hours_non_negative [] sql=breakdown_hours >= 0
+  KISIT CheckConstraint ck_equipment_rental_invoice_lines_capacity_hours_non_negative [] sql=capacity_hours IS NULL OR capacity_hours >= 0
+  KISIT CheckConstraint ck_equipment_rental_invoice_lines_invoiced_hours_non_negative [] sql=invoiced_hours IS NULL OR invoiced_hours >= 0
+  KISIT CheckConstraint ck_equipment_rental_invoice_lines_rate_amount_non_negative [] sql=rate_amount IS NULL OR rate_amount >= 0
+  KISIT CheckConstraint ck_equipment_rental_invoice_lines_worked_hours_non_negative [] sql=worked_hours >= 0
+  KISIT ForeignKeyConstraint None ['equipment_id'] -> equipment.id(ondelete=RESTRICT,onupdate=None)
+  KISIT ForeignKeyConstraint None ['invoice_id'] -> equipment_rental_invoices.id(ondelete=CASCADE,onupdate=None)
+  KISIT ForeignKeyConstraint None ['site_id'] -> sites.id(ondelete=SET NULL,onupdate=None)
+  KISIT PrimaryKeyConstraint None ['id']
+  KISIT UniqueConstraint uq_equipment_rental_invoice_lines_equipment_kind ['equipment_id', 'invoice_id', 'line_kind'] UQ
+  INDEKS ix_equipment_rental_invoice_lines_equipment_id ['equipment_id'] unique=False
+  INDEKS ix_equipment_rental_invoice_lines_invoice_id ['invoice_id'] unique=False
+  INDEKS ix_equipment_rental_invoice_lines_site_id ['site_id'] unique=False
+TABLO equipment_rental_invoices
+  equipment_rental_invoices.id: tur=UUID() null=False pk=True varsayilan=uuid4 sunucu=None
+  equipment_rental_invoices.supplier_id: tur=UUID() null=False pk=False varsayilan=None sunucu=None
+  equipment_rental_invoices.invoice_no: tur=String(length=100) null=True pk=False varsayilan=None sunucu=None
+  equipment_rental_invoices.invoice_amount: tur=Numeric(precision=18, scale=2) null=True pk=False varsayilan=None sunucu=None
+  equipment_rental_invoices.period_year: tur=Integer() null=False pk=False varsayilan=None sunucu=None
+  equipment_rental_invoices.period_month: tur=Integer() null=False pk=False varsayilan=None sunucu=None
+  equipment_rental_invoices.site_id: tur=UUID() null=True pk=False varsayilan=None sunucu=None
+  equipment_rental_invoices.rate_period: tur=Enum('hourly', 'daily', 'monthly', name='equipment_rate_period', metadata=MetaData()) null=False pk=False varsayilan=None sunucu=None
+  equipment_rental_invoices.vat_rate: tur=Numeric(precision=5, scale=2) null=False pk=False varsayilan=Decimal('20.00') sunucu=sql:20.00
+  equipment_rental_invoices.status: tur=Enum('draft', 'pending_verification', 'approved', 'paid', name='rental_invoice_status') null=False pk=False varsayilan=<RentalInvoiceStatus.draft: 'draft'> sunucu=sql:'draft'::rental_invoice_status
+  equipment_rental_invoices.approved_by_id: tur=UUID() null=True pk=False varsayilan=None sunucu=None
+  equipment_rental_invoices.approved_at: tur=DateTime(timezone=True) null=True pk=False varsayilan=None sunucu=None
+  equipment_rental_invoices.paid_at: tur=DateTime(timezone=True) null=True pk=False varsayilan=None sunucu=None
+  equipment_rental_invoices.created_at: tur=DateTime(timezone=True) null=False pk=False varsayilan=None sunucu=sql:now()
+  equipment_rental_invoices.updated_at: tur=DateTime(timezone=True) null=False pk=False varsayilan=None sunucu=sql:now()
+  KISIT CheckConstraint ck_equipment_rental_invoices_amount_non_negative [] sql=invoice_amount IS NULL OR invoice_amount >= 0
+  KISIT CheckConstraint ck_equipment_rental_invoices_month_range [] sql=period_month >= 1 AND period_month <= 12
+  KISIT CheckConstraint ck_equipment_rental_invoices_vat_rate_range [] sql=vat_rate >= 0 AND vat_rate <= 100
+  KISIT ForeignKeyConstraint None ['approved_by_id'] -> users.id(ondelete=SET NULL,onupdate=None)
+  KISIT ForeignKeyConstraint None ['site_id'] -> sites.id(ondelete=SET NULL,onupdate=None)
+  KISIT ForeignKeyConstraint None ['supplier_id'] -> suppliers.id(ondelete=RESTRICT,onupdate=None)
+  KISIT PrimaryKeyConstraint None ['id']
+  KISIT UniqueConstraint uq_equipment_rental_invoices_supplier_invoice_no ['invoice_no', 'supplier_id'] UQ
+  INDEKS ix_equipment_rental_invoices_period ['period_year', 'period_month'] unique=False
+  INDEKS ix_equipment_rental_invoices_site_id ['site_id'] unique=False
+  INDEKS ix_equipment_rental_invoices_status ['status'] unique=False
+  INDEKS ix_equipment_rental_invoices_supplier_id ['supplier_id'] unique=False
+TABLO equipment_work_logs
+  equipment_work_logs.id: tur=UUID() null=False pk=True varsayilan=uuid4 sunucu=None
+  equipment_work_logs.equipment_id: tur=UUID() null=False pk=False varsayilan=None sunucu=None
+  equipment_work_logs.work_date: tur=Date() null=False pk=False varsayilan=None sunucu=None
+  equipment_work_logs.site_id: tur=UUID() null=True pk=False varsayilan=None sunucu=None
+  equipment_work_logs.operator_id: tur=UUID() null=True pk=False varsayilan=None sunucu=None
+  equipment_work_logs.record_type: tur=Enum('worked', 'breakdown', name='work_log_type') null=False pk=False varsayilan=<WorkLogType.worked: 'worked'> sunucu=sql:'worked'::work_log_type
+  equipment_work_logs.start_time: tur=Time() null=True pk=False varsayilan=None sunucu=None
+  equipment_work_logs.end_time: tur=Time() null=True pk=False varsayilan=None sunucu=None
+  equipment_work_logs.hours: tur=Numeric(precision=6, scale=2) null=False pk=False varsayilan=None sunucu=None
+  equipment_work_logs.note: tur=Text() null=True pk=False varsayilan=None sunucu=None
+  equipment_work_logs.created_by_id: tur=UUID() null=True pk=False varsayilan=None sunucu=None
+  equipment_work_logs.created_at: tur=DateTime(timezone=True) null=False pk=False varsayilan=None sunucu=sql:now()
+  equipment_work_logs.updated_at: tur=DateTime(timezone=True) null=False pk=False varsayilan=None sunucu=sql:now()
+  KISIT CheckConstraint ck_equipment_work_logs_hours_range [] sql=hours >= 0 AND hours <= 24
+  KISIT CheckConstraint ck_equipment_work_logs_time_pair [] sql=(start_time IS NULL) = (end_time IS NULL)
+  KISIT ForeignKeyConstraint None ['created_by_id'] -> users.id(ondelete=SET NULL,onupdate=None)
+  KISIT ForeignKeyConstraint None ['equipment_id'] -> equipment.id(ondelete=RESTRICT,onupdate=None)
+  KISIT ForeignKeyConstraint None ['operator_id'] -> personnel.id(ondelete=SET NULL,onupdate=None)
+  KISIT ForeignKeyConstraint None ['site_id'] -> sites.id(ondelete=SET NULL,onupdate=None)
+  KISIT PrimaryKeyConstraint None ['id']
+  INDEKS ix_equipment_work_logs_equipment_id ['equipment_id'] unique=False
+  INDEKS ix_equipment_work_logs_record_type ['record_type'] unique=False
+  INDEKS ix_equipment_work_logs_site_id ['site_id'] unique=False
+  INDEKS ix_equipment_work_logs_work_date ['work_date'] unique=False
