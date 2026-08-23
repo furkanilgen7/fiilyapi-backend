@@ -181,6 +181,17 @@ LEAVE_APPROVE_OWN_REQUEST = (
 )
 
 
+# --- İK-2.2: talebi GERİ ÇEKME korkuluğu ----------------------------------
+
+# 409 — geri çekme YALNIZ `pending` talepte anlamlıdır. `LEAVE_NOT_PENDING`
+# ("düzenlenebilir ya da silinebilir") ve `LEAVE_DECISION_NOT_PENDING`
+# ("onaylanabilir ya da reddedilebilir") metinlerinden AYRIDIR ve bu bilinçlidir
+# (guards.py:117 emsali): kullanıcıya yaptığı eylemin adıyla konuşmayan bir
+# korkuluk, onu YANLIŞ eylemi aramaya yollar. Karara bağlanmış bir talebi geri
+# çekmek onayı ya da reddi SESSİZCE İPTAL ederdi.
+LEAVE_WITHDRAW_NOT_PENDING = "Yalnız bekleyen izin talebi geri çekilebilir"
+
+
 def validate_personnel_source(source: WorkerSource, subcontractor_id: uuid.UUID | None) -> None:
     """Kural BİRLEŞİK kayıt üzerinde koşar.
 

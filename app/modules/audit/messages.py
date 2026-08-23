@@ -1094,6 +1094,17 @@ def leave_request_rejected(
     return f"İzin talebi reddedildi: {full_name} · {type_name} · {start} - {end} · {reason}"
 
 
+def leave_request_withdrawn(full_name: str, type_name: str, start: date, end: date) -> str:
+    """İK-2.2 — talebi ACAN kisinin KENDI vazgecmesi. Kayit SILINMEZ, durumu
+    `withdrawn` olur; bu yuzden `leave_request_deleted`ten AYRI bir metindir —
+    denetimde "geri cekildi" ile "silindi" ayirt edilebilmelidir.
+
+    🔴 Yeni `AuditAction` uyesi ACILMADI (TB3/T3 kanonu, gercek Postgres enum):
+    eylem `update`tir (approve/reject ile ayni — ucu de durum gecisidir), ayrim
+    BU METINDEDIR."""
+    return f"İzin talebi geri çekildi: {full_name} · {type_name} · {start} - {end}"
+
+
 def leave_balance_updated(full_name: str, year: int, carried_over: Decimal) -> str:
     """Devreden gün MANUEL girilir (İZ 137) — bakiyeyi doğrudan büyüten tek yazma
     yolu budur, bu yüzden yeni değer metne KONUR (denetim onu geri okuyabilsin)."""

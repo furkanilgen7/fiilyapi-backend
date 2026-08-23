@@ -181,6 +181,17 @@ def _assert_decidable(request: LeaveRequest) -> None:
         raise ConflictError(guards.LEAVE_DECISION_NOT_PENDING)
 
 
+def _assert_withdrawable(request: LeaveRequest) -> None:
+    """Geri çekme YALNIZ `pending` talepte → aksi 409 (İK-2.2).
+
+    Karara bağlanmış talebi geri çekmek onayı ya da reddi SESSİZCE İPTAL ederdi;
+    ikinci kez geri çekmek ise ilk geri çekmenin damgasını EZERDİ. Metin
+    `LEAVE_DECISION_NOT_PENDING`ten AYRIDIR (guards.py gerekçesi).
+    """
+    if request.status is not LeaveStatus.pending:
+        raise ConflictError(guards.LEAVE_WITHDRAW_NOT_PENDING)
+
+
 async def _assert_approver_is_not_owner(
     session: AsyncSession, actor: User, personnel: Personnel
 ) -> bool:
@@ -342,5 +353,75 @@ async def reject_leave_request(
 
     detail = messages.leave_request_rejected(
         personnel.full_name, leave_type.name, request.start_date, request.end_date, reason
+    )
+    return _leave_response(request, personnel, leave_type), detail
+
+
+# --- İK-2.2: talebi GERİ ÇEKME (kullanıcı kararı 2026-08-22) ---------------
+#
+# 🔴 Bu bir KARAR DEĞİL, sahibin VAZGEÇMESİdir — ama `approve`/`reject` ile AYNI
+# satırın AYNI durum alanını yazar, bu yüzden onlarla AYNI kilit disiplinine
+# tabidir ve bu dosyada yaşar (`_lock_decision_scope` tek yazımı burada).
+
+
+async def withdraw_leave_request(
+    session: AsyncSession, actor: User, request_id: uuid.UUID
+) -> tuple[LeaveRequestResponse, str]:
+    """Talebi SAHİBİ geri çeker — kapı YALNIZ SAHİPLİKTİR.
+
+    Sıra: kayıt (404) → **SAHİPLİK (404)** → satır kilidi → durum (409) → damga.
+
+    ## 🔴 Neden 403 değil 404
+
+    Bu ucun modül kapısı YOKTUR (`/leave-requests/self` emsali): `personnel=none`
+    seviyeli her kullanıcı buraya ULAŞIR. 403 dönseydi cevap *"bu id'de bir talep
+    VAR"* derdi ve yabancı bir aktör başkasının taleplerinin varlığını sayabilirdi.
+    Görünmeyen kayıt var olmayandan AYIRT EDİLEMEZ (repo kanonu) — metin de
+    AYNIDIR (`LEAVE_REQUEST_MISSING`).
+
+    ## 🔴 Neden `admin` istisnası YOK
+
+    `delete_leave_request` iki yoldan açılır (`admin` YA DA sahibi); burada
+    YALNIZ sahiplik vardır. Geri çekme bir VAZGEÇMEdir, yetki yükseltmesi değil:
+    admin'in başkası adına "vazgeçmesi" anlamsızdır ve görevler ayrılığını
+    bulandırır — admin zaten `reject` edebilir (gerekçesi denetime düşer) ya da
+    `DELETE` edebilir. Bu yüzden `_can_delete_leave_request` YENİDEN
+    KULLANILMAZ; `is_own_personnel_record` (core'un TEK yazımı) doğrudan okunur.
+
+    ## 🔴 Neden sahiplik kapısı KİLİTTEN ÖNCE
+
+    EŞİK = KİLİT kanonu **durum/eşik** denetimleri içindir (onlar TOCTOU'ya
+    açıktır ve kilit ALTINDA okunmalıdır). Sahiplik bir eşik DEĞİLDİR: eşzamanlı
+    izin yollarının hiçbiri `Personnel.user_id`yi yazmaz, dolayısıyla kilit
+    altında yeniden okumak hiçbir şey kazandırmaz. Buna karşılık kapıyı kilitten
+    SONRA koymak İKİ zarar üretirdi:
+      * yabancı bir aktör, göremediği bir personelin satırında `FOR UPDATE`
+        alabilirdi — İK'nın onay akışını bloke edebilecek bir yüzey;
+      * 404 cevabı kilit beklemesi kadar GECİKİRDİ ve kaydın varlığı
+        ZAMANLAMAYLA sızardı (tam da 403'ten kaçınma gerekçesinin delinmesi).
+
+    ## Belirsizlik BU YÖNDE yok
+
+    `resolve_self_personnel` (kullanıcı → personel) çoklu kayıtta 409 verir;
+    burada yön TERStir (talep → personel → `user_id`) ve bir kaydın TEK
+    `user_id`si vardır — tahmin yürütülmez, 409 hâli doğmaz.
+    """
+    request, personnel, leave_type = await get_leave_request_row(session, request_id)
+    if not is_own_personnel_record(personnel, actor):
+        raise NotFoundError(guards.LEAVE_REQUEST_MISSING)
+
+    await _lock_decision_scope(session, request, personnel)
+    _assert_withdrawable(request)
+
+    # Damga TEK yazımdan geçer: `withdrawn` de terminal bir durumdur ve bugün
+    # `status != pending` olan HER satırın `decided_at`i DOLUdur. NULL bırakmak
+    # o değişmezi kırar ve ekranda tarihsiz bir terminal satır üretirdi.
+    # `decided_by` burada GERİ ÇEKENdir (= sahibi); ayrım denetim metnindedir.
+    _stamp_decision(request, actor, LeaveStatus.withdrawn, None)
+    await session.flush()
+    await session.refresh(request)
+
+    detail = messages.leave_request_withdrawn(
+        personnel.full_name, leave_type.name, request.start_date, request.end_date
     )
     return _leave_response(request, personnel, leave_type), detail

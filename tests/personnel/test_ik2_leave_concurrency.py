@@ -86,12 +86,22 @@ async def _kur(
     *,
     deducts: bool,
     araliklar: list[tuple[date, date]],
+    sahip_aktor: int | None = None,
 ) -> _Kurulum:
     """Reel commit'li kurulum: kıdemli personel + bir izin tipi + N bekleyen talep
     + İKİ aktör.
 
     İki ayrı aktör bilinçlidir: karar damgasının (`decided_by`) HANGİ transaction
     tarafından atıldığı ancak böyle ayırt edilebilir.
+
+    `sahip_aktor` (İK-2.2): personel kaydını AKTÖRLERDEN BİRİNE bağlar
+    (`Personnel.user_id`). Varsayılanı `None`dır ve o hâlde kurulum ESKİSİYLE
+    BİREBİR AYNIDIR — mevcut beş test HİÇ etkilenmez.
+
+    🔴 Parametre ham bir `user_id` DEĞİL, aktör SIRA NUMARASIDIR: aktörler bu
+    fonksiyonun İÇİNDE doğar, çağıran onların kimliğini önceden bilemez. Geri
+    çekme yolu SAHİPLİK ister (sahip olmayan 404 alır ve yarış hiç ölçülemezdi),
+    bu yüzden köprü kurulumda kurulmak zorundadır.
     """
     async with _SessionFactory() as session:
         role = Role(key=_ROL_ANAHTARI, name="İzin Eşzamanlılık Rolü")
@@ -120,6 +130,10 @@ async def _kur(
         ]
         session.add_all(aktorler)
         await session.flush()
+
+        if sahip_aktor is not None:
+            personnel.user_id = aktorler[sahip_aktor].id
+            await session.flush()
 
         talepler = [
             LeaveRequest(
@@ -218,6 +232,20 @@ async def _reddet(request_id: uuid.UUID, actor_id: uuid.UUID) -> str:
             )
             await session.commit()
             return "rejected"
+        except ConflictError:
+            await session.rollback()
+            return "conflict"
+
+
+async def _geri_cek(request_id: uuid.UUID, actor_id: uuid.UUID) -> str:
+    """İK-2.2 — `_reddet`in birebir kardeşi. Aktör talebin SAHİBİ olmalıdır,
+    yoksa servis 404 (`NotFoundError`) atar ve yarış hiç ölçülmezdi."""
+    async with _SessionFactory() as session:
+        actor = await session.get(User, actor_id)
+        try:
+            await service.withdraw_leave_request(session, actor, request_id)
+            await session.commit()
+            return "withdrawn"
         except ConflictError:
             await session.rollback()
             return "conflict"
@@ -372,6 +400,77 @@ async def test_ayni_talebe_esZamanli_onay_ve_red_tek_damga_birakir() -> None:
         sonuc2 = await asyncio.wait_for(task2, timeout=5)
         assert sonuc1 == "approved"
         assert sonuc2 == "conflict", "red, tazelenmiş `approved` durumunu GÖRMEDİ"
+
+        async with _SessionFactory() as dogrula:
+            talep = await dogrula.get(LeaveRequest, talep_id)
+            assert talep.status is LeaveStatus.approved
+            assert talep.decided_by == kurulum.actor_ids[0], "karar damgası ÜZERİNE YAZILDI"
+            assert talep.reject_reason is None
+    finally:
+        await _gorevleri_bosalt(task1, task2)
+        await _temizle(kurulum)
+
+
+async def test_ayni_talebe_esZamanli_onay_ve_geri_cekme_tek_damga_birakir() -> None:
+    """İK-2.2 K: AYNI talebe eşzamanlı ONAY + GERİ ÇEKME — damga TEK kez atılır.
+
+    Geri çekme de `_lock_decision_scope`u (personel → talep, `populate_existing`)
+    kullanmak ZORUNDADIR: kilitsiz hâlde ikinci transaction birincinin damgasını
+    GÖREMEDEN geçer, onaylanmış bir izin sessizce "geri çekilmiş" olur ve
+    personel izne çıkmışken kayıt kuyruktan düşer.
+
+    ## 🔴 AYRIŞMA NOKTASI "bloke oldu mu" DEĞİL, SONUÇ ÇİFTİdir
+
+    FIN-1 kanonu: kilitsiz kod da kendi `UPDATE`inin ÖRTÜK satır kilidine takılıp
+    bloke olabilir — yani `not task2.done()` tek başına kilidin VARLIĞINI
+    kanıtlamaz. Ayrışma `sorted([sonuc1, sonuc2]) == ["approved", "conflict"]`
+    iddiasındadır: kilitsiz (ya da `populate_existing`siz) hâlde İKİSİ DE başarı
+    döner ve `approve`ın kararı sessizce KAYBOLUR. Bloke iddiası yine de durur —
+    yarış penceresinin gerçekten açıldığını gösteren korkuluktur.
+
+    Aktör SAHİPLİK gerektirir: `sahip_aktor=1` ile personel ikinci aktöre
+    bağlanır. Bağlanmasaydı `_geri_cek` 404 alır, `ConflictError` yakalanmaz ve
+    test yarışı DEĞİL kurulum hatasını ölçerdi.
+
+    Birinci aktör (onaylayan) personelin SAHİBİ DEĞİLDİR — OK-1A T5'in "kendi
+    talebini onaylayamaz" 403'ü bu yüzden hiç koşmaz ve ölçüm karışmaz.
+    """
+    kurulum = await _kur(
+        deducts=True,
+        araliklar=[(date(_YIL, 9, 1), date(_YIL, 9, 5))],
+        sahip_aktor=1,
+    )
+    talep_id = kurulum.request_ids[0]
+    kilit_alindi = asyncio.Event()
+    kilidi_birak = asyncio.Event()
+    task1: asyncio.Task | None = None
+    task2: asyncio.Task | None = None
+    try:
+        task1 = asyncio.create_task(
+            _onayla_ve_tut(talep_id, kurulum.actor_ids[0], kilit_alindi, kilidi_birak)
+        )
+        await asyncio.wait_for(kilit_alindi.wait(), timeout=5)
+
+        task2 = asyncio.create_task(_geri_cek(talep_id, kurulum.actor_ids[1]))
+        await asyncio.sleep(0.3)
+        # 🔴 Once GERCEK hatayi yuzeye cikar: beklenmedik bir istisnayla OLEN gorev
+        # de `done()`dur ve asagidaki korkuluk onu "kilit yok" diye RAPORLARDI —
+        # yanlis teshis, kirmizinin en pahali hali.
+        if task2.done() and task2.exception() is not None:
+            raise task2.exception()
+        assert not task2.done(), (
+            "geri çekme, onay kilidi serbest bırakılmadan ilerleyebildi — "
+            "`withdraw_leave_request` artık karar satırını KİLİTLEMİYOR olabilir "
+            "(K4 damga yarışı geri çekme yolunda açık)"
+        )
+
+        kilidi_birak.set()
+        sonuc1 = await asyncio.wait_for(task1, timeout=5)
+        sonuc2 = await asyncio.wait_for(task2, timeout=5)
+        assert sorted([sonuc1, sonuc2]) == ["approved", "conflict"], (
+            "iki istek de BAŞARILI döndü: onay kararı sessizce kayboldu "
+            f"(sonuçlar: {sonuc1!r}, {sonuc2!r})"
+        )
 
         async with _SessionFactory() as dogrula:
             talep = await dogrula.get(LeaveRequest, talep_id)
