@@ -9,8 +9,8 @@
 | `status` | başlangıç değeri `sale_type`tan türer; geçişler T5'in uçlarıdır |
 | `unit_id` (PATCH'te) | ünite değişimi İKİ ünitenin senkronunu ve tekliği birlikte ilgilendirir |
 | `sale_type` (PATCH'te) | `status` ile eşleşiktir; rezervasyon→satış geçişi T5 `activate` ucudur |
-| maliyet / kâr | KALICI KARAR 3 — `pending_module: "project_costs"` (aşağıda) |
-| belgeler / peşinat faturası | F168-207 → `pending_modules` (belge çekirdeği + `invoicing`) |
+| maliyet / kâr KOLONU | yok; değer `MetricPlaceholder` ZARFINDA döner (P10 T3'te bağlandı) |
+| belgeler / peşinat faturası | F168-207 → `pending_modules`; iki modül de canlı, BAĞ yok |
 
 `min_sale_price` KONTROLÜ HİÇBİR KATMANDA YOKTUR (kalıcı karar 2): ne şemada,
 ne serviste, ne DB'de — uyarı bile üretilmez.
@@ -37,11 +37,25 @@ from app.modules.sales.models import (
 # kuraldır (karar 9) ve iki kopya validator zamanla ayrışır.
 from app.modules.units.schemas import VatRate
 
-# KALICI KARAR 3 / karar 8 / `invoicing` boşluğu — yer tutucu anahtarları tek yerde.
+# Yer tutucu anahtarları tek yerde.
+#
+# 🔴 P-YT3 DENETİMİ (2026-08-23): `COST_MODULE` **`PENDING_MODULES`tan
+# ÇIKARILDI**. Sebep bir çelişkiydi: liste ekrana *"maliyet/kârın kaynağı yok"*
+# derken `UnitSaleResponse.unit_cost` ve `sale_profit` AYNI YANITTA dolu
+# geliyordu (P10 T3, `e7b84cb`, 2026-08-09'dan beri). Bu listeye bakıp maliyet
+# sütununu gizleyen bir ekran, verisi OLAN bir sütunu gizlerdi.
+# Sabit KALIR: `SalesSummaryResponse` onu hâlâ kullanır (aşağıdaki gerekçe).
 COST_MODULE = "project_costs"
+# Ölçüldü: `documents` tablosunda satışa bağ YOKTUR (`project_id`/`site_id`/
+# `folder_id` dışında kolon yok) — "bu satışın belgeleri" listelenemez.
 DOCUMENTS_MODULE = "documents"
+# Ölçüldü: `Invoice`ta `unit_sale_id` KOLONU YOKTUR; kaynak bağları
+# `progress_payments` / `subcontractor_progress_payments` /
+# `equipment_rental_invoices` / `purchase_orders`tır. F206-207 peşinat faturası
+# bir satışa BAĞLANAMAZ. (Modülün kendisi FAT-1'den beri CANLI — eski yorumun
+# "kodu henüz yazılmadı" cümlesi bayattı.)
 INVOICING_MODULE = "invoicing"
-PENDING_MODULES = [COST_MODULE, DOCUMENTS_MODULE, INVOICING_MODULE]
+PENDING_MODULES = [DOCUMENTS_MODULE, INVOICING_MODULE]
 
 _LABEL_SEPARATOR = " · "
 
@@ -147,19 +161,28 @@ class UnitSaleResponse(BaseModel):
     installment_total: int
     installment_paid_count: int
     overdue_installment_count: int
-    # --- Yer tutucular (spec §5) ---
-    # KALICI KARAR 3: F62 "Maliyet" ve F90 "Bu Satıştan Kâr" sütunu YOKTUR;
-    # sahte rakam yerine dürüst boş durum döner. Bir sonraki ajan bunları
-    # "eksik alan" sanıp DOLDURMAMALIDIR — kaynak P10 `project_costs`tur.
-    unit_cost: MetricPlaceholder = Field(
-        default_factory=lambda: MetricPlaceholder(pending_module=COST_MODULE)
-    )
-    sale_profit: MetricPlaceholder = Field(
-        default_factory=lambda: MetricPlaceholder(pending_module=COST_MODULE)
-    )
-    # F168-202 satış belgeleri (belge çekirdeği, karar 8) + F206-207 peşinat
-    # faturası (`invoicing` modülünün kodu henüz yazılmadı) — `contracts`
-    # şemalarındaki `pending_modules` deseninin aynısı.
+    # --- DS 62/90 maliyet + kâr (yer tutucu DEĞİL, BAĞLI) ---
+    #
+    # 🔴 P-YT3 DENETİMİ (2026-08-23) — ESKİ YORUM YANLIŞTI. *"F62 Maliyet ve F90
+    # Bu Satıştan Kâr sütunu YOKTUR"* diyordu; oysa P10 T3 (`e7b84cb`,
+    # 2026-08-09) iki alanı da BAĞLADI: `service._cost_metrics` her yanıtta
+    # gerçek değeri basar (kanıt: `tests/sales/test_sales_cost_binding.py`).
+    #
+    # 🔴 `default_factory` KALDIRILDI (K3). Kalan varsayılan, "boş durum"
+    # kararının İKİNCİ KOPYASIYDI: gerçek karar `_cost_metrics`te yaşar ve
+    # kaynak yoksa (m²'si girilmemiş ünite, bütçesiz proje) zarfı ORASI boş
+    # doğurur. Şemadaki varsayılan ise bir çağıran alanı unuttuğunda —
+    # `project_costs` canlı ve değer hesaplanabilirken — sessizce
+    # "bekleniyor" basardı. Alan zorunlu olunca o dal YAPISAL OLARAK imkânsız.
+    #
+    # ⚠️ SÖZLEŞME ETKİSİ (K5): iki alan artık OpenAPI'de `required`.
+    # `openapi-typescript` onları zorunlu üretir — sunucu zaten HER yanıtta
+    # gönderdiği için bu, sözleşmenin gerçeğe UYDURULMASIDIR.
+    unit_cost: MetricPlaceholder
+    sale_profit: MetricPlaceholder
+    # F168-202 satış belgeleri + F206-207 peşinat faturası. İki modül de CANLI;
+    # eksik olan MODÜL değil satışa giden BAĞdır (gerekçeler `PENDING_MODULES`
+    # sabitlerinin yanında ölçüldü). `contracts` şemalarındaki desenin aynısı.
     pending_modules: list[str] = Field(default_factory=lambda: list(PENDING_MODULES))
 
 
@@ -375,6 +398,12 @@ class SalesSummaryResponse(BaseModel):
     overdue: OverdueKpi
     upcoming_collections: list[UpcomingCollection]
     expired_reservations: list[ExpiredReservation]
-    # KALICI KARAR 3: maliyet/kâr KPI'sı AÇILMAZ; uydurma rakam yerine dürüst
-    # yer tutucu anahtarı döner (P10 `project_costs`).
+    # KALICI KARAR 3: maliyet/kâr KPI'sı AÇILMAZ.
+    #
+    # 🔴 P-YT3 (2026-08-23) — (B) GEÇERLİ, etiket KALDI ama SEBEBİ DEĞİŞTİ:
+    # eskiden "kaynak yok"tu, bugün kaynak VAR (`costs.allocation` canlı ve
+    # satış satırında kullanılıyor). Eksik olan şey KPI ALANIDIR, veri değil —
+    # yani etiket artık bir modül boşluğunu değil bir ÜRÜN KARARINI bildiriyor.
+    # `UnitSaleResponse`taki kardeşinden farkı budur: orada alan VAR ve dolu,
+    # burada alan hiç açılmadı.
     pending_modules: list[str] = Field(default_factory=lambda: [COST_MODULE])

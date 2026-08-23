@@ -142,3 +142,17 @@ async def test_satis_listesinde_sorgu_sayisi_satis_sayisindan_bagimsizdir(
 
     assert len(liste.json()["items"]) == 2
     assert tek_sayim == cift_sayim, (tek_sayim, cift_sayim)
+
+    # 🔴 MUTLAK TAVAN (P-YT3 T3, 2026-08-23) — P-YT2'nin olctugu kor noktanin
+    # bu sicak yolda da GECERLI oldugu KANITLANDI: `list_sales`e SABIT bir
+    # ek sorgu (satis sayisindan bagimsiz) eklendiginde yukaridaki esitlik
+    # iddiasi YESIL kaldi, cunku iki olcumu de ayni sabitle kaydirir. Yani
+    # "N+1 yok" demek "maliyet artmadi" demek DEGILDIR.
+    #
+    # Bugunku olcum: 14 ifade. Tavan 16'dir — dar birakildi ki sessiz bir
+    # kayma yakalansin, ama kimlik/yetki katmaninin bir ifade eklemesi turu
+    # bosuna kirmasin. Sayiyi DUSURMEK serbesttir; YUKSELTMEK gerekcelidir.
+    assert cift_sayim <= 16, (
+        f"satis listesi sicak yolu {cift_sayim} sorguya cikti (tavan 16) — "
+        "esitlik iddiasi bu artisi GOREMEZ, tavan gorur"
+    )

@@ -372,11 +372,38 @@ class SiteStockRow(BaseModel):
     `balance` YALNIZ o şantiyenin depolarını kapsar; merkez depo (`site_id IS
     NULL`) hiçbir şantiyenin bakiyesine girmez (spec §3).
 
-    `monthly_need` ("Aylık İhtiyaç") ve `section` ("Bölüm") sütunlarının GİRİŞ
-    YÜZEYİ YOKTUR: ikisi de ileride planlama/BOQ türevi olacaktır. Değer
-    üretilmez, mevcut yer tutucu zarfları taşınır — `section` metin listesi
+    `monthly_need` ("Aylık İhtiyaç") ve `section` ("Bölüm") sütunlarının değeri
+    ÜRETİLMEZ; mevcut yer tutucu zarfları taşınır — `section` metin listesi
     olduğu için `ListPlaceholder`, `monthly_need` tek sayı olduğu için
     `MetricPlaceholder`.
+
+    🔴 **P-YT3 DENETİMİ (2026-08-23) — GEREKÇE TAZELENDİ.** Eski cümle *"ikisi
+    de ileride planlama/BOQ türevi olacaktır"* diyordu; `site_planning` modülü
+    o gün geldi ve iki sütun da dolmadı. Bugünkü ölçülmüş olgu:
+
+    | alan | sınıf | engel |
+    |---|---|---|
+    | `monthly_need` | (B) GEÇERLİ | kaynak YOK ve gelmeyecek (aşağıda) |
+    | `section` | (C) TUZAK | makul görünen kaynak VAR ama ANLAMI yanlış |
+
+    **`monthly_need` — kaynak yok.** `PlanResourceKind` yalnız `crew` ve
+    `equipment` taşır; `SitePlanRow`da ne `stock_item_id` ne bir malzeme
+    miktarı vardır (tek sayısal kolon `planned_worker_count`) ve modelin kendi
+    docstring'i *"Plan-gerçekleşen kıyas kolonu YOKTUR (spec §5)"* der. Yani
+    bekleyen şey MODÜL değil, o modülün hiç taşımadığı bir KAVRAMdır.
+
+    **`section` — TUZAK.** Görünüşte işleyen bir kaynak vardır:
+    `purchase_requests.section_id` + `purchase_request_lines.stock_item_id`
+    ikilisi bir stok kartını bir bölüme bağlar. K4 bunu engellemez (`inventory`
+    okuyup `procurement`ta `none` olan rol YOKTUR). Engel ANLAMdır: o bağ *"bu
+    malzemeyi HANGİ BÖLÜM TALEP ETTİ"*dir — stoğun bulunduğu bölüm değil.
+    Depolar şantiyeye bağlıdır, bölüme DEĞİL (`warehouses.site_id`; `sections`a
+    FK yok). Basılsaydı ekran makul görünen ama yanlış bir "Bölüm" gösterirdi.
+
+    ⚠️ **İkinci engel — K4:** `site_planning` bir izin modülü DEĞİLDİR; router'ı
+    `site_diary` kapısını kullanır ve `procurement` `inventory=full` iken
+    `site_diary=none`dur. Plan verisi buraya basılsaydı o kapı atlanırdı.
+    Bekçi: `tests/modules/inventory/test_pyt3_yer_tutucu_denetimi.py`.
     """
 
     id: uuid.UUID

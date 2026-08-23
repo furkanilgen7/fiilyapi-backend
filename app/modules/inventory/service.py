@@ -634,7 +634,10 @@ async def build_site_stock(
                 min_stock=row[0].min_stock,
                 balance=row.balance,
                 status=row.status,
-                # ŞS "Aylık İhtiyaç" / "Bölüm": giriş yüzeyi YOK, değer üretilmez.
+                # ŞS "Aylık İhtiyaç" / "Bölüm" — P-YT3 (2026-08-23) denetlendi ve
+                # KALDI. `site_planning` CANLI; engel (a) plan izgarasının malzeme
+                # satırı taşımaması, (b) `section` için talep-bölüm bağının YANLIŞ
+                # ANLAM taşıması. Tam gerekçe: `schemas.SiteStockRow` docstring'i.
                 monthly_need=MetricPlaceholder(pending_module=PENDING_SITE_PLANNING),
                 section=ListPlaceholder(pending_module=PENDING_SITE_PLANNING),
             )

@@ -584,6 +584,20 @@ async def test_ozet_ucunda_n_plus_1_yok(client, admin_headers, depo_fabrikasi, k
 
     assert kucuk == buyuk, f"N+1: küçük hacimde {kucuk}, büyük hacimde {buyuk} sorgu"
 
+    # 🔴 MUTLAK TAVAN (P-YT3 T3, 2026-08-23). Yukaridaki esitlik iddiasi
+    # "N+1 yok" der ama "maliyet artmadi" DEMEZ: hacimden BAGIMSIZ sabit bir
+    # ek sorgu iki olcumu de ayni miktarda kaydirir ve iddia YESIL kalir
+    # (P-YT2 dashboard'da olctu, P-YT3 satis listesinde tekrar uretti).
+    # Tavan o sinifi gorur. SINIRI: sayac yalniz STOK tablolarini sayar
+    # (`_stok_sorgulari`), baska bir tabloya acilan sabit sorgu buraya da
+    # gorunmez. Sayiyi DUSURMEK serbest, YUKSELTMEK gerekcelidir.
+    #
+    # Tavan BOSLUKSUZ (olculen sayinin kendisi): sayac zaten kimlik/rol
+    # sorgularini disarida birakiyor, yani altyapi calkantisi bu sayiyi
+    # oynatmaz — bir bosluk birakmak yalnizca o kadarlik bir mutasyonu
+    # gorunmez kilardi (fiilen olculdu: tavan 4 iken +1 mutasyon YESIL kaldi).
+    assert buyuk <= 4, f"/stock/summary sicak yolu {buyuk} stok sorgusuna cikti (tavan 4)"
+
 
 @pytest.mark.asyncio
 async def test_santiye_stok_ucunda_n_plus_1_yok(
@@ -609,3 +623,17 @@ async def test_santiye_stok_ucunda_n_plus_1_yok(
     buyuk = await _olc()
 
     assert kucuk == buyuk, f"N+1: küçük hacimde {kucuk}, büyük hacimde {buyuk} sorgu"
+
+    # 🔴 MUTLAK TAVAN (P-YT3 T3, 2026-08-23). Yukaridaki esitlik iddiasi
+    # "N+1 yok" der ama "maliyet artmadi" DEMEZ: hacimden BAGIMSIZ sabit bir
+    # ek sorgu iki olcumu de ayni miktarda kaydirir ve iddia YESIL kalir
+    # (P-YT2 dashboard'da olctu, P-YT3 satis listesinde tekrar uretti).
+    # Tavan o sinifi gorur. SINIRI: sayac yalniz STOK tablolarini sayar
+    # (`_stok_sorgulari`), baska bir tabloya acilan sabit sorgu buraya da
+    # gorunmez. Sayiyi DUSURMEK serbest, YUKSELTMEK gerekcelidir.
+    #
+    # Tavan BOSLUKSUZ (olculen sayinin kendisi): sayac zaten kimlik/rol
+    # sorgularini disarida birakiyor, yani altyapi calkantisi bu sayiyi
+    # oynatmaz — bir bosluk birakmak yalnizca o kadarlik bir mutasyonu
+    # gorunmez kilardi (fiilen olculdu: tavan 4 iken +1 mutasyon YESIL kaldi).
+    assert buyuk <= 3, f"ŞS sicak yolu {buyuk} stok sorgusuna cikti (tavan 3)"

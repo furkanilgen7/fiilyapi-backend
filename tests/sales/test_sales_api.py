@@ -136,25 +136,42 @@ async def test_unite_ve_alici_etiketleri_doner(client, admin_headers, proje, uni
 
 
 @pytest.mark.asyncio
-async def test_maliyet_ve_kar_yer_tutucudur(client, admin_headers, proje, unite, musteri):
-    """KALICI KARAR 3: F62 "Maliyet" ve F90 "Bu Satıştan Kâr" SÜTUNU YOKTUR.
+async def test_maliyet_zarfi_KAYNAK_YOKKEN_durustce_BOS_kalir(
+    client, admin_headers, proje, unite, musteri
+):
+    """🔴 BU TESTIN ADI 2026-08-23'te (P-YT3) DUZELTILDI.
 
-    Sahte rakam yerine dürüst boş durum döner; F168-202 belgeler ve F206-207
-    peşinat faturası da `pending_modules` listesinde bildirilir.
+    Eski adi `test_maliyet_ve_kar_yer_tutucudur` idi ve docstring'i *"F62
+    Maliyet / F90 Bu Satistan Kâr SUTUNU YOKTUR"* diyordu. Ikisi de BAYATTI:
+    P10 T3 (`e7b84cb`, 2026-08-09) iki zarfi da BAGLADI. Test yesil kaliyordu
+    cunku `unite` fixture'inin `gross_area_m2`si YOKTUR — yani olctugu sey
+    "alan yer tutucudur" degil **"kaynak yoksa zarf durustce bos kalir"**dir.
+    Adiyla olctugu sey ayrisan bir test, bir denetimi yaniltabilir (ve fiilen
+    P-YT1/P-YT3 sayimini yanilttı).
+
+    Dolu hâlin kaniti `test_sales_cost_binding.py` ile
+    `test_pyt3_yer_tutucu_denetimi.py`dedir.
     """
+    assert unite.gross_area_m2 is None, (
+        "fixture m² kazandi — bu test artik BOS zarfi olcmuyor, iddia bosa koser"
+    )
+
     govde = await _olustur(client, admin_headers, proje, unite, musteri)
 
     assert govde["unit_cost"] == {
         "available": False,
         "value": None,
         "pending_module": "project_costs",
-    }
+    }, "m²'siz unitede maliyet BILINMEZ — uydurma 0 basilmaz (K2)"
     assert govde["sale_profit"] == {
         "available": False,
         "value": None,
         "pending_module": "project_costs",
-    }
-    assert govde["pending_modules"] == ["project_costs", "documents", "invoicing"]
+    }, "maliyet bilinmiyorsa kâr da bilinmez — 'kâr = tum bedel' basilmaz"
+    assert govde["pending_modules"] == ["documents", "invoicing"], (
+        "P-YT3: `project_costs` listeden CIKTI — zarf BAGLI oldugu icin listede "
+        "durmasi yanitin kendi icinde celiski olurdu"
+    )
 
 
 @pytest.mark.asyncio

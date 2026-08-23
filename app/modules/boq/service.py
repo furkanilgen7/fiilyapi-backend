@@ -1,6 +1,6 @@
 import uuid
 from collections.abc import Iterable
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,6 +27,7 @@ from app.modules.boq.schemas import (
     BoqListResponse,
     BoqTotals,
     MetricPlaceholder,
+    quantize_money,
     quantize_quantity,
 )
 
@@ -55,17 +56,17 @@ _ALLOCATION_EXCEEDS_QUANTITY = "Bölümlere dağıtılan miktar poz miktarını 
 _ALLOCATION_DUPLICATE_SECTION = "Aynı bölüm gövdede birden fazla kez gönderildi"
 _QUANTITY_BELOW_ALLOCATED = "Poz miktarı bölümlere dağıtılan toplamın altına indirilemez"
 
-# Spec §3.2/§5.1: bu dilimde YAZILMAYAN turev alanlarin bagli oldugu modul
-# anahtarlari. Kullaniciya gosterilecek metin degil, B6 sozlesmesindeki
-# pending_module anahtaridir.
+# B6 sozlesmesindeki `pending_module` anahtarlari (kullaniciya gosterilecek
+# metin DEGILDIR).
+#
+# 🔴 P-YT3 DENETIMI (2026-08-23): ikisi de CANLI bir izin modulunu adlandirir.
+# Yani zarfin ilk tasarimindaki *"bu modul henuz yok"* anlami burada ARTIK
+# GECERLI DEGIL — bekleyen sey modul degil, o modulun VERISINI bu ucta basma
+# IZNIDIR (K4). Gerekcenin tamami `schemas.BoqTotals` docstring'indedir;
+# ayrismanin bugunku hâli `test_boq_pyt3_yer_tutucu_denetimi.py::test_K4_*`
+# ile ISIMLE cakilidir.
 _CONTRACTS = "contracts"
 _PROGRESS_PAYMENTS = "progress_payments"
-
-_MONEY = Decimal("0.01")
-
-
-def _quantize_money(value: Decimal) -> Decimal:
-    return value.quantize(_MONEY, rounding=ROUND_HALF_UP)
 
 
 def _metric(pending_module: str) -> MetricPlaceholder:
@@ -145,7 +146,7 @@ async def group_response(session: AsyncSession, group: BoqGroup) -> BoqGroupResp
 def _totals(groups: list[BoqGroupResponse]) -> BoqTotals:
     """Spec §5.1: `grand_total` GERCEK (gruplarin toplami), geri kalani yer
     tutucu. Toplama Decimal ile yapilir (float ASLA); bos BOQ "0.00" doner."""
-    grand_total = _quantize_money(sum((group.group_total for group in groups), Decimal("0")))
+    grand_total = quantize_money(sum((group.group_total for group in groups), Decimal("0")))
     return BoqTotals(
         contract_total=_metric(_CONTRACTS),
         realized_total=_metric(_PROGRESS_PAYMENTS),

@@ -12,6 +12,7 @@ from app.modules.projects.schemas import MetricPlaceholder
 
 __all__ = [
     "MetricPlaceholder",
+    "quantize_money",
     "BoqGroupCreate",
     "BoqGroupResponse",
     "BoqGroupUpdate",
@@ -35,7 +36,16 @@ _MONEY = Decimal("0.01")
 _QUANTITY = Decimal("0.001")
 
 
-def _quantize_money(value: Decimal) -> Decimal:
+def quantize_money(value: Decimal) -> Decimal:
+    """Paranin `boq/` icindeki TEK yuvarlamasi (K3, P-YT3 T2).
+
+    🔴 Ad basindaki alt cizgi KALDIRILDI cunku ikinci bir kopya vardi:
+    `service.py` ayni `_MONEY`/`_quantize_money` ikilisini kendi icinde
+    yeniden tanimliyordu. Iki kopya bugun ayni sonucu veriyordu, ama
+    `boq`nun kalem basina yuvarlayan para formulu `sites.Section.budget`in
+    (C) gerekcesinin TAM MERKEZINDEDIR (P-YT2): o alani ileride baglayacak
+    dilim "tek kopyayi cagir" derken IKI aday bulurdu.
+    """
     return value.quantize(_MONEY, rounding=ROUND_HALF_UP)
 
 
@@ -48,8 +58,27 @@ def quantize_quantity(value: Decimal) -> Decimal:
 
 class BoqItemResponse(BaseModel):
     """Spec §5.1 poz kalemi satiri. `amount` turevdir, saklanmaz — quantity *
-    unit_price, para hassasiyetine (0.01) yuvarlanir. `progress_pct` hakediş
-    (P7) yer tutucusudur (spec §3.2)."""
+    unit_price, para hassasiyetine (0.01) yuvarlanir.
+
+    🔴 `progress_pct` — **(C) TUZAK** (P-YT3 denetimi, 2026-08-23). Eski yorum
+    *"hakediş (P7) yer tutucusudur"* diyordu; bu BAYATTI — `progress_payments`
+    modulu CANLI ve birlestirme anahtari da VAR:
+
+        boq_items.contract_item_id ──> employer_contract_items.id
+                                                ^
+                  progress_payment_lines.(contract_item_id, site_id)
+
+    Yani "gerceklesen miktar / poz miktari" ilkece HESAPLANABILIR. Alan yine de
+    bagli DEGIL ve sebep veri degil **IZIN KAPISIDIR (K4, P-YT2 kanonu)**:
+    tohumlanmis matriste `procurement` `boq=view/limited` (2026-07-30 kullanici
+    karari) ama `progress_payments=none`. Zarfi doldurmak, isverene kesilen
+    hakedisin gerceklesme oranini satinalmaya BOQ ekranindan acardi — o modulun
+    `require_permission` kapisi hic calismadan.
+
+    Bekci: `tests/modules/test_boq_pyt3_yer_tutucu_denetimi.py` — veri KURULUP
+    zarfin yine de bos kaldigi ayri bir testle cakilidir; matris ayrismasi
+    kapanirsa `test_K4_*` haber verir.
+    """
 
     id: uuid.UUID
     code: str
@@ -73,7 +102,7 @@ class BoqItemResponse(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def amount(self) -> Decimal:
-        return _quantize_money(self.quantity * self.unit_price)
+        return quantize_money(self.quantity * self.unit_price)
 
 
 class BoqGroupResponse(BaseModel):
@@ -87,12 +116,36 @@ class BoqGroupResponse(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def group_total(self) -> Decimal:
-        return _quantize_money(sum((item.amount for item in self.items), Decimal("0")))
+        return quantize_money(sum((item.amount for item in self.items), Decimal("0")))
 
 
 class BoqTotals(BaseModel):
-    """Spec §5.1 ust KPI seridi. `grand_total` GERCEK deger, geri kalani yer
-    tutucu (sozlesme/hakediş bu dilimde yazilmiyor)."""
+    """Spec §5.1 ust KPI seridi. `grand_total` GERCEK deger (gruplarin toplami).
+
+    🔴 **P-YT3 DENETIMI (2026-08-23) — BES ZARFIN DE SINIFI VE SEBEBI.** Eski
+    yorum *"sozlesme/hakediş bu dilimde yazilmiyor"* diyordu ve BAYATTI: iki
+    modul de aylardir canli. Bugunku olgu:
+
+    | alan | sinif | bagli olmama SEBEBI |
+    |---|---|---|
+    | `contract_total` | (C) TUZAK | **K4** — `site_chief`+`procurement`: boq=view, contracts=none |
+    | `realized_total` | (C) TUZAK | **K4** — `procurement` `progress_payments`ta `none` |
+    | `remaining_total` | (C) TUZAK | `contract_total − realized_total`; iki ucu da K4 kapali |
+    | `revision_total` | (B) GECERLI | 🔑 **repoda REVIZYON KAVRAMI YOK** — kaynak yok |
+    | `grand_progress_pct` | (C) TUZAK | **K4** — `realized_total`in turevi |
+
+    🔑 `contract_total`in formulu ZATEN YAZILI ve TEK KOPYA:
+    `contracts/distribution.py::_site_summaries` santiye basina
+    `Σ (BOQ satiri miktari × SOZLESME kaleminin birim fiyati)` hesaplar (spec
+    §3.3: otorite sozlesmedir). Baglanacagi gun o cagrilir, KOPYALANMAZ (K3) —
+    burada ikinci bir carpim yazmak kurus farkli bir "Sozlesme Bedeli" uretirdi.
+
+    🔴 `revision_total` icin arama YAPILDI: `revision`/`revizyon` gecen tek yer
+    `subcontractor_progress_payments`taki `is_revision_required` BAYRAGIDIR
+    (hakedisin "duzeltilmeli" durumu) — sozlesme revizyonu ile ilgisi yoktur.
+    Sozlesme revizyonu ne modelde ne migration'da vardir; anahtar `contracts`
+    dogru kalir ama bekleyen sey MODUL degil **KAVRAMDIR**.
+    """
 
     contract_total: MetricPlaceholder
     realized_total: MetricPlaceholder
