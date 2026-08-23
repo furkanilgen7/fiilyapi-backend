@@ -312,7 +312,7 @@ async def update_purchase_request_endpoint(
     `lines` gönderilirse kalemler REPLACE edilir (tek atomik işlem); hiç
     göndermemek onlara DOKUNMAZ, boş liste hepsini SİLER.
     """
-    purchase_request = await service.visible_request(session, user, request_id)
+    purchase_request = await service.visible_request_locked(session, user, request_id)
     purchase_request, detail = await service.update_request(session, user, purchase_request, data)
     await _audit(request, session, user, AuditAction.update, detail)
     return await service.build_request_detail(session, user, purchase_request)
@@ -341,7 +341,7 @@ async def delete_purchase_request_endpoint(
 
     Yanıt `204 No Content`, gövdesizdir.
     """
-    purchase_request = await service.visible_request(session, user, request_id)
+    purchase_request = await service.visible_request_locked(session, user, request_id)
     detail = await service.delete_request(session, user, purchase_request)
     await _audit(request, session, user, AuditAction.delete, detail)
 
@@ -539,7 +539,7 @@ async def create_quote_endpoint(
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> PurchaseQuoteResponse:
     """Yalnız `quote_wait` (aksi **409**). `delivery_time` SERBEST metindir."""
-    purchase_request = await service.visible_request(session, user, request_id)
+    purchase_request = await service.visible_request_locked(session, user, request_id)
     quote, detail = await service.create_quote(session, purchase_request, data)
     await _audit(request, session, user, AuditAction.create, detail)
     return quote
@@ -565,7 +565,7 @@ async def update_quote_endpoint(
     """Kısmi güncelleme. Nakliye kuralı BİRLEŞİK değerlerde koşar (**422**):
     gövde yalnız `shipping_cost` taşısa bile DB'deki `shipping_included`
     hesaba katılır."""
-    purchase_request = await service.visible_request(session, user, request_id)
+    purchase_request = await service.visible_request_locked(session, user, request_id)
     quote, detail = await service.update_quote(session, purchase_request, quote_id, data)
     await _audit(request, session, user, AuditAction.update, detail)
     return quote
@@ -593,7 +593,7 @@ async def delete_quote_endpoint(
     giren kullanıcı değil TEDARİKÇİDİR ve kayıtta `created_by` kolonu yoktur.
     Kapı bu yüzden düz `full`dur.
     """
-    purchase_request = await service.visible_request(session, user, request_id)
+    purchase_request = await service.visible_request_locked(session, user, request_id)
     detail = await service.delete_quote(session, purchase_request, quote_id)
     await _audit(request, session, user, AuditAction.delete, detail)
 

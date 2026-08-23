@@ -660,3 +660,66 @@ def test_siparis_PATCH_ucu_KILITLI_kapiyi_kullanir():
 
     assert "service.visible_order_locked(" in govde
     assert "service.visible_order(" not in govde
+
+
+# --------------------------------------------------------------------------- #
+# T3 SUPURGESI — MODUL GENELI INVARYANT
+# --------------------------------------------------------------------------- #
+
+
+def test_TUM_yazma_uclari_KILITLI_kapiyi_kullanir():
+    """🔴 MODULUN TEK YAPISAL KURALI, tek yerde bekcilenir.
+
+    T3 taramasi sunu gosterdi: kusur `select-and-order`a OZGU DEGILDI, tek bir
+    yapisal kuralin ON DORT ucta tutarsiz uygulanmasiydi. Kural:
+
+        DURUM'a bakarak karar veren her YAZMA ucu, o satiri KILITLI okumak
+        zorundadir; OKUMA uclari kilit ALMAZ.
+
+    Kilitsiz kapiyla olculen ihlaller (338697d tabani, hepsi GERCEK yaris —
+    `wait_event_type = Lock/transactionid` dogrulandi):
+
+    * `select-and-order` || `select-and-order` -> IKI SIPARIS, ₺500.000 (asil kusur)
+    * stok teslimi       || `PATCH` siparis    -> teslim damgasi KAYIP, ikili CELISKILI
+    * `PATCH` siparis    || `PATCH` siparis    -> ikisi de gecti, 409 YOK
+    * `submit`           || `PATCH` talep      -> `_assert_draft` ATLATILDI
+    * `select-and-order` || `POST` teklif      -> `_assert_quote_wait` ATLATILDI
+    * `select-and-order` || `DELETE` teklif    -> secili teklif SILINDI
+
+    Uc uc bazinda bekcilemek yerine invaryant BURADA durur: yeni bir yazma ucu
+    kilitsiz kapiyla eklenirse bu test kirmizi olur ve ekleyen kisi karari
+    BILINCLI vermek zorunda kalir.
+    """
+    from pathlib import Path
+
+    metin = (Path(service.__file__).resolve().parent.parent / "router.py").read_text(
+        encoding="utf-8"
+    )
+    yazma = {"post", "patch", "put", "delete"}
+    ihlaller: list[str] = []
+    okuma_kilitli: list[str] = []
+
+    for parca in metin.split("\n@router.")[1:]:
+        yontem = parca.split("(", 1)[0].strip().lower()
+        ad = parca.split("async def ", 1)[1].split("(", 1)[0]
+        govde = parca.split("):", 1)[-1]
+        kapilar = {k for k in ("visible_request", "visible_order") if f"service.{k}(" in govde}
+        kilitli = {
+            k
+            for k in ("visible_request_locked", "visible_order_locked")
+            if f"service.{k}(" in govde
+        }
+
+        if yontem in yazma and kapilar:
+            ihlaller.append(f"{yontem.upper()} {ad} -> {sorted(kapilar)}")
+        if yontem == "get" and kilitli:
+            okuma_kilitli.append(f"GET {ad} -> {sorted(kilitli)}")
+
+    assert not ihlaller, (
+        "KILITSIZ kapi kullanan YAZMA ucu var — es zamanli iki istek BAYAT durum "
+        f"uzerinden karar verir: {ihlaller}"
+    )
+    assert not okuma_kilitli, (
+        "OKUMA ucu satir kilidi aliyor — listeler/detaylar yazmalarin arkasinda "
+        f"bekler, gereksiz cekisme: {okuma_kilitli}"
+    )
