@@ -52,6 +52,15 @@ from app.modules.invoicing.models import Invoice
 from app.modules.payroll.models import PayrollPeriod
 from app.modules.payroll.transitions import PERIOD_TRANSITIONS
 
+#: 🔴 OK-1C'nin ÖLÇÜLMÜŞ rota gezgini — KOPYALANMAZ, İTHAL EDİLİR (DRY).
+#: FastAPI 0.141'de `app.routes` doğrudan `APIRoute` vermez; ara katman
+#: `_IncludedRouter`dır ve `.original_router.routes` ile açılır. Bu olgu
+#: 2026-08-22'de OK-1C turunda kanıtlandı; ikinci bir kopya, gezgin
+#: güncellendiğinde sessizce ayrışır ve bu dosya YANLIŞ şeyi ölçmeye başlardı.
+#: Test modülleri arası private ithal deponun yerleşik deseni
+#: (`test_ok1c_dar_kapsam.py` → `test_ok1c_ikame.py`).
+from tests.modules.approvals.test_ok1c_dar_kapsam import _api_rotalari
+
 # --------------------------------------------------------------------------- #
 # 1. MOTORUN KAPSAM VARSAYIMI — zincire giren her aile projesinden süzülebilmeli
 # --------------------------------------------------------------------------- #
@@ -147,13 +156,16 @@ def test_BORDRO_DONEMI_olusturani_SATIRDA_tasinmaz():
     """
     kolonlar = set(PayrollPeriod.__table__.columns.keys())
 
+    # 🔴 BAYATLIK KANARYASI ÖNCE koşar. Sonra koşsaydı ve tablo tamamen
+    # yeniden adlandırılsaydı, asıl iddia "kolon yok" diye BOŞUNA geçer
+    # (vacuously true) ve ölçümün bayatladığını hiçbir şey söylemezdi.
+    assert "approved_by_id" in kolonlar, (
+        "`payroll_periods.approved_by_id` KAYBOLMUS — bordro doneminin tek aktor "
+        "kolonu buydu; bu dosyadaki bordro olcumleri BAYATLAMIS olabilir."
+    )
     assert "created_by_id" not in kolonlar and "created_by_user_id" not in kolonlar, (
         "`payroll_periods`a olusturan kolonu EKLENMIS — zincirin 5. bekcisi "
         "(kendi evragini onaylayamazsin) artik satirdan beslenebilir."
-    )
-    assert "approved_by_id" in kolonlar, (
-        "`payroll_periods.approved_by_id` KAYBOLMUS — bordro doneminin tek aktor "
-        "kolonu buydu, olcum bayatladi."
     )
 
 
@@ -221,24 +233,6 @@ def test_BORDRO_DONEMININ_ret_ucu_YOKTUR():
     assert ("POST", "/payroll/lines/{line_id}/reject") in yollar, (
         "SATIR ret ucu kaybolmus — olcum bayatladi."
     )
-
-
-def _api_rotalari(rotalar) -> list:  # noqa: ANN001
-    """FastAPI 0.141'de `app.routes` doğrudan `APIRoute` VERMEZ (OK-1C ölçümü).
-
-    Ara katman `_IncludedRouter`dır ve `.original_router.routes` ile açılır.
-    """
-    from fastapi.routing import APIRoute
-
-    cikti: list = []
-    for rota in rotalar:
-        if isinstance(rota, APIRoute):
-            cikti.append(rota)
-        elif type(rota).__name__ == "_IncludedRouter":
-            cikti.extend(_api_rotalari(rota.original_router.routes))
-        elif hasattr(rota, "routes"):
-            cikti.extend(_api_rotalari(rota.routes))
-    return cikti
 
 
 # --------------------------------------------------------------------------- #
