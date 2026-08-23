@@ -395,7 +395,12 @@ async def test_isveren_detayinda_pending_modules_kuculdu(
         await client.get(f"/projects/{dort_onayli_hakedisli_proje}/contract", headers=admin_headers)
     ).json()
     assert "progress_payments" not in govde["pending_modules"]
-    assert govde["pending_modules"] == ["project_schedule", "documents"]
+    # P-YT4 (2026-08-23): `"project_schedule"` bir FOSİLDİ (depoda o ada sahip ne
+    # izin modülü ne paket ne dosya vardı). Milestone'ın gerçek sahibi `sites`
+    # (`SectionMilestone`) ve CANLI. Bekçi:
+    # `tests/contracts/test_pyt4_yer_tutucu_denetimi.py::
+    # test_gerekce_pending_modules_anahtarlari_FOSIL_OLAMAZ`.
+    assert govde["pending_modules"] == ["sites", "documents"]
     ozet = govde["progress_payment_summary"]
     assert ozet is not None
     assert Decimal(ozet["cumulative_gross"]) == Decimal("8400000.00")
