@@ -1051,3 +1051,57 @@ async def test_denetimin_YEDI_yer_tutucusu_hala_BOS_ve_anahtarini_TASIYOR(
             f"{kart}.{alan} anahtari degismis ({zarf['pending_module']!r} != "
             f"{anahtar!r}): cagri yerindeki gerekce de gozden gecirilmeli."
         )
+
+
+# --- P-YT4 DENETİMİ (2026-08-23): `construction_progress` anahtarının AÇIK UCU ---
+
+
+def test_taseron_tarafinda_FIZIKSEL_ILERLEME_HESABI_YOKTUR() -> None:
+    """🔴 `construction_progress` anahtarının neden DEĞİŞMEDİĞİNİ çakar.
+
+    P-YT1 ölçtü: `_land_share_card.construction_progress` yer tutucusunun
+    `pending_module="progress_payments"` anahtarı YAPISAL OLARAK
+    KARŞILANAMAZ — kat karşılığı projesinde İŞVEREN yoktur, o modül bu değeri
+    asla veremez. P-YT1 kusuru yazdı ama düzeltmedi.
+
+    P-YT4 doğru anahtarı ARADI ve **bugün doğru bir anahtar OLMADIĞINI** ölçtü:
+    işveren tarafında fiziksel ilerleme `progress_payments/service.py`de
+    (`physical_numerator` → `_progress_block.physical_pct`) hesaplanır; TAŞERON
+    tarafında böyle bir hesap HİÇ YOKTUR. Anahtarı "olabilecek" bir modüle
+    çevirmek ölçülmüş bir olguyu tahminle değiştirmek olurdu.
+
+    ⚠️ BU TEST KIRMIZIYA DÖNERSE: taşeron tarafına fiziksel ilerleme yazılmış
+    demektir ve `projects/cards.py::_land_share_card` içindeki TUZAK A notu
+    YENİDEN KARARA BAĞLANMALIDIR — artık dürüst bir anahtar VARDIR.
+    """
+    import pathlib
+
+    modul = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "app"
+        / "modules"
+        / "subcontractor_progress_payments"
+    )
+    assert modul.is_dir(), "TH modülü taşınmış: bu bekçinin yolu güncellenmeli."
+    fiziksel = {
+        dosya.name: [
+            satir for satir in dosya.read_text(encoding="utf-8").splitlines() if "physical" in satir
+        ]
+        for dosya in sorted(modul.glob("*.py"))
+    }
+    bulunan = {ad: satirlar for ad, satirlar in fiziksel.items() if satirlar}
+    assert bulunan == {}, (
+        "Taşeron tarafında fiziksel ilerleme belirmiş "
+        f"({bulunan}): `_land_share_card.construction_progress` anahtarı "
+        "(`progress_payments`) yeniden karara bağlanmalı."
+    )
+    # Karşı kutup: işveren tarafında hesap GERÇEKTEN vardır — bekçi "hiçbir yerde
+    # yok" diye boş bir iddia kurmuyor, ASİMETRİYİ ölçüyor.
+    isveren = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "app"
+        / "modules"
+        / "progress_payments"
+        / "service.py"
+    ).read_text(encoding="utf-8")
+    assert "physical_numerator" in isveren

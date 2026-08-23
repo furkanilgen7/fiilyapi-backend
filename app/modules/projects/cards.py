@@ -285,7 +285,25 @@ def _land_share_card(project: Project, card_costs: ProjectCardCosts) -> LandShar
         # projesinde ISVEREN YOKTUR. Yani `pending_module="progress_payments"`,
         # bu degeri ASLA veremeyecek bir modulu adlandiriyor. Ayni yanlis etiket
         # kardes alanda BIR KEZ YAKALANIP DUZELTILDI — yukaridaki `_contracting_card`
-        # notu ("P1'den kalan yanlis etiket") — burada HALA DUZELTILMEDI.
+        # notu ("P1'den kalan yanlis etiket").
+        #
+        # 🔴 P-YT4 (2026-08-23) — ANAHTAR NEDEN HALA DEGISMIYOR (olculdu).
+        # P-YT1 "burada HALA DUZELTILMEDI" diye birakmisti; dogru anahtarin NE
+        # OLDUGU arandi ve **BUGUN DOGRU BIR ANAHTAR YOKTUR**:
+        #   * `subcontractor_progress_payments` (TH, canli) FIZIKSEL ilerleme
+        #     HESAPLAMAZ — modulde `physical` gecen TEK bir satir bile yoktur;
+        #     isveren tarafindaki `_progress_block` / `physical_numerator`
+        #     ikilisinin taseron karsiligi HIC YAZILMADI.
+        #   * `site_planning` yalnizca bir `in_progress` DURUM UYESI tasir
+        #     (`site_planning/models.py`), yuzde uretmez.
+        #   * `boq`/`sites` fiziksel ilerleme yuzdesi tanimlamaz.
+        # Anahtari "sahibi olabilecek" bir module cevirmek, olculmus bir olguyu
+        # bir TAHMINLE degistirmek olurdu. Anahtar bu yuzden OLDUGU GIBI birakildi
+        # ve yanlisligi BURAYA yazildi; bagimsiz bekci
+        # `tests/modules/test_projects_cost_bindings.py::
+        # test_taseron_tarafinda_FIZIKSEL_ILERLEME_HESABI_YOKTUR` bu olcumun
+        # bayatlamasini engeller — taseron tarafina fiziksel ilerleme yazildigi
+        # gun kirmizi doner ve anahtar yeniden karara baglanir.
         #
         # TUZAK B — CEKICI SUTUN BIR FOSIL. (Denetimin bas bulgusu.)
         # `projects.progress_pct` (`projects/models.py:143`, `Numeric(5,2)`,

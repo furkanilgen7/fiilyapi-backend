@@ -11,6 +11,7 @@ Senaryo: bütçe 9.800.000 · proje brüt m² 1.780 · ünite 178 m² →
 
 from decimal import Decimal
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.projects.models import Project
@@ -221,3 +222,132 @@ async def test_unite_listesinde_sorgu_sayisi_unite_sayisindan_bagimsizdir(
 
     assert len(yanit.blocks[0].units) == 8
     assert kucuk_sayim == buyuk_sayim, (kucuk_sayim, buyuk_sayim)
+
+
+# --- P-YT4 DENETİMİ (2026-08-23): TABAN bekçisi ---------------------------------
+#
+# P10 kanonu: **iki maliyet tabanı AYRIDIR — kart "Harcanan", kâr "Bütçe".**
+# `unit_cost`/`expected_profit` BÜTÇE tabanlıdır (`costs.unit_cost` docstring'i:
+# "Bütçe bazlıdır, gerçekleşen bazlı DEĞİL"). Yukarıdaki testlerin HİÇBİRİ bunu
+# ölçmüyordu: hepsinde projenin harcananı 0'dı, yani tabanı `total_spent`e
+# çeviren bir mutasyon HEPSİNİ YEŞİL bırakırdı. Aşağıdaki bekçi tam olarak o
+# mutasyonu yakalar — bütçe ile harcanan BİLEREK farklı kurulur.
+
+
+async def _harcanan_yarat(session: AsyncSession, project: Project, *, brut: Decimal) -> None:
+    """Projeye `approved` bir TAŞERON hakedişi kurar — `costs.total_spent`in girdisi.
+
+    Brüt = miktar × birim fiyat; avans/teminat 0 tutulur ki sayı okunur kalsın.
+    """
+    from app.modules.contracts.models import (
+        ContractStatus,
+        Subcontractor,
+        SubcontractorContract,
+        SubcontractorContractItem,
+    )
+    from app.modules.subcontractor_progress_payments.models import (
+        SubcontractorPaymentStatus,
+        SubcontractorProgressPayment,
+        SubcontractorProgressPaymentLine,
+    )
+    from app.modules.users.models import User
+
+    sahip = (await session.execute(select(User).limit(1))).scalars().first()
+    assert sahip is not None
+    sub = Subcontractor(name=f"Taşeron {project.code}")
+    session.add(sub)
+    await session.flush()
+    contract = SubcontractorContract(
+        project_id=project.id,
+        subcontractor_id=sub.id,
+        subcontractor_name=sub.name,
+        contract_no=f"TSD-{project.code}",
+        status=ContractStatus.active,
+        created_by=sahip.id,
+    )
+    session.add(contract)
+    await session.flush()
+    item = SubcontractorContractItem(
+        contract_id=contract.id,
+        code="01.001",
+        description="Kaba inşaat",
+        unit="m3",
+        quantity=Decimal("1000"),
+        unit_price=Decimal("1.00"),
+        sort_order=0,
+    )
+    session.add(item)
+    await session.flush()
+    payment = SubcontractorProgressPayment(
+        contract_id=contract.id,
+        project_id=project.id,
+        sequence_no=1,
+        period_year=2026,
+        period_month=7,
+        status=SubcontractorPaymentStatus.approved,
+        vat_pct=Decimal("20.00"),
+        advance_pct=Decimal("0.00"),
+        retainage_pct=Decimal("0.00"),
+        created_by=sahip.id,
+    )
+    payment.lines = [
+        SubcontractorProgressPaymentLine(
+            contract_item_id=item.id,
+            code=item.code,
+            description=item.description,
+            unit=item.unit,
+            contract_unit_price=item.unit_price,
+            coefficient=Decimal("1.000"),
+            quantity=brut,
+            sort_order=0,
+        )
+    ]
+    session.add(payment)
+    await session.flush()
+
+
+async def test_TABAN_unite_maliyeti_BUTCEDEN_turer_HARCANANDAN_degil(
+    client, db_session, user_factory, project_factory
+):
+    """🔴 TABAN MUTASYON BEKÇİSİ — bütçe 9,8M · harcanan 3,4M, ünite 178/1780 m².
+
+    Bütçe tabanı ⇒ 9.800.000 × 178/1780 = **980.000,00** (UE 91 birebir).
+    Harcanan tabanına kayarsa ⇒ 3.400.000 × 178/1780 = 340.000,00 çıkardı ve
+    UE 98 "Beklenen Kâr" 500.000 yerine 1.140.000 görünürdü: ünite, bitmemiş bir
+    inşaatın düşük gerçekleşen maliyeti yüzünden olduğundan kârlı basılırdı
+    (`costs.unit_cost` docstring'inin ölçülmüş gerekçesi).
+    """
+    project, unit, _ = await _ue_senaryosu(db_session, project_factory, "UC-TABAN")
+    # `_login` ÖNCE koşar: hakedişin `created_by`si NOT NULL'dır ve bu dosyada
+    # kullanıcıyı yaratan tek yer `user_factory`dir.
+    token = await _login(client, user_factory)
+    await _harcanan_yarat(db_session, project, brut=Decimal("3400000"))
+
+    body = (await client.get(f"/projects/{project.id}/units", headers=_auth(token))).json()
+
+    satir = next(
+        row for grup in body["blocks"] for row in grup["units"] if row["id"] == str(unit.id)
+    )
+    assert Decimal(satir["unit_cost"]["value"]) == Decimal("980000.00"), (
+        "Ünite maliyetinin tabanı kaymış: BÜTÇE olmalı, harcanan DEĞİL (P10 kanonu)."
+    )
+    assert Decimal(satir["expected_profit"]["value"]) == Decimal("500000.00")
+
+    # Aynı projede HARCANAN gerçekten farklı bir sayı: iki taban yan yana yaşıyor.
+    maliyet = (await client.get(f"/projects/{project.id}/costs", headers=_auth(token))).json()
+    assert Decimal(maliyet["breakdown"]["construction_spent"]) == Decimal("3400000.00")
+    assert Decimal(maliyet["breakdown"]["construction_budget"]) == Decimal("9800000.00")
+
+
+def test_TABAN_zarflar_hala_MetricPlaceholder_tipindedir() -> None:
+    """P-YT4: alan "yer tutucu" DEĞİL ama zarf TİPİ korunur — ikisi ayrı şeydir.
+
+    Zarf, değerin GİRDİYE bağlı olarak bilinmeyebileceğini (m²'siz ünite,
+    bütçesiz proje) ifade eder. Düz `Decimal | None`a çevirmek hem kırıcı olurdu
+    hem de "neden boş" bilgisini (`pending_module`) silerdi.
+    """
+    from app.modules.projects.schemas import MetricPlaceholder
+    from app.modules.units.schemas import UnitResponse
+
+    for alan in ("unit_cost", "expected_profit"):
+        assert UnitResponse.model_fields[alan].annotation is MetricPlaceholder, alan

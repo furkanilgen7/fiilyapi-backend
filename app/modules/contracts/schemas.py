@@ -9,6 +9,11 @@ olamaz, tutarlar `>= 0`, `quantity > 0`, yüzdeler 0-100, `payment_term_days >= 
 Kapsam dışı alanlar (spec §2.2) yanıt şemalarında AÇIKÇA yer alır: hakediş →
 `progress_payment_summary: None`, milestone → `milestones: None`, belgeler →
 `documents: None`, artı `pending_modules: list[str]` sabiti.
+
+🔴 **P-YT4 (2026-08-23):** bu üç alanın hiçbiri artık "modül yazılmadı" DEMEZ —
+üçünün de kaynak modülü CANLIDIR. Kalan engeller ALANA ÖZELDİR ve her birinin
+kendi alan notunda ölçülmüş hâliyle yazılıdır (bağ yok · şekil uyuşmuyor ·
+mockup kendi etiketiyle çelişiyor).
 """
 
 import uuid
@@ -125,9 +130,16 @@ class ContractListItem(BaseModel):
     progress_pct: Decimal | None = None
     """§8 finansal ilerleme: `kümülatif brüt / bedel × 100` (P7/H9, spec §9.6).
 
-    İşveren sözleşmesinde gerçek değer; bedel yok/sıfır ise `None`. Taşeron
-    sözleşmesinde her zaman `None` (ayrı dilim, spec §1.2). Kırıcı değişiklik:
-    eskiden `MetricPlaceholder` sarmalayıcısıydı (spec §10/4).
+    **İKİ SEKMEDE DE GERÇEK DEĞER** (P-YT4, 2026-08-23). Eski not "taşeron
+    sözleşmesinde her zaman `None` (ayrı dilim, spec §1.2)" diyordu; o gerekçe
+    ÖLÇÜLDÜ ve BAYAT çıktı — taşeron dilimi TH ile yazıldı ve `list_contracts`
+    kümülatif brüt sözlüğünü zaten okuyordu (`_subcontractor_item` docstring'i).
+    Bedel yok/sıfırsa `None` KALIR (sahte %0 basılmaz); hakedişi olmayan
+    sözleşmede `0.00` gerçek cevaptır.
+
+    Kırıcı değişiklik geçmişi: eskiden `MetricPlaceholder` sarmalayıcısıydı
+    (spec §10/4). P-YT4 bağlaması ŞEMAYI DEĞİŞTİRMEZ — tip aynı kalır, yalnız
+    taşeron satırlarında `null` yerine sayı gelir.
     """
     status: ContractStatus
     is_draft: bool
@@ -256,9 +268,34 @@ class EmployerContractDetail(BaseModel):
     `None` gelen bir dal yoktur, bu yüzden şema da `None`'a izin vermez."""
     milestones: None = None
     documents: None = None
-    pending_modules: list[str] = Field(default_factory=lambda: ["project_schedule", "documents"])
+    pending_modules: list[str] = Field(default_factory=lambda: ["sites", "documents"])
     """`progress_payments` bu listeden ÇIKTI (P7/H9): modül artık yazıldı ve
-    `progress_payment_summary` gerçek veri taşıyor."""
+    `progress_payment_summary` gerçek veri taşıyor.
+
+    🔴 **P-YT4 DENETİMİ (2026-08-23) — `"project_schedule"` BİR FOSİLDİ.** O ad
+    depoda BAŞKA HİÇBİR YERDE geçmiyordu: ne 21 izin modülünden biri, ne
+    `app/modules/` altında bir paket, ne de bir dosya. Anahtarın bugünkü anlamı
+    "veri hangi modülün MÜLKİYETİNDE"dir (`projects/cards.py::_metric`) ve
+    olmayan bir modülü adlandıran anahtar bu sözleşmeyi anlamsızlaştırır.
+    Gerçek sahip ÖLÇÜLDÜ: milestone `section_milestones` tablosudur ve `sites`
+    modülünde yaşar (`sites/models.py::SectionMilestone`); okuma yüzeyi de
+    CANLIDIR (`GET /projects/timeline`). Anahtar bu yüzden `"sites"` OLDU.
+
+    ⚠️ İki alan da hâlâ `None` DÖNER ve bu DOĞRU sonuçtur — engel MODÜL değil:
+
+    * **`milestones` (E14 100-120)** — engel ŞEKİL + KAPSAM. Mockup AY ARALIĞI
+      ("Nis–Tem 2025") ve ÜÇ durum (Tamamlandı/Devam Ediyor/Planlandı) ister;
+      `SectionMilestone` TEK bir `milestone_date` taşır ve durumu bilinçli
+      olarak TÜREV bırakır (o sınıfın notu). Ayrıca milestone BÖLÜME bağlıdır,
+      işveren sözleşmesi ise PROJE düzeyindedir — bir projede N şantiye × N
+      bölüm vardır ve "bu sözleşmenin milestone'ları" diye bir küme YOKTUR.
+    * **`documents`** — modül CANLI (BC, 20. izin modülü) ama BAĞ YOK: belge
+      künyesinde `project_id`/`site_id`/`folder_id` dışında kolon yoktur, "bu
+      sözleşmenin belgeleri" sorgulanamaz. (`sales/schemas.py`nin P-YT3'te
+      ölçtüğü durumun aynısı.)
+
+    Bekçiler: `tests/contracts/test_pyt4_yer_tutucu_denetimi.py::test_gerekce_*`.
+    """
 
 
 # --- Poz dağılımı (spec §6.3, `POZ` ekranı) ---
@@ -540,10 +577,27 @@ class SubcontractorContractDetail(BaseModel):
     pending_modules: list[str] = Field(
         default_factory=lambda: ["subcontractor_progress_payments", "documents"]
     )
-    """⚠️ Buradaki yer tutucu **TAŞERON** hakedişidir, işveren hakedişi DEĞİL —
-    P7 yalnız işveren tarafını yazdı. Anahtar bu yüzden spec §1.2'nin adıyla
-    (`subcontractor_progress_payments`) YENİDEN ADLANDIRILDI; listeden
-    ÇIKARILMADI: taşeron hakedişi hâlâ ayrı ve yazılmamış bir dilimdir."""
+    """⚠️ Buradaki yer tutucu **TAŞERON** hakedişidir, işveren hakedişi DEĞİL.
+
+    🔴 **P-YT4 DENETİMİ (2026-08-23) — ESKİ GEREKÇE BAYAT.** Not *"taşeron
+    hakedişi hâlâ ayrı ve YAZILMAMIŞ bir dilimdir"* diyordu; ÖLÇÜLDÜ ve YANLIŞ:
+    `app/modules/subcontractor_progress_payments/` CANLI bir pakettir, router'ı
+    `app/main.py`de kayıtlıdır ve `summary.get_summary` tam bir KPI özeti
+    üretebilir. Anahtar KALIR (mülkiyet gerçekten o modüldedir), gerekçe DEĞİŞTİ.
+
+    **Bağlamayı bekleten şey mockup'ın KENDİ ÇELİŞKİSİ** (`Taşeron Sözleşme
+    Detay.dc.html`): L74 etiketi "Ödenen Hakediş ₺2.936.000" der, ama aynı
+    ekranın hakediş geçmişi (L199-201) 1.240.000 **Onay Bekliyor** + 960.000
+    Ödendi + 736.000 Ödendi'dir — yani sayı ÜÇÜNÜN TOPLAMI, etiket ise ÖDENEN.
+    `paid` bağlansaydı 1.696.000 çıkar ve mockup'ı tutmazdı; hepsi bağlansaydı
+    etiket YALAN olurdu. Alanı doldurmak ayrıca sözleşmeyi de KIRAR: bugün
+    OpenAPI'de tipi `null`dır, nesneye dönerse `gen:api` devri gerekir.
+    Bağlayacak kişi ÖNCE bu ikilemi karara bağlamak zorundadır.
+
+    **`documents`** — modül CANLI (BC, 20. izin modülü) ama BAĞ YOK: belge
+    künyesinde sözleşme kolonu yoktur (`sales/schemas.py`nin P-YT3'te ölçtüğü
+    durumun aynısı). Bekçiler:
+    `tests/contracts/test_pyt4_yer_tutucu_denetimi.py::test_gerekce_*`."""
 
 
 # --- Taşeron sözleşmesi seçim listesi (TB2 U1) ---

@@ -198,9 +198,22 @@ class BlockResponse(BaseModel):
 class UnitResponse(BaseModel):
     """KY 271-274 ve KKP 86-92 sutunlari.
 
-    Satis alanlari (KY 275-277, KKP 92) P8 T5'te, hissedar (KKP 91) P9 T3'te
-    GERCEK degere baglandi; ikisi de artik yer tutucu DEGILDIR. Geriye kalan iki
-    yer tutucu (`unit_cost`, `expected_profit`) kalici karar 3 geregidir.
+    Satis alanlari (KY 275-277, KKP 92) P8 T5'te, hissedar (KKP 91) P9 T3'te,
+    maliyet/kâr (UE 91 / UE 97-99) P10 T3'te GERCEK degere baglandi.
+
+    🔴 **P-YT4 DENETIMI (2026-08-23): BU SEMADA ARTIK BOS DURAN ZARF YOKTUR.**
+    Eski not *"geriye kalan iki yer tutucu (`unit_cost`, `expected_profit`)"*
+    diyordu; OLCULDU ve BAYAT cikti — tek uretici (`units/summary.py::_to_unit`,
+    `UnitResponse(...)` bu semayi kuran YEGANE yerdir) iki alani da
+    `metric(cost.cost, ...)` / `metric(cost.expected_profit, ...)` ile
+    P10 T3'ten beri DOLDURUR. Zarf yalnizca girdi eksikse (m²'si girilmemis
+    unite, butcesi girilmemis proje) bos kalir — bu "modul bekliyor" DEGIL,
+    "kullanici bu alani girmemis"tir.
+
+    Alan TIPI `MetricPlaceholder` KALIR ve bu bilinclidir: zarf, degerin
+    GIRDIYE bagli olarak bilinmeyebilecegini ifade eder; duz `Decimal | None`e
+    cevirmek hem kirici olurdu hem de "neden bos" bilgisini (`pending_module`)
+    silerdi.
     """
 
     id: uuid.UUID
@@ -236,9 +249,17 @@ class UnitResponse(BaseModel):
     # ARSA unitesinde ikisi de `None`dir (KKP 119 "—"); uydurma deger uretilmez.
     shareholder_id: uuid.UUID | None  # P9 (KKP 91)
     shareholder_name: str | None  # P9 (KKP 91)
-    # --- ileri dilim yer tutuculari ---
-    # KARAR 3: maliyet ELLE GIRILMEZ, kolon ACILMAZ (spec §4.5) — ileride Is
-    # Kalemleri/satinalmadan hesaplanacak. Maliyet yoksa kâr da yoktur.
+    # --- Maliyet/kâr: KOLON YOK ama DEGER VAR (P10 T3) ---
+    # KARAR 3 YASIYOR: maliyet ELLE GIRILMEZ ve KOLON ACILMAZ (spec §4.5).
+    # Degerin TUREV olmasi onu yer tutucu YAPMAZ: `projects/costs.py` butce
+    # bazli m² dagitimiyla hesaplar, `units/summary.py` zarfa koyar.
+    #
+    # 🔴 TABAN = **BUTCE**, harcanan DEGIL (P10 kanonu "iki maliyet tabani
+    # AYRIDIR"): `costs.ProjectCostAllocation.for_unit` `self.budget_cost`
+    # uzerinden boler. Tabani `total_spent`e cevirmek ayni ada sahip alani
+    # sessizce baska bir sey olcerdi — kâr projeksiyonu (`expected_profit`)
+    # butce tabanindan turer ve iki taban tek alanda karisamaz.
+    # Bekci: `tests/modules/test_pyt4_unite_maliyet_tabani.py`.
     unit_cost: MetricPlaceholder  # UE 91 / FDS 62
     expected_profit: MetricPlaceholder  # UE 97-99
 

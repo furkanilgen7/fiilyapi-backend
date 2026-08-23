@@ -242,9 +242,11 @@ class Unit(Base):
     karari 2 ile ACILDI (P3 §4.6'dan bilincli DONUS, spec §4.4) — bir sonraki
     ajan bunu "P3 ihlali" sanip SILMEMELIDIR.
 
-    Maliyet sutunu ACILMAZ (karar 3, spec §4.5): maliyet ileride Is
-    Kalemleri/satinalmadan otomatik hesaplanacaktir; `unit_cost` ve
-    `expected_profit` yer tutucu olarak doner.
+    Maliyet sutunu ACILMAZ (karar 3, spec §4.5) — ve bu KARAR YASIYOR. Ama
+    "yer tutucu olarak doner" cumlesi P-YT4 denetiminde (2026-08-23) BAYAT
+    bulundu: `unit_cost`/`expected_profit` P10 T3'ten beri GERCEK deger tasir,
+    yalnizca KOLONDAN degil TUREVDEN (proje butcesinin m² bazli dagitimi,
+    `projects/costs.py`). Kolonsuzluk kaynaksizlik DEMEK DEGILDIR.
 
     Iki ayri fiyat sutunu (spec §4.4, kullanici karari): `list_price` satisa
     cikarilan fiyattir (KY 274 "Liste Fiyati"), `appraisal_value` paylasimin
