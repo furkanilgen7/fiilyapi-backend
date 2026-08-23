@@ -360,43 +360,88 @@ async def test_N1_ilerleme_baglamasi_sozlesme_basina_SORGU_ACMAZ(
 # Her `pending_modules` anahtarı CANLI bir artefaktı adlandırmak ZORUNDA.
 # `project_schedule` bu bekçi yazılana kadar bir FOSİLDİ: depoda o ada sahip
 # hiçbir izin modülü, paket ya da dosya yoktu.
+#
+# 🔴 Harita DEPO GENELİDİR, tek modülün değil: aşağıdaki bekçi `pending_modules`
+# alanı taşıyan HER şemayı gezer. Yeni bir anahtar eklendiğinde buraya "hangi
+# canlı artefaktı gösteriyor" satırı yazılmadan test geçmez.
+#
+# Anahtarların hepsi izin modülü DEĞİLDİR ve bu bilinçlidir (P-YT3'ün
+# `tests/sales/...::test_pending_modules_etiketlerinin_HEPSI_CANLI_bir_izin_
+# modulunu_adlandirir` bekçisi yalnız `sales`in anahtarları için geçerlidir):
+# `project_costs` bir DOSYA (`projects/costs.py`),
+# `subcontractor_progress_payments` bir PAKET ama izin modülü değil.
 _ANAHTAR_ARTEFAKTI = {
     "documents": "app/modules/documents",
+    "invoicing": "app/modules/invoicing",
+    "project_costs": "app/modules/projects/costs.py",
     "sites": "app/modules/sites",
     "subcontractor_progress_payments": "app/modules/subcontractor_progress_payments",
 }
-# `sites` paketinde `router.py` YOKTUR (router `sites/router/` paketidir); zaten
-# 21 izin modülünden biri olduğu için bekçinin ilk kolu onu geçirir.
+
+
+def _pending_modules_semalari() -> dict[str, list[str]]:
+    """`pending_modules` alanı taşıyan TÜM şemalar → varsayılan anahtar listesi.
+
+    `app.main` import edildiği anda her modülün şemaları `sys.modules`tadır;
+    bekçi bu yüzden elle bir şema listesi TAŞIMAZ (taşısaydı yeni bir şema
+    sessizce denetim dışında kalırdı — bu turda bulunan fosil de tam olarak
+    "arama dar tutuldu" yüzünden ikinci bir yerde hayatta kalmıştı).
+    """
+    import sys
+
+    from pydantic import BaseModel
+
+    # Yan etki KASITLI: `app.main` tüm modüllerin şemalarını `sys.modules`a yükler.
+    import app.main  # noqa: F401
+
+    bulunan: dict[str, list[str]] = {}
+    for ad, modul in list(sys.modules.items()):
+        if not ad.startswith("app."):
+            continue
+        for nesne_adi in dir(modul):
+            nesne = getattr(modul, nesne_adi, None)
+            if not (isinstance(nesne, type) and issubclass(nesne, BaseModel)):
+                continue
+            alan = nesne.model_fields.get("pending_modules")
+            if alan is None or alan.default_factory is None:
+                continue
+            bulunan[f"{nesne.__module__}.{nesne.__name__}"] = list(alan.default_factory())  # type: ignore[call-arg]
+    return bulunan
 
 
 def test_gerekce_pending_modules_anahtarlari_FOSIL_OLAMAZ() -> None:
-    """🔴 Anahtar, ADI OLAN bir şeyi göstermek zorundadır.
+    """🔴 Anahtar, ADI OLAN bir şeyi göstermek zorundadır — DEPO GENELİNDE.
 
     P-YT1 kanonu: `pending_module` artık "modül yok" DEMİYOR, "veri hangi modülün
     mülkiyetinde" diyor. Bu ancak anahtar GERÇEK bir şeyi adlandırırsa anlamlıdır.
-    Bekçi iki yoldan da doğrular: ya 21 izin modülünden biri, ya canlı bir paket.
+    Bekçi iki yoldan da doğrular: ya 21 izin modülünden biri, ya depoda var olan
+    canlı bir paket/dosya.
     """
     import pathlib
 
     kok = pathlib.Path(__file__).resolve().parents[2]
     izin_modulleri = {m["key"] for m in MODULES}
+    semalar = _pending_modules_semalari()
 
-    anahtarlar: set[str] = set()
+    # Denetimin bildiği İKİ sözleşme şeması mutlaka taranmış olmalı — bekçi
+    # kendi girdisini kaybederse sessizce boş küme üzerinde yeşil kalırdı.
     for sema in (EmployerContractDetail, SubcontractorContractDetail):
-        fabrika = sema.model_fields["pending_modules"].default_factory
-        assert fabrika is not None
-        anahtarlar |= set(fabrika())  # type: ignore[call-arg]
-    assert anahtarlar, "Anahtar kümesi boş okundu — bekçi kendi girdisini kaybetmiş."
-    for anahtar in anahtarlar:
-        yol = _ANAHTAR_ARTEFAKTI.get(anahtar)
-        assert yol is not None, (
-            f"{anahtar!r} bu bekçinin haritasında YOK: yeni bir anahtar eklenmiş ve "
-            "hangi CANLI artefaktı gösterdiği yazılmamış."
-        )
-        assert (kok / yol).exists(), f"{anahtar!r} → {yol} artefaktı YOK (fosil anahtar)."
-        assert anahtar in izin_modulleri or (kok / yol / "router.py").exists(), (
-            f"{anahtar!r} ne izin modülü ne de router'ı olan canlı bir paket."
-        )
+        anahtar_adi = f"{sema.__module__}.{sema.__name__}"
+        assert anahtar_adi in semalar, f"{anahtar_adi} taranamadı — bekçi kör."
+
+    for sema_adi, anahtarlar in sorted(semalar.items()):
+        for anahtar in anahtarlar:
+            yol = _ANAHTAR_ARTEFAKTI.get(anahtar)
+            assert yol is not None, (
+                f"{sema_adi}: {anahtar!r} bu bekçinin haritasında YOK — yeni bir "
+                "anahtar eklenmiş ve hangi CANLI artefaktı gösterdiği yazılmamış."
+            )
+            assert (kok / yol).exists(), (
+                f"{sema_adi}: {anahtar!r} → {yol} artefaktı YOK (fosil anahtar)."
+            )
+            assert anahtar in izin_modulleri or (kok / yol).exists(), (
+                f"{sema_adi}: {anahtar!r} ne izin modülü ne de canlı bir artefakt."
+            )
 
 
 def test_gerekce_belge_tablosunda_SOZLESME_BAGI_YOKTUR() -> None:
