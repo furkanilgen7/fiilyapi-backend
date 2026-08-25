@@ -75,6 +75,7 @@ from app.modules.accounting.models import (
     ChartAccount,
     ChartAccountType,
     JournalEntry,
+    JournalEntryCounter,
     JournalEntryStatus,
     JournalLine,
 )
@@ -270,6 +271,16 @@ async def _temizle(kurulum: _Kurulum) -> None:
                 tuple_(AccountingPeriod.year, AccountingPeriod.month).in_(_DONEMLER)
             )
         )
+        # 🔴 SAYAC SATIRI DA SILINIR (TB-XDIST, 2026-08-25). Bu dosya GERCEKTEN
+        # commit eder; `generate_entry_no(..., year=YIL)` cagrisi
+        # `journal_entry_counters`e KALICI bir satir yaziyordu ve temizlik onu
+        # ATLIYORDU. Sonuc: paylasilan test veritabaninda `{2031: N}` satiri
+        # kaliyor ve `test_fisno_numbering.py::test_YIL_sayaclari_BIRBIRINI_sifirlamaz`
+        # (tabloyu GLOBAL okuyan bir iddia) kirmiziya donuyordu. Seri kosuda
+        # gorunmuyordu cunku alfabetik sirada `test_fisno_*` bu dosyadan ONCE
+        # kosuyor; sira degisince (xdist `--dist loadfile`) hemen patliyor.
+        # KANIT: iki dosya bu sirayla SERI kosuldugunda da kirmizi (olculdu).
+        await session.execute(delete(JournalEntryCounter).where(JournalEntryCounter.year == YIL))
         await session.execute(delete(ChartAccount).where(ChartAccount.id.in_(kurulum.account_ids)))
         await session.execute(delete(User).where(User.id.in_(kurulum.actor_ids)))
         await session.execute(delete(Role).where(Role.id == kurulum.role_id))
@@ -763,3 +774,69 @@ async def test_5_ESZAMANLI_ONCEKI_reopen_ve_SONRAKI_close_SIZINTI_OLCUMU() -> No
                 assert onceki.closed_at is not None and onceki.closed_by_id is not None
     finally:
         await _guvenli_temizlik(kurulum, *gorevler)
+
+
+async def test_6_TEMIZLIK_HICBIR_SATIR_BIRAKMAZ_sayac_DAHIL() -> None:
+    """🔴 SIZINTI KATMANININ KENDI BEKÇİSİ (TB-XDIST, 2026-08-25).
+
+    Bu dosya `db_session` yalıtımını KULLANMAZ: kendi bağlantılarında GERÇEKTEN
+    commit eder, yani bıraktığı her satır **paylaşılan test veritabanında kalıcıdır**
+    ve sonraki testlere sızar. `_temizle` bu yüzden TEK korumadır.
+
+    Fiilen sızdı: `_kur(taslak_fis=True)` `generate_entry_no(..., year=YIL)` çağırıp
+    `journal_entry_counters`e `{2031: N}` satırı yazıyordu; `_temizle` o tabloyu
+    hiç bilmiyordu. `test_fisno_numbering.py::test_YIL_sayaclari_BIRBIRINI_sifirlamaz`
+    tabloyu GLOBAL okuduğu için kırmızıya döndü. Seri koşuda görünmüyordu — alfabetik
+    sırada `test_fisno_*` bu dosyadan ÖNCE koşuyor; sıra değişince (xdist
+    `--dist loadfile`) hemen patladı. İki dosya bu sırayla SERİ koşulunca da kırmızı
+    olduğu ÖLÇÜLDÜ: kusur paralellikten DEĞİL, temizliğin eksikliğinden geliyordu.
+
+    🔴 Bu bekçi neden AYRI: sızıntı kapatıldıktan sonra karşı taraftaki iddia da
+    kendi yıllarına daraltıldı. İki katman birbirini MASKELER — daraltma yerinde
+    dururken `_temizle`den sayaç silmeyi kaldırmak hiçbir testi kırmıyordu
+    (ölçüldü). Bu test, sızıntı katmanına DOĞRUDAN bakar (WORKFLOW §4: "çok
+    katmanlı korumada mutasyon kanıtı her katman için AYRI verilir").
+    """
+    kurulum = await _kur(taslak_fis=True, donem_var=True, sira_zinciri=True)
+    await _temizle(kurulum)
+
+    async with _SessionFactory() as session:
+        artik_sayac = (
+            (
+                await session.execute(
+                    select(JournalEntryCounter).where(JournalEntryCounter.year == YIL)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert artik_sayac == [], (
+            f"`_temizle` `journal_entry_counters` satırını BIRAKTI (yıl {YIL}) — "
+            "bu dosya gerçekten commit ediyor, artık satır sonraki testlere SIZAR."
+        )
+
+        artik_donem = (
+            (
+                await session.execute(
+                    select(AccountingPeriod).where(
+                        tuple_(AccountingPeriod.year, AccountingPeriod.month).in_(_DONEMLER)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert artik_donem == [], "`_temizle` dönem satırı bıraktı."
+
+        artik_fis = (
+            (
+                await session.execute(
+                    select(JournalEntry).where(
+                        JournalEntry.period_year == YIL, JournalEntry.period_month == AY
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert artik_fis == [], "`_temizle` fiş satırı bıraktı."
