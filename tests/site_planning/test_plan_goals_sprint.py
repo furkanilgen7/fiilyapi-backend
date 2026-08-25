@@ -243,13 +243,40 @@ async def test_goals_gorunmeyen_santiye_404(
 async def test_goals_audit_tek_ozet_olayi(
     client: AsyncClient, sef_headers: dict[str, str], seeded_db: AsyncSession, santiye
 ) -> None:
-    onceki = len((await seeded_db.execute(select(AuditLog))).scalars().all())
+    async def _bu_haftanin_kayitlari() -> list[AuditLog]:
+        """🔴 KAPSAMLI + DETERMİNİSTİK SIRALI (TB-XDIST, 2026-08-25).
+
+        Önceki hâli iki ayrı belirsizlik taşıyordu; ikisi de bu testi FLAKY yapıyordu
+        (TB-LOCK turunda yerelde kırmızı verdi, CI'da tekrarlamadı):
+          (a) `select(AuditLog)` **`ORDER BY`suz**du ve `kayitlar[-1]` alınıyordu —
+              PostgreSQL sırasız bir `SELECT`i heap sırasında döndürür ve bu **garanti
+              değildir**; satır güncellenip yer değiştirdiğinde ya da plan değiştiğinde
+              "son kayıt" başka bir satır olur.
+          (b) İddia **GLOBAL satır sayısı deltasıydı** — bu tabloya yazan HER kayıt,
+              kimin ürettiğine bakılmaksızın iddiayı oynatır.
+        Onarım: sorgu **bu testin haftasına** daraltılır ve `ORDER BY occurred_at, id`
+        ile sabitlenir. Eşitlik bozucu ikincil anahtar (`id`) ŞARTTIR: `occurred_at`
+        `now()` sunucu varsayılanından gelir ve aynı transaction içinde SABİTTİR
+        (WORKFLOW §4 "davranış testi sıralama kararını bekçileyemez").
+        Şantiye adı KAPSAMA GİRMEZ — aşağıdaki `"A-Blok Şantiyesi" in detay` iddiası
+        böylece kendini doğrulamayan gerçek bir iddia olarak kalır.
+        """
+        stmt = (
+            select(AuditLog)
+            .where(AuditLog.detail.contains(HAFTA.isoformat()))
+            .order_by(AuditLog.occurred_at, AuditLog.id)
+        )
+        return list((await seeded_db.execute(stmt)).scalars().all())
+
+    onceki = len(await _bu_haftanin_kayitlari())
 
     yanit = await _kaydet(client, sef_headers, santiye.id, [_hedef("A"), _hedef("B")])
     assert yanit.status_code == 200, yanit.text
 
-    kayitlar = (await seeded_db.execute(select(AuditLog))).scalars().all()
-    assert len(kayitlar) == onceki + 1
+    kayitlar = await _bu_haftanin_kayitlari()
+    assert len(kayitlar) == onceki + 1, (
+        f"{HAFTA.isoformat()} haftası için TEK özet olayı beklenirdi: {onceki} → {len(kayitlar)}"
+    )
     detay = kayitlar[-1].detail
     assert "A-Blok Şantiyesi" in detay
     assert HAFTA.isoformat() in detay
