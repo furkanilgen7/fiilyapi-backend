@@ -21,7 +21,20 @@ asyncpg>=0.30
 alembic==1.19.1
 pydantic[email]==2.13.4
 pydantic-settings==2.15.0
-argon2-cffi>=23.1
+# 🔴 PAROLA MALİYET PARAMETRELERİNİ ÜRETEN KÜTÜPHANE PİNLİ (SEC-ARGON, 2026-08-25).
+# `PasswordHasher`ın varsayılan time_cost/memory_cost/parallelism değerleri sürümle
+# değişebilir; aralık bırakıldığında o günden sonraki parolalar sessizce BAŞKA maliyetle
+# hash'lenir ve argon2 özeti kendi parametrelerini taşıdığı için eskiler doğrulanmaya
+# devam eder → hiçbir test kırılmaz. Sürüm CANLIDA KOŞANA göre donduruldu (`>=23.1`
+# kısıtı 2025-06-03'ten beri 25.1.0 çözüyor); 23.1.0 ↔ 25.1.0 varsayılanları ÖZDEŞ
+# ölçüldü, mevcut özetlerin maliyeti değişmiyor.
+# Bekçisi: tests/core/test_argon2_parametreleri.py
+argon2-cffi==25.1.0
+# argon2-cffi-bindings geçişli bir bağımlılıktır ama parola özetini fiilen ÜRETEN katman
+# odur (`starlette` ↔ `fastapi` emsali). Sürüklenme ÖLÇÜLDÜ: 26.1.0 2026-08-20'de çıktı,
+# 2026-08-25 TB-PIN deploy'u bu dosyayı değiştirip Docker katman önbelleğini düşürünce
+# canlı imaj sessizce 25.1.0 → 26.1.0'a taşındı. Canlı build log'undan doğrudan okundu.
+argon2-cffi-bindings==26.1.0
 pyjwt>=2.10
 slowapi>=0.1.9
 python-multipart>=0.0.20
