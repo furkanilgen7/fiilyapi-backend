@@ -23,7 +23,7 @@ from sqlalchemy import delete, func, select
 
 from app.modules.audit.models import AuditLog
 from app.modules.units.importer import COLUMNS
-from tests.modules.units.test_units_api import _auth, _login, _login_with_access, _site
+from tests.modules.units._units_api import _auth, _login, _login_with_access, _site
 
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 

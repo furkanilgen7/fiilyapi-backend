@@ -20,7 +20,7 @@ from sqlalchemy import delete, func, select
 
 from app.modules.audit.models import AuditLog
 from app.modules.units.models import Block, Unit
-from tests.modules.units.test_units_api import (
+from tests.modules.units._units_api import (
     _auth,
     _block,
     _login,

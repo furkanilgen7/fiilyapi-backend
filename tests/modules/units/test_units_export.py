@@ -26,7 +26,7 @@ from app.modules.customers.models import Customer, CustomerType
 from app.modules.projects.models import LandShareShareholder
 from app.modules.sales.models import SaleType, UnitSale, UnitSaleStatus
 from app.modules.units.models import Unit, UnitOwnerSide, UnitSalesStatus
-from tests.modules.units.test_units_api import _auth, _block, _login, _site, _unit
+from tests.modules.units._units_api import _auth, _block, _login, _site, _unit
 
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 

@@ -24,7 +24,7 @@ from app.modules.audit.models import AuditAction, AuditLog
 from app.modules.projects.models import LandShareShareholder
 from app.modules.units.models import Unit, UnitKind, UnitOwnerSide
 from app.modules.units.schemas import UnitNumberingPattern
-from tests.modules.units.test_units_api import _block, _login, _site, _unit
+from tests.modules.units._units_api import _block, _login, _site, _unit
 
 _IP = "203.0.113.42"
 _IP_HEADER = {"x-forwarded-for": _IP}
