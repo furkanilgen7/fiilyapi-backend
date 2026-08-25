@@ -39,7 +39,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e ".[dev]"
+      # 🔴 KURULUM KİLİTTEN YAPILIR (TB-LOCK, 2026-08-25). `pip install -e ".[dev]"`
+      # aralıkları HER TURDA yeniden çözerdi: kapılar, canlının koştuğundan farklı bir
+      # ağaçla yeşil verebiliyordu. `--no-deps` şart — onsuz pip projeyi kurarken
+      # aralıkları tekrar çözer ve kilidi ezer.
+      - run: pip install -r requirements-dev.lock
+      - run: pip install -e . --no-deps
       - run: python -m ruff check .
       - run: python -m ruff format --check .
       - run: python -m pytest --cov=app --cov-report=term-missing --cov-fail-under=80
@@ -65,7 +70,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e ".[dev]"
+      # 🔴 KURULUM KİLİTTEN YAPILIR (TB-LOCK, 2026-08-25). `pip install -e ".[dev]"`
+      # aralıkları HER TURDA yeniden çözerdi: kapılar, canlının koştuğundan farklı bir
+      # ağaçla yeşil verebiliyordu. `--no-deps` şart — onsuz pip projeyi kurarken
+      # aralıkları tekrar çözer ve kilidi ezer.
+      - run: pip install -r requirements-dev.lock
+      - run: pip install -e . --no-deps
       - run: alembic upgrade head
       - run: alembic downgrade -1
       - run: alembic upgrade head
