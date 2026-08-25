@@ -1,10 +1,14 @@
+import asyncio
+import os
 from collections.abc import AsyncGenerator
 from datetime import date
 from decimal import Decimal
 
+import asyncpg
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import settings
@@ -49,6 +53,96 @@ from app.modules.users.models import User, UserStatus
 # Testlerde login/refresh hız sınırını kapat: login-yoğun testler paylaşılan in-memory
 # limiter'da birbirini boğmasın. test_auth_ratelimit kendi ayrı limiter'ını kurar.
 limiter.enabled = False
+
+
+# ---------------------------------------------------------------------------
+# 🔴 XDIST İŞÇİ YALITIMI (TB-XDIST, 2026-08-25)
+#
+# `pytest -n N` ile koşulan işçiler AYNI süreçte değil, AYRI süreçlerdedir; ama
+# `TEST_DATABASE_URL` hepsinde AYNIdır. Bu kümenin yalıtımı "her test kendi
+# transaction'ında koşar + sonunda rollback" desenine dayanır — o desen **tek bir
+# veritabanı içindeki tek bir bağlantı** için geçerlidir. İki işçi aynı veritabanına
+# yazarsa:
+#   · biri `drop_all` + `create_all` koşarken öbürü o tablolara yazıyor olur (sahte kırmızı),
+#   · birinin görünür kıldığı satır öbürünün "kaç kayıt var" iddiasına karışır (sahte yeşil).
+# Bu yüzden HER İŞÇİ KENDİ VERİTABANINI alır: `<taban>_gw0`, `<taban>_gw1`, …
+#
+# 🔑 Yama noktası `test_engine` DEĞİL, `settings.test_database_url`dir: bu depodaki
+# testlerin bir bölümü (migration dosyaları, `test_fisno_concurrency`, `tests/test_db.py`)
+# kendi DSN'lerini/scratch veritabanlarını DOĞRUDAN `settings.test_database_url`den
+# türetiyor. Yalnız motoru yamalamak onları paylaşılan veritabanında bırakırdı —
+# `tests/test_db.py` sabit adlı bir probe tablosu (`CREATE TABLE … DROP TABLE`) açıyor,
+# iki işçide çakışırdı.
+#
+# ⚠️ `or` YEDEĞİ YOK: `TEST_DATABASE_URL` verilmediğinde `settings` kendi varsayılanına
+# düşer (localhost), asla `DATABASE_URL`e DEĞİL.
+# ---------------------------------------------------------------------------
+
+XDIST_ISCI = os.environ.get("PYTEST_XDIST_WORKER")
+
+
+def _isci_veritabani_url(temel: str, isci: str | None) -> str:
+    """Taban DSN'e işçi son ekini ekler. Seri koşuda (işçi yok) DSN aynen kalır."""
+    if not isci:
+        return temel
+    url = make_url(temel)
+    assert url.database, f"TEST_DATABASE_URL'de veritabanı adı yok: {temel}"
+    return url.set(database=f"{url.database}_{isci}").render_as_string(hide_password=False)
+
+
+settings.test_database_url = _isci_veritabani_url(settings.test_database_url, XDIST_ISCI)
+
+
+def _duz_dsn(veritabani: str) -> str:
+    """`postgresql+asyncpg://…` DSN'i, asyncpg'nin doğrudan yediği düz DSN'e çevirir."""
+    return (
+        make_url(settings.test_database_url)
+        .set(drivername="postgresql", database=veritabani)
+        .render_as_string(hide_password=False)
+    )
+
+
+def _isci_veritabani_adi() -> str:
+    """🔴 Düşürülecek adın İŞÇİ son ekini TAŞIDIĞI burada çakılır.
+
+    `DROP DATABASE` çalıştıran her yol, adın `_gwN` ile bittiğini doğrulamadan
+    çalışmaz — böylece taban veritabanı (ve `.env` uzak Railway'i gösteriyorsa canlı)
+    bu koddan ASLA düşürülemez.
+    """
+    ad = make_url(settings.test_database_url).database
+    assert ad and XDIST_ISCI and ad.endswith(f"_{XDIST_ISCI}"), (
+        f"İşçi veritabanı adı beklenen `_{XDIST_ISCI}` son ekini taşımıyor: {ad!r}. "
+        "DROP DATABASE çalıştırılmadı."
+    )
+    return ad
+
+
+async def _admin_calistir(sql: str) -> None:
+    baglanti = await asyncpg.connect(_duz_dsn("postgres"))
+    try:
+        await baglanti.execute(sql)
+    finally:
+        await baglanti.close()
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """İşçi kendi veritabanını oturum başında SIFIRDAN kurar (öksüz kalmışsa da)."""
+    if not XDIST_ISCI:
+        return
+    ad = _isci_veritabani_adi()
+    asyncio.run(_admin_calistir(f'DROP DATABASE IF EXISTS "{ad}" WITH (FORCE)'))
+    asyncio.run(_admin_calistir(f'CREATE DATABASE "{ad}"'))
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """🔴 BAŞARISIZLIKTA DA DÜŞER: `pytest_sessionfinish` toplama hatasında, iddia
+    kırmızısında ve `-x` ile erken çıkışta da çağrılır (fikstür teardown'ı çağrılmayabilir).
+    `WITH (FORCE)` artakalan bağlantıları da keser."""
+    if not XDIST_ISCI:
+        return
+    ad = _isci_veritabani_adi()
+    asyncio.run(_admin_calistir(f'DROP DATABASE IF EXISTS "{ad}" WITH (FORCE)'))
+
 
 test_engine = create_async_engine(settings.test_database_url, pool_pre_ping=True)
 TestSessionLocal = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)

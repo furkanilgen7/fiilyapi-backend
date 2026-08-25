@@ -17,7 +17,7 @@ Elle pin **yetmez**: pinlenmeyen her geçişli katman aralıkta kalır ve
 
 **Çözüm — iki kilit dosyası, tek tüketici (pip):**
   · `requirements.lock`      → ÜRETİM ağacı (41 paket). `Dockerfile` bunu kurar.
-  · `requirements-dev.lock`  → üretim + dev/test ağacı (52 paket). CI bunu kurar.
+  · `requirements-dev.lock`  → üretim + dev/test ağacı (54 paket). CI bunu kurar.
 Her ikisi de düz `requirements.txt` biçimindedir; `pip install -r` doğrudan tüketir,
 **deploy akışına yeni araç girmez** (`uv`/`poetry` binary'si imaja EKLENMEZ).
 

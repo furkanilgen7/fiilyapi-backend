@@ -33,13 +33,55 @@ PATH'te `python` olmayabilir; komutlarda daima `.venv/bin/...` kullanın.
 ## Test ve linter
 
 ```bash
-.venv/bin/pytest -q
-.venv/bin/pytest --cov=app --cov-report=term-missing
-.venv/bin/ruff check . && .venv/bin/ruff format --check .
+# TAM KÜME (dilimin KAPANIŞ kapısı) — paralel:
+.venv/bin/pytest -q -n 4 --dist loadfile
+.venv/bin/pytest -n 4 --dist loadfile --cov=app --cov-report=term-missing --cov-fail-under=80
+.venv/bin/ruff check --no-cache . && .venv/bin/ruff format --check --no-cache .
 ```
 
 Testler `TEST_DATABASE_URL`'e bağlanır ve oturum başında şemayı **düşürüp yeniden kurar**
 (`drop_all` + `create_all`). Bu değişkeni asla üretim/canlı veritabanına yöneltmeyin.
+
+### 🔴 Testi paralel koşmak — ve HEDEFLİ koşu (TB-XDIST, 2026-08-25)
+
+**Ölçülen sorun:** tam küme tek çekirdekte **24 dk 24 sn** sürüyordu (CI turu, PR #80 `test`
+işi; **6144 test**). Şefler bu kümeyi turda 2-3 kez koşuyordu → dilim başına giden 50-100
+dakikanın en büyük tek kalemi buydu.
+
+**İki ayrı koşu türü vardır ve BİRBİRİNİN YERİNE GEÇMEZ:**
+
+| Tür | Komut | Ne zaman |
+|---|---|---|
+| **HEDEFLİ** (mutasyon turu) | `.venv/bin/pytest tests/<hedef> -q` | Bir bekçinin kırmızı verdiğini görmek için. **Paralel DEĞİL** — tek dosya için 4 süreç açmak yavaşlatır. |
+| **TAM KÜME** (kapanış kapısı) | `.venv/bin/pytest -q -n 4 --dist loadfile` | Dilim kapanışında ve CI'da. |
+
+⚠️ **Hedefli koşu tam kümenin YERİNİ TUTMAZ.** Bu deponun kanonu: *"paylaşılan test kaynağı —
+izole koşuda yeşil olan tam kümede kırmızı olabilir ve tersi"* (FAT-1 dersi: eşzamanlılık
+bekçisi izole koşuda **3/3 yeşil**, dosya bütününde kırmızıydı; kök neden soğuk bağlantı
+havuzu). Hedefli koşu **mutasyon turu içindir**; kapanış kapısı **her zaman tam kümedir**.
+
+**🔴 `-n auto` KULLANILMAZ, üst sınır 4'tür.** Makine 8 çekirdek ama **8 GB RAM**; swap'e düşen
+bir koşu seri koşudan **yavaştır**. Ayrıca bu depoda paralel frontend hattı koşar.
+
+**Yerel ölçüm (aynı makine, aynı ağaç, 6144 test):**
+
+| Koşu | Süre | Zirve `pytest` RSS |
+|---|---|---|
+| seri (`-p no:randomly`) | **751,02 s** (12:31) | ~200 MB |
+| `-n 3 --dist loadfile` | **434,54 s** (7:14) | ~824 MB |
+| `-n 4 --dist loadfile` | **385,09 s** (6:25) | ~813 MB |
+| `tests/site_planning` (hedefli, 102 test) | **10,98 s** | — |
+
+`-n 4` seçildi: `-n 3`ten **%11 daha hızlı** ve RAM'de fark yok (ikisi de < 1 GB, 8 GB'ın
+**%10**'u). Swap büyümesi ölçüldü, iki koşuda da ihmal edilebilir.
+
+**Yalıtım — her işçi KENDİ veritabanını alır.** `tests/conftest.py`, `PYTEST_XDIST_WORKER`
+ortam değişkeninden `<taban>_gw0`, `<taban>_gw1`, … adlarını türetir ve
+`settings.test_database_url`i **o adla yamalar** (motoru değil: migration/eşzamanlılık
+testleri kendi DSN'lerini doğrudan o ayardan üretiyor). Veritabanı `pytest_sessionstart`ta
+kurulur, `pytest_sessionfinish`te `DROP DATABASE … WITH (FORCE)` ile **başarısızlıkta da**
+düşürülür. `DROP` çalıştıran her yol, adın `_gwN` son ekini taşıdığını önce çakar — taban
+veritabanı bu koddan düşürülemez.
 
 ## OpenAPI şeması (frontend sözleşmesi)
 
@@ -57,7 +99,7 @@ ağaç** kilitlenir.
 | Dosya | Kapsam | Kuran |
 |---|---|---|
 | `requirements.lock` | üretim ağacı — **41 paket** | `Dockerfile` (Railway) |
-| `requirements-dev.lock` | üretim + dev/test — **52 paket** | CI ve yerel kurulum |
+| `requirements-dev.lock` | üretim + dev/test — **54 paket** | CI ve yerel kurulum |
 
 Her ikisi de düz `requirements.txt` biçimindedir; `pip install -r` doğrudan tüketir —
 imaja/CI'a `uv` ya da `poetry` **binary'si girmez**. Kaynak dosyalar (`requirements.txt`,

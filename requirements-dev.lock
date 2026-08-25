@@ -37,6 +37,8 @@ email-validator==2.3.0
     # via pydantic
 et-xmlfile==2.0.0
     # via openpyxl
+execnet==2.1.2
+    # via pytest-xdist
 fastapi==0.141.1
     # via fiil-erp-backend (pyproject.toml)
 greenlet==3.5.5
@@ -96,9 +98,12 @@ pytest==9.1.1
     #   fiil-erp-backend (pyproject.toml)
     #   pytest-asyncio
     #   pytest-cov
+    #   pytest-xdist
 pytest-asyncio==1.4.0
     # via fiil-erp-backend (pyproject.toml)
 pytest-cov==7.1.0
+    # via fiil-erp-backend (pyproject.toml)
+pytest-xdist==3.8.0
     # via fiil-erp-backend (pyproject.toml)
 python-dotenv==1.2.3
     # via
