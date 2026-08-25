@@ -56,8 +56,15 @@ pytestmark = pytest.mark.asyncio
 
 
 def _asyncpg_dsn(database: str) -> str:
-    ham = settings.test_database_url or settings.database_url
-    return ham.replace("postgresql+asyncpg://", "postgresql://").rsplit("/", 1)[0] + f"/{database}"
+    """🔴 YALNIZ `test_database_url` — `database_url`a DUSULMEZ.
+
+    `.env`de `DATABASE_URL` UZAK RAILWAY'i gosterir. Bir `or settings.database_url`
+    yedegi, `TEST_DATABASE_URL` unutuldugu anda bu dosyanin `CREATE DATABASE` /
+    `DROP DATABASE ... WITH (FORCE)` cagrilarini CANLIYA yoneltirdi.
+    `test_procurement_migration._asyncpg_dsn` de tam olarak bu yuzden yedeksizdir.
+    """
+    base = settings.test_database_url.replace("postgresql+asyncpg://", "postgresql://")
+    return base.rsplit("/", 1)[0] + f"/{database}"
 
 
 def _run_alembic(*args: str, database: str) -> subprocess.CompletedProcess[str]:
