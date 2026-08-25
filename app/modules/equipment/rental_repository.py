@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.equipment.models import (
     Equipment,
     EquipmentOwnership,
+    EquipmentRatePeriod,
     EquipmentRentalInvoice,
     EquipmentRentalInvoiceLine,
     EquipmentWorkLog,
@@ -93,6 +94,7 @@ def _filtered(
     *,
     supplier_id: uuid.UUID | None,
     site_id: uuid.UUID | None,
+    equipment_id: uuid.UUID | None,
     status: RentalInvoiceStatus | None,
     period_year: int | None,
     period_month: int | None,
@@ -102,6 +104,19 @@ def _filtered(
     stmt = invoice_scope(stmt, project_ids)
     if supplier_id is not None:
         stmt = stmt.where(EquipmentRentalInvoice.supplier_id == supplier_id)
+    if equipment_id is not None:
+        # 🔴 `equipment_id` BAŞLIKTA DEĞİL SATIRDADIR (MK-2 şeması): süzgeç bu
+        # yüzden bir `EXISTS`tir, JOIN DEĞİL. JOIN yazılsaydı aynı ekipmanın iki
+        # satırı bulunan bir fatura listede İKİ KEZ görünür ve `total` gerçek
+        # fatura sayısından fazla çıkardı (sayfalama kanonunun sessiz kaçağı).
+        stmt = stmt.where(
+            select(EquipmentRentalInvoiceLine.id)
+            .where(
+                EquipmentRentalInvoiceLine.invoice_id == EquipmentRentalInvoice.id,
+                EquipmentRentalInvoiceLine.equipment_id == equipment_id,
+            )
+            .exists()
+        )
     if site_id is not None:
         stmt = stmt.where(EquipmentRentalInvoice.site_id == site_id)
     if status is not None:
@@ -119,6 +134,7 @@ async def list_invoices(
     *,
     supplier_id: uuid.UUID | None = None,
     site_id: uuid.UUID | None = None,
+    equipment_id: uuid.UUID | None = None,
     status: RentalInvoiceStatus | None = None,
     period_year: int | None = None,
     period_month: int | None = None,
@@ -133,6 +149,7 @@ async def list_invoices(
         project_ids,
         supplier_id=supplier_id,
         site_id=site_id,
+        equipment_id=equipment_id,
         status=status,
         period_year=period_year,
         period_month=period_month,
@@ -155,6 +172,7 @@ async def count_invoices(
     *,
     supplier_id: uuid.UUID | None = None,
     site_id: uuid.UUID | None = None,
+    equipment_id: uuid.UUID | None = None,
     status: RentalInvoiceStatus | None = None,
     period_year: int | None = None,
     period_month: int | None = None,
@@ -165,6 +183,7 @@ async def count_invoices(
         project_ids,
         supplier_id=supplier_id,
         site_id=site_id,
+        equipment_id=equipment_id,
         status=status,
         period_year=period_year,
         period_month=period_month,
@@ -343,3 +362,36 @@ async def site_names(session: AsyncSession, site_ids: list[uuid.UUID]) -> dict[u
         return {}
     rows = (await session.execute(select(Site.id, Site.name).where(Site.id.in_(site_ids)))).all()
     return {row[0]: row[1] for row in rows}
+
+
+async def paid_lines_for_equipment(
+    session: AsyncSession,
+    project_ids: list[uuid.UUID],
+    *,
+    equipment_id: uuid.UUID,
+) -> list[Row[tuple[EquipmentRentalInvoiceLine, EquipmentRatePeriod]]]:
+    """MK-4 `Kümülatif Ödenen` (MD:82) — ÖDENMİŞ hakedişlerin satırları.
+
+    🔴 SQL'de `SUM(...)` YAZILMAZ: ödenecek tutarın formülü `rental.py`dedir
+    (MK-2 K4 "tek formül") ve dönem dönüşümünü (`hourly`/`daily`/`monthly`) ile
+    satırın `capacity_hours` snapshot'ını (MK-3 K1) birlikte okur. Toplamı SQL'e
+    yazmak, aynı paranın İKİNCİ bir formülünü doğururdu.
+
+    `rate_period` FATURANINDIR (M5:74), satırın değil — bu yüzden satırla
+    birlikte döner; çağıran onu satırdan uyduramaz.
+
+    Durum süzgeci **yalnız `paid`**tir: "ödenen" ile "onaylanan" aynı şey
+    değildir ve `approved` de sayılsaydı ekran henüz çıkmamış bir parayı
+    ödenmiş gösterirdi. Kapsam (K9) fatura başlığından okunur.
+    """
+    stmt = invoice_scope(
+        select(EquipmentRentalInvoiceLine, EquipmentRentalInvoice.rate_period).join(
+            EquipmentRentalInvoice,
+            EquipmentRentalInvoice.id == EquipmentRentalInvoiceLine.invoice_id,
+        ),
+        project_ids,
+    ).where(
+        EquipmentRentalInvoiceLine.equipment_id == equipment_id,
+        EquipmentRentalInvoice.status == RentalInvoiceStatus.paid,
+    )
+    return list((await session.execute(stmt)).all())

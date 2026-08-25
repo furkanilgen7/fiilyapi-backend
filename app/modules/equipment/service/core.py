@@ -28,6 +28,7 @@ KAPSAMI belirler.
 """
 
 import uuid
+from datetime import date
 from decimal import Decimal
 from typing import NamedTuple
 
@@ -58,6 +59,14 @@ EQUIPMENT_MISSING = "Ekipman bulunamadı."
 SITE_MISSING = "Seçilen şantiye bulunamadı."
 OPERATOR_MISSING = "Seçilen operatör bulunamadı."
 SUPPLIER_MISSING = "Seçilen tedarikçi bulunamadı."
+
+RENTAL_PERIOD_ORDER = "Kira bitiş tarihi kira başlangıç tarihinden önce olamaz."
+"""🔴 MK-4. Kural İKİ KATMANDA yaşar ve bu bilinçlidir (BOR-TEMIZ dersi):
+`equipment` tablosundaki `ck_equipment_rental_period_order` CHECK'i seed/SQL
+düzeltmesi dâhil HER yazma yolunu kapatır; burası ise kullanıcının HTTP'den
+düzeltebileceği bir hataya anlaşılır bir 422 verir. Yalnız CHECK bırakılsaydı
+kullanıcı `IntegrityError` handler'ının opak "Veri bütünlüğü hatası" 409'unu
+görürdü; yalnız burası bırakılsaydı kural HTTP dışı her yolda delinirdi."""
 
 PURCHASE_AMOUNT_REQUIRED = (
     "Şirkete ait (sahip olunan) ekipmanda alış bedeli zorunludur. "
@@ -142,6 +151,18 @@ def _assert_purchase_amount(ownership: EquipmentOwnership, purchase_amount: Deci
         raise EquipmentValidationError(PURCHASE_AMOUNT_REQUIRED)
 
 
+def _assert_rental_period(start: date | None, end: date | None) -> None:
+    """MK-4 — kira dönemi TERS OLAMAZ. TEK denetim noktası: POST ve PATCH aynı
+    fonksiyonu çağırır (K2 emsali), ikinci bir kopya yazılsaydı doğru sırayla
+    kaydedip sonra bitişi öne çekmek kuralı atlardı.
+
+    İki taraftan biri `None` iken kural SUSAR: bitişi henüz belli olmayan bir
+    kira sözleşmesi yasaklanacak bir şey değildir.
+    """
+    if start is not None and end is not None and end < start:
+        raise EquipmentValidationError(RENTAL_PERIOD_ORDER)
+
+
 async def list_equipment(
     session: AsyncSession,
     actor: User,
@@ -189,6 +210,7 @@ async def create_equipment(
         supplier_id=data.supplier_id,
     )
     _assert_purchase_amount(data.ownership, data.purchase_amount)
+    _assert_rental_period(data.rental_start_date, data.rental_end_date)
     equipment = Equipment(**data.model_dump())
     session.add(equipment)
     await session.flush()
@@ -225,6 +247,14 @@ async def update_equipment(
         _assert_purchase_amount(
             degisiklikler.get("ownership", equipment.ownership),
             degisiklikler.get("purchase_amount", equipment.purchase_amount),
+        )
+    # F-İK "touched" deseni: kural yalnız İKİ TARİHTEN BİRİNE dokunulduğunda
+    # koşar. Her PATCH'te koşsaydı, kuralın öncesinden kalmış ters bir dönem bir
+    # daha HİÇ düzeltilemez hâle gelirdi.
+    if {"rental_start_date", "rental_end_date"} & degisiklikler.keys():
+        _assert_rental_period(
+            degisiklikler.get("rental_start_date", equipment.rental_start_date),
+            degisiklikler.get("rental_end_date", equipment.rental_end_date),
         )
     for alan, deger in degisiklikler.items():
         setattr(equipment, alan, deger)

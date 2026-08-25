@@ -59,6 +59,13 @@ _STATUS_NOTE = Field(default=None, max_length=FREE_TEXT_MAX_LENGTH)
 _MONEY = Field(default=None, ge=0, max_digits=18, decimal_places=2)
 # K5: norm tüketim SAYIDIR ve pozitiftir — 0 norm, sapma hesabını sıfıra bölerdi.
 _NORM = Field(default=None, gt=0, max_digits=10, decimal_places=2)
+# MK-4 — motor gücü `Numeric(10, 2)` ve POZİTİFTİR (0 kW bir ölçüm değil,
+# bir giriş hatasıdır); hourmeter okumaları aynı ölçekte ama 0 GEÇERLİDİR
+# (sıfır saatte teslim alınmış yeni makine).
+_POWER = Field(default=None, gt=0, max_digits=10, decimal_places=2)
+_HOURMETER = Field(default=None, ge=0, max_digits=10, decimal_places=2)
+# `String(200)` — kapasite metni ve ödeme biçimi; kolon sınırıyla BİREBİR.
+_MEDIUM_TEXT = Field(default=None, max_length=200)
 
 
 class EquipmentCreate(BaseModel):
@@ -97,6 +104,20 @@ class EquipmentCreate(BaseModel):
     maintenance_period: EquipmentMaintenancePeriod | None = None
     # K7: VERİDİR. 0 verilebilir (kullanım % `null` döner, K16) ama negatif olamaz.
     monthly_capacity_hours: int = Field(default=DEFAULT_MONTHLY_CAPACITY_HOURS, ge=0)
+    # --- MK-4: Ekipman Detay alanları (mockup `Makine - Ekipman Detay.dc.html`) ---
+    engine_power_kw: Decimal | None = _POWER
+    capacity_description: str | None = _MEDIUM_TEXT
+    hourmeter_hours: Decimal | None = _HOURMETER
+    rental_contract_no: str | None = _SHORT_TEXT
+    rental_start_date: date | None = None
+    rental_end_date: date | None = None
+    # 🔴 `monthly_capacity_hours` DEĞİLDİR (model yorumu): o bir PAYDA, bu bir
+    # SÖZLEŞME TAAHHÜDÜ. 0 verilebilir (asgari yok), negatif olamaz.
+    rental_min_monthly_hours: int | None = Field(default=None, ge=0)
+    rental_payment_terms: str | None = _MEDIUM_TEXT
+    last_service_date: date | None = None
+    last_service_hourmeter: Decimal | None = _HOURMETER
+
     # K8: yalnız bir işaret; hiçbir yan etki tetiklemez.
     is_company_asset: bool = True
     is_active: bool = True
@@ -138,6 +159,19 @@ class EquipmentUpdate(BaseModel):
     norm_unit: EquipmentNormUnit | None = None
     maintenance_period: EquipmentMaintenancePeriod | None = None
     monthly_capacity_hours: int | None = Field(default=None, ge=0)
+    # --- MK-4: Ekipman Detay alanları (mockup `Makine - Ekipman Detay.dc.html`) ---
+    engine_power_kw: Decimal | None = _POWER
+    capacity_description: str | None = _MEDIUM_TEXT
+    hourmeter_hours: Decimal | None = _HOURMETER
+    rental_contract_no: str | None = _SHORT_TEXT
+    rental_start_date: date | None = None
+    rental_end_date: date | None = None
+    # 🔴 `monthly_capacity_hours` DEĞİLDİR (model yorumu): o bir PAYDA, bu bir
+    # SÖZLEŞME TAAHHÜDÜ. 0 verilebilir (asgari yok), negatif olamaz.
+    rental_min_monthly_hours: int | None = Field(default=None, ge=0)
+    rental_payment_terms: str | None = _MEDIUM_TEXT
+    last_service_date: date | None = None
+    last_service_hourmeter: Decimal | None = _HOURMETER
     is_company_asset: bool | None = None
     is_active: bool | None = None
 
@@ -179,6 +213,21 @@ class EquipmentResponse(BaseModel):
     norm_unit: EquipmentNormUnit | None
     maintenance_period: EquipmentMaintenancePeriod | None
     monthly_capacity_hours: int
+    # --- MK-4: SAKLANAN detay alanları ---
+    # 🔴 Bunlar TÜREV DEĞİLDİR, bu yüzden buradadırlar. Ekranın kalan altı
+    # sayısı (sonraki bakım saati · kalan saat · tahmini tarih · `%57` çubuğu ·
+    # kümülatif ödenen) BURAYA GİRMEZ: `EquipmentDetailResponse`ta yaşarlar,
+    # çünkü liste her çizilişte hareket tablosunu taramak zorunda kalırdı.
+    engine_power_kw: Decimal | None
+    capacity_description: str | None
+    hourmeter_hours: Decimal | None
+    rental_contract_no: str | None
+    rental_start_date: date | None
+    rental_end_date: date | None
+    rental_min_monthly_hours: int | None
+    rental_payment_terms: str | None
+    last_service_date: date | None
+    last_service_hourmeter: Decimal | None
     is_company_asset: bool
     is_active: bool
     created_at: datetime

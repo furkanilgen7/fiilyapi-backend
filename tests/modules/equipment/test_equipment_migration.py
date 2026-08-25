@@ -228,6 +228,19 @@ def test_equipment_columns_match_spec():
         "norm_unit",
         "maintenance_period",
         "monthly_capacity_hours",
+        # 🔴 MK-4 — Ekipman Detay ekranının SAKLANAN on alanı. Bu küme bilerek
+        # TAM kümedir (bkz. altındaki gerekçe): genişleten dilim onu burada
+        # GÖRÜNÜR kılmak zorundadır, sessizce değil.
+        "engine_power_kw",
+        "capacity_description",
+        "hourmeter_hours",
+        "rental_contract_no",
+        "rental_start_date",
+        "rental_end_date",
+        "rental_min_monthly_hours",
+        "rental_payment_terms",
+        "last_service_date",
+        "last_service_hourmeter",
         "is_company_asset",
         "is_active",
         "created_at",

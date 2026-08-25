@@ -573,6 +573,16 @@ async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
     (mevcut `{request_id}` yolunun altına ayrı bir alt-yol açar) ve üzerinde TEK
     operasyon (POST) taşır; `approve`/`reject` emsalinin birebir kardeşi. Yani
     230→**231** · 338→**339**.
+
+    🔴 **MK-4 (+1 yol / +1 operasyon):** `GET /equipment/{equipment_id}/detail`
+    — Ekipman Detay ekranının TÜREV blokları (bakım penceresi + kümülatif
+    ödenen). Yeni bir YOLDUR; `GET /equipment/{equipment_id}` gövdesi
+    DEĞİŞMEDİ (türevler künyeye konsaydı LİSTE ucu da her çizilişte hareket
+    tablosunu tarardı). `GET /equipment/rental-invoices`a eklenen
+    `equipment_id` SÜZGECİ ise **ne yol ne operasyon** açar — Kanon 3'ün
+    üçüncü ölçüsü: bir sorgu parametresi sözleşmeyi genişletir ama bu iki
+    sayacın hiçbirini oynatmaz (sürüklenmeyi `tests/contract/` yakalar).
+    Yani 231→**232** · 339→**340**.
     """
     from app.main import app
 
@@ -584,5 +594,5 @@ async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
         for metot in uc
         if metot in {"get", "post", "put", "patch", "delete"}
     )
-    assert len(yollar) == 231
-    assert operasyonlar == 339
+    assert len(yollar) == 232
+    assert operasyonlar == 340

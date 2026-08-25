@@ -53,6 +53,9 @@ from app.modules.equipment.service.core import (
     PURCHASE_AMOUNT_REQUIRED as PURCHASE_AMOUNT_REQUIRED,
 )
 from app.modules.equipment.service.core import (
+    RENTAL_PERIOD_ORDER as RENTAL_PERIOD_ORDER,
+)
+from app.modules.equipment.service.core import (
     SITE_MISSING as SITE_MISSING,
 )
 from app.modules.equipment.service.core import (
@@ -66,6 +69,9 @@ from app.modules.equipment.service.core import (
 )
 from app.modules.equipment.service.core import (
     _assert_references as _assert_references,
+)
+from app.modules.equipment.service.core import (
+    _assert_rental_period as _assert_rental_period,
 )
 from app.modules.equipment.service.core import (
     _is_visible_site as _is_visible_site,

@@ -26,16 +26,31 @@ TABLO equipment
   equipment.norm_unit: tur=Enum('lt_hour', 'lt_km', name='equipment_norm_unit') null=True pk=False varsayilan=None sunucu=None
   equipment.maintenance_period: tur=Enum('hours_250', 'hours_500', 'hours_1000', 'monthly', name='equipment_maintenance_period') null=True pk=False varsayilan=None sunucu=None
   equipment.monthly_capacity_hours: tur=Integer() null=False pk=False varsayilan=200 sunucu=sql:200
+  equipment.engine_power_kw: tur=Numeric(precision=10, scale=2) null=True pk=False varsayilan=None sunucu=None
+  equipment.capacity_description: tur=String(length=200) null=True pk=False varsayilan=None sunucu=None
+  equipment.hourmeter_hours: tur=Numeric(precision=10, scale=2) null=True pk=False varsayilan=None sunucu=None
+  equipment.rental_contract_no: tur=String(length=100) null=True pk=False varsayilan=None sunucu=None
+  equipment.rental_start_date: tur=Date() null=True pk=False varsayilan=None sunucu=None
+  equipment.rental_end_date: tur=Date() null=True pk=False varsayilan=None sunucu=None
+  equipment.rental_min_monthly_hours: tur=Integer() null=True pk=False varsayilan=None sunucu=None
+  equipment.rental_payment_terms: tur=String(length=200) null=True pk=False varsayilan=None sunucu=None
+  equipment.last_service_date: tur=Date() null=True pk=False varsayilan=None sunucu=None
+  equipment.last_service_hourmeter: tur=Numeric(precision=10, scale=2) null=True pk=False varsayilan=None sunucu=None
   equipment.is_company_asset: tur=Boolean() null=False pk=False varsayilan=True sunucu=sql:true
   equipment.is_active: tur=Boolean() null=False pk=False varsayilan=True sunucu=sql:true
   equipment.created_at: tur=DateTime(timezone=True) null=False pk=False varsayilan=None sunucu=sql:now()
   equipment.updated_at: tur=DateTime(timezone=True) null=False pk=False varsayilan=None sunucu=sql:now()
   KISIT CheckConstraint ck_equipment_depreciation_years_positive [] sql=depreciation_years IS NULL OR depreciation_years > 0
+  KISIT CheckConstraint ck_equipment_engine_power_positive [] sql=engine_power_kw IS NULL OR engine_power_kw > 0
+  KISIT CheckConstraint ck_equipment_hourmeter_non_negative [] sql=hourmeter_hours IS NULL OR hourmeter_hours >= 0
+  KISIT CheckConstraint ck_equipment_last_service_hourmeter_non_negative [] sql=last_service_hourmeter IS NULL OR last_service_hourmeter >= 0
   KISIT CheckConstraint ck_equipment_market_value_non_negative [] sql=market_value IS NULL OR market_value >= 0
   KISIT CheckConstraint ck_equipment_monthly_capacity_non_negative [] sql=monthly_capacity_hours >= 0
   KISIT CheckConstraint ck_equipment_norm_consumption_positive [] sql=norm_consumption IS NULL OR norm_consumption > 0
   KISIT CheckConstraint ck_equipment_purchase_amount_non_negative [] sql=purchase_amount IS NULL OR purchase_amount >= 0
   KISIT CheckConstraint ck_equipment_rate_amount_non_negative [] sql=rate_amount IS NULL OR rate_amount >= 0
+  KISIT CheckConstraint ck_equipment_rental_min_monthly_hours_non_negative [] sql=rental_min_monthly_hours IS NULL OR rental_min_monthly_hours >= 0
+  KISIT CheckConstraint ck_equipment_rental_period_order [] sql=rental_start_date IS NULL OR rental_end_date IS NULL OR rental_end_date >= rental_start_date
   KISIT ForeignKeyConstraint None ['operator_id'] -> personnel.id(ondelete=SET NULL,onupdate=None)
   KISIT ForeignKeyConstraint None ['site_id'] -> sites.id(ondelete=SET NULL,onupdate=None)
   KISIT ForeignKeyConstraint None ['supplier_id'] -> suppliers.id(ondelete=SET NULL,onupdate=None)

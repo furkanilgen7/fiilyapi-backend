@@ -30,10 +30,14 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.core.db import Base
 from app.modules.equipment.models.constants import (
     DEFAULT_MONTHLY_CAPACITY_HOURS,
+    HOURMETER_PRECISION,
+    HOURMETER_SCALE,
     HOURS_PRECISION,
     HOURS_SCALE,
     MONEY_PRECISION,
     MONEY_SCALE,
+    POWER_PRECISION,
+    POWER_SCALE,
     QUANTITY_PRECISION,
     QUANTITY_SCALE,
     UNIT_PRICE_PRECISION,
@@ -91,6 +95,36 @@ class Equipment(Base):
         CheckConstraint(
             "depreciation_years IS NULL OR depreciation_years > 0",
             name="ck_equipment_depreciation_years_positive",
+        ),
+        # MK-4 — `rate_amount`/`market_value` desenin birebiri: NULL
+        # ("bilinmiyor") serbesttir, negatif hiçbir okumada anlamlı değildir.
+        # Motor gücü AYRICA 0 olamaz: 0 kW'lik bir motor bir ölçüm değil, bir
+        # veri girişi hatasıdır (`norm_consumption > 0` emsali).
+        CheckConstraint(
+            "engine_power_kw IS NULL OR engine_power_kw > 0",
+            name="ck_equipment_engine_power_positive",
+        ),
+        CheckConstraint(
+            "hourmeter_hours IS NULL OR hourmeter_hours >= 0",
+            name="ck_equipment_hourmeter_non_negative",
+        ),
+        CheckConstraint(
+            "last_service_hourmeter IS NULL OR last_service_hourmeter >= 0",
+            name="ck_equipment_last_service_hourmeter_non_negative",
+        ),
+        CheckConstraint(
+            "rental_min_monthly_hours IS NULL OR rental_min_monthly_hours >= 0",
+            name="ck_equipment_rental_min_monthly_hours_non_negative",
+        ),
+        # 🔴 Kira dönemi TERS OLAMAZ. Servis katmanına bırakılsaydı kural yalnız
+        # HTTP'den geçen yazmaları korurdu; migration/seed/SQL düzeltmesi onu
+        # atlar ve "bitiş < başlangıç" bir kira kartı sessizce yaşardı.
+        # İki tarihten biri NULL iken kısıt SUSAR: yarım girilmiş bir sözleşme
+        # (henüz bitiş tarihi belli değil) yasaklanacak bir şey değildir.
+        CheckConstraint(
+            "rental_start_date IS NULL OR rental_end_date IS NULL "
+            "OR rental_end_date >= rental_start_date",
+            name="ck_equipment_rental_period_order",
         ),
     )
 
@@ -180,6 +214,54 @@ class Equipment(Base):
         nullable=False,
         default=DEFAULT_MONTHLY_CAPACITY_HOURS,
         server_default=text(str(DEFAULT_MONTHLY_CAPACITY_HOURS)),
+    )
+    # MK-4 — Ekipman Detay ekranının EKSİK alanları (mockup
+    # `projedesign/Makine - Ekipman Detay.dc.html`).
+    #
+    # ⚙️ Teknik Bilgiler (satır 58-65)
+    # MD:59 `45 kW` — birim KOLON ADINDADIR (`constants.POWER_*` gerekçesi).
+    engine_power_kw: Mapped[Decimal | None] = mapped_column(
+        Numeric(POWER_PRECISION, POWER_SCALE), nullable=True
+    )
+    # MD:61 `8 Ton · 60 m yükseklik` — SERBEST METİNDİR ve bu bilinçlidir:
+    # kapasitenin BİRİMİ kategoriye göre değişir (vinçte ton+yükseklik, mikserde m³,
+    # kompresörde m³/dk). Sayı+birim'e ayrılsaydı tek bir satır bile ("8 Ton · 60 m")
+    # iki büyüklük taşıdığı için sığmazdı. Üzerinde hiçbir hesap yapılmaz.
+    capacity_description: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # 🔴 MD:65 `14.286 saat` — SAKLANIR, çalışma kaydından TÜRETİLMEZ.
+    # Hourmeter makinenin üzerindeki fiziksel sayacın ÖLÇÜMÜdür; ERP'nin çalışma
+    # kayıtları ise yalnız ERP dönemini kapsar (bu makine 2019 model, kayıtlar
+    # 2026'da başlıyor). Türetilseydi sunucu hiç yapmadığı bir ölçümü UYDURMUŞ
+    # olurdu; "aynı sayının iki kaynağı" kanonu burada İHLAL EDİLMEZ çünkü
+    # `SUM(work_logs.hours)` ile hourmeter AYNI SAYI DEĞİLDİR.
+    hourmeter_hours: Mapped[Decimal | None] = mapped_column(
+        Numeric(HOURMETER_PRECISION, HOURMETER_SCALE), nullable=True
+    )
+    # 📋 Kiralama Bilgileri (MD:69-80). Kiralayan firma (MD:67) `supplier_id`dir
+    # (K3), saatlik bedel (MD:75) `rate_amount`tır — ikisi de MK-1'de vardı.
+    rental_contract_no: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    rental_start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    rental_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # 🔴 MD:78 `160 saat` — `monthly_capacity_hours` ile KARIŞTIRILMAZ.
+    # `monthly_capacity_hours` (K7) bir PAYDAdır: kullanım yüzdesini ve `monthly`
+    # dönem bedelinin saatlik karşılığını üretir; makinenin fiziksel kapasitesidir.
+    # Bu kolon ise KİRA SÖZLEŞMESİNİN taahhüt ettiği asgari saattir — makine daha az
+    # çalışsa bile firma bu kadarını faturalar. Tek kolonda birleştirilselerdi
+    # sözleşme asgarisi değişince makinenin kullanım yüzdesi de sessizce oynardı.
+    rental_min_monthly_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # MD:80 `Aylık — fatura üzerinden`. ENUM AÇILMADI ve `procurement.PaymentTerms`
+    # (cash/days_15/30/60) YENİDEN KULLANILMADI: o bir VADEdir, bu bir ödeme
+    # BİÇİMİdir. Mockup tek örnek basıyor; tek örnekten kapalı küme çıkarmak
+    # "mockup'ta olmayanı uydurma" kuralını çiğnerdi.
+    rental_payment_terms: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # 🔧 Bakım Bilgileri (MD:148-151). Bakım periyodu (MD:147) `maintenance_period`
+    # enum'udur — MK-1'de vardı. Sonraki bakım saati, kalan saat, tahmini tarih ve
+    # `%57` çubuğu KOLON DEĞİLDİR: hepsi bu ikisinden TÜRER (`maintenance.py`).
+    last_service_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # MD:151 `14.000 sa` — bakım anındaki HOURMETER OKUMASIDIR, bakımın süresi
+    # değil. Ad bu yüzden `last_service_hours` değil `last_service_hourmeter`dır.
+    last_service_hourmeter: Mapped[Decimal | None] = mapped_column(
+        Numeric(HOURMETER_PRECISION, HOURMETER_SCALE), nullable=True
     )
     # K8: YALNIZ bir işaret — hiçbir yan etki tetiklemez.
     is_company_asset: Mapped[bool] = mapped_column(

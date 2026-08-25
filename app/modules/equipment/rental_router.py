@@ -83,6 +83,10 @@ async def list_rental_invoices_endpoint(
     session: Annotated[AsyncSession, Depends(get_db)],
     supplier_id: uuid.UUID | None = None,
     site_id: uuid.UUID | None = None,
+    #: 🔴 MK-4 — Ekipman Detay ekranının "bu makinenin hakedişleri" bloğu.
+    #: Süzgeç SATIR düzeyindedir (`equipment_id` başlıkta yoktur): bir fatura,
+    #: bu ekipmana ait EN AZ BİR satırı varsa listeye girer.
+    equipment_id: uuid.UUID | None = None,
     status_filter: Annotated[RentalInvoiceStatus | None, Query(alias="status")] = None,
     period_year: Annotated[int | None, Query(ge=2000, le=2200)] = None,
     period_month: Annotated[int | None, Query(ge=1, le=12)] = None,
@@ -99,6 +103,7 @@ async def list_rental_invoices_endpoint(
         user,
         supplier_id=supplier_id,
         site_id=site_id,
+        equipment_id=equipment_id,
         status=status_filter,
         period_year=period_year,
         period_month=period_month,

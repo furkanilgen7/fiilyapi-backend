@@ -691,3 +691,40 @@ async def fuel_summary_rows(
     if equipment_id is not None:
         stmt = stmt.where(Equipment.id == equipment_id)
     return list((await session.execute(stmt)).all())
+
+
+# --- MK-4: Ekipman Detay türevlerinin girdileri ---
+
+
+async def worked_hours_in_window(
+    session: AsyncSession,
+    project_ids: list[uuid.UUID],
+    *,
+    equipment_id: uuid.UUID,
+    date_from: date,
+    date_to: date,
+) -> Decimal:
+    """Bir ekipmanın penceredeki ÇALIŞMA saati toplamı (MK-4 tahmini bakım tarihi).
+
+    🔴 `record_type = worked` süzgeci ZORUNLUDUR: arıza saatleri makineyi
+    yormaz, hourmeter'ı ilerletmez. Toplama katılsalardı duran bir makine
+    "hızlı çalışıyor" sayılır ve bakım tarihi ERKENE alınırdı (K10'un para
+    tarafındaki `breakdown` ayrımının bakım tarafındaki eşi).
+
+    Kapsam (K9) çalışma kaydının KENDİ `site_id`sinden okunur: görmediği bir
+    şantiyedeki saati toplayan kullanıcı, o şantiyenin varlığını temposundan
+    çıkarırdı.
+
+    Kaydı olmayan pencerede `0` döner — `None` DEĞİL: "hiç çalışmadı" bilinen
+    bir olgudur; fail-closed kararı bu sayının TÜKETİCİSİNDEDİR
+    (`maintenance.daily_rate` 0 tempoda `None` verir).
+    """
+    stmt = work_log_scope(
+        select(func.coalesce(func.sum(EquipmentWorkLog.hours), 0)), project_ids
+    ).where(
+        EquipmentWorkLog.equipment_id == equipment_id,
+        EquipmentWorkLog.record_type == WorkLogType.worked,
+        EquipmentWorkLog.work_date >= date_from,
+        EquipmentWorkLog.work_date <= date_to,
+    )
+    return Decimal((await session.execute(stmt)).scalar_one())
