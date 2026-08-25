@@ -14,7 +14,7 @@ import uuid
 from sqlalchemy import func, select
 
 from app.modules.units.models import Unit, UnitOwnerSide
-from tests.modules.units.test_units_api import _auth, _block, _login, _site, _unit
+from tests.modules.units._units_api import _auth, _block, _login, _site, _unit
 
 _ALLOCATION_WRONG_TYPE = "Paylaşım yalnızca kat karşılığı projelerde kaydedilebilir"
 _DUPLICATE_IN_PAYLOAD = "Aynı ünite listede birden çok kez var"

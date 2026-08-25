@@ -28,7 +28,7 @@ from app.modules.projects.land_share import LAND_SHARE_MISSING
 from app.modules.projects.models import LandShareShareholder, ProjectLandShare
 from app.modules.units.models import UnitKind, UnitOwnerSide, UnitSalesStatus
 from tests.conftest import test_engine
-from tests.modules.units.test_units_api import _auth, _block, _login, _site, _unit
+from tests.modules.units._units_api import _auth, _block, _login, _site, _unit
 
 
 def _summary_url(project_id: uuid.UUID) -> str:

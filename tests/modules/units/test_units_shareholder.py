@@ -30,7 +30,7 @@ from sqlalchemy import event, func, select
 from app.modules.projects.models import LandShareShareholder
 from app.modules.units.models import Unit, UnitOwnerSide
 from tests.conftest import test_engine
-from tests.modules.units.test_units_api import _auth, _block, _login, _site, _unit
+from tests.modules.units._units_api import _auth, _block, _login, _site, _unit
 
 _SHAREHOLDER_WRONG_SIDE = "Hissedar yalnızca arsa payı ünitesine atanabilir"
 _SHAREHOLDER_MISSING = "Hissedar bulunamadı"

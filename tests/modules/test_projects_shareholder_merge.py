@@ -32,7 +32,7 @@ from app.modules.projects.schemas import (
 from app.modules.projects.service import create_project, update_project
 from app.modules.units.models import Unit, UnitKind, UnitOwnerSide
 from app.modules.users.models import UserProjectAccess
-from tests.modules.units.test_units_api import _block, _site
+from tests.modules.units._units_api import _block, _site
 
 
 async def _writer(seeded_db, user_factory, email: str):
