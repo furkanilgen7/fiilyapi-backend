@@ -16,6 +16,7 @@ OPERATOR_MISSING = 'Seçilen operatör bulunamadı.'
 OVERNIGHT_NOT_SUPPORTED = 'Bitiş saati başlangıç saatinden önce olamaz. Gece yarısını geçen vardiya bu sürümde desteklenmiyor; vardiyayı iki güne iki ayrı kayıt olarak girin.'
 PERMISSION_MODULE = 'equipment'
 PURCHASE_AMOUNT_REQUIRED = 'Şirkete ait (sahip olunan) ekipmanda alış bedeli zorunludur. Kiralık ekipmanda bu alan boş bırakılabilir.'
+RENTAL_PERIOD_ORDER = 'Kira bitiş tarihi kira başlangıç tarihinden önce olamaz.'
 SITE_MISSING = 'Seçilen şantiye bulunamadı.'
 SUPPLIER_MISSING = 'Seçilen tedarikçi bulunamadı.'
 TIME_PAIR_REQUIRED = 'Başlangıç ve bitiş saati birlikte verilmelidir: ikisini de girin ya da ikisini de boş bırakın.'
@@ -27,6 +28,7 @@ _UNIT_PRICE_QUANTUM = Decimal('0.0001')
 async def _assert_daily_cap(session: sqlalchemy.ext.asyncio.session.AsyncSession, *, equipment_id: uuid.UUID, work_date: datetime.date, hours: decimal.Decimal, exclude_log_id: uuid.UUID | None = None) -> None
 def _assert_purchase_amount(ownership: app.modules.equipment.models.EquipmentOwnership, purchase_amount: decimal.Decimal | None) -> None
 async def _assert_references(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, *, site_id: uuid.UUID | None, operator_id: uuid.UUID | None, supplier_id: uuid.UUID | None) -> None
+def _assert_rental_period(start: datetime.date | None, end: datetime.date | None) -> None
 async def _is_visible_site(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, site_id: uuid.UUID | None) -> bool
 async def _lock_equipment(session: sqlalchemy.ext.asyncio.session.AsyncSession, *equipment_ids: uuid.UUID) -> None
 def _monday(gun: datetime.date) -> datetime.date

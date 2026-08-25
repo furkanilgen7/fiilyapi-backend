@@ -518,17 +518,25 @@ async def list_invoices(
     *,
     supplier_id: uuid.UUID | None,
     site_id: uuid.UUID | None,
+    equipment_id: uuid.UUID | None,
     status: RentalInvoiceStatus | None,
     period_year: int | None,
     period_month: int | None,
     limit: int,
     offset: int,
 ) -> tuple[list[RentalInvoiceResponse], int]:
-    """Liste + `total` TEK kapsam kararını paylaşır (TB3 kanonu)."""
+    """Liste + `total` TEK kapsam kararını paylaşır (TB3 kanonu).
+
+    🔴 `equipment_id` VARLIĞI DOĞRULANMAZ ve bu bilinçlidir: bu bir SÜZGEÇtir,
+    bir varlık referansı değil. Var olmayan (ya da görünmeyen) bir kimlik BOŞ
+    LİSTE döndürür, 404 değil — 404, süzgeci bir keşif aracına çevirir
+    (kullanıcı hangi kimliklerin var olduğunu deneme yanılmayla öğrenirdi).
+    """
     project_ids = await service._visible_project_ids(session, actor)
     suzgecler = {
         "supplier_id": supplier_id,
         "site_id": site_id,
+        "equipment_id": equipment_id,
         "status": status,
         "period_year": period_year,
         "period_month": period_month,

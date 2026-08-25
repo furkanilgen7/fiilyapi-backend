@@ -45,3 +45,19 @@ VAT_RATE_SCALE = 2
 # altı hanenin altında sıkışmamalıdır.
 RENTAL_HOURS_PRECISION = 8
 RENTAL_HOURS_SCALE = 2
+
+# MK-4 (Ekipman Detay) ölçekleri.
+
+#: Motor gücü kW cinsindendir ve BİRİM KOLON ADINDADIR (`engine_power_kw`).
+#: Ayrı bir birim enum'u (K5 deseni) AÇILMADI: K5 sayı+birim ayrımını, üzerinde
+#: HESAP yapılan bir büyüklük için gerektirir (norm tüketimden yüzde sapma
+#: türetilir). Motor gücü hiçbir formülün girdisi değildir; birim için ikinci
+#: bir kolon açmak, hiçbir okumanın sormadığı bir soruyu saklamak olurdu.
+POWER_PRECISION = 10
+POWER_SCALE = 2
+
+#: Hourmeter ÖMÜR BOYU birikmiş saattir (M-DETAY:65 `14.286 saat`) ve MK-1'in
+#: `HOURS_PRECISION`ına (6 hane → 9.999,99 tavan) SIĞMAZ. Ayrı ölçek şart:
+#: tek günün saati ile makinenin ömrü aynı kolon genişliğini paylaşamaz.
+HOURMETER_PRECISION = 10
+HOURMETER_SCALE = 2

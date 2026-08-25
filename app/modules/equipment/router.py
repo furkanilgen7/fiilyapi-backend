@@ -50,7 +50,8 @@ from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
-from app.modules.equipment import service
+from app.modules.equipment import detail_service, service
+from app.modules.equipment.detail_schemas import EquipmentDetailResponse
 from app.modules.equipment.models import (
     EquipmentCategory,
     EquipmentOwnership,
@@ -412,6 +413,34 @@ async def get_equipment_endpoint(
     return EquipmentResponse.model_validate(
         await service.visible_equipment(session, user, equipment_id)
     )
+
+
+@router.get(
+    "/{equipment_id}/detail",
+    response_model=EquipmentDetailResponse,
+    dependencies=[_VIEW],
+)
+async def get_equipment_detail_endpoint(
+    equipment_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    as_of: date | None = None,
+) -> EquipmentDetailResponse:
+    """MK-4 — Ekipman Detay ekranının künye + İKİ TÜREV bloğu.
+
+    🔴 `GET /{equipment_id}` DEĞİŞMEDİ: türevler oraya konsaydı LİSTE ucu da
+    (aynı şemayı paylaşır) her çizilişte hareket tablosunu tarardı. Sözleşme
+    ADDITIVE genişler.
+
+    `as_of` **tahmini bakım tarihinin dayanak günüdür** ve verilmezse TR
+    takviminde bugündür (`core.timezone.today`). Parametre olması, yanıtın
+    hangi güne göre üretildiğini istemcinin de testin de SABİTLEYEBİLMESİ
+    içindir — sunucunun kendi günü hesabın derinine gömülseydi ikisi de
+    imkânsızdı.
+
+    Görünmeyen kayıt var olmayanla AYNI 404'ü döner (K20).
+    """
+    return await detail_service.equipment_detail(session, user, equipment_id, as_of=as_of)
 
 
 @router.patch(

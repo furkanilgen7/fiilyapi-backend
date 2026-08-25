@@ -313,14 +313,20 @@ def test_anlik_goruntu_bos_degil_ve_tum_sembolleri_kapsiyor() -> None:
     Referans yanlışlıkla boşalsa ya da sembollerin yarısı düşse üstteki test
     yine yeşil kalabilirdi ("hiçbir şeyi hiçbir şeyle karşılaştırmak").
     """
+    # 🔴 MK-4 (+2 sembol, +1 fonksiyon, +2 satır): `RENTAL_PERIOD_ORDER` sabiti
+    # ve `_assert_rental_period` kapısı. Kural SERVİSE konuldu (şemaya ya da
+    # yalnız DB `CHECK`ine değil) çünkü PATCH'te gövde ile DB satırının
+    # BİRLEŞİMİNE bakar — `_assert_purchase_amount` (K2) emsalinin birebiri.
+    # Sayılar bilinçli olarak ELLE güncellenir: yüzeyi genişleten dilim onu
+    # GÖRÜNÜR kılmak zorundadır.
     tanimlar = _tanimlar()
-    assert len(tanimlar) == 49, f"sembol sayısı 49 olmalı, {len(tanimlar)} bulundu"
+    assert len(tanimlar) == 51, f"sembol sayısı 51 olmalı, {len(tanimlar)} bulundu"
     nesneler = {a: getattr(service, a) for a in tanimlar}
     fonksiyonlar = [a for a, n in nesneler.items() if callable(n) and not isinstance(n, type)]
-    assert len(fonksiyonlar) == 30, f"fonksiyon sayısı 30 olmalı, {len(fonksiyonlar)} bulundu"
+    assert len(fonksiyonlar) == 31, f"fonksiyon sayısı 31 olmalı, {len(fonksiyonlar)} bulundu"
 
     satirlar = _ANLIK_GORUNTU.read_text(encoding="utf-8").splitlines()
-    assert len(satirlar) == 99, f"anlık görüntü 99 satır olmalı, {len(satirlar)} bulundu"
+    assert len(satirlar) == 101, f"anlık görüntü 101 satır olmalı, {len(satirlar)} bulundu"
     for ad in tanimlar:
         assert any(
             s.startswith(f"{ad} = ")
