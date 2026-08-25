@@ -6,9 +6,13 @@ FastAPI · SQLAlchemy 2.0 (async, asyncpg) · Alembic · PostgreSQL
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -e '.[dev]'
+.venv/bin/pip install -r requirements-dev.lock   # 🔴 KİLİTTEN kurulur, aralık çözülmez
+.venv/bin/pip install -e . --no-deps             # --no-deps ŞART: onsuz kilit ezilir
 cp .env.example .env   # DATABASE_URL, TEST_DATABASE_URL, JWT_SECRET doldurulur
 ```
+
+> ⚠️ `pip install -e '.[dev]'` **KULLANILMAZ** — aralıkları her seferinde yeniden çözer ve
+> yerel ağacınız canlıdan/CI'dan sessizce ayrışır. Bkz. "Bağımlılık kilidi".
 
 PATH'te `python` olmayabilir; komutlarda daima `.venv/bin/...` kullanın.
 
@@ -42,6 +46,43 @@ Testler `TEST_DATABASE_URL`'e bağlanır ve oturum başında şemayı **düşür
 `openapi.json` bir **üretim çıktısıdır ve bu depoda izlenmez** (`.gitignore`). Frontend'in
 TÜKETTİĞİ tek kopya frontend deposundadır: `frontend/openapi/openapi.json`. İki depoda iki
 tüketilebilir kopya tutmak kaçınılmaz olarak birbirinden ayrışır.
+
+### 🔴 Bağımlılık kilidi (TB-LOCK, 2026-08-25)
+
+Elle pin **yetmez**: pinlenmeyen her **geçişli** katman `>=` aralığında kalır. Ölçüldü —
+`argon2-cffi` pinliyken parola özetini fiilen üreten `argon2-cffi-bindings`, TB-PIN'in
+**kendi deploy'unda** 25.1.0 → 26.1.0'a tek satır kod değişmeden taşındı. Bu yüzden **tam
+ağaç** kilitlenir.
+
+| Dosya | Kapsam | Kuran |
+|---|---|---|
+| `requirements.lock` | üretim ağacı — **41 paket** | `Dockerfile` (Railway) |
+| `requirements-dev.lock` | üretim + dev/test — **52 paket** | CI ve yerel kurulum |
+
+Her ikisi de düz `requirements.txt` biçimindedir; `pip install -r` doğrudan tüketir —
+imaja/CI'a `uv` ya da `poetry` **binary'si girmez**. Kaynak dosyalar (`requirements.txt`,
+`pyproject.toml`) elle tutulmaya devam eder; kilitler onlardan **üretilir**.
+
+**Yenileme (bağımlılık ekleyen/yükselten her dilim yapar):**
+
+```bash
+uv pip compile requirements.txt --python-version 3.12 \
+    --python-platform x86_64-unknown-linux-gnu -o requirements.lock
+uv pip compile pyproject.toml --extra dev --python-version 3.12 \
+    --python-platform x86_64-unknown-linux-gnu -o requirements-dev.lock
+.venv/bin/pip install -r requirements-dev.lock && .venv/bin/pip install -e . --no-deps
+```
+
+Hedef platform **linux/x86_64**: hem Railway imajı (`python:3.12-slim`) hem CI
+(`ubuntu-latest`) odur.
+⚠️ `uv pip compile -o X`, var olan `X`i **tercih girdisi** olarak okur (gereksiz
+yükseltmeyi önlemek için). Kasıtlı yükseltmede `--upgrade-package <ad>` kullanın; sıfırdan
+çözüm için kilidi önce **silin**. Her durumda `git diff` gözle doğrulanır.
+
+**Bekçi:** `tests/contract/test_bagimlilik_kilidi.py` dört iddiayı ölçer —
+(1) dev kilidi ↔ **fiilen kurulu** ağaç, (2) üretim kilidi ⊆ dev kilidi (canlıya testlerin
+doğrulamadığı sürüm gitmesin), (3) kaynak pinleri ↔ kilit (bayat kilit), (4) `Dockerfile` ve
+CI'ın **fiilen kilitten kurduğu** (kilit, onu kuran adım olmadan yalnızca dekorasyondur).
 
 ### 🔴 Sözleşme sürüklenme kapısı (TB-PIN, 2026-08-25)
 
