@@ -1,13 +1,26 @@
 # Production runtime bağımlılıkları. Kaynağı pyproject.toml [project.dependencies];
 # Railway Docker build'i bunu kurar (dev/test bağımlılıkları hariç).
-fastapi>=0.115
-uvicorn[standard]>=0.32
-sqlalchemy>=2.0.36
+#
+# 🔴 SÖZLEŞMEYİ ÜRETEN KÜTÜPHANELER TAM SÜRÜMLE PİNLİDİR (TB-PIN, 2026-08-25).
+# Gerekçe: `openapi.json` bu kütüphanelerin YORUMLAYICI DAVRANIŞININ çıktısıdır, kodun
+# değil. Aralık bırakıldığında Docker `pip install` her önbelleksiz build'de PyPI'daki
+# EN YENİ sürümü çözer ve tek satır kod değişmeden sözleşme kayar; frontend tiplerini
+# (`schema.d.ts`) bu dosyadan ürettiği için sessizce bayatlar. Ölçüldü: pydantic
+# 2.11.10 ile 2.12+ arasında `Decimal` alanları `pattern` kazanıyor — 5 → 643 alan.
+# Pinlenen sürümler CANLIDA KOŞANA göre seçildi: canlı `/openapi.json` indirildi ve
+# bu takımla üretilen sözleşmeyle kanonik md5'i BİREBİR eşleşti (5bc7730dc55e1705fb7c1d92842bca4a).
+# Bekçisi: tests/contract/test_openapi_contract_baseline.py
+fastapi==0.141.1
+# starlette fastapi'nin geçişli bağımlılığıdır ama yolları/operasyonları O üretir —
+# fastapi pinliyken bile aralıkta kalırsa sözleşme kayabilir, o yüzden ayrıca pinli.
+starlette==1.6.0
+uvicorn[standard]==0.52.4
+sqlalchemy==2.0.52
 greenlet>=3.1
 asyncpg>=0.30
-alembic>=1.14
-pydantic[email]>=2.10
-pydantic-settings>=2.7
+alembic==1.19.1
+pydantic[email]==2.13.4
+pydantic-settings==2.15.0
 argon2-cffi>=23.1
 pyjwt>=2.10
 slowapi>=0.1.9

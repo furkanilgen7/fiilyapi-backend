@@ -7,14 +7,27 @@ name = "fiil-erp-backend"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "fastapi>=0.115",
-    "uvicorn[standard]>=0.32",
-    "sqlalchemy>=2.0.36",
+    # 🔴 SOZLESMEYI URETEN KUTUPHANELER TAM SURUMLE PINLIDIR (TB-PIN, 2026-08-25).
+    # `openapi.json` bu kutuphanelerin YORUMLAYICI DAVRANISININ ciktisidir, kodun degil:
+    # aralik birakildiginda CI ve Docker her kosuda PyPI'daki en yeni surumu cozer ve tek
+    # satir kod degismeden sozlesme kayar. Frontend tiplerini (`schema.d.ts`) bu sozlesmeden
+    # urettigi icin sessizce bayatlar. Olculdu: pydantic 2.11.10 -> 2.12+ gecisinde `Decimal`
+    # alanlari `pattern` kazaniyor (5 -> 643 alan), 554 semanin buyuk bolumu degisiyor.
+    # Surumler CANLIDA KOSANA gore secildi (canli /openapi.json ile kanonik md5 birebir).
+    # Bekcisi: tests/contract/test_openapi_contract_baseline.py
+    # Ayni gerekce `ruff==0.15.22` pininin gerekcesiyle ayni siniftan: uretilen artefakt
+    # arac surumune baglidir, koda degil.
+    "fastapi==0.141.1",
+    # starlette fastapi'nin gecisli bagimliligidir ama yollari/operasyonlari O uretir;
+    # fastapi pinliyken bile aralikta kalirsa sozlesme kayabilir.
+    "starlette==1.6.0",
+    "uvicorn[standard]==0.52.4",
+    "sqlalchemy==2.0.52",
     "greenlet>=3.1",
     "asyncpg>=0.30",
-    "alembic>=1.14",
-    "pydantic[email]>=2.10",
-    "pydantic-settings>=2.7",
+    "alembic==1.19.1",
+    "pydantic[email]==2.13.4",
+    "pydantic-settings==2.15.0",
     "argon2-cffi>=23.1",
     "pyjwt>=2.10",
     "slowapi>=0.1.9",
