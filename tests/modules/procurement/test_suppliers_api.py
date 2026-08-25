@@ -128,6 +128,78 @@ async def test_silme_ucu_yoktur_405(client, satinalma_headers, tedarikci_fabrika
     assert yanit.status_code == 405
 
 
+# --- SUP-TCKN: şahıs tedarikçisinin TCKN'si (11 hane) ---
+
+
+async def test_sahis_tedarikcisi_11_haneli_tckn_ile_acilir(client, satinalma_headers, seeded_db):
+    """🔴 SUP-TCKN: şahıs şirketi 11 haneli TCKN kullanır (kullanıcı kararı 2026-08-25).
+
+    Önceki hâlde kolon ve şema `String(10)`du ve 11 hane **422** alıyordu — yani
+    şahıs tedarikçi hiç kaydedilemiyordu. Emsal `invoicing.party_tax_number`
+    String(11): TEK kolon, TCKN'yi de VKN'yi de taşır (tip ayırt edicisi yok).
+
+    Değer BİREBİR geri okunur: `varchar(11)` yerine `varchar(10)` kalsaydı PG
+    kaydı kesmez, `StringDataRightTruncation` ile **500** verirdi.
+    """
+    tckn = "12345678901"
+    assert len(tckn) == 11
+    yanit = await client.post("/suppliers", json=_govde(tax_no=tckn), headers=satinalma_headers)
+    assert yanit.status_code == 201, yanit.text
+    assert yanit.json()["tax_no"] == tckn
+
+    # Şema katmanı bekçisi TEK BAŞINA yetmez: değerin DB'ye kesilmeden indiği
+    # ayrıca okunur (`String(11)` model metadata'sı DDL'i kanıtlamaz).
+    kayitli = (await seeded_db.execute(select(Supplier.tax_no))).scalar_one()
+    assert kayitli == tckn
+
+
+async def test_12_hane_tax_no_reddedilir_POST(client, satinalma_headers):
+    """Sınır değeri kanonu: `N` kabul (11) · `N+1` reddedilir (12)."""
+    yanit = await client.post(
+        "/suppliers", json=_govde(tax_no="123456789012"), headers=satinalma_headers
+    )
+    assert yanit.status_code == 422, yanit.text
+
+
+async def test_sahis_tedarikcisinin_tckn_si_PATCH_ile_de_yazilir(
+    client, satinalma_headers, tedarikci_fabrikasi
+):
+    """POST'a konan sınır PATCH'i KORUMAZ — her giriş noktası AYRI sınanır."""
+    tedarikci = await tedarikci_fabrikasi("Ahmet Yılmaz İnşaat", tax_no=None)
+    yanit = await client.patch(
+        f"/suppliers/{tedarikci.id}",
+        json={"tax_no": "12345678901"},
+        headers=satinalma_headers,
+    )
+    assert yanit.status_code == 200, yanit.text
+    assert yanit.json()["tax_no"] == "12345678901"
+
+
+async def test_12_hane_tax_no_reddedilir_PATCH(client, satinalma_headers, tedarikci_fabrikasi):
+    tedarikci = await tedarikci_fabrikasi("Ahmet Yılmaz İnşaat", tax_no=None)
+    yanit = await client.patch(
+        f"/suppliers/{tedarikci.id}",
+        json={"tax_no": "123456789012"},
+        headers=satinalma_headers,
+    )
+    assert yanit.status_code == 422, yanit.text
+
+
+async def test_10_haneli_vkn_calismaya_devam_eder(client, satinalma_headers):
+    """Genişletme REGRESYON DEĞİLDİR: tüzel kişinin 10 haneli VKN'si aynen geçer.
+
+    BİÇİM kuralı (yalnız rakam / tam 10 ya da 11 hane) BİLEREK EKLENMEDİ:
+    `customers/guards.py` "Biçim doğrulaması BİLİNÇLİ OLARAK yok" notu ve bu
+    modülün kendi `SupplierCreate` gerekçesi ("dış ülke tedarikçisi ya da şahıs
+    firması kalıba oturmayabilir") bunu yasaklıyor. Tek sınır kolonun genişliği.
+    """
+    yanit = await client.post(
+        "/suppliers", json=_govde(tax_no="1234567890"), headers=satinalma_headers
+    )
+    assert yanit.status_code == 201, yanit.text
+    assert yanit.json()["tax_no"] == "1234567890"
+
+
 # --- İcat yasağı (spec §5) ---
 
 

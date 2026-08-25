@@ -131,9 +131,24 @@ class Supplier(Base):
     acik uclu bir kumedir — enum ICAT EDILSEYDI her yeni tedarikci turu
     migration gerektirirdi.
 
-    `tax_no` String(10): TR vergi kimlik numarasi 10 hanedir. UNIQUE DEGILDIR —
-    mockup'ta zorunlu bir alan degildir ve bosluk birakan kayitlarin cakismasi
-    kullaniciyi kilitlerdi; tekillik gerekirse T2'nin isidir.
+    `tax_no` String(11) (SUP-TCKN, 2026-08-25 kullanici karari): alan TEK
+    basina hem VKN'yi (tuzel kisi, 10 hane) hem TCKN'yi (SAHIS SIRKETI, 11
+    hane) tasir. Onceki String(10) siniri sahis tedarikcisini KAYDEDILEMEZ
+    kiliyordu (422). Emsal `invoicing.party_tax_number` String(11) — orada da
+    tek kolon iki kimligi tasir. `customers` iki AYRI kolon (`national_id` +
+    `tax_number`) kullanir ama bunu YAPABILMESININ sebebi `customer_type`
+    ayirt edicisi ve "tam biri dolu" korkulugudur; tedarikcide tip ayirt
+    edicisi YOKTUR ve `tax_no` zorunlu bile degildir, o desen buraya oturmaz.
+
+    BICIM kurali (yalniz rakam / tam 10 ya da 11 hane) EKLENMEDI: `employers`
+    disindaki her kimlik alani yalniz `max_length` ile sinirlidir ve
+    `customers/guards.py` "Bicim dogrulamasi BILINCLI OLARAK yok" notu yeni bir
+    sertligin TUM VKN alanlariyla BIRLIKTE ve ayri bir kararla gelmesini sart
+    kosuyor.
+
+    UNIQUE DEGILDIR — mockup'ta zorunlu bir alan degildir ve bosluk birakan
+    kayitlarin cakismasi kullaniciyi kilitlerdi; tekillik gerekirse T2'nin
+    isidir.
 
     PUAN/PERFORMANS KOLONU YOKTUR (spec §5): degerlendirme girisi hicbir ekranda
     yoktur, uydurma bir puan gostermektense hic gostermemek dogrudur.
@@ -144,7 +159,7 @@ class Supplier(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     category: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    tax_no: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    tax_no: Mapped[str | None] = mapped_column(String(11), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
     payment_terms: Mapped[PaymentTerms] = mapped_column(payment_terms_enum, nullable=False)
     is_active: Mapped[bool] = mapped_column(
