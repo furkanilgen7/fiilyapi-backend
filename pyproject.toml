@@ -60,6 +60,11 @@ dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.25",
     "pytest-cov>=6.0",
+    # Tam kume TEK cekirdekte 24 dk 24 sn suruyordu (CI turu, PR #80 `test` isi; 6144 test).
+    # xdist testleri N ayri SURECE dagitir. Yalitim: her isci KENDI veritabanini alir
+    # (`tests/conftest.py` -> `PYTEST_XDIST_WORKER` son eki); paylasilan tek DB'de
+    # kosmak sahte kirmizi VE sahte yesil uretirdi.
+    "pytest-xdist>=3.6",
     "httpx>=0.28",
     # Sabit surum: ruff'un bicimlendirici davranisi surumler arasinda degisiyor.
     # Araligi acik birakmak (>=0.8) CI'nin her kosuda en yeni surumu kurmasina ve
@@ -80,6 +85,15 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
+# 🔴 `-n` BURAYA YAZILMAZ (TB-XDIST, 2026-08-25) — ve `-n auto` HIC KULLANILMAZ.
+# Gerekce iki katmanli:
+#   (a) `addopts`a konsaydi HEDEFLI kosu da (tek dosya, mutasyon turu) 4 surec acar,
+#       her biri kendi veritabanini kurup dusururdu -> tek dosyalik tur YAVASLARDI.
+#       Paralellik TAM KUMENIN sorunudur; hedefli kosu zaten saniyeler suruyor.
+#   (b) `auto` bu makinede 8 isci acar; makine 8 CEKIRDEK ama 8 GB RAM'dir ve swap'e
+#       dusen kosu SERI kosudan YAVASTIR. Ust sinir 4'tur (kullanici karari); ayrica
+#       bu depoda paralel frontend hatti kosar.
+# Tam kume icin komut README "Test ve linter" bolumundedir (`-n 4 --dist loadfile`).
 
 [tool.coverage.run]
 source = ["app"]

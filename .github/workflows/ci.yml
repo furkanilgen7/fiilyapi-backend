@@ -47,7 +47,18 @@ jobs:
       - run: pip install -e . --no-deps
       - run: python -m ruff check .
       - run: python -m ruff format --check .
-      - run: python -m pytest --cov=app --cov-report=term-missing --cov-fail-under=80
+      # 🔴 PARALEL KOŞU (TB-XDIST, 2026-08-25). Tek çekirdekte bu adım **24 dk 24 sn**
+      # sürüyordu (PR #80 turu, 6144 test) ve turun tamamına hükmediyordu.
+      # `-n` AÇIK verilir, `auto` DEĞİL: runner çekirdek sayısı sessizce değişebilir ve
+      # kapının süresi/davranışı ölçülmemiş bir sayıya bağlanır.
+      # `--dist loadfile`: aynı dosyanın testleri aynı işçiye gider — dosya bütününde
+      # koşmaya dayanan bekçiler (eşzamanlılık testleri, FAT-1 dersi) bölünmez.
+      # Yalıtım: her işçi KENDİ veritabanını alır (`tests/conftest.py` →
+      # `PYTEST_XDIST_WORKER` son eki); paylaşılan tek DB'de koşmak sahte kırmızı VE
+      # sahte yeşil üretirdi.
+      # 🔴 `--cov-fail-under=80` KORUNUR: pytest-cov, xdist işçilerinin ölçümlerini
+      # denetleyicide BİRLEŞTİRİR; eşik birleşik rapor üzerinden uygulanır.
+      - run: python -m pytest -n 4 --dist loadfile --cov=app --cov-report=term-missing --cov-fail-under=80
 
   alembic-cycle:
     runs-on: ubuntu-latest

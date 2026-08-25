@@ -95,8 +95,21 @@ async def test_YIL_sayaclari_BIRBIRINI_sifirlamaz(seeded_db: AsyncSession) -> No
     assert await numbering.generate_entry_no(seeded_db, year=2026) == "YEV-2026-0002"
     assert await numbering.generate_entry_no(seeded_db, year=2027) == "YEV-2027-0002"
 
+    # 🔴 IDDIA BU TESTIN ACTIGI YILLARA DARALTILIR (TB-XDIST, 2026-08-25).
+    # Onceki hali tabloyu GLOBAL okuyordu: `journal_entry_counters`e yazan BASKA
+    # her testin satiri bu iddiayi oynatiyordu. Fiilen oldu — commit eden
+    # `test_mu2_periods_lock.py` 2031 satirini birakiyordu. Sizintinin kendisi
+    # orada kapatildi; bu daraltma IKINCI katmandir: iddia yalnizca KENDI
+    # actigi hatlari konusur.
+    BU_TESTIN_YILLARI = (2026, 2027)
     sayaclar = {
         satir.year: satir.next_no
-        for satir in (await seeded_db.execute(select(JournalEntryCounter))).scalars()
+        for satir in (
+            await seeded_db.execute(
+                select(JournalEntryCounter)
+                .where(JournalEntryCounter.year.in_(BU_TESTIN_YILLARI))
+                .order_by(JournalEntryCounter.year)
+            )
+        ).scalars()
     }
     assert sayaclar == {2026: 3, 2027: 3}
