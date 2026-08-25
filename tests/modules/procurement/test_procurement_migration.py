@@ -319,7 +319,10 @@ def test_supplier_columns_match_spec():
     # `category` SERBEST METINDIR (TED alt-etiketi) — enum ICAT EDILMEZ.
     assert columns["category"].type.length == 100
     assert columns["category"].nullable
-    assert columns["tax_no"].type.length == 10
+    # 🔴 SUP-TCKN (2026-08-25): 10 -> 11. Alan TEK basina hem VKN'yi (10) hem
+    # SAHIS SIRKETININ TCKN'sini (11) tasir; eski sinir sahis tedarikcisini
+    # 422 ile reddediyordu. DB tarafi `test_suptckn_migration.py`de.
+    assert columns["tax_no"].type.length == 11
     assert columns["tax_no"].nullable
     assert columns["phone"].type.length == 30
     assert columns["phone"].nullable

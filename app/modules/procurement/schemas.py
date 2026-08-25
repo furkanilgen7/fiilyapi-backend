@@ -37,10 +37,10 @@ from app.modules.procurement.models import (
 )
 
 # Model sinirlari: `suppliers.name` String(200) · `category` String(100) ·
-# `tax_no` String(10) · `phone` String(30).
+# `tax_no` String(11) · `phone` String(30).
 _SUPPLIER_NAME = Field(min_length=1, max_length=200)
 _CATEGORY = Field(default=None, max_length=100)
-_TAX_NO = Field(default=None, max_length=10)
+_TAX_NO = Field(default=None, max_length=11)
 _PHONE = Field(default=None, max_length=30)
 
 # `purchase_request_lines.free_text_name` String(200) · `free_text_unit` String(20).
@@ -66,9 +66,13 @@ class SupplierCreate(BaseModel):
     turu migration gerektirirdi. `payment_terms` ise KAPALI kumedir (TED
     50/71/91/112 + FST 134), bu yuzden enum'dur.
 
-    `tax_no` icin BICIM kurali (10 hane / yalniz rakam) UYDURULMAZ: mockup'ta
-    alan zorunlu bile degildir ve dis ulke tedarikcisi ya da sahis firmasi
-    kaliba oturmayabilir. Tek sinir kolonun kendi genisligidir.
+    `tax_no` TEK alandir ve HEM VKN'yi (tuzel kisi, 10 hane) HEM TCKN'yi
+    (SAHIS SIRKETI, 11 hane) tasir — sinir `max_length=11` (SUP-TCKN,
+    2026-08-25 kullanici karari; onceki 10 sahis tedarikcisini 422'ye
+    dusuruyordu). BICIM kurali (yalniz rakam / tam 10 ya da 11 hane)
+    UYDURULMAZ: mockup'ta alan zorunlu bile degildir ve dis ulke tedarikcisi
+    ya da sahis firmasi kaliba oturmayabilir. Tek sinir kolonun kendi
+    genisligidir.
     """
 
     name: str = _SUPPLIER_NAME
