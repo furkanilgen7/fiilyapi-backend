@@ -28,7 +28,27 @@ dependencies = [
     "alembic==1.19.1",
     "pydantic[email]==2.13.4",
     "pydantic-settings==2.15.0",
-    "argon2-cffi>=23.1",
+    # 🔴 PAROLA MALIYET PARAMETRELERINI URETEN KUTUPHANE PINLI (SEC-ARGON, 2026-08-25).
+    # `PasswordHasher`in VARSAYILAN time_cost/memory_cost/parallelism degerleri surumle
+    # degisebilir; aralik birakildiginda o gunden sonraki parolalar sessizce BASKA
+    # maliyetle hash'lenir ve argon2 ozeti self-describing oldugu icin eskiler
+    # dogrulanmaya devam eder → hicbir test kirilmaz, hicbir uyari cikmaz.
+    # Surum CANLIDA KOSANA gore donduruldu, yukseltme YAPILMADI: `>=23.1` kisiti
+    # 2025-06-03'ten (25.1.0 yayimi) beri her kurulumda 25.1.0 coziyor, son deploy
+    # 2026-08-25 → canli 25.1.0 kosuyor. 23.1.0 ile 25.1.0'in varsayilanlari OLCULDU
+    # ve OZDES (t=3, m=65536, p=4) → veritabanindaki mevcut ozetler tek nesildir.
+    # Bekcisi: tests/core/test_argon2_parametreleri.py (pin ↔ KURULU surum + uretilen ozet)
+    "argon2-cffi==25.1.0",
+    # argon2-cffi-bindings, argon2-cffi'nin GECISLI bagimliligidir ama parola ozetini
+    # fiilen URETEN katman odur (`starlette` ↔ `fastapi` emsali). Aralikta birakilmasinin
+    # zarari HIPOTETIK DEGIL, OLCULDU: 26.1.0 **2026-08-20**'de cikti ve 2026-08-25 TB-PIN
+    # deploy'u `requirements.txt`i degistirip Docker katman onbellegini dusurunce canli
+    # imaj sessizce 25.1.0 → 26.1.0'a tasindi. Surum CANLIDA KOSANA gore donduruldu;
+    # canli build log'undan DOGRUDAN okundu (`railway logs --build --service
+    # fiilyapi-backend` → "Successfully installed ... argon2-cffi-bindings-26.1.0").
+    # 25.1.0 ↔ 26.1.0 ayni parametrelerle BAYT-AYNI ozet uretiyor (olculdu) — yani bugun
+    # zarar yok; pin tam olarak "bugun zarar yok, yarin sessizce degisir" icin var.
+    "argon2-cffi-bindings==26.1.0",
     "pyjwt>=2.10",
     "slowapi>=0.1.9",
     "python-multipart>=0.0.20",

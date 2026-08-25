@@ -1,4 +1,4 @@
-"""suptckn tedarikci tax_no 10 -> 11 hane (sahis sirketi TCKN'si)
+r"""suptckn tedarikci tax_no 10 -> 11 hane (sahis sirketi TCKN'si)
 
 SUP-TCKN — kullanici karari 2026-08-25: **sahis tedarikcisi kaydedilebilmeli.**
 
