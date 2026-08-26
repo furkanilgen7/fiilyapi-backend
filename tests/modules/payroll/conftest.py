@@ -30,8 +30,11 @@ from decimal import Decimal
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.accounting.chart_seed_data import CHART_ACCOUNTS
+from app.modules.accounting.models import ChartAccount, JournalSourceType
 from app.modules.payroll.models import (
     IncomeKind,
     PayrollMinimumWage,
@@ -39,11 +42,13 @@ from app.modules.payroll.models import (
     PayrollRate,
     PayrollTaxBracket,
 )
+from app.modules.payroll.posting import PAYROLL_POSTING_RULES
 from app.modules.payroll.tax_bracket_seed_data import (
     MINIMUM_WAGE_GROSS_2026,
     TAX_BRACKETS_2026_WAGE,
 )
 from app.modules.personnel.models import PaymentMethod, Personnel, WageType
+from app.modules.posting.models import PostingRule
 from app.modules.projects.models import Project
 from app.modules.site_diary.models import WorkerSource
 from app.modules.sites.models import Site
@@ -289,3 +294,51 @@ async def dort_tip(donem, oranlar, personel_fabrikasi, puantaj_fabrikasi):
     for kisi in kisiler.values():
         await puantaj_fabrikasi(kisi, [1, 2, 3, 4, 5])
     return kisiler
+
+
+@pytest.fixture(autouse=True)
+async def _mu3e_esleme(db_session: AsyncSession) -> None:
+    """🔴 MU-3E — bordro ailesinin `posting_rules` ÜRÜN eşlemesi (AUTOUSE).
+
+    `approve_period` artık `approved` adımında FİŞ KESER. Test şeması
+    `Base.metadata.create_all` ile kurulur ve **migration KOŞMAZ**, yani tohum
+    hiç uygulanmaz: eşleme olmadan bu paketteki HER onay ucu **422** alırdı.
+
+    🔴 `autouse` seçildi çünkü kusur bir "posting testi" sorunu değil, bu
+    paketin TAMAMINI ilgilendiren bir kurulum önkoşuludur (`tests/
+    progress_payments/conftest.py`nin `_mu3d_esleme` emsali). Fixture'ı tek tek
+    testlere eklemek, unutulan her testi sessizce kırmızıya çevirirdi.
+
+    ⚠️ **`test_payroll_approval_concurrency.py` bunu GÖLGELER** (aynı adla boş
+    bir fixture tanımlar): o dosya `db_session`i BİLEREK kullanmaz, iki
+    bağımsız bağlantı açıp GERÇEKTEN commit eder ve `seed_reference_data`nın
+    commit EDİLMEMİŞ satırlarıyla çakışıp tam küme koşusunu DEADLOCK'ta asılı
+    bırakırdı (MU-3D'de ölçüldü). Kendi eşlemesini kendisi kurar.
+
+    Eşleme ÜRÜN demetinden kurulur; elle yazılsaydı `PAYROLL_POSTING_RULES`
+    bozulduğunda bu kurulum yeşil kalırdı. Hesap kartının `account_type`/
+    `is_contra` değerleri `chart_seed_data`dan okunur, elle YAZILMAZ.
+    """
+    tohum = {satir.code: satir for satir in CHART_ACCOUNTS}
+    for role_key, kod in PAYROLL_POSTING_RULES:
+        account = (
+            await db_session.execute(select(ChartAccount).where(ChartAccount.code == kod))
+        ).scalar_one_or_none()
+        if account is None:
+            kart = tohum[kod]
+            account = ChartAccount(
+                code=kart.code,
+                name=kart.name,
+                account_type=kart.account_type,
+                is_contra=kart.is_contra,
+            )
+            db_session.add(account)
+            await db_session.flush()
+        db_session.add(
+            PostingRule(
+                source_type=JournalSourceType.payroll_period,
+                role_key=role_key,
+                account_id=account.id,
+            )
+        )
+    await db_session.flush()

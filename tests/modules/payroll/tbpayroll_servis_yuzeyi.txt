@@ -51,7 +51,7 @@ def _promote_period_after_compute(period: app.modules.payroll.models.PayrollPeri
 async def _tax_brackets(session: sqlalchemy.ext.asyncio.session.AsyncSession, year: int) -> tuple[app.modules.payroll.income_tax.TaxBracket, ...] | None
 async def _tax_context_for_line(session: sqlalchemy.ext.asyncio.session.AsyncSession, period: app.modules.payroll.models.PayrollPeriod, person: app.modules.personnel.models.Personnel) -> app.modules.payroll.compute.TaxContext
 async def approve_line(session: sqlalchemy.ext.asyncio.session.AsyncSession, line_id: uuid.UUID) -> tuple[app.modules.payroll.schemas.PayrollLineResponse, str]
-async def approve_period(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor_id: uuid.UUID, period_id: uuid.UUID) -> tuple[app.modules.payroll.schemas.PayrollPeriodApproveResult, str]
+async def approve_period(session: sqlalchemy.ext.asyncio.session.AsyncSession, actor: app.modules.users.models.User, period_id: uuid.UUID) -> tuple[app.modules.payroll.schemas.PayrollPeriodApproveResult, str]
 module calendar -> calendar
 module compute -> app.modules.payroll.compute
 async def compute_period(session: sqlalchemy.ext.asyncio.session.AsyncSession, period_id: uuid.UUID) -> app.modules.payroll.schemas.PayrollComputeResult
