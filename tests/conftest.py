@@ -1,5 +1,7 @@
 import asyncio
 import os
+import shutil
+import tempfile
 from collections.abc import AsyncGenerator
 from datetime import date
 from decimal import Decimal
@@ -93,6 +95,56 @@ def _isci_veritabani_url(temel: str, isci: str | None) -> str:
 settings.test_database_url = _isci_veritabani_url(settings.test_database_url, XDIST_ISCI)
 
 
+# ---------------------------------------------------------------------------
+# 🔴 İŞÇİ BAŞINA GEÇİCİ DİZİN (TB-TMPDIR, 2026-08-26)
+#
+# 🔑 KÖK KANON: `--dist loadfile` **DOSYA** bütünlüğünü korur, **SÜREÇ** bütünlüğünü
+# KORUMAZ. Veritabanı yukarıda işçi başına ayrıldı; `/tmp` ayrılmamıştı — port, soket,
+# ortam değişkeni gibi süreç-DIŞI paylaşılan her kaynak hâlâ yarışır.
+#
+# Fiilen ölçüldü (PR #82 CI turu): `test_import_does_not_persist_file` küresel
+# `tempfile.gettempdir()` dizinini istek ÖNCESİ/SONRASI karşılaştırıyor; bu depoda
+# **12 test dosyası `openpyxl` kullanıyor** ve `openpyxl.worksheet._writer`
+# `NamedTemporaryFile(prefix="openpyxl.", delete=False)` ile AYNI `/tmp`e yazıyor.
+# Başka bir işçinin o pencerede açtığı dosya iddiaya karışıyor →
+# `assert {'openpyxl.v_pusb94'} == set()`. Aynı `headSha` rerun'ı YEŞİL geldi.
+#
+# `tempfile.tempdir` **ve** `TMPDIR` birlikte yamalanır: birincisi bu süreçteki
+# `tempfile` çağrılarını (kütüphaneler dahil) yönlendirir — `gettempdir()` sonucunu
+# önbelleklediği için ortam değişkeni TEK BAŞINA yetmez; ikincisi testlerin açtığı
+# ALT SÜREÇLERİ kapsar.
+#
+# ⚠️ Öksüz bırakılmaz: dizin oturum başında (önceki çöküşten kalmışsa) silinip
+# yeniden kurulur, oturum sonunda — başarısızlıkta da — silinir.
+# ---------------------------------------------------------------------------
+
+GECICI_KOK = (
+    os.path.join(tempfile.gettempdir(), f"fiil-erp-test-{XDIST_ISCI}") if XDIST_ISCI else None
+)
+
+
+def _gecici_kok_yolu() -> str:
+    """🔴 Silinecek yolun İŞÇİ son ekini TAŞIDIĞI burada çakılır.
+
+    `_isci_veritabani_adi`nin geçici dizin kardeşi: `rmtree` çalıştıran her yol,
+    adın `fiil-erp-test-<isci>` kalıbına uyduğunu doğrulamadan çalışmaz — böylece
+    küresel `/tmp` bu koddan ASLA silinemez.
+    """
+    assert (
+        GECICI_KOK
+        and XDIST_ISCI
+        and os.path.basename(GECICI_KOK) == (f"fiil-erp-test-{XDIST_ISCI}")
+    ), f"Geçici dizin adı beklenen kalıba uymuyor: {GECICI_KOK!r}. rmtree çalıştırılmadı."
+    return GECICI_KOK
+
+
+if GECICI_KOK:
+    shutil.rmtree(_gecici_kok_yolu(), ignore_errors=True)
+    os.makedirs(GECICI_KOK, exist_ok=True)
+    os.environ["TMPDIR"] = GECICI_KOK
+    tempfile.tempdir = GECICI_KOK
+
+
 def _duz_dsn(veritabani: str) -> str:
     """`postgresql+asyncpg://…` DSN'i, asyncpg'nin doğrudan yediği düz DSN'e çevirir."""
     return (
@@ -142,6 +194,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         return
     ad = _isci_veritabani_adi()
     asyncio.run(_admin_calistir(f'DROP DATABASE IF EXISTS "{ad}" WITH (FORCE)'))
+    shutil.rmtree(_gecici_kok_yolu(), ignore_errors=True)
 
 
 test_engine = create_async_engine(settings.test_database_url, pool_pre_ping=True)
