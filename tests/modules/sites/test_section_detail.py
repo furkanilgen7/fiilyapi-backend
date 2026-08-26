@@ -39,9 +39,13 @@ WRITE_ROLE = "patron"  # sites=full
 VIEW_ROLE = "site_chief"  # sites=view
 NONE_ROLE = "procurement"  # izin testte acikca none'a cekilir
 
-# Detay govdesinde KALMASI gereken yer tutucular (spec §6: hero KPI'lari
-# placeholder deseninde kalir).
+# Detay govdesinde bulunmasi gereken DORT ZARF ALANI. 🔴 Ad "PLACEHOLDER" kaldi
+# ama artik hepsi BOS demek DEGILDIR (BLM-SAY): `worker_count` T4'te,
+# `boq_item_count` + `budget` BLM-SAY'de BAGLANDI; yalniz `progress_pct` bos.
+# Alan alan hangisinin bos oldugu asagida ayrica cakilidir.
 PLACEHOLDER_FIELDS = ("progress_pct", "boq_item_count", "budget", "worker_count")
+#: Bu dilimden sonra HÂLÂ bos kalan tek zarf (hakediş turevi, ayri is).
+STILL_EMPTY_FIELDS = ("progress_pct",)
 
 # T1'in actigi kolonlarin API karsiligi (spec §3 tablosu + §7 S2a `budget_amount`).
 NEW_SECTION_FIELDS = (
@@ -145,8 +149,17 @@ async def test_get_section_returns_every_new_column(
 async def test_get_section_keeps_placeholder_metrics(
     client, db_session, user_factory, project_factory
 ):
-    """Hero KPI'lari yer tutucu KALIR (spec §6): elle girilen `budget_amount`
-    BOQ turevi `budget` yer tutucusunun yerine GECMEZ, yaninda durur."""
+    """Zarf ALANLARI durur, ama BLM-SAY sonrasi hepsi bos DEGILDIR.
+
+    🔴 Bu testin eski iddiasi (`hepsinin pending_module'u dolu`) BLM-SAY'de
+    CURUDU: dolu bir `MetricPlaceholder` `pending_module` TASIYAMAZ (P10 T3
+    zarf kurali, pydantic duzeyinde bagli). Iddia zayiflatilmadi, DARALTILDI:
+    zarf SEKLI hâlâ alan alan cakilir, bosluk ise yalniz gercekten bos kalan
+    alanda aranir.
+
+    Elle girilen `budget_amount` BOQ turevi `budget`in yerine GECMEZ, yaninda
+    durur — bu iddia AYNEN gecerlidir ve tahsis yokken turev `0.00`dir.
+    """
     _, section = await _tree(db_session, project_factory, "P6T2-PH", budget_amount=Decimal("10.00"))
     token = await _login(client, db_session, user_factory, VIEW_ROLE, grant_all=True)
 
@@ -154,8 +167,11 @@ async def test_get_section_keeps_placeholder_metrics(
 
     for field in PLACEHOLDER_FIELDS:
         assert isinstance(body[field], dict), (field, body[field])
+    for field in STILL_EMPTY_FIELDS:
+        assert body[field]["available"] is False, field
         assert body[field]["pending_module"], field
     assert Decimal(body["budget_amount"]) == Decimal("10.00")
+    assert body["budget"] == {"available": True, "value": "0.00", "pending_module": None}
 
 
 async def test_get_section_nullable_columns_default_to_null(

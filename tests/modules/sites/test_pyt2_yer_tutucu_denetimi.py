@@ -93,9 +93,13 @@ def test_yer_tutucu_zarflari_YALNIZ_presenters_icinde_kurulur():
     )
 
 
-def test_zarf_kurucu_YARDIMCILARI_UC_TANEDIR():
-    """Kurulum noktalarinin SAYISI da cakilir: `_metric` · `_count` ·
-    `_worker_count`. Dorduncu bir yardimci, dorduncu bir yorum demektir."""
+def test_zarf_kurucu_YARDIMCILARI_BES_TANEDIR():
+    """Kurulum noktalarinin SAYISI da cakilir.
+
+    🔴 BLM-SAY: UC iken BES oldu — `_boq_item_count` ve `_boq_budget` eklendi
+    (`boq_item_count` + `budget` BAGLANDI). Bekcinin amaci degismedi: her yeni
+    yardimci, gerekcesi YAZILMASI gereken yeni bir kurulum noktasidir.
+    """
     agac = ast.parse(pathlib.Path(presenters.__file__).read_text(encoding="utf-8"))
     kurucular = {
         dugum.name
@@ -108,9 +112,13 @@ def test_zarf_kurucu_YARDIMCILARI_UC_TANEDIR():
         )
     }
 
-    assert kurucular == {"_metric", "_count", "_worker_count"}, (
-        f"zarf kurucu yardimcilari degisti: {sorted(kurucular)}"
-    )
+    assert kurucular == {
+        "_metric",
+        "_count",
+        "_worker_count",
+        "_boq_item_count",
+        "_boq_budget",
+    }, f"zarf kurucu yardimcilari degisti: {sorted(kurucular)}"
 
 
 def test_anahtar_uzayi_IZIN_MODULU_uzayindan_AYRISMIS():
@@ -158,7 +166,21 @@ def test_anahtar_uzayi_IZIN_MODULU_uzayindan_AYRISMIS():
 async def test_BOLUM_zarflari__anahtar_ve_bos_durum_alan_alan(
     seeded_db, user_factory, project_factory
 ):
-    """`to_section` DORT zarf basar: ucu bos (B)/(C), biri BAGLI (A)."""
+    """`to_section` DORT zarf basar: 🔴 BLM-SAY sonrasi UCU BAGLI, BIRI bos.
+
+    P-YT2'nin iki (C) karari OLCEREK curutuldu ve kapandi:
+
+    * `boq_item_count` — gerekce *"mockup 'tamamlanan / toplam' ister"*ti.
+      YARISI hâlâ dogru (PAYIN kaynagi yok) ama PAYDA olculebilir; tek `int`
+      yuvaya PAYDA basmak DOGRU bir cumledir, payi uydurmak yalan olurdu.
+    * `budget` — gerekce IKI engel sayiyordu: para formulunun tek kopyasinin
+      cagrilamamasi (P-YT3'te `quantize_money` adi acildi → KALKTI) ve toplu
+      okuyucu olmamasi (`boq/counts.py::by_section` → KALKTI).
+
+    Bu bekci ARTIK YER TUTUCULUGU DEGIL, ZARF SEKLINI cakiyor: hangi alan
+    hangi kural altinda (dolu `CountPlaceholder` anahtar TASIR, dolu
+    `MetricPlaceholder` TASIMAZ) ne donuyor.
+    """
     _p, site, user, _b = await _kurulum(
         seeded_db, user_factory, project_factory, "YT-1", "yt1@t.co"
     )
@@ -170,11 +192,12 @@ async def test_BOLUM_zarflari__anahtar_ve_bos_durum_alan_alan(
         "progress_payments",
     ), "(B) — modul canli ama turev BOQ'da da yer tutucu"
     assert (satir.boq_item_count.available, satir.boq_item_count.pending_module) == (
-        False,
+        True,
         "boq",
-    ), "(C) — mockup 'tamamlanan / toplam' ister, zarf tek int tasir"
-    assert (satir.budget.available, satir.budget.pending_module) == (False, "boq"), (
-        "(C) — baglamak IKINCI bir para formulu dogururdu"
+    ), "BLM-SAY'de BAGLANDI; dolu `CountPlaceholder` anahtari TASIMAYA devam eder"
+    assert satir.boq_item_count.count == 0, "tahsisi olmayan bolum: OLCULMUS sifir"
+    assert (satir.budget.available, satir.budget.pending_module) == (True, None), (
+        "BLM-SAY'de BAGLANDI; dolu `MetricPlaceholder` anahtar TASIMAZ (P10 T3)"
     )
     assert (satir.worker_count.available, satir.worker_count.pending_module) == (
         True,

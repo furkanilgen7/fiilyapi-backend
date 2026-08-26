@@ -293,7 +293,12 @@ async def test_post_section_manager_user_id_persisted_with_name_snapshot(
 async def test_post_section_estimated_amount_silently_ignored(
     client, db_session, user_factory, project_factory
 ):
-    """§3.4: "Tahmini Bedel" SAKLANMAZ; `budget` yer tutucu olarak doner."""
+    """§3.4: "Tahmini Bedel" SAKLANMAZ; `budget` BOQ tahsislerinden TURER.
+
+    🔴 BLM-SAY: eski iddia yer tutucu bekliyordu. Bag acildi — yeni acilan
+    bolumun tahsisi olmadigi icin turev `0.00`dir. Testin ASIL iddiasi
+    (govdedeki `estimated_amount` SESSIZCE YUTULUR, yanita girmez) DEGISMEDI.
+    """
     project = await project_factory("T6-9")
     token = await _login(client, db_session, user_factory)
 
@@ -308,7 +313,7 @@ async def test_post_section_estimated_amount_silently_ignored(
     assert resp.status_code == 201, resp.text
     section = resp.json()["sections"][0]
     assert "estimated_amount" not in section
-    assert section["budget"] == {"available": False, "value": None, "pending_module": "boq"}
+    assert section["budget"] == {"available": True, "value": "0.00", "pending_module": None}
 
 
 async def test_post_without_sections_creates_none(

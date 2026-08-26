@@ -206,7 +206,10 @@ async def test_create_section_and_audit(client, db_session, user_factory, projec
     body = resp.json()
     assert body["status"] == "planned"
     assert body["sort_order"] == 2
-    assert body["budget"]["pending_module"] == "boq"
+    # BLM-SAY: yeni acilan bolumun tahsisi YOKTUR — turev bedel `0.00`dir ve
+    # dolu zarf `pending_module` TASIMAZ (P10 T3). Eski iddia (`== "boq"`) bu
+    # dilimde CURUDU.
+    assert body["budget"] == {"available": True, "value": "0.00", "pending_module": None}
     details = await _audit_details(db_session, AuditAction.create)
     assert any("Kat 6-10 Kaba İnşaat" in d and "A-Blok Şantiyesi" in d for d in details)
 
@@ -434,10 +437,16 @@ async def test_section_response_includes_manager_user_id(
     assert detail.json()["sections"][0]["manager_user_id"] == str(manager.id)
 
 
-async def test_section_budget_placeholder_pending_boq(
+async def test_section_budget_TAHSIS_YOKKEN_sifir(
     client, db_session, user_factory, project_factory
 ):
-    """Bolum bedeli SAKLANMAZ (spec §2.2) — BOQ toplaminin turevidir, yer tutucu doner."""
+    """Bolum bedeli SAKLANMAZ (spec §2.2) — BOQ tahsislerinin turevidir.
+
+    🔴 BLM-SAY: eski ad `..._placeholder_pending_boq`ti ve yer tutucu bekliyordu.
+    Bag ACILDI; tahsisi olmayan bolum artik OLCULMUS `0.00` doner, yer tutucu
+    DEGIL (K-MKD3: bos kume burada gercek bir sifirdir, cunku birlesim
+    anahtarlarinin ikisi de NOT NULL — gerekce `boq/counts.py`de).
+    """
     project = await project_factory("A-18")
     site = await _site(db_session, project)
     db_session.add(Section(site_id=site.id, name="Kaba İnşaat"))
@@ -447,8 +456,13 @@ async def test_section_budget_placeholder_pending_boq(
     resp = await client.get(f"/sites/{site.id}/sections", headers=_auth(token))
 
     assert resp.json()["items"][0]["budget"] == {
-        "available": False,
-        "value": None,
+        "available": True,
+        "value": "0.00",
+        "pending_module": None,
+    }
+    assert resp.json()["items"][0]["boq_item_count"] == {
+        "available": True,
+        "count": 0,
         "pending_module": "boq",
     }
 

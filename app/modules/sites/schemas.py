@@ -100,6 +100,20 @@ class SectionResponse(BaseModel):
     boq_item_count: CountPlaceholder
     budget: MetricPlaceholder
     worker_count: CountPlaceholder
+    # --- BLM-SAY: LISTE ucuna TASINDI (kullanicinin canlida bildirdigi kusur) ---
+    #
+    # 🔴 Bu iki kolon KAYITLIYDI ama YALNIZ detay ucunda donuyordu; bolum karti
+    # "Bolum Bedeli"ni basamiyor ("—") ve planlanan isciyi bilmedigi icin `0`
+    # yaziyordu. Alanlar `SectionDetailResponse`ten BURAYA cekildi (kopyalanmadi):
+    # tip iki ucta AYRISAMAZ, cunku artik TEK tanim vardir — `SectionCreate`/
+    # `SectionUpdate` icin zaten uygulanan kuralin ayni.
+    #
+    # `budget_amount` ELLE GIRILEN kolondur ve yukaridaki `budget` (BOQ turevi)
+    # ile AYNI SEY DEGILDIR; biri digerinin yerine gecmez (bkz. `Section`
+    # docstring'i, P6 §7 S2a). Ikisi de yanittadir, hangisinin basilacagi
+    # ekranin karari.
+    planned_worker_count: int | None
+    budget_amount: Decimal | None
     # --- P11 (spec §3): YALNIZ EKLEME. Bolum basan UC yuzey de (detay, liste,
     # santiye detayi) tek donusturucuden (`service.to_section`) gectigi icin bu
     # iki alan hepsinde ayni anda dogar. Varsayilan YOKTUR: alani doldurmayi
@@ -112,14 +126,17 @@ class SectionDetailResponse(SectionResponse):
     """P6 §5 — `GET /sections/{section_id}` govdesi: `sections`in TUM kolonlari.
 
     `SectionResponse`ten TUREYIR, YERINE GECMEZ: liste ucu (`SectionListResponse`)
-    dar govdeyi tasimaya devam eder. Miras alinan DORT YER TUTUCU
-    (`progress_pct`/`boq_item_count`/`budget`/`worker_count`) BILINCLI OLARAK
-    KALIR (spec §6): hero KPI'lari bu dilimde placeholder desenindedir.
+    dar govdeyi tasimaya devam eder. 🔴 BLM-SAY'de dort yer tutucudan IKISI
+    BAGLANDI (`boq_item_count` · `budget`) ve ikisi de MIRAS yoluyla ayni anda
+    liste + detay + santiye detayinda dogdu; `progress_pct` yer tutucu KALDI
+    (hakediş turevi, ayri is), `worker_count` T4'te zaten bagliydi.
 
-    `budget` (BOQ turevi yer tutucu) ile `budget_amount` (elle girilen gercek
-    kolon) AYNI SEY DEGILDIR ve biri digerinin yerine gecmez — bkz. `Section`
-    docstring'i (P6 §7 S2a). BOQ-bolum bagi acildiginda yer tutucu gercege
-    donusecek, `budget_amount` ise turev degere cevrilecektir.
+    `budget` (BOQ turevi) ile `budget_amount` (elle girilen gercek kolon) AYNI
+    SEY DEGILDIR ve biri digerinin yerine gecmez — bkz. `Section` docstring'i
+    (P6 §7 S2a). Bag ACILDI, ama `budget_amount` bu dilimde TUREVE CEVRILMEDI:
+    o bir URUN KARARIDIR (canli kayitlarda elle girilmis bedeller var) ve
+    yonetime raporlandi. Iki alan da yanittadir, hangisinin basilacagi ekranin
+    kararidir.
 
     Mockup'ta gorunup burada OLMAYAN her sey `Section` modelinde de yoktur
     (BOQ atamalari, taseron/makine, bagimlilik/milestone, belgeler): spec §6
@@ -133,8 +150,9 @@ class SectionDetailResponse(SectionResponse):
     # GORUNTUSUDUR, kullanici silinse (FK `SET NULL`) bile evrakta KALIR.
     deputy_manager_user_id: uuid.UUID | None
     deputy_manager_name: str | None
-    planned_worker_count: int | None
-    budget_amount: Decimal | None
+    # `planned_worker_count`/`budget_amount` BURADA YENIDEN TANIMLANMAZ —
+    # `SectionResponse`ten miras alinir (BLM-SAY). Iki yerde tanimlanan bir alan,
+    # iki ucun tipini ayristirabilecek tek yerdi.
     is_draft: bool
     created_at: datetime
     updated_at: datetime

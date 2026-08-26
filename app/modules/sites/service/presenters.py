@@ -6,8 +6,15 @@ burada kurulur — alan TIPI degismesin diye zarf korunur, yalnizca doldurulur."
 
 import uuid
 from collections.abc import Mapping
+from decimal import Decimal
 
 from app.core.timezone import today
+
+# BOLUM BOQ SAYACLARININ TEK KAYNAGI `boq` modulüdür (BLM-SAY): `sites` kendi
+# `SELECT`ini yazmaz — `timesheet/counts.py` ile ayni gerekce (iki sayim mantigi
+# zamanla ayrisir ve bolum satiri ile bolum detayi farkli sayi gosterir).
+from app.modules.boq.counts import EMPTY as _BOQ_EMPTY
+from app.modules.boq.counts import SectionBoqTotals
 from app.modules.projects.models import Project
 from app.modules.sites.models import Section, SectionMilestone, SectionStatus, Site, SiteStatus
 from app.modules.sites.schemas import (
@@ -41,14 +48,15 @@ from app.modules.sites.schemas import (
 #     Ikisi de DEGISTIRILMEDI (deger yanittadir) ve bir bekciyle cakildi:
 #     `test_anahtar_uzayi_IZIN_MODULU_uzayindan_AYRISMIS`.
 #
-# Olculen tablo (12 yer tutucu CAGRI YERI: 3'u BAGLI, 9'u bos):
+# Olculen tablo — 🔴 BLM-SAY (2026-08-27) IKI SATIRI KAPATTI:
 #
 # | anahtar | modul canli mi | sinif | tek cumlelik gerekce |
 # |---|---|---|---|
 # | `_TIMESHEET`   | ✅ | **(A)** | T4'te BAGLANDI (`_worker_count`, 3 yerde) |
+# | `_BOQ` sayac   | ✅ | **(A)** | ✅ BLM-SAY'de BAGLANDI (`_boq_item_count`) — PAYDA basilir |
+# | `_BOQ` bedel   | ✅ | **(A)** | ✅ BLM-SAY'de BAGLANDI (`_boq_budget`) — iki engel de kalkti |
 # | `_PROGRESS_PAYMENTS` | ✅ | **(B)** ilerleme | turevin KENDISI besleyende de yer tutucu |
 # | `_PROGRESS_PAYMENTS` | ✅ | **(C)** hakedis | santiye kirilimi YARIM (bkz. `to_detail`) |
-# | `_BOQ`         | ✅ | **(C)** | sayac IKI sayi ister, bedel IKINCI para formulu dogurur |
 # | `_CONTRACTS`   | ✅ | **(C)** | SANTIYE duzeyinde sozlesme bedeli SEMADA YOK |
 # | `_PROJECT_COSTS` | ⚠️ kavramsal | **(C)** | "ortalama marj" TANIMSIZ (bkz. `_totals`) |
 # | `_SUBCONTRACTS`| ❌ | **(C)** | 🔴 BOYLE BIR MODUL YOK — canlisi `contracts` |
@@ -77,6 +85,42 @@ def _metric(pending_module: str) -> MetricPlaceholder:
 
 def _count(pending_module: str) -> CountPlaceholder:
     return CountPlaceholder(pending_module=pending_module)
+
+
+def _boq_item_count(value: int) -> CountPlaceholder:
+    """`_BOQ` sayac yer tutucusunun BAGLANMIS hali (BLM-SAY).
+
+    Zarf (`CountPlaceholder`) KORUNUR, yalnizca doldurulur: `available=True` +
+    gercek `count` + `pending_module` AYNEN kalir (`_worker_count` emsali —
+    dolu `CountPlaceholder` kaynak modulu isaretlemeye devam eder).
+
+    🔴 SAYAC NEYIN KUMESI: "bolume EN AZ BIR tahsis satiri dusmus FARKLI poz"
+    sayisi — sorgu govdesi `boq/counts.py::by_section`dedir. Santiyenin tum
+    pozlari DEGIL, "tamamlanan" poz DEGIL. Mockup'in "16 / 26" ikilisinin
+    PAYDASIDIR; PAYIN kaynagi repoda YOKTUR (tahsiste "tamamlandi" bayragi yok,
+    gerceklesen taraf `progress_pct` hâlâ yer tutucu) ve UYDURULMADI.
+
+    Tahsisi olmayan bolum `0` doner, yer tutucuya DUSMEZ: birlesim anahtarlarinin
+    ikisi de NOT NULL oldugu icin bos kume "kayit baglanmamis" anlamina GELEMEZ
+    (K2 tuzagi burada yapisal olarak yok; gerekce `boq/counts.py`de).
+    """
+    return CountPlaceholder(available=True, count=value, pending_module=_BOQ)
+
+
+def _boq_budget(value: Decimal) -> MetricPlaceholder:
+    """`_BOQ` bedel yer tutucusunun BAGLANMIS hali (BLM-SAY).
+
+    Deger = Σ (bolume tahsis edilen miktar × pozun birim fiyati), carpim SATIR
+    BASINA `boq.schemas.quantize_money` ile yuvarlanir — o para formulunun TEK
+    kopyasidir (K3). Ikinci bir kopya (SQL'de `SUM(quantity*unit_price)`) BOQ
+    ekraninin kendi toplamindan kurus farkli bir "Bolum Bedeli" uretirdi.
+
+    🔴 Dolu `MetricPlaceholder` `pending_module` TASIMAZ (P10 T3 zarf kurali,
+    pydantic duzeyinde bagli) — `CountPlaceholder`taki emsalin TERSI. Iki zarf
+    sinifinin kurallari FARKLIDIR ve ikisi de kendi siniflarinin notunda
+    gerekcelidir; burada tek yerde uygulanir.
+    """
+    return MetricPlaceholder(available=True, value=value)
 
 
 def _worker_count(value: int) -> CountPlaceholder:
@@ -149,41 +193,45 @@ def _to_milestone(row: SectionMilestone) -> SectionMilestoneResponse:
     )
 
 
-def to_section(section: Section, worker_count: int) -> SectionResponse:
-    """Bolum satiri. DORT yer tutucusunun UCU P-YT2'de denetlendi ve KALDI.
+def to_section(
+    section: Section,
+    worker_count: int,
+    boq_totals: SectionBoqTotals = _BOQ_EMPTY,
+) -> SectionResponse:
+    """Bolum satiri. DORT yer tutucusundan IKISI BLM-SAY'de BAGLANDI.
 
-    🔴 `progress_pct` — **(B) GECERLI**, anahtar dogru ama ANLAMI TAZELENDI.
-    `progress_payments` modulu CANLI; bekleyen sey modul degil, o modulden
-    turemesi gereken FIZIKSEL ILERLEME yuzdesidir — ve o turev BESLEYENIN
-    KENDISINDE de hâlâ yer tutucudur: `boq/schemas.py:51-52`
-    `BoqItemResponse.progress_pct` "hakediş (P7) yer tutucusudur" diye
-    yaziyor, `BoqTotals.grand_progress_pct` de yer tutucu. Burada bir yuzde
-    uretmek, BOQ'nun bilerek acik biraktigi formulu ikinci bir yerde ve daha
-    dar bir baglamda ICAT etmek olurdu; iki ekran ayni bolum icin farkli "%"
-    basardi. Mockup ("Bölüm Detay.dc.html:71-73" %62) bu yuzdeyi BoQ tablosunun
-    "Gerç. %" toplamiyla AYNI sayi olarak cizer — yani tek kaynak BOQ'dur.
+    ⛔ `progress_pct` — **(B) GECERLI, YER TUTUCU KALIR.** Bekleyen sey
+    `progress_payments` modulu degil, o modulden turemesi gereken FIZIKSEL
+    ILERLEME yuzdesidir — ve o turev BESLEYENIN KENDISINDE de hâlâ yer
+    tutucudur: `boq/schemas.py` `BoqItemResponse.progress_pct` ve
+    `BoqTotals.grand_progress_pct`. Burada bir yuzde uretmek, BOQ'nun bilerek
+    acik biraktigi formulu ikinci ve daha dar bir baglamda ICAT etmek olurdu;
+    iki ekran ayni bolum icin farkli "%" basardi. Mockup (`Bölüm Detay.dc.html:
+    71-73`, %62) bu yuzdeyi BoQ tablosunun "Gerç. %" toplamiyla AYNI sayi olarak
+    cizer — yani tek kaynak BOQ'dur. BLM-SAY bu alana DOKUNMADI.
 
-    🔴 `boq_item_count` — **(C) TUZAK**. BOQ canli ve bolum tahsisleri
-    SAYILABILIR (`boq/repository.py:132`), ama mockup bu kutuya TEK sayi
-    basmiyor: "16 / 26" (`Şantiye Detay.dc.html:174`, `Bölüm Detay.dc.html:86`)
-    yani TAMAMLANAN / TOPLAM. `CountPlaceholder.count` tek `int` tasir; `26`
-    basmak ekranin cift okudugu bir yuvaya tek sayi koymaktir (P-YT1'in
-    `sales_ratio` bulgusunun ayni sinifi). Ustelik PAYIN KAYNAGI DA YOK:
-    `BoqItemSectionAllocation`ta "tamamlandi" bayragi yoktur ve gerceklesen
-    taraf (yukaridaki `progress_pct`) zaten yer tutucudur.
+    ✅ `boq_item_count` — **BLM-SAY'de BAGLANDI.** P-YT2'nin (C) gerekcesi
+    ("mockup TEK sayi basmiyor: 16 / 26") OLCULDU ve YARISI hâlâ gecerli:
+    PAYIN kaynagi yok, PAYDA var. Zarf tek `int` tasidigi icin PAYDA basilir —
+    "bu bolumde 26 is kalemi var" DOGRU bir cumledir; payi uydurmak yalan
+    olurdu. Kalinti raporlandi (bkz. `_boq_item_count` ve `boq/counts.py`).
 
-    🔴 `budget` — **(C) TUZAK**, ve engeli PARA FORMULUDUR. Deger ilkece
-    hesaplanabilir (bolume tahsis edilmis miktar × pozun birim fiyati), ama o
-    carpimin repodaki TEK kopyasi `boq/schemas.py:76`dir ve KALEM BASINA
-    yuvarlar; grup toplami (`:90`) o yuvarlanmis tutarlari toplar. SQL'de
-    `SUM(quantity * unit_price)` yazmak BIR KEZ yuvarlar ve BOQ ekraninin
-    kendi toplamindan KURUS FARKLI bir "Bölüm Bedeli" uretir — ayni paranin
-    iki formulu (K3). Tek kopyayi kullanmak `boq/`de refactor ister; bu dilim
-    `sites/` + `dashboard/`e tahsislidir. Ayrica toplu okuyucu da YOK:
-    `section_allocations_for_site` BOLUM BASINA sorgudur, santiye detayindaki
-    N bolum icin N+1 olurdu.
+    ✅ `budget` — **BLM-SAY'de BAGLANDI.** P-YT2'nin (C) gerekcesi IKI ENGEL
+    sayiyordu ve İKİSİ DE KALKTI:
+      * *para formulu* — `boq.schemas.quantize_money` P-YT3'te ADI ACILDI (alt
+        cizgi kaldirildi) ve ikinci kopyasi silindi; artik CAGRILABILIR TEK
+        kopyadir, burada ikinci bir carpim YAZILMAZ.
+      * *toplu okuyucu yok* — `boq/counts.py::by_section` yazildi, TEK sorgu
+        (`section_allocations_for_site` BOLUM BASINA sorguydu, N+1 acardi).
+    `budget_amount` (elle girilen kolon) ile AYNI SEY DEGILDIR ve UZERINE
+    YAZMAZ: ikisi de yanittadir.
 
-    ✅ `worker_count` — T4'te BAGLANDI (`_worker_count`).
+    ✅ `worker_count` — T4'te baglandi (`_worker_count`).
+
+    `boq_totals` VARSAYILANLI degil de zorunlu olsaydi daha guvenli olurdu, ama
+    varsayilan BILINCLI: `_BOQ_EMPTY` "tahsis yok" demektir ve tahsisi olmayan
+    bolumun DOGRU cevabidir — cagiranin sozlugunde bulunmayan bolum icin de
+    ayni deger gecer.
     """
     return SectionResponse(
         id=section.id,
@@ -196,9 +244,13 @@ def to_section(section: Section, worker_count: int) -> SectionResponse:
         end_date=section.end_date,
         sort_order=section.sort_order,
         progress_pct=_metric(_PROGRESS_PAYMENTS),
-        boq_item_count=_count(_BOQ),
-        budget=_metric(_BOQ),
+        boq_item_count=_boq_item_count(boq_totals.item_count),
+        budget=_boq_budget(boq_totals.amount),
         worker_count=_worker_count(worker_count),
+        # BLM-SAY: kayitli kolonlar LISTE yanitina da girer — kullanicinin
+        # canlida bildirdigi kusur tam buradaydi (deger vardi, uc dondurmuyordu).
+        planned_worker_count=section.planned_worker_count,
+        budget_amount=section.budget_amount,
         # P11 (spec §3): iki alan da TEK donusturucuden gectigi icin bolum basan
         # UC yuzeyde (detay, liste, santiye detayi) ayni anda dogar. Milestone
         # sirasi DETERMINISTIKTIR — `Section.milestones` iliskisi
@@ -208,22 +260,29 @@ def to_section(section: Section, worker_count: int) -> SectionResponse:
     )
 
 
-def to_section_detail(section: Section, worker_count: int) -> SectionDetailResponse:
+def to_section_detail(
+    section: Section,
+    worker_count: int,
+    boq_totals: SectionBoqTotals = _BOQ_EMPTY,
+) -> SectionDetailResponse:
     """P6 §5 — bolum detay govdesi: `to_section`in TUM alanlari + T1 kolonlari.
 
-    Yer tutucular `to_section`ten AYNEN devralinir (yeniden kurulmaz): dort
-    `pending_module` degeri tek yerde tanimli kalir, aksi hâlde liste ve detay
-    ekranlari zamanla farkli modul anahtarlari gosterirdi.
+    Zarflar `to_section`ten AYNEN devralinir (yeniden kurulmaz): bagli sayaclar
+    da bos yer tutucular da tek yerde uretilir, aksi hâlde liste ve detay
+    ekranlari zamanla farkli sayi/anahtar gosterirdi.
+
+    🔴 `planned_worker_count`/`budget_amount` BURADA ARTIK VERILMEZ — BLM-SAY'de
+    `to_section`e tasindilar ve `model_dump()` ile gelirler. Ikisini de burada
+    tekrar gecmek `TypeError` verirdi; sessiz bir ayrisma degil, gurultulu bir
+    hata — istenen budur.
     """
     return SectionDetailResponse(
-        **to_section(section, worker_count).model_dump(),
+        **to_section(section, worker_count, boq_totals).model_dump(),
         site_id=section.site_id,
         section_type=section.section_type,
         description=section.description,
         deputy_manager_user_id=section.deputy_manager_user_id,
         deputy_manager_name=section.deputy_manager_name,
-        planned_worker_count=section.planned_worker_count,
-        budget_amount=section.budget_amount,
         is_draft=section.is_draft,
         created_at=section.created_at,
         updated_at=section.updated_at,
@@ -284,6 +343,7 @@ def to_detail(
     project: Project,
     worker_count: int,
     section_worker_counts: Mapping[uuid.UUID, int],
+    section_boq_totals: Mapping[uuid.UUID, SectionBoqTotals],
 ) -> SiteDetailResponse:
     """Santiye detayi. IKI yer tutucusu P-YT2'de denetlendi, IKISI de **(C)**.
 
@@ -317,7 +377,14 @@ def to_detail(
         **_card_fields(site, project, worker_count),
         project=SiteProjectSummary.model_validate(project),
         section_status_counts=_section_counts(sections),
-        sections=[to_section(s, section_worker_counts.get(s.id, 0)) for s in sections],
+        sections=[
+            to_section(
+                s,
+                section_worker_counts.get(s.id, 0),
+                section_boq_totals.get(s.id, _BOQ_EMPTY),
+            )
+            for s in sections
+        ],
         total_progress_payment=_metric(_PROGRESS_PAYMENTS),
         contract_amount=_metric(_CONTRACTS),
     )

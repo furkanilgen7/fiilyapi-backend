@@ -21298,7 +21298,7 @@
         "type": "object"
       },
       "SectionDetailResponse": {
-        "description": "P6 §5 — `GET /sections/{section_id}` govdesi: `sections`in TUM kolonlari.\n\n`SectionResponse`ten TUREYIR, YERINE GECMEZ: liste ucu (`SectionListResponse`)\ndar govdeyi tasimaya devam eder. Miras alinan DORT YER TUTUCU\n(`progress_pct`/`boq_item_count`/`budget`/`worker_count`) BILINCLI OLARAK\nKALIR (spec §6): hero KPI'lari bu dilimde placeholder desenindedir.\n\n`budget` (BOQ turevi yer tutucu) ile `budget_amount` (elle girilen gercek\nkolon) AYNI SEY DEGILDIR ve biri digerinin yerine gecmez — bkz. `Section`\ndocstring'i (P6 §7 S2a). BOQ-bolum bagi acildiginda yer tutucu gercege\ndonusecek, `budget_amount` ise turev degere cevrilecektir.\n\nMockup'ta gorunup burada OLMAYAN her sey `Section` modelinde de yoktur\n(BOQ atamalari, taseron/makine, bagimlilik/milestone, belgeler): spec §6\nlistesi — bu dilimde ARA COZUM yazilmaz.",
+        "description": "P6 §5 — `GET /sections/{section_id}` govdesi: `sections`in TUM kolonlari.\n\n`SectionResponse`ten TUREYIR, YERINE GECMEZ: liste ucu (`SectionListResponse`)\ndar govdeyi tasimaya devam eder. 🔴 BLM-SAY'de dort yer tutucudan IKISI\nBAGLANDI (`boq_item_count` · `budget`) ve ikisi de MIRAS yoluyla ayni anda\nliste + detay + santiye detayinda dogdu; `progress_pct` yer tutucu KALDI\n(hakediş turevi, ayri is), `worker_count` T4'te zaten bagliydi.\n\n`budget` (BOQ turevi) ile `budget_amount` (elle girilen gercek kolon) AYNI\nSEY DEGILDIR ve biri digerinin yerine gecmez — bkz. `Section` docstring'i\n(P6 §7 S2a). Bag ACILDI, ama `budget_amount` bu dilimde TUREVE CEVRILMEDI:\no bir URUN KARARIDIR (canli kayitlarda elle girilmis bedeller var) ve\nyonetime raporlandi. Iki alan da yanittadir, hangisinin basilacagi ekranin\nkararidir.\n\nMockup'ta gorunup burada OLMAYAN her sey `Section` modelinde de yoktur\n(BOQ atamalari, taseron/makine, bagimlilik/milestone, belgeler): spec §6\nlistesi — bu dilimde ARA COZUM yazilmaz.",
         "properties": {
           "boq_item_count": {
             "$ref": "#/components/schemas/CountPlaceholder"
@@ -21505,6 +21505,8 @@
           "boq_item_count",
           "budget",
           "worker_count",
+          "planned_worker_count",
+          "budget_amount",
           "depends_on_section_id",
           "milestones",
           "site_id",
@@ -21512,8 +21514,6 @@
           "description",
           "deputy_manager_user_id",
           "deputy_manager_name",
-          "planned_worker_count",
-          "budget_amount",
           "is_draft",
           "created_at",
           "updated_at"
@@ -21615,6 +21615,18 @@
           "budget": {
             "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
           },
+          "budget_amount": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Budget Amount"
+          },
           "code": {
             "anyOf": [
               {
@@ -21689,6 +21701,17 @@
             "title": "Name",
             "type": "string"
           },
+          "planned_worker_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Worker Count"
+          },
           "progress_pct": {
             "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
           },
@@ -21728,6 +21751,8 @@
           "boq_item_count",
           "budget",
           "worker_count",
+          "planned_worker_count",
+          "budget_amount",
           "depends_on_section_id",
           "milestones"
         ],
