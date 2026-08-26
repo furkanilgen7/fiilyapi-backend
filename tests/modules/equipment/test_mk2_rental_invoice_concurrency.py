@@ -178,8 +178,12 @@ async def _fisleri_temizle(session, invoice_id: uuid.UUID) -> None:
     Bu dosya COMMIT ettiği için kalıntı bırakırsa sonraki koşu
     `uq_chart_of_accounts_code`a çarpardı.
     """
-    from app.modules.accounting.models import ChartAccount, JournalEntry, JournalLine
-    from app.modules.accounting.models import JournalSourceType
+    from app.modules.accounting.models import (
+        ChartAccount,
+        JournalEntry,
+        JournalLine,
+        JournalSourceType,
+    )
     from app.modules.equipment.rental_posting import RENTAL_POSTING_RULES
     from app.modules.posting.models import PostingRule
 
