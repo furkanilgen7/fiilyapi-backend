@@ -24,7 +24,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from decimal import Decimal
 
-from sqlalchemy import event
+from sqlalchemy import UniqueConstraint, event
 
 from app.modules.boq.models import BoqItemSectionAllocation
 from app.modules.sites import service
@@ -42,8 +42,10 @@ _PLANLANAN_ISCI = 12
 async def _kurulum(session, user_factory, project_factory, kod: str, email: str):
     """Proje + şantiye + İKİ bölüm + BOQ pozları + tahsisler + aktör.
 
-    * `dolu` bölüm: İKİ ayrı poza tahsisi var, `budget_amount`/
-      `planned_worker_count` girilmiş.
+    * `dolu` bölüm: ÜÇ ayrı poza tahsisi var, `budget_amount`/
+      `planned_worker_count` girilmiş. Miktarlar KASITLI olarak kuruş altına
+      düşen çarpımlar üretir: kalem başına yuvarlama ile TOPLAMI bir kez
+      yuvarlama ARASINDAKİ farkı (K3) görünür kılar.
     * `bos` bölüm: HİÇ tahsisi yok — "satır yok" hâlinin bekçisi.
     """
     project = await project_factory(kod)
@@ -74,6 +76,15 @@ async def _kurulum(session, user_factory, project_factory, kod: str, email: str)
         quantity=Decimal("10.000"),
         unit_price=Decimal("1500.50"),
     )
+    # 1.111 × 1500.50 = 1667,0555 → kuruşa yuvarlanır: 1667,06
+    poz3 = await _item(
+        session,
+        site,
+        group,
+        code="01.003",
+        quantity=Decimal("10.000"),
+        unit_price=Decimal("1500.50"),
+    )
     session.add_all(
         [
             BoqItemSectionAllocation(
@@ -81,6 +92,9 @@ async def _kurulum(session, user_factory, project_factory, kod: str, email: str)
             ),
             BoqItemSectionAllocation(
                 boq_item_id=poz2.id, section_id=dolu.id, quantity=Decimal("3.333")
+            ),
+            BoqItemSectionAllocation(
+                boq_item_id=poz3.id, section_id=dolu.id, quantity=Decimal("1.111")
             ),
         ]
     )
@@ -92,9 +106,15 @@ async def _kurulum(session, user_factory, project_factory, kod: str, email: str)
     return project, site, user, dolu, bos
 
 
-#: `dolu` bölümün beklenen BOQ türevi bedeli — kalem başına yuvarlanıp toplanır
-#: (`boq.schemas.quantize_money`, TEK kopya).
-_TUREV_BEDEL = Decimal("117001.17")
+#: `dolu` bölümün beklenen BOQ türevi bedeli — SATIR BAŞINA yuvarlanıp toplanır
+#: (`boq.schemas.quantize_money`, TEK kopya):
+#:   112.000,00 + 5.001,17 + 1.667,06
+_TUREV_BEDEL = Decimal("118668.23")
+#: 🔴 AYNI verinin ÖBÜR formülü: önce toplanıp SONRA bir kez yuvarlanmış hâli
+#: (SQL'de `SUM(quantity * unit_price)` yazmanın sonucu) — 118.668,222 → ,22.
+#: BİR KURUŞ farklıdır ve bekçi ikisini AYIRT EDER; ayırt etmeseydi K3
+#: mutasyonu (formülü değiştirmek) sağ kalırdı.
+_TEK_SEFER_YUVARLANMIS = Decimal("118668.22")
 
 
 def _satirlar(liste) -> dict[uuid.UUID, object]:
@@ -168,7 +188,7 @@ async def test_boq_item_count_BAGLI__tahsisi_olan_bolum(seeded_db, user_factory,
     ]
 
     assert satir.boq_item_count.available is True
-    assert satir.boq_item_count.count == 2
+    assert satir.boq_item_count.count == 3
     # Zarf KORUNDU: dolu `CountPlaceholder` da `pending_module` taşır
     # (`_worker_count` emsali) — şerit kaynağını oradan okur.
     assert satir.boq_item_count.pending_module == "boq"
@@ -218,6 +238,10 @@ async def test_budget_TAHSIS_EDILEN_miktarlardan_turer(seeded_db, user_factory, 
 
     assert satir.budget.available is True
     assert satir.budget.value == _TUREV_BEDEL
+    # 🔴 K3 MUTASYON BEKÇİSİ: aynı veri SQL'de tek seferde yuvarlansaydı bir
+    # kuruş eksik çıkardı. Bu satır olmadan "para formülünü değiştirmek"
+    # mutasyonu SAĞ KALIRDI.
+    assert satir.budget.value != _TEK_SEFER_YUVARLANMIS
     # Dolu `MetricPlaceholder` `pending_module` TAŞIMAZ (P10 T3 zarf kuralı).
     assert satir.budget.pending_module is None
 
@@ -278,7 +302,7 @@ async def test_UC_YUZEY_de_ayni_sayaci_basar(seeded_db, user_factory, project_fa
     detay = await service.get_section_detail(seeded_db, user, dolu.id)
 
     for yuzey in (liste, santiye, detay):
-        assert yuzey.boq_item_count.count == 2
+        assert yuzey.boq_item_count.count == 3
         assert yuzey.budget.value == _TUREV_BEDEL
         assert yuzey.budget_amount == _BEDEL
         assert yuzey.planned_worker_count == _PLANLANAN_ISCI
@@ -336,3 +360,33 @@ async def test_sorgu_sayisi_BOLUM_SAYISINDAN_bagimsizdir(seeded_db, user_factory
         f"bölüm listesi sıcak yolu {sekiz_bolum} sorguya çıktı (tavan 16) — "
         "eşitlik iddiası SABİT bir artışı GÖREMEZ, tavan görür"
     )
+
+
+# --------------------------------------------------------------------------- #
+# 🔴 EŞDEĞER MUTANTIN AÇIKÇA YAZILMASI (dürüst rapor)
+# --------------------------------------------------------------------------- #
+
+
+def test_DISTINCT_sayim_bugun_ESDEGERDIR__cunku_UQ_var():
+    """`by_section` pozları `set` ile sayar; SATIR sayması BUGÜN aynı sonucu verir.
+
+    🔴 Mutasyon koşuldu (`set` → `list`) ve **SAĞ KALDI**. Bu bir bekçi eksiği
+    DEĞİL, yapısal bir eşdeğerliktir: `boq_item_section_allocations` üzerinde
+    `(boq_item_id, section_id)` UNIQUE'tir, yani bir bölüme aynı poz İKİNCİ KEZ
+    tahsis edilemez — `COUNT(*)` ile `COUNT(DISTINCT boq_item_id)` ayrışamaz.
+
+    O hâlde `set` neden duruyor? Çünkü eşdeğerlik **kısıta bağlıdır, koda
+    değil**: UQ düşerse (ya da DEFERRABLE penceresinde aynı işlem içinde geçici
+    olarak iki satır görünürse) satır sayımı sessizce şişerdi. Bu test o bağı
+    ÇAKAR — kısıt kaybolursa sayacın gerekçesi de bayatlar ve haber verir.
+    """
+    kisitlar = {
+        kisit.name: tuple(kolon.name for kolon in kisit.columns)
+        for kisit in BoqItemSectionAllocation.__table__.constraints
+        if isinstance(kisit, UniqueConstraint)
+    }
+
+    assert kisitlar.get("uq_boq_item_section_allocations_item_section") == (
+        "boq_item_id",
+        "section_id",
+    ), f"tahsis tekilliği kısıtı değişti: {kisitlar} — DISTINCT sayımın eşdeğerliği ARTIK GEÇERSİZ"
