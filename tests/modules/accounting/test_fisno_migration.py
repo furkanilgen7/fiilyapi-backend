@@ -378,6 +378,16 @@ async def test_BACKFILL_deterministiktir_sayac_tohumlanir_ve_sonraki_fis_CAKISMA
         finally:
             await conn.close()
 
+        # 🔴 (c) ORM ile yazar, yani `JournalEntry` MODELININ BUGUNKU kolon
+        #     kumesini kullanir — ama veritabani `FISNO_REVISION`da duruyor.
+        #     Sonraki bir dilim `journal_entries`e kolon ekledigi anda
+        #     (MU-3A: `source_type`/`source_id`) bu insert `UndefinedColumnError`
+        #     verirdi. Iddia (a) ve (b) YUKARIDA, DOGRU revizyonda zaten olculdu;
+        #     (c)'nin olctugu sey SAYAC TOHUMUDUR ve sonraki migration'lar sayaci
+        #     ELLEMEZ. Sema HEAD'e cikarilir ki bu test model ile revizyonun
+        #     ayrisimindan DEGIL, yalnizca tohumdan kirilsin.
+        _run_alembic("upgrade", "head", database=database)
+
         # (c) CAKISMA YOK — gercek uretici + gercek yazim.
         engine = create_async_engine(_sqlalchemy_dsn(database))
         try:

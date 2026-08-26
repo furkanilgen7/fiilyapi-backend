@@ -120,7 +120,15 @@ def test_journal_entry_columns_match_spec():
     ALINDI (`models.JournalEntry` docstring'i). Emsal MT-1/KK-1'dir: orada da
     `is_contra` bu tam sayima BOYLE eklenmisti.
 
-    Sayim BILEREK tamdir: `entry_no` DISINDA yeni bir kolon sessizce eklenemez.
+    🔑 `source_type`/`source_id` KUMEYE EKLENDI (MU-3A, 2026-08-26): otomatik
+    fisin idempotanligi bu ciftin uzerinde yasar (`uq_journal_entries_source` +
+    `ck_journal_entries_source_pair`). Ikisi de NULLABLE'dir — elle girilen
+    fiste bos kalirlar ve PG'de NULL'lar ayrik oldugu icin birbirlerini
+    ENGELLEMEZLER.
+
+    Sayim BILEREK tamdir: bu kolonlar DISINDA yeni bir kolon sessizce eklenemez.
+    Kanon: kume genisledigi her seferde GEREKCE buraya yazilir, iddia
+    GEVSETILMEZ.
     """
     columns = JournalEntry.__table__.columns
     assert set(columns.keys()) == {
@@ -135,6 +143,8 @@ def test_journal_entry_columns_match_spec():
         "total_debit",
         "total_credit",
         "reversal_of_id",
+        "source_type",
+        "source_id",
         "created_by_id",
         "created_at",
         "updated_at",
