@@ -577,3 +577,66 @@ async def test_onaycinin_kendisi_KULLANICI_kaydini_dogrular(
     assert await approvals_repository.user_approval_roles(seeded_db, user.id) == [
         ApprovalRole.accounting
     ]
+
+
+async def test_MU3D_ARA_adim_FIS_YAZMAZ_fis_SON_adimda_dogar(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    muhasebe_onaycisi: dict[str, str],
+    patron_onaycisi: dict[str, str],
+    seeded_db: AsyncSession,
+    gecerli_taslak: uuid.UUID,
+) -> None:
+    """🔴 MU-3D — fiş, EYLEMDEN değil evrağın `approved` OLMASINDAN doğar.
+
+    ## Bu testin GERÇEKTEN bekçilik ettiği şey
+
+    `transitions.perform` onay zinciri tamamlanmadığında **ERKEN DÖNER**
+    (`chain_step is not None and not chain_step.is_complete`) ve `_fisle`ye
+    HİÇ ULAŞMAZ. O erken dönüş kaldırılırsa ara adım evrağı `approved` yapar
+    VE fişini yazar — yani muhasebe imzaladığı anda, patron daha imzalamadan,
+    hasılat deftere girer.
+
+    MU-3D öncesi bu erken dönüşü ölçen testler yalnız DURUMU iddia ediyordu
+    (`status == "pending_approval"`). Durum iddiası fişi görmez: fişleme başka
+    bir yerden (örneğin bir router kancasından) çağrılsaydı durum yine
+    `pending_approval` kalır ama defter DOLARDI. Bu yüzden burada defterin
+    KENDİSİ ölçülür.
+
+    ⚠️ `_fisle`nin içindeki `new_status is approved` denetimi bugün bu erken
+    dönüşle EŞDEĞERDİR (matriste `approve` eyleminin TEK hedefi `approved`tır)
+    ve mutasyonla ölçüldüğünde eşdeğer mutant verir. Bilerek duruyor: geçiş
+    matrisine `approved`a varan ikinci bir eylem eklendiğinde YAPISAL olarak
+    doğru kalan denetim odur. Bekçilik eden ise BU TESTTİR.
+    """
+    from app.modules.accounting.models import JournalEntry, JournalSourceType
+
+    async def _fis_sayisi() -> int:
+        return len(
+            (
+                await seeded_db.execute(
+                    select(JournalEntry.id)
+                    .where(JournalEntry.source_type == JournalSourceType.progress_payment)
+                    .where(JournalEntry.source_id == gecerli_taslak)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    await _esik(client, admin_headers, "100000.00")
+    await _gonder(client, admin_headers, gecerli_taslak)
+
+    ara = await client.post(
+        f"/progress-payments/{gecerli_taslak}/approve", headers=muhasebe_onaycisi
+    )
+    assert ara.status_code == 200, ara.text
+    assert ara.json()["status"] == "pending_approval"
+    assert await _fis_sayisi() == 0, (
+        "ARA ADIMDA FİŞ YAZILDI — patron imzalamadan hasılat deftere girdi"
+    )
+
+    son = await client.post(f"/progress-payments/{gecerli_taslak}/approve", headers=patron_onaycisi)
+    assert son.status_code == 200, son.text
+    assert son.json()["status"] == "approved"
+    assert await _fis_sayisi() == 1, "SON adımda fiş DOĞMADI"

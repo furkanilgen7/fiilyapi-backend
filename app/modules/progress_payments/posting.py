@@ -32,12 +32,14 @@ approved`. Ötekiler bilinçli olarak dışarıdadır:
   (`102`/`100`) Hazine diliminindir (MU-3C) ve oradan yazılır. Buradan fiş
   atılsaydı aynı hakediş İKİ KEZ hasılat yazardı.
 
-🔴 **KANCA GEÇİŞE DEĞİL BELGEYE BAĞLIDIR** (MU-3C dersi: yanlış kancanın bedeli
-bir hata değil bir SESSİZLİKTİR). `approve` eylemi TEK BAŞINA yetmez: onay
-zinciri (OK-1A) tamamlanmadıysa `perform` erken döner ve **durum
-`pending_approval` KALIR**. Fiş bu yüzden eylemden değil, kaydın `approved`
-durumuna FİİLEN geçmesinden doğar — `transitions.perform` fişlemeyi
-`payment.status = new_status` damgasından SONRA çağırır.
+🔴 **KANCA GEÇİŞE DEĞİL BELGEYE BAĞLIDIR.** `transitions.perform` fişlemeyi
+`payment.status = new_status` damgasından SONRA ve `new_status is approved`
+koşuluyla çağırır. Onay zinciri (OK-1A) tamamlanmadıysa `perform` daha yukarıda
+erken döner ve durum `pending_approval` KALIR — fiş de yazılmaz.
+
+⚠️ Dürüst kayıt: bu iki koşul (`action is approve` ↔ `new_status is approved`)
+BUGÜN eşdeğerdir; ayrıntısı ve asıl bekçi testin adı
+`transitions._fisle` docstring'indedir.
 
 ## 🔴 GERİ ALMA = STORNO (KARAR-5)
 

@@ -41,6 +41,7 @@ from typing import NamedTuple
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
+from app.core.timezone import to_display
 from app.modules.approvals import service as approvals_service
 from app.modules.approvals.models import ApprovalDocumentType
 from app.modules.contracts.models import SubcontractorContract
@@ -127,8 +128,9 @@ async def _fisle(
 ) -> None:
     """🔴 MU-3D — taşeron hakedişinin yevmiye fişi. İşveren ailesinin AYNASI.
 
-    Gerekçelerin tamamı (kanca neden GEÇİŞE değil BELGEYE bağlı · sıra neden
-    damga → fiş · `unapprove` neden STORNO yazar) kardeş dosyada
+    Gerekçelerin tamamı (kanca neden GEÇİŞE değil BELGEYE bağlı — ve o
+    denetimin bugün neden EŞDEĞER olduğu · sıra neden damga → fiş ·
+    `unapprove` neden STORNO yazar) kardeş dosyada
     `progress_payments.transitions._fisle`de TEK KOPYA olarak durur.
 
     🔴 Bu ailede sözleşme bedeli bir KOLON DEĞİLDİR: `subcontractor_contracts`ta
@@ -155,7 +157,13 @@ async def _fisle(
         payment,
         base=posting.posting_base_for(payment, contract_amount, advance_recovered),
         # 🔴 ONAY GÜNÜ — `period_year`/`period_month` DEĞİL (gerekçe kardeş dosyada).
-        entry_date=payment.approved_at.date(),
+        entry_date=to_display(payment.approved_at).date(),
+        # 🔴 `to_display` ŞART, çıplak `.date()` DEĞİL (TB5 yerel takvim
+        #    bekçisi bunu yakaladı): `approved_at` bir `timestamptz`tir ve
+        #    ham `.date()` UTC gününü verir. TR UTC+3 olduğu için gece
+        #    00:00-03:00 arasında onaylanan bir hakedişin fişi BİR GÜN
+        #    GERİYE düşer — ay sınırında ise ÖNCEKİ AYIN mizanına, hatta
+        #    KAPALI bir döneme. Gün sınırı tek kaynaktan okunur.
         subcontractor_name=contract.subcontractor_name,
     )
 

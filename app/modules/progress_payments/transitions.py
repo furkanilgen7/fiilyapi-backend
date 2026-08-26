@@ -54,6 +54,7 @@ from typing import NamedTuple
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, SiteValidationError
+from app.core.timezone import to_display
 from app.modules.approvals import service as approvals_service
 from app.modules.approvals.models import ApprovalDocumentType
 from app.modules.progress_payments import (
@@ -197,11 +198,24 @@ async def _fisle(
 
     ## 🔴 KANCA GEÇİŞE DEĞİL BELGEYE BAĞLIDIR
 
-    Ölçüt `action is approve` DEĞİL, `new_status is approved`tir. `approve`
-    eylemi TEK BAŞINA yetmez: onay zinciri (OK-1A) tamamlanmadıysa `perform`
-    bu satıra HİÇ ULAŞMADAN erken döner ve durum `pending_approval` KALIR.
-    Eyleme bağlansaydı fiş, henüz onaylanmamış bir hakediş için yazılırdı — ve
-    bunun bedeli bir hata değil bir SESSİZLİKTİR (MU-3C dersi).
+    Ölçüt `action is approve` DEĞİL, `new_status is approved`tir.
+
+    🔴 **DÜRÜST KAYIT (mutasyonla ölçüldü):** bu iki koşul BUGÜN EŞDEĞERDİR —
+    geçiş matrisinde `approve` eyleminin TEK hedefi `approved`tır, dolayısıyla
+    ölçütü `action is approve` yapan bir mutant hiçbir testi kırmaz. Zincir
+    tamamlanmadığında fişin yazılmasını önleyen şey BU SATIR DEĞİL, `perform`un
+    yukarısındaki ERKEN DÖNÜŞTÜR (`not chain_step.is_complete`) — `_fisle` o
+    hâlde hiç çağrılmaz.
+
+    Denetim yine de `new_status` üzerindedir çünkü matrise `approved`a varan
+    ikinci bir eylem eklendiğinde (ya da erken dönüş yeniden yazıldığında)
+    YAPISAL olarak doğru kalan ölçüt odur; eylem adına bakan bir koşul o gün
+    sessizce yanılırdı.
+
+    🔴 Asıl bekçi bir TESTTİR ve gerçekten ısırır:
+    `tests/progress_payments/test_ok1a_chain_binding.py::
+    test_MU3D_ARA_adim_FIS_YAZMAZ_fis_SON_adimda_dogar` — erken dönüş
+    kaldırıldığında KIRMIZIYA döner (M2 mutantı ölçtü).
 
     ## Sıra: damga → fiş
 
@@ -235,7 +249,13 @@ async def _fisle(
         #    Döneme yazılsaydı geçmiş bir aya kesilen hakediş KAPALI bir döneme
         #    fiş atmayı dener ve KARAR-6'yı delerdi. `_stamp` bu satırdan hemen
         #    ÖNCE koştuğu için damga DAİMA doludur.
-        entry_date=payment.approved_at.date(),
+        entry_date=to_display(payment.approved_at).date(),
+        # 🔴 `to_display` ŞART, çıplak `.date()` DEĞİL (TB5 yerel takvim
+        #    bekçisi bunu yakaladı): `approved_at` bir `timestamptz`tir ve
+        #    ham `.date()` UTC gününü verir. TR UTC+3 olduğu için gece
+        #    00:00-03:00 arasında onaylanan bir hakedişin fişi BİR GÜN
+        #    GERİYE düşer — ay sınırında ise ÖNCEKİ AYIN mizanına, hatta
+        #    KAPALI bir döneme. Gün sınırı tek kaynaktan okunur.
         employer_name=project.employer_name,
     )
 

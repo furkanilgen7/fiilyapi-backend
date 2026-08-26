@@ -304,3 +304,25 @@ async def gorunmeyen_hakedis(
 async def gorunmeyen_sozlesme(taseron_sozlesmesi_fabrikasi) -> uuid.UUID:
     contract, _, _ = await taseron_sozlesmesi_fabrikasi("THK-G02")
     return contract.id
+
+
+@pytest.fixture(autouse=True)
+async def _mu3d_esleme(seeded_db: AsyncSession) -> None:
+    """🔴 MU-3D — taşeron hakedişi `posting_rules` eşlemesi, **AUTOUSE**.
+
+    Gerekçe kardeş pakettedir (`tests/progress_payments/conftest.py::
+    _mu3d_esleme`): fişleme bu paketin ölçtüğü kural DEĞİL, bir altyapı ön
+    koşuludur; fail-closed dalı `tests/modules/posting/` altında, autouse'un
+    ulaşmadığı yerde ayrıca ölçülür.
+    """
+    from app.modules.accounting.models import JournalSourceType
+    from app.modules.subcontractor_progress_payments.posting import (
+        SUBCONTRACTOR_POSTING_RULES,
+    )
+    from tests._hakedis_esleme import esleme_kur
+
+    await esleme_kur(
+        seeded_db,
+        JournalSourceType.subcontractor_progress_payment,
+        SUBCONTRACTOR_POSTING_RULES,
+    )

@@ -40,6 +40,7 @@ from app.core.errors import (
     EquipmentValidationError,
     NotFoundError,
 )
+from app.core.timezone import to_display
 from app.modules.equipment import (
     rental_posting,
     rental_repository,
@@ -656,7 +657,13 @@ async def _fisle(session: AsyncSession, actor: User, invoice: EquipmentRentalInv
         # 🔴 ONAY GÜNÜ — `period_year`/`period_month` DEĞİL. Döneme yazılsaydı
         #    geçmiş bir aya ait kira hakedişi KAPALI bir döneme fiş atmayı dener
         #    ve KARAR-6'yı delerdi. Damga bu satırdan hemen ÖNCE basılır.
-        entry_date=invoice.approved_at.date(),
+        entry_date=to_display(invoice.approved_at).date(),
+        # 🔴 `to_display` ŞART, çıplak `.date()` DEĞİL (TB5 yerel takvim
+        #    bekçisi bunu yakaladı): `approved_at` bir `timestamptz`tir ve
+        #    ham `.date()` UTC gününü verir. TR UTC+3 olduğu için gece
+        #    00:00-03:00 arasında onaylanan bir hakedişin fişi BİR GÜN
+        #    GERİYE düşer — ay sınırında ise ÖNCEKİ AYIN mizanına, hatta
+        #    KAPALI bir döneme. Gün sınırı tek kaynaktan okunur.
         supplier_name=supplier.name if supplier is not None else None,
     )
 
