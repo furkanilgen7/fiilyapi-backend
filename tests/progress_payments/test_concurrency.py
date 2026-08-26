@@ -513,3 +513,23 @@ async def _temizle(project_id: uuid.UUID, user_id: uuid.UUID) -> None:
         await session.execute(delete(User).where(User.id == user_id))
         await _referans_temizle(session)
         await session.commit()
+
+
+@pytest.fixture(autouse=True)
+async def _mu3d_esleme() -> None:
+    """🔴 MU-3D — conftest'teki AYNI ADLI autouse fixture'ı GÖLGELER (kapatır).
+
+    Bu dosya `seeded_db`yi BİLEREK KULLANMAZ (modül docstring'i): iki bağımsız
+    bağlantı açar ve GERÇEKTEN COMMIT eder. Conftest'in eşleme fixture'ı
+    `seeded_db`ye bağlıdır ve autouse olduğu için onu BU dosyaya da zorla
+    sokuyordu; `seed_reference_data`nın commit EDİLMEMİŞ `modules` satırları
+    ile buradaki gerçek commit aynı benzersiz anahtarda çakıştı ve tam küme
+    koşusu bir DEADLOCK'ta ASILI KALDI — ölçüldü: `pg_stat_activity`de
+    `wait_event_type='Lock'`, `wait_event='transactionid'`.
+
+    🔴 Eşlemenin burada BULUNMAMASI bir eksiklik değildir: bu dosyanın
+    hakedişleri SATIRSIZDIR, fişin tabanı sıfırdır ve `post_progress_payment`
+    `None` dönerek fişi HİÇ AÇMAZ. Yani onay yolu buradan fişleme koduna
+    girmez ve eşleme aranmaz.
+    """
+    return None

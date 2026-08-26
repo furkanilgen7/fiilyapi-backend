@@ -73,6 +73,7 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.timezone import to_display
 from app.modules.accounting import state_service as accounting_state_service
 from app.modules.accounting.models import JournalSourceType
 from app.modules.accounting.transitions import JournalAction
@@ -80,6 +81,7 @@ from app.modules.equipment.models.rental import EquipmentRentalInvoice
 from app.modules.posting import repository as posting_repository
 from app.modules.posting import service as posting_service
 from app.modules.posting.service import PostingLine, PostingOutcome
+from app.modules.procurement.models import Supplier
 from app.modules.users.models import User
 
 __all__ = [
@@ -89,6 +91,7 @@ __all__ = [
     "SOURCE_TYPE",
     "description_for",
     "lines_for",
+    "post_on_approval",
     "post_rental_invoice",
     "posting_base_for",
     "reverse_rental_invoice",
@@ -182,3 +185,44 @@ async def reverse_rental_invoice(session: AsyncSession, actor: User, invoice_id:
         session, actor, entry.id, JournalAction.reverse
     )
     return True
+
+
+async def post_on_approval(
+    session: AsyncSession, actor: User, invoice: EquipmentRentalInvoice
+) -> None:
+    """🔴 MU-3D — onay kancasının GÖVDESİ. `rental_service`ten ÇAĞRILIR.
+
+    ## Neden `rental_service`te DEĞİL burada
+
+    `rental_service.py` 785 satırdı; gövde orada kalsaydı dosya **832**e çıkıp
+    deponun 800 satır tavanını KIRARDI (ölçüldü). Ama yer seçimi bir satır
+    sayısı zorunluluğundan İBARET DEĞİLDİR: tedarikçi adının nereden okunduğu
+    ve fişin hangi güne yazıldığı FİŞLEME kararlarıdır, kira hakedişinin durum
+    makinesinin kararları değil. `rental_service`te kalan tek şey KANCANIN YERİ
+    olmalıdır (`hedef is approved` dalı), kancanın İÇERİĞİ değil.
+
+    ## Ne yapar
+
+    Tedarikçi adını çözer ve `post_rental_invoice`i çağırır. Fiş yazılamazsa
+    (kapalı dönem **409** · eksik eşleme **422**) onay da GERİ ALINIR —
+    "onaylı ama fişsiz" bir kira hakedişi DOĞMAZ. COMMIT ETMEZ.
+    """
+    # `session.get` — kimlik haritasından okur, ikinci bir sorgu koşmaz
+    # (`_supplier_display` ile AYNI desen).
+    supplier = await session.get(Supplier, invoice.supplier_id)
+    await post_rental_invoice(
+        session,
+        actor,
+        invoice,
+        # 🔴 ONAY GÜNÜ — `period_year`/`period_month` DEĞİL. Döneme yazılsaydı
+        # geçmiş bir aya ait kira hakedişi KAPALI bir döneme fiş atmayı dener ve
+        # KARAR-6'yı delerdi. Damga bu satırdan hemen ÖNCE basılır.
+        #
+        # 🔴 `to_display` ŞART, çıplak `.date()` DEĞİL (TB5 yerel takvim bekçisi
+        # bunu yakaladı): `approved_at` bir `timestamptz`tir ve ham `.date()`
+        # UTC gününü verir. TR UTC+3 olduğu için gece 00:00-03:00 arasında
+        # onaylanan bir hakedişin fişi BİR GÜN GERİYE düşer — ay sınırında ise
+        # ÖNCEKİ AYIN mizanına, hatta KAPALI bir döneme.
+        entry_date=to_display(invoice.approved_at).date(),
+        supplier_name=supplier.name if supplier is not None else None,
+    )

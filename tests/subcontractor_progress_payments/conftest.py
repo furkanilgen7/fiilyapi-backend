@@ -314,6 +314,7 @@ async def _mu3d_esleme(seeded_db: AsyncSession) -> None:
     _mu3d_esleme`): fişleme bu paketin ölçtüğü kural DEĞİL, bir altyapı ön
     koşuludur; fail-closed dalı `tests/modules/posting/` altında, autouse'un
     ulaşmadığı yerde ayrıca ölçülür.
+
     """
     from app.modules.accounting.models import JournalSourceType
     from app.modules.subcontractor_progress_payments.posting import (

@@ -40,7 +40,6 @@ from app.core.errors import (
     EquipmentValidationError,
     NotFoundError,
 )
-from app.core.timezone import to_display
 from app.modules.equipment import (
     rental_posting,
     rental_repository,
@@ -636,38 +635,6 @@ async def reload_invoice(
     return await invoice_detail(session, invoice), "Kira hakedişi çalışma kaydından tazelendi"
 
 
-async def _fisle(session: AsyncSession, actor: User, invoice: EquipmentRentalInvoice) -> None:
-    """🔴 MU-3D — kira hakedişinin yevmiye fişi (KDV'SİZ).
-
-    Gerekçelerin tamamı `equipment.rental_posting` modül docstring'indedir:
-    neden taban `invoice_amount`tır (`payable_total` KDV'yi içerir, `our_total`
-    bir doğrulama büyüklüğüdür), neden `invoice_amount` NULL iken fiş HİÇ
-    AÇILMAZ, ve neden bu ailenin tutarı YAPISAL OLARAK BAYATLAMAZ.
-
-    Fiş yazılamazsa (kapalı dönem **409** · eksik eşleme **422**) onay da GERİ
-    ALINIR — "onaylı ama fişsiz" bir kira hakedişi DOĞMAZ.
-    """
-    # `session.get` — kimlik haritasından okur, ikinci bir sorgu koşmaz
-    #    (`_supplier_display` ile AYNI desen, rental_service.py:369).
-    supplier = await session.get(Supplier, invoice.supplier_id)
-    await rental_posting.post_rental_invoice(
-        session,
-        actor,
-        invoice,
-        # 🔴 ONAY GÜNÜ — `period_year`/`period_month` DEĞİL. Döneme yazılsaydı
-        #    geçmiş bir aya ait kira hakedişi KAPALI bir döneme fiş atmayı dener
-        #    ve KARAR-6'yı delerdi. Damga bu satırdan hemen ÖNCE basılır.
-        entry_date=to_display(invoice.approved_at).date(),
-        # 🔴 `to_display` ŞART, çıplak `.date()` DEĞİL (TB5 yerel takvim
-        #    bekçisi bunu yakaladı): `approved_at` bir `timestamptz`tir ve
-        #    ham `.date()` UTC gününü verir. TR UTC+3 olduğu için gece
-        #    00:00-03:00 arasında onaylanan bir hakedişin fişi BİR GÜN
-        #    GERİYE düşer — ay sınırında ise ÖNCEKİ AYIN mizanına, hatta
-        #    KAPALI bir döneme. Gün sınırı tek kaynaktan okunur.
-        supplier_name=supplier.name if supplier is not None else None,
-    )
-
-
 async def approve_invoice(
     session: AsyncSession, actor: User, invoice_id: uuid.UUID
 ) -> tuple[RentalInvoiceResponse, str]:
@@ -704,7 +671,7 @@ async def approve_invoice(
         #    HEDEF DURUMA bağlıdır: bu uç bir TEK ADIM İLERLETİCİDİR ve `draft`
         #    üzerinde çağrıldığında yalnız `pending_verification`a taşır —
         #    uca bağlansaydı doğrulanmamış bir kira bedeli deftere girerdi.
-        await _fisle(session, actor, invoice)
+        await rental_posting.post_on_approval(session, actor, invoice)
     await session.flush()
     return await _header(session, invoice), f"Kira hakedişi durumu: {invoice.status.value}"
 

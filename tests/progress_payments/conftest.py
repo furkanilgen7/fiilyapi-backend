@@ -104,6 +104,19 @@ async def _mu3d_esleme(seeded_db: AsyncSession) -> None:
     `tests/modules/posting/test_mu3d_hakedis_fisleme.py::
     test_ESLEME_YOKSA_422_ve_ONAY_da_GERI_ALINIR`. O test bu fixture'ı
     BİLEREK görmez.
+
+    ## 🔴 `test_concurrency.py` BU FIXTURE'I KAPATIR
+
+    O dosya `seeded_db`yi BİLEREK KULLANMAZ: iki bağımsız bağlantı açar ve
+    GERÇEKTEN COMMIT eder (kilit davranışı ancak öyle ölçülür). Autouse onu
+    oraya da zorla soktuğunda `seed_reference_data`nın commit EDİLMEMİŞ
+    `modules` satırları ile testin kendi commit'i aynı benzersiz anahtarda
+    çakıştı ve tam küme koşusu bir DEADLOCK'ta ASILI KALDI (ölçüldü:
+    `pg_stat_activity`de `wait_event_type='Lock'`, `transactionid`).
+
+    Çare pytest'in kendi mekanizmasıdır: o dosya AYNI ADLA boş bir fixture
+    tanımlar ve bunu GÖLGELER. Eşlemeye zaten ihtiyacı yoktur — satırsız
+    hakedişle koşar, taban sıfırdır ve fiş HİÇ AÇILMAZ.
     """
     from app.modules.accounting.models import JournalSourceType
     from app.modules.progress_payments.posting import PROGRESS_PAYMENT_POSTING_RULES
