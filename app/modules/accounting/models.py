@@ -231,6 +231,79 @@ POSTING_BALANCED_CHECK = (
 )
 
 
+class JournalSourceType(str, enum.Enum):
+    """🔴 MU-3A — otomatik fişi DOĞURAN belgenin AİLESİ (`journal_entries.source_type`).
+
+    ## Neden PG enum, neden METİN DEĞİL
+
+    Depo deseni ÖLÇÜLDÜ: `app/modules/*/models.py` altında **91** adet
+    `Enum(..., name=...)` kolonu var, çok biçimli bir referansı serbest metinle
+    tutan TEK BİR tablo YOK. Desen burada da doğrudur ve gerekçesi bu dilime
+    özeldir: bu kolon `uq_journal_entries_source`un YARISIDIR. Metin olsaydı
+    `"invoice"` ile `"invoices"` (ya da `"Invoice"`) AYRI iki tekillik uzayı açar
+    ve aynı fatura İKİ KEZ fişlenebilirdi — yani idempotanlığın kendisi bir yazım
+    hatasına dayanırdı. Enum'da böyle bir değer DB'ye HİÇ GİREMEZ.
+
+    Bedeli bilinerek alınmıştır: her yeni aile bir `ALTER TYPE … ADD VALUE`
+    migration'ı ister (MT-1'in `equity` emsali). Bu bedel, sessiz bir çift fişten
+    ucuzdur.
+
+    ## Üye = TABLO, üye ≠ KAVRAM
+
+    Her üye TEK BİR tabloya karşılık gelir ve `source_id` O TABLONUN birincil
+    anahtarıdır. "Hakediş" tek bir üye olsaydı `source_id` iki farklı tablonun
+    (`progress_payments` / `subcontractor_progress_payments`) kimliğini birden
+    taşır ve "bu kimlik hangi tabloda?" sorusu kolonlardan CEVAPLANAMAZDI.
+
+    ## 🔴 FK YOKTUR ve olamaz
+
+    Çok biçimli referansta tek bir `source_id` beş tabloya birden bakamaz. Bu bir
+    zayıflıktır ve bilinçlidir: alternatif beş nullable FK kolonu + bir
+    "yalnız biri dolu" CHECK'iydi (`invoices.ck_invoices_single_source` deseni),
+    ki o da beş kolonu UNIQUE'e sokmayı ve her yeni ailede ŞEMA değiştirmeyi
+    gerektirirdi. Bütünlüğü ayakta tutan şey `post_document`in TEK GİRİŞ
+    NOKTASI olmasıdır (`app/modules/posting/service.py`).
+
+    ## Bugün YOKLAR ve neden
+
+    * **`purchase_order` / stok hareketi** — KARAR-7: satınalma ve stok fiş
+      ATMAZ. Stokta değerleme yöntemi yoktur, sarf fişinin tutarı hesaplanamaz.
+    * **`equipment_rental_invoice`** — MK-2'nin kira hakedişi bir belgedir ama
+      MU-3B/C/D/E kapsamında ADI GEÇMEZ; üye ICAT EDILMEZ, fişlendiği dilimde
+      `ALTER TYPE` ile eklenir.
+
+    Üye SIRASI kilitlidir: `ALTER TYPE … ADD VALUE` üyeyi SONA ekler ve
+    `enum_range` o sırayı döner (migration testi bunu ölçer).
+    """
+
+    invoice = "invoice"  # `invoices` — gelen ve giden, YÖN kolonu belgenin kendisindedir
+    payment = "payment"  # `payments`
+    payroll_period = "payroll_period"  # `payroll_periods` — bordro DÖNEM bazlı fişlenir
+    progress_payment = "progress_payment"  # `progress_payments` (işveren hakedişi)
+    subcontractor_progress_payment = "subcontractor_progress_payment"
+
+
+#: 🔴 MU-3A — kaynak çifti BÜTÜNDÜR: ya İKİSİ de dolu (otomatik fiş) ya İKİSİ de
+#: NULL (elle fiş). Yarım çift UNIQUE'e ÇARPMAZ (PG'de NULL'lar ayrıktır), yani
+#: bu CHECK olmadan "türü bilinen, belgesi bilinmeyen" fişler sessizce birikir ve
+#: *"bu belge fişlendi mi?"* sorusu yine cevapsız kalırdı.
+#:
+#: 🔴 `CLOSED_STAMP_CHECK`in kardeşidir ve ondan FARKLI olarak İKİ DEĞERLİ bir
+#: enuma bağlı DEĞİLDİR: yalnız NULL-olma hâline bakar, bu yüzden `JournalSourceType`
+#: yeni üye kazandığında TANIMSIZ kalmaz.
+SOURCE_PAIR_CHECK = (
+    "(source_type IS NULL AND source_id IS NULL) OR "
+    "(source_type IS NOT NULL AND source_id IS NOT NULL)"
+)
+
+
+#: 🔴 TEK `Enum` NESNESİ — `posting_rules.source_type` de BUNU kullanır.
+#: İki ayrı `Enum(JournalSourceType, name="journal_source_type")` kurulsaydı
+#: `Base.metadata.create_all` PG tipini İKİ KEZ yaratmaya çalışır ve tüm test
+#: kümesi `type "journal_source_type" already exists` ile düşerdi.
+JOURNAL_SOURCE_TYPE = Enum(JournalSourceType, name="journal_source_type")
+
+
 class AccountingPeriodStatus(str, enum.Enum):
     """Donem durumu — IKI degerli, ucuncu uye ICAT EDILMEZ.
 
@@ -458,6 +531,20 @@ class JournalEntry(Base):
         UniqueConstraint("reversal_of_id", name="uq_journal_entries_reversal_of"),
         # 🔑 FIS-NO — numara SIRKET GENELINDE tekildir (yil numaranin icinde).
         UniqueConstraint("entry_no", name="uq_journal_entries_entry_no"),
+        # 🔴 MU-3A — İDEMPOTANLIĞIN SON SAVUNMASI: bir belge EN FAZLA BİR KEZ
+        # fişlenir. `post_document` bir danışma kilidi alıp önce okur, ama
+        # SERVİS KAPISI TEK BAŞINA YETMEZ (bu deponun tekrar tekrar ölçtüğü
+        # ders): `post_document`i atlayan bir yazma yolu yarın yazılırsa
+        # tekilliği ayakta tutacak TEK şey budur.
+        #
+        # 🔴 NULL'lar ayrıktır (PG varsayılanı `NULLS DISTINCT`) ve bu TAM
+        # OLARAK İSTENENDİR: elle girilen fişlerin ikisi de NULL taşır ve
+        # birbirini ENGELLEMEZ. `NULLS NOT DISTINCT` yazılsaydı muhasebecinin
+        # ikinci elle fişi gerekçesiz bir 409 alırdı. Ölçüldü, varsayılmadı:
+        # `tests/modules/posting/test_mu3a_source_stamp.py`.
+        UniqueConstraint("source_type", "source_id", name="uq_journal_entries_source"),
+        # 🔴 Çift BÜTÜNDÜR — gerekçe `SOURCE_PAIR_CHECK` sabitinin yanındadır.
+        CheckConstraint(SOURCE_PAIR_CHECK, name="ck_journal_entries_source_pair"),
         CheckConstraint(PERIOD_MATCHES_DATE_CHECK, name="ck_journal_entries_period_matches_date"),
         # 🔴 K1'in baslik ayagi: DENGESIZ FIS DEFTERE GIREMEZ. `draft` dengesiz
         # BIRAKILABILIR — kapi kayitlastirma aninda yeniden kosar.
@@ -507,6 +594,20 @@ class JournalEntry(Base):
     reversal_of_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("journal_entries.id", ondelete="RESTRICT"), nullable=True
     )
+    # 🔴 MU-3A — fişi DOĞURAN belge. Elle girilen fişte İKİSİ de NULL kalır
+    # (`ck_journal_entries_source_pair`). `source_id` bir FK DEĞİLDİR: çok
+    # biçimli referansta tek kolon beş tabloya birden bakamaz (bkz.
+    # `JournalSourceType` docstring'i).
+    #
+    # 🔴 STORNO bu çifti TAŞIMAZ (`_build_reversal` alanlara hiç dokunmaz, NULL
+    # doğarlar) ve bu bir eksiklik DEĞİL, kısıtın gereğidir: taşısaydı
+    # `uq_journal_entries_source` orijinal fişle çakışır ve KARAR-5 (belge geri
+    # alınırsa storno) HİÇ UYGULANAMAZDI. Stornonun belgesi TÜRETİLİR:
+    # `reversal_of_id` → orijinal fiş → `source_type`/`source_id`.
+    source_type: Mapped[JournalSourceType | None] = mapped_column(
+        JOURNAL_SOURCE_TYPE, nullable=True
+    )
+    source_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     created_by_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
