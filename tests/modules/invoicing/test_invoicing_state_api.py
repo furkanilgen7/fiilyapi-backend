@@ -131,13 +131,56 @@ async def test_send_yalniz_full_pm_403(client, pm_headers, fatura_fabrikasi, gor
 # --- Uç 9: mark-collected (sent → collected) ---
 
 
-async def test_mark_collected_gonderilmis_faturayi_tahsil_eder(
-    client, muhasebe_headers, fatura_fabrikasi, gorunen_proje
+async def test_mark_collected_TAM_odeme_varsa_tahsil_eder(
+    client, muhasebe_headers, fatura_fabrikasi, gorunen_proje, tam_odeme
 ) -> None:
+    """MU-3E İŞ 2 — kapı AÇIK olmalıdır: toplamı karşılayan ödeme varsa 200."""
     fatura = await fatura_fabrikasi(project=gorunen_proje, status=InvoiceStatus.sent)
+    await tam_odeme(fatura)
     resp = await client.post(f"{_YOL}/{fatura.id}/mark-collected", headers=muhasebe_headers)
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == InvoiceStatus.collected.value
+
+
+async def test_mark_collected_ODEMESIZ_422(
+    client, muhasebe_headers, fatura_fabrikasi, gorunen_proje
+) -> None:
+    """🔴 MU-3E İŞ 2 KABUL KAPISI — ödemesiz tahsilat damgası REDDEDİLİR.
+
+    Kusur ölçülmüştü: damga basılıyor, ödeme satırı olmadığı için nakit fişi
+    DOĞMUYOR (MU-3C) ve `120 Alıcılar` muhasebede AÇIK kalıyordu — mizan
+    alıcıları fazla gösteriyor, kullanıcıya bunu söyleyen hiçbir mekanizma
+    bulunmuyordu.
+
+    🔴 Durum DEĞİŞMEMİŞ olmalıdır: 422 dönüp damgayı yine de basan bir kod
+    (`status` yazımı kapıdan ÖNCEye kaydırılırsa) yalnız bu iddiada kırmızıya
+    döner — kodun tek başına ölçülmesi kusuru göremezdi.
+    """
+    fatura = await fatura_fabrikasi(project=gorunen_proje, status=InvoiceStatus.sent)
+    resp = await client.post(f"{_YOL}/{fatura.id}/mark-collected", headers=muhasebe_headers)
+    assert resp.status_code == 422, resp.text
+    assert "ödeme kaydı" in resp.json()["detail"]
+
+    oku = await client.get(f"{_YOL}/{fatura.id}", headers=muhasebe_headers)
+    assert oku.json()["status"] == InvoiceStatus.sent.value
+
+
+async def test_mark_collected_KISMI_odeme_422(
+    client, muhasebe_headers, fatura_fabrikasi, gorunen_proje, seeded_db, tam_odeme
+) -> None:
+    """🔴 Eşik `>=`tir: kısmi tahsilat damgayı BASTIRMAZ.
+
+    Yalnız "ödeme satırı VAR MI" diye bakan bir kapı bu testte yeşil kalır ve
+    1₺'lik bir ödeme 100.000₺'lik faturayı kapatırdı. Eşiğin
+    `payments_service._rederive_status` (K5) ile AYNI olduğu buradan ölçülür.
+    """
+    fatura = await fatura_fabrikasi(project=gorunen_proje, status=InvoiceStatus.sent)
+    odeme = await tam_odeme(fatura)
+    odeme.amount = fatura.total - Decimal("0.01")
+    await seeded_db.flush()
+
+    resp = await client.post(f"{_YOL}/{fatura.id}/mark-collected", headers=muhasebe_headers)
+    assert resp.status_code == 422, resp.text
 
 
 async def test_mark_collected_taslak_fatura_409(
@@ -166,10 +209,16 @@ async def test_mark_collected_kalemsiz_faturada_K6_UYGULANMAZ(
 ) -> None:
     """Kalem kapısı YALNIZ `send`/`approve` içindir (`validation.GATE_ACTIONS`).
 
-    `mark-collected` zaten kalemli bir `sent` faturadan gelir; kapıyı buraya da
-    koymak, veri kaybı yaşamış eski bir kaydı sonsuza dek `sent`te kilitlerdi.
+    `mark-collected` zaten kalemli bir `sent` faturadan gelir.
+
+    🔴 **MU-3E İŞ 2'den SONRA da geçer ve bu bir TESADÜF DEĞİLDİR:** kalemsiz
+    faturanın toplamı 0,00'dır ve ödeme eşiği `0 >= 0` ile KENDİLİĞİNDEN
+    sağlanır. Doğrusu da budur — kapatılacak bir alacak yoktur, `120` hiç
+    açılmamıştır. Yeni kapının bu dalı ayrıca `if total > 0` diye yazmaması,
+    hiçbir şeyi korumayan bir kod eklememesi anlamına gelir.
     """
     fatura = await fatura_fabrikasi(project=gorunen_proje, status=InvoiceStatus.sent, lines=[])
+    assert fatura.total == Decimal("0.00"), "kalemsiz fatura sıfır toplamlı DEĞİL"
     resp = await client.post(f"{_YOL}/{fatura.id}/mark-collected", headers=muhasebe_headers)
     assert resp.status_code == 200, resp.text
 
@@ -307,6 +356,7 @@ async def test_gecis_para_alanlarini_YENIDEN_HESAPLAMAZ(
     gorunen_proje,
     seeded_db,
     fatura_eslemesi,
+    tam_odeme,
     islem: str,
     durum: InvoiceStatus,
     yon: InvoiceDirection,
@@ -330,6 +380,10 @@ async def test_gecis_para_alanlarini_YENIDEN_HESAPLAMAZ(
     )
     once = {alan: getattr(fatura, alan) for alan in _PARA_ALANLARI}
     assert any(deger != Decimal("0.00") for deger in once.values())
+    if islem == "mark-collected":
+        # MU-3E İŞ 2 — kapı ödeme arar. K7 iddiası ödemenin VARLIĞINDAN
+        # etkilenmez: ödeme satırı faturanın hiçbir para kolonuna yazmaz.
+        await tam_odeme(fatura)
 
     resp = await client.post(f"{_YOL}/{fatura.id}/{islem}", headers=muhasebe_headers)
     assert resp.status_code == 200, resp.text

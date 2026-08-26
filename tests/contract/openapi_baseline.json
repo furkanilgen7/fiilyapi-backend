@@ -41151,7 +41151,7 @@
     },
     "/invoices/{invoice_id}/mark-collected": {
       "post": {
-        "description": "`sent → collected` (FY:130 `Tahsil Edildi`) — YALNIZ giden fatura.\n\n**Tahsilat KAYDI değildir** (FGI:220-247 formu Hazine diliminindir:\n`bank_accounts` tablosu henüz YOK). Burada yalnız damga vardır; tutar,\nhesap ve tarih alanları AÇILMAZ — yazma yolu olmayan kolon her zaman NULL\ndöner ve uydurma alan olur.\n\nK6 kapısı UYGULANMAZ: `sent` bir fatura zaten kapıdan geçmiştir.",
+        "description": "`sent → collected` (FY:130 `Tahsil Edildi`) — YALNIZ giden fatura.\n\n**Tahsilat KAYDI değildir** (FGI:220-247 formu Hazine diliminindir:\n`bank_accounts` tablosu henüz YOK). Burada yalnız damga vardır; tutar,\nhesap ve tarih alanları AÇILMAZ — yazma yolu olmayan kolon her zaman NULL\ndöner ve uydurma alan olur.\n\nK6 kapısı UYGULANMAZ: `sent` bir fatura zaten kapıdan geçmiştir.\n\n🔴 **MU-3E İŞ 2 — ÖDEME ARANIR (kullanıcı kararı 2026-08-26).** Faturanın\ntoplamını karşılayan ödeme kaydı yoksa **422**. Ödemesiz damga muhasebede\n`120 Alıcılar`ı AÇIK bırakıyor ve mizan alıcıları fazla gösteriyordu:\nnakit bacağı `payments` satırından doğar (MU-3C), ödeme yoksa fiş de\nyoktur. Doğru yol `POST /payments`tir — tahsilat girildiğinde bu damga\nKENDİLİĞİNDEN basılır (K5) ve nakit fişi de aynı işlemde yazılır.",
         "operationId": "mark_collected_invoice_endpoint_invoices__invoice_id__mark_collected_post",
         "parameters": [
           {
@@ -41186,14 +41186,7 @@
             "description": "İşlem faturanın yönüne ya da durumuna uygulanamaz"
           },
           "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
+            "description": "Faturanın toplamını karşılayan ödeme kaydı yok (MU-3E İŞ 2)"
           }
         },
         "security": [

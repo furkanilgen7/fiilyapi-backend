@@ -14,6 +14,10 @@ Sıra DEĞİŞMEZDİR ve kilit HER ŞEYDEN ÖNCE gelir:
     2. kapsam  — görünmeyen fatura 404 (kilitli satır üzerinde koşar)
     3. matris  — `transitions.next_status` → 409 (yön dışı ya da matris dışı)
     4. K6      — `validation.gate_blockers` → 422 (kalemsiz `send`/`approve`)
+    4b. TAHSİLAT — `validation.collection_blockers` → 422 (ödemesiz
+        `mark-collected`, MU-3E İŞ 2). Kilidin İÇİNDE okunur (EŞİK = KİLİT) ve
+        4'ün AYNI 422'sinde toplanır: ikisi de "bu geçiş bu belgeye şu ANDA
+        uygulanamaz" der ve kullanıcı onları ayrı ele alamaz.
     5. damga   — `status` yazılır
 
 Kilit 3. adımdan SONRA alınsaydı iki eşzamanlı `send` de `draft` okur, ikisi de
@@ -27,6 +31,19 @@ Bekleyen istek uyandığında kararı YENİDEN verir: taze satırda durum artık
 olduğu için matris `(sent, send)` çiftini tanımaz ve **409** döner.
 
 Kilit sırası uçtan uca SABİT: fatura → kalemler (`service.py` ile aynı).
+
+## 🔴 MU-3E İŞ 2 — ÖDEMESİZ `mark-collected` ARTIK REDDEDİLİR (kullanıcı kararı)
+
+Kural ve gerekçesi `validation.collection_blockers`tadır. Burada duran tek
+karar ŞUDUR: eşik `perform_transition`ın kilidi ALTINDA okunur.
+
+🔴 **`payments_service._rederive_status` bu kapıdan GEÇMEZ ve geçmemelidir.**
+O yol damgayı `transitions.next_status` ile DOĞRUDAN basar ve yalnız
+`Σ payments >= total` iken basar — yani kapının koşulunu ZATEN sağlar. Buradan
+geçseydi ödeme yazan her istek gereksiz bir ikinci `Σ payments` taraması açar
+ve daha kötüsü, `create_payment`in kendi kilit sırası ile bu fonksiyonunki
+iç içe girerdi. İki yolun AYNI eşiği (`>=`) kullanması bir tesadüf değil bir
+ZORUNLULUKTUR ve bekçisi `collection_blockers`ın docstring'indedir.
 
 ## 🔴 K7 — geçiş HİÇBİR ŞEYİ CANLI OKUMAZ
 
@@ -46,6 +63,7 @@ denetim tablosunda numara ile birlikte okunur.
 """
 
 import uuid
+from decimal import Decimal
 from typing import NamedTuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -63,6 +81,16 @@ from app.modules.invoicing import (
 )
 from app.modules.invoicing.models import Invoice
 from app.modules.invoicing.transitions import InvoiceAction
+
+# 🔴 MU-3E İŞ 2 — `invoicing` ARTIK paket düzeyinde `treasury`yi okur ve bu
+#    yönün TEK istisnasıdır (`treasury/payments_service.py`nin "import yönü tek
+#    yönlüdür" notu buna göre güncellendi). Çember AÇILMAZ, ölçüldü:
+#    `treasury.repository` yalnız `treasury.balance` + `treasury.models`u,
+#    `treasury.balance` da `invoicing.models`u ithal eder — ve `invoicing.models`
+#    bir YAPRAKTIR (stdlib + `app.core.db` dışında hiçbir modül ithal etmez).
+#    🔴 `treasury.payments_service` İTHAL EDİLMEZ: o `invoicing.service`i okur
+#    ve gerçek bir çember olurdu.
+from app.modules.treasury import repository as treasury_repository
 from app.modules.users.models import User
 
 __all__ = ["TransitionOutcome", "perform_transition"]
@@ -100,6 +128,30 @@ _AUDIT_MESSAGES = {
 }
 
 
+async def _tahsil_edilen(session: AsyncSession, invoice: Invoice, action: InvoiceAction) -> Decimal:
+    """`Σ payments.amount` — YALNIZ `mark-collected` yolunda okunur.
+
+    🔴 Sorgu KOŞULA BAĞLIDIR ve bu bir mikro-optimizasyon DEĞİLDİR: öteki üç
+    geçiş (`send` · `approve` · `dispute`) ödemeyle hiç ilgilenmez ve onlara
+    bir `payments` taraması eklemek, kuralın hangi geçişe ait olduğunu koddan
+    OKUNAMAZ hâle getirirdi. `collection_blockers` zaten `action`ı süzer;
+    burada ikinci kez süzülmesinin sebebi süzgeç değil, SORGUNUN KENDİSİDİR.
+
+    🔴 EŞİK = KİLİT: bu okuma `visible_invoice(for_update=True)`in aldığı satır
+    kilidinin İÇİNDEDİR. Kilitsiz okunsaydı iki eşzamanlı `mark-collected` aynı
+    toplamı görür ve — eşik sağlanmasa bile — arada silinen bir ödemeyle
+    ikisinden biri geçebilirdi.
+
+    🔴 Toplam `treasury.repository.paid_total_for_invoice`ten gelir, BURADA
+    yeniden yazılmaz: ikinci bir `sum(amount)` `coalesce`ı unutabilir ve
+    ödemesiz faturada `NULL >= total` karşılaştırması SESSİZCE `False`
+    üretirdi — doğru cevabı yanlış sebeple veren bir kod.
+    """
+    if action is not InvoiceAction.mark_collected:
+        return Decimal("0")
+    return await treasury_repository.paid_total_for_invoice(session, invoice.id)
+
+
 async def perform_transition(
     session: AsyncSession, actor: User, invoice_id: uuid.UUID, action: InvoiceAction
 ) -> TransitionOutcome:
@@ -114,6 +166,9 @@ async def perform_transition(
     yeni_durum = transitions.next_status(invoice.direction, invoice.status, action)
 
     engeller = validation.gate_blockers(action, await repository.load_lines(session, invoice.id))
+    engeller += validation.collection_blockers(
+        action, invoice.total, await _tahsil_edilen(session, invoice, action)
+    )
     if engeller:
         raise InvoicingValidationError(" · ".join(engeller))
 
@@ -125,7 +180,9 @@ async def perform_transition(
     #     olduğu `posting/service.py`dedir ve burada TEKRARLANMAZ.
     #
     #     K7 KORUNUR: `posting.lines_for` faturanın DONMUŞ kolonlarını okur,
-    #     `amounts.compute` bu dosyadan hâlâ ÇAĞRILMAZ.
+    #     `amounts.compute` bu dosyadan hâlâ ÇAĞRILMAZ. MU-3E'nin `Σ payments`
+    #     okuması da K7'yi delmez: o, faturanın PARASI değil, faturaya YAPILMIŞ
+    #     ödemelerin toplamıdır ve faturanın hiçbir kolonunu yeniden üretmez.
     if action in posting.POSTING_ACTIONS:
         await posting.post_invoice(session, actor, invoice)
         # 🔴 MU-3D İŞ 2 — TAKAS: faturanın fişi yazıldıysa kaynak hakedişin
