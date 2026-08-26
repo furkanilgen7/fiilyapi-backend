@@ -636,3 +636,24 @@ def cek_fabrikasi(seeded_db: AsyncSession):
         return instrument
 
     return _create
+
+
+# --------------------------------------------------------------------------- #
+# 🔴 MU-3C — ÖDEME FİŞLEMESİNİN `posting_rules` EŞLEMESİ
+#
+# `create_payment` artık nakit bacağını yazar; eşleme yoksa **422** verir ve bu
+# FAIL-CLOSED olan taraftır (`treasury/posting.py`). Canlıda satırları
+# `d1e2f3a4b5c6` migration'ı tohumlar; test kümesi migration koşmaz
+# (`Base.metadata.create_all`), bu yüzden ödeme YAZAN her test onu ister.
+#
+# 🔴 Kurulum `tests/modules/treasury/_mu3c.py`den ÇAĞRILIR, kopyalanmaz: iki
+# kopya bir gün ayrışır ve biri kuralı değil kurulumunu ölçerdi.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+async def odeme_eslemesi(seeded_db: AsyncSession):
+    """MU-3B + MU-3C `posting_rules` ürün eşlemesi (hesap planı satırları dahil)."""
+    from tests.modules.treasury._mu3c import esleme_kur
+
+    return await esleme_kur(seeded_db)

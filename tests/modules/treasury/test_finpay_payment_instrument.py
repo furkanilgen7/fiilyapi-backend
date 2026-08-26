@@ -72,7 +72,7 @@ async def _kolon(seeded_db, payment_id: str):  # noqa: ANN001
 
 
 async def test_alan_GONDERILMEDEN_odeme_201_ve_kolon_NULL(
-    client, muhasebe_headers, seeded_db, fatura_fabrikasi, hesap_fabrikasi
+    client, muhasebe_headers, seeded_db, fatura_fabrikasi, hesap_fabrikasi, odeme_eslemesi
 ) -> None:
     """Mevcut istemciler alanı hiç bilmez; zorunlu kılınsaydı hepsi 422 alırdı."""
     invoice = await fatura_fabrikasi(total="1000.00")
@@ -88,7 +88,7 @@ async def test_alan_GONDERILMEDEN_odeme_201_ve_kolon_NULL(
 
 
 async def test_method_cheque_olsa_bile_bag_ZORUNLU_DEGIL(
-    client, muhasebe_headers, fatura_fabrikasi, hesap_fabrikasi
+    client, muhasebe_headers, fatura_fabrikasi, hesap_fabrikasi, odeme_eslemesi
 ) -> None:
     """🔴 K1 — etiket varlığı İMA ETMEZ (`models.py:226`)."""
     invoice = await fatura_fabrikasi(total="1000.00")
@@ -103,7 +103,7 @@ async def test_method_cheque_olsa_bile_bag_ZORUNLU_DEGIL(
 
 
 async def test_acikca_null_gonderilen_bag_da_201(
-    client, muhasebe_headers, fatura_fabrikasi, hesap_fabrikasi
+    client, muhasebe_headers, fatura_fabrikasi, hesap_fabrikasi, odeme_eslemesi
 ) -> None:
     """`null` "bağ yok" demektir; 404'e düşseydi alan fiilen zorunlu olurdu."""
     invoice = await fatura_fabrikasi(total="1000.00")
@@ -125,7 +125,13 @@ async def test_acikca_null_gonderilen_bag_da_201(
 
 
 async def test_GIDEN_faturaya_ALINAN_cek_baglanir_201(
-    client, muhasebe_headers, seeded_db, fatura_fabrikasi, hesap_fabrikasi, cek_fabrikasi
+    client,
+    muhasebe_headers,
+    seeded_db,
+    fatura_fabrikasi,
+    hesap_fabrikasi,
+    cek_fabrikasi,
+    odeme_eslemesi,
 ) -> None:
     """🔴 K3 uyumlu çifti — yön `balance.inflow_condition()`tan ÖLÇÜLDÜ.
 
@@ -148,7 +154,13 @@ async def test_GIDEN_faturaya_ALINAN_cek_baglanir_201(
 
 
 async def test_GELEN_faturaya_VERILEN_senet_baglanir_201(
-    client, muhasebe_headers, seeded_db, fatura_fabrikasi, hesap_fabrikasi, cek_fabrikasi
+    client,
+    muhasebe_headers,
+    seeded_db,
+    fatura_fabrikasi,
+    hesap_fabrikasi,
+    cek_fabrikasi,
+    odeme_eslemesi,
 ) -> None:
     """K3'ün öbür yarısı: gelen fatura bize kesilmiştir → ödeme → **verilen**."""
     invoice = await fatura_fabrikasi(direction=InvoiceDirection.incoming, total="1000.00")
@@ -166,7 +178,7 @@ async def test_GELEN_faturaya_VERILEN_senet_baglanir_201(
 
 
 async def test_PORTFOY_DISI_cek_de_baglanabilir(
-    client, muhasebe_headers, fatura_fabrikasi, hesap_fabrikasi, cek_fabrikasi
+    client, muhasebe_headers, fatura_fabrikasi, hesap_fabrikasi, cek_fabrikasi, odeme_eslemesi
 ) -> None:
     """Durum denetimi YOKTUR ve uydurulmaz: tahsil edilmiş bir çekin ödemesi
     tam olarak o çek tahsil edildiği için kaydedilir. `portfolio` şartı
@@ -318,7 +330,7 @@ async def _para_goruntusu(client, headers) -> dict:  # noqa: ANN001
 
 
 async def test_K4_bagli_odeme_para_turevlerini_bagsiz_odemeyle_AYNI_oynatir(
-    client, admin_headers, fatura_fabrikasi, hesap_fabrikasi, cek_fabrikasi
+    client, admin_headers, fatura_fabrikasi, hesap_fabrikasi, cek_fabrikasi, odeme_eslemesi
 ) -> None:
     """🔴 K4 — bağ bir ETİKETTİR, hiçbir para türevine GİRDİ EKLEMEZ.
 
@@ -384,7 +396,13 @@ async def test_K4_bagli_odeme_para_turevlerini_bagsiz_odemeyle_AYNI_oynatir(
 
 
 async def test_liste_ucu_bagi_dondurur_bagsizi_NULL_basar(
-    client, muhasebe_headers, pm_headers, fatura_fabrikasi, hesap_fabrikasi, cek_fabrikasi
+    client,
+    muhasebe_headers,
+    pm_headers,
+    fatura_fabrikasi,
+    hesap_fabrikasi,
+    cek_fabrikasi,
+    odeme_eslemesi,
 ) -> None:
     """Yalnız POST'a eklenip GET'e eklenmeseydi kullanıcı yazdığı bağı hiçbir
     ekranda GÖREMEZDİ (yazılabilen ama okunamayan bir alan sınıfı)."""
@@ -412,7 +430,7 @@ async def test_liste_ucu_bagi_dondurur_bagsizi_NULL_basar(
 
 
 async def test_K7_yanit_TUREV_alan_TASIMAZ(
-    client, muhasebe_headers, fatura_fabrikasi, hesap_fabrikasi, cek_fabrikasi
+    client, muhasebe_headers, fatura_fabrikasi, hesap_fabrikasi, cek_fabrikasi, odeme_eslemesi
 ) -> None:
     """🔴 K7 — yalnız SAKLANAN kolon döner. Çek no/vade/kesideci eklenseydi tek
     kaynak bozulur, çek düzeltilince ödeme yanıtı BAYAT kalırdı."""
@@ -473,7 +491,13 @@ async def test_GORUNMEYEN_projenin_faturasinda_IDOR_YOK(
 
 
 async def test_K8_denetim_gunlugu_satiri_da_metni_de_DEGISMEDI(
-    client, muhasebe_headers, seeded_db, fatura_fabrikasi, hesap_fabrikasi, cek_fabrikasi
+    client,
+    muhasebe_headers,
+    seeded_db,
+    fatura_fabrikasi,
+    hesap_fabrikasi,
+    cek_fabrikasi,
+    odeme_eslemesi,
 ) -> None:
     """🔴 K8 — bağ varlığı `messages.payment_created(...)` metnine SIZMAZ.
 
@@ -518,7 +542,13 @@ async def test_K8_denetim_gunlugu_satiri_da_metni_de_DEGISMEDI(
 
 
 async def test_bagli_odeme_silinince_durum_TURETIMI_bozulmadi(
-    client, admin_headers, seeded_db, fatura_fabrikasi, hesap_fabrikasi, cek_fabrikasi
+    client,
+    admin_headers,
+    seeded_db,
+    fatura_fabrikasi,
+    hesap_fabrikasi,
+    cek_fabrikasi,
+    odeme_eslemesi,
 ) -> None:
     """K5 türetimi bağdan ETKİLENMEZ: tam ödeme `collected` damgalar, silme
     `sent`e geri düşürür."""

@@ -86,6 +86,23 @@ bugünkü yolla düzeltilir — `DELETE /payments/{id}` (admin) + yeniden yazma.
 
 Yeni `AuditAction` üyesi AÇILMAZ (TB3/T3 kanonu): ayrım `messages.payment_*`
 METNİNDEDİR.
+
+## 🔴 MU-3C — ÖDEME ARTIK FİŞ ATAR (2026-08-26)
+
+`create_payment` nakit bacağını yazar, `delete_payment` onu STORNO eder. İkisi
+de `treasury/posting.py`den geçer ve o dosyanın modül docstring'i bu dilimin
+BÜTÜN gerekçesini taşır; burada TEKRARLANMAZ. Bu dosyayı ilgilendiren üç şey:
+
+* **Kilit sırası DEĞİŞMEDİ.** Fişleme belgelenmiş dört adımın (fatura → Σ →
+  hesap → eşik) ve enstrüman bağının SONUNA eklenir; `post_document` kendi
+  danışma kilidini orada alır ve satır kilidi sırasına halka SOKMAZ.
+* **Fiş AYNI transaction'dadır.** Kapalı dönem (**409**) ya da eksik eşleme
+  (**422**) ödemeyi de geri alır — "parası girmiş ama fişsiz" bir tahsilat
+  DOĞMAZ.
+* **`_rederive_status` FİŞ ATMAZ.** `collected` damgası bir GEÇİŞTİR, para
+  hareketi DEĞİL; para zaten ödeme satırından fişlenmiştir. Aynı sebeple
+  `InvoiceAction.mark_collected` `invoicing.posting.POSTING_ACTIONS` dışında
+  KALIR ve MU-3C bunu DEĞİŞTİRMEZ (gerekçe `treasury/posting.py`de üç ölçümle).
 """
 
 import uuid
@@ -100,7 +117,7 @@ from app.modules.invoicing import service as invoicing_service
 from app.modules.invoicing import transitions
 from app.modules.invoicing.models import Invoice, InvoiceDirection, InvoiceStatus
 from app.modules.invoicing.transitions import InvoiceAction
-from app.modules.treasury import repository
+from app.modules.treasury import posting, repository
 from app.modules.treasury.instruments import service as instruments_service
 from app.modules.treasury.models import (
     BankAccount,
@@ -360,6 +377,19 @@ async def create_payment(
     # async bağlamda tembel yükleme `MissingGreenlet` = 500 demektir (P11 dersi).
     await session.refresh(payment)
 
+    # 🔴 MU-3C — NAKİT BACAĞI. Ödeme satırından SONRA ve AYNI transaction'da:
+    #     fiş yazılamazsa (kapalı dönem 409 · eksik eşleme 422) ÖDEME DE GERİ
+    #     ALINIR, yani "parası girmiş ama fişsiz" bir tahsilat DOĞMAZ.
+    #
+    #     🔴 ÇİFT SAYIM YOK: bacaklar yalnız cariyi (`120`/`320`) ve nakdi
+    #     (`102`/`100`) taşır — faturanın gider/hasılatı MU-3B'de ZATEN
+    #     yazılmıştır ve buradan bir daha yazılmaz (`treasury/posting.py`).
+    #
+    #     Kilit sırası KORUNUR: fatura → Σ → hesap → eşik → (enstrüman) → fiş.
+    #     `post_document` kendi danışma kilidini EN SONDA alır, yani belgelenmiş
+    #     satır kilidi sırasına yeni bir halka SOKMAZ.
+    await posting.post_payment(session, actor, payment, invoice, account)
+
     _rederive_status(invoice, yeni_toplam)
     await session.flush()
     detail = messages.payment_created(invoice.invoice_no, account.bank_name, account.display_name)
@@ -403,6 +433,17 @@ async def delete_payment(session: AsyncSession, actor: User, payment_id: uuid.UU
     # Denetim metni silmeden ÖNCE kurulur; sonra kurulsaydı hesap/numara
     # güvenilir okunamaz ve silinenin NE OLDUĞU kaybolurdu.
     detail = messages.payment_deleted(invoice.invoice_no, account.bank_name, account.display_name)
+
+    # 🔴 MU-3C · KARAR-5 — GERİ ALMA = STORNO, silme DEĞİL. Ödeme satırı
+    #     SİLİNMEDEN ÖNCE stornolanır: silindikten sonra `payment.id` hâlâ
+    #     okunabilir olsa da, sıra tersine dönseydi bir hata hâlinde ödemesi
+    #     silinmiş ama fişi CANLI kalan bir mali iz doğabilirdi.
+    #
+    #     Storno BUGÜNE yazılır ve o ayın dönemi kapalıysa **409** gelir; ödeme
+    #     o zaman HİÇ silinmez (KARAR-6). MU-3C öncesi yazılmış, fişi hiç
+    #     doğmamış ödemelerde `reverse_payment` `False` döner ve hiçbir şey
+    #     yazılmaz.
+    await posting.reverse_payment(session, actor, payment.id)
 
     await session.delete(payment)
     await session.flush()

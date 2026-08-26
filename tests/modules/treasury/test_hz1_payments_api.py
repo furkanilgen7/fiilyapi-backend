@@ -164,7 +164,7 @@ async def test_liste_yetkisiz_rol_403(client, yetkisiz_headers, fatura_fabrikasi
 
 
 async def test_odeme_ekleme_full_gecer_ve_listede_gorunur(
-    client, muhasebe_headers, fatura_fabrikasi, hesap_fabrikasi
+    client, muhasebe_headers, fatura_fabrikasi, hesap_fabrikasi, odeme_eslemesi
 ) -> None:
     invoice = await fatura_fabrikasi(total="1000.00")
     account = await hesap_fabrikasi()
@@ -182,7 +182,7 @@ async def test_odeme_ekleme_full_gecer_ve_listede_gorunur(
 
 
 async def test_odeme_ekleme_hesap_bakiyesine_YANSIR(
-    client, muhasebe_headers, admin_headers, fatura_fabrikasi, hesap_fabrikasi
+    client, muhasebe_headers, admin_headers, fatura_fabrikasi, hesap_fabrikasi, odeme_eslemesi
 ) -> None:
     """K2 ile K4'ün dikişi: giden faturanın ödemesi hesaba GİRİŞTİR.
 
@@ -211,7 +211,7 @@ async def test_odeme_ekleme_view_rolu_403(
 
 
 async def test_K6_TAM_TOPLAM_gecer(
-    client, muhasebe_headers, fatura_fabrikasi, hesap_fabrikasi
+    client, muhasebe_headers, fatura_fabrikasi, hesap_fabrikasi, odeme_eslemesi
 ) -> None:
     """🔴 SINIR 1: `Σ + yeni == total` GEÇER — eşitlik aşım DEĞİLDİR."""
     invoice = await fatura_fabrikasi(total="1000.00")
@@ -253,7 +253,7 @@ async def test_K6_IKINCI_odeme_kalani_asarsa_422(
 
 
 async def test_K5_TAM_tahsilat_giden_faturayi_collected_damgalar(
-    client, muhasebe_headers, fatura_fabrikasi, hesap_fabrikasi, seeded_db
+    client, muhasebe_headers, fatura_fabrikasi, hesap_fabrikasi, seeded_db, odeme_eslemesi
 ) -> None:
     invoice = await fatura_fabrikasi(
         direction=InvoiceDirection.outgoing, status=InvoiceStatus.sent, total="1000.00"
@@ -267,7 +267,7 @@ async def test_K5_TAM_tahsilat_giden_faturayi_collected_damgalar(
 
 
 async def test_K5_KISMI_tahsilat_durumu_DEGISTIRMEZ(
-    client, muhasebe_headers, fatura_fabrikasi, hesap_fabrikasi, seeded_db
+    client, muhasebe_headers, fatura_fabrikasi, hesap_fabrikasi, seeded_db, odeme_eslemesi
 ) -> None:
     invoice = await fatura_fabrikasi(status=InvoiceStatus.sent, total="1000.00")
     account = await hesap_fabrikasi()
@@ -279,7 +279,7 @@ async def test_K5_KISMI_tahsilat_durumu_DEGISTIRMEZ(
 
 
 async def test_K5_GELEN_faturada_durum_DEGISMEZ(
-    client, muhasebe_headers, fatura_fabrikasi, hesap_fabrikasi, seeded_db
+    client, muhasebe_headers, fatura_fabrikasi, hesap_fabrikasi, seeded_db, odeme_eslemesi
 ) -> None:
     """Gelen faturanın ödenmesi Hazine kapsamında durum damgalamaz: `collected`
     GİDEN tarafın terminalidir ve gelen makinede karşılığı YOKTUR."""
@@ -295,7 +295,7 @@ async def test_K5_GELEN_faturada_durum_DEGISMEZ(
 
 
 async def test_K5_DRAFT_giden_faturada_durum_DEGISMEZ(
-    client, muhasebe_headers, fatura_fabrikasi, hesap_fabrikasi, seeded_db
+    client, muhasebe_headers, fatura_fabrikasi, hesap_fabrikasi, seeded_db, odeme_eslemesi
 ) -> None:
     """🔴 MATRİS DIŞI GEÇİŞ UYDURULMAZ: `(draft, mark-collected)` çifti
     `OUTGOING_TRANSITIONS`ta YOKTUR, dolayısıyla tam ödense bile `draft` kalır."""
@@ -309,7 +309,7 @@ async def test_K5_DRAFT_giden_faturada_durum_DEGISMEZ(
 
 
 async def test_odeme_ekleme_gelen_faturada_hesaptan_CIKIS(
-    client, muhasebe_headers, admin_headers, fatura_fabrikasi, hesap_fabrikasi
+    client, muhasebe_headers, admin_headers, fatura_fabrikasi, hesap_fabrikasi, odeme_eslemesi
 ) -> None:
     """K4: yön ödemenin kendi kolonundan değil FATURANIN yönünden gelir."""
     invoice = await fatura_fabrikasi(
@@ -399,7 +399,13 @@ async def test_odeme_ekleme_BILINMEYEN_alan_422(
 
 
 async def test_odeme_ekleme_denetim_satiri_yazilir(
-    client, muhasebe_headers, fatura_fabrikasi, hesap_fabrikasi, seeded_db, kullanici_kimligi
+    client,
+    muhasebe_headers,
+    fatura_fabrikasi,
+    hesap_fabrikasi,
+    seeded_db,
+    kullanici_kimligi,
+    odeme_eslemesi,
 ) -> None:
     invoice = await fatura_fabrikasi()
     account = await hesap_fabrikasi(bank_name="Yapı Kredi")
@@ -507,7 +513,7 @@ async def test_silme_GELEN_faturada_durum_DEGISMEZ(
 
 
 async def test_silme_FULL_rolu_403_ama_ayni_kullanici_POST_gecer(
-    client, muhasebe_headers, fatura_fabrikasi, hesap_fabrikasi, fatura_odemesi
+    client, muhasebe_headers, fatura_fabrikasi, hesap_fabrikasi, fatura_odemesi, odeme_eslemesi
 ) -> None:
     """ÖN KOŞULLU test: 403 seviyeden gelir, faturaya erişememesinden değil."""
     invoice = await fatura_fabrikasi(total="1000.00")

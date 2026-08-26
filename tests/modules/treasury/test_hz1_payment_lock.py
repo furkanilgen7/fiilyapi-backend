@@ -53,14 +53,23 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import TreasuryValidationError
 from app.core.security import hash_password
+from app.modules.accounting.chart_seed_data import CHART_ACCOUNTS
+from app.modules.accounting.models import (
+    AccountingPeriod,
+    ChartAccount,
+    JournalEntry,
+    JournalEntryCounter,
+    JournalSourceType,
+)
 from app.modules.invoicing.models import (
     Invoice,
     InvoiceDirection,
     InvoiceDocumentType,
     InvoiceStatus,
 )
+from app.modules.posting.models import PostingRule
 from app.modules.roles.models import Role
-from app.modules.treasury import payments_service, repository
+from app.modules.treasury import payments_service, posting, repository
 from app.modules.treasury.models import BankAccount, BankAccountType, Payment, PaymentMethodKind
 from app.modules.treasury.schemas import PaymentCreate
 from app.modules.users.models import User
@@ -72,6 +81,17 @@ _SessionFactory = async_sessionmaker(test_engine, class_=AsyncSession, expire_on
 #: için sızıntı ancak yaratılan satırların tam bilinmesiyle kapanır.
 _ROL_ANAHTARI = "hz1_conc_admin"
 _EPOSTALAR = ("hz1-kilit1@conc.co", "hz1-kilit2@conc.co")
+
+#: 🔴 MU-3C — ödeme artık NAKİT BACAĞI yazar ve eşlemesiz **422** alır
+#: (fail-closed). Bu dosya GERÇEKTEN commit ettiği için eşlemeyi kendi kurar ve
+#: kendi siler; `odeme_eslemesi` fixture'ı `seeded_db`nin SAVEPOINT'inde yaşar
+#: ve bu dosyanın bağımsız bağlantılarından GÖRÜNMEZ.
+_ESLEME: tuple[tuple[str, str], ...] = posting.PAYMENT_POSTING_RULES
+
+#: Fişin düştüğü dönem — `paid_on` ile AYNI ay. `assert_periods_open` satırı
+#: UPSERT eder; temizlik onu da almalıdır, yoksa dönem testleri
+#: `uq_accounting_periods_year_month`a çarpardı.
+_DONEM = (2026, 8)
 
 #: Baraj/görev bekleyişlerinin tavanı. Kilit DOĞRUYKEN görevler saniyenin
 #: altında biter; tavan yalnızca BOZUK bir kurulumun testi sonsuza asmasını
@@ -92,12 +112,14 @@ class _Kurulum:
         account_id: uuid.UUID,
         actor_ids: list[uuid.UUID],
         role_id: uuid.UUID,
+        chart_account_ids: list[uuid.UUID],
         payment_id: uuid.UUID | None = None,
     ) -> None:
         self.invoice_id = invoice_id
         self.account_id = account_id
         self.actor_ids = actor_ids
         self.role_id = role_id
+        self.chart_account_ids = chart_account_ids
         self.payment_id = payment_id
 
 
@@ -128,6 +150,35 @@ async def _kur(
             for sira, eposta in enumerate(_EPOSTALAR, start=1)
         ]
         session.add_all(aktorler)
+        await session.flush()
+
+        # 🔴 MU-3C eşlemesi — TDHP kartlarının kendi kodlarıyla. Kod başına TEK
+        # hesap açılır: iki rol aynı hesabı gösteriyorsa (bu ailede göstermez)
+        # ikinci bir satır `uq_chart_of_accounts_code`a çarpardı.
+        tohum = {kart.code: kart for kart in CHART_ACCOUNTS}
+        hesap_planı: dict[str, ChartAccount] = {}
+        for _rol, kod in _ESLEME:
+            if kod in hesap_planı:
+                continue
+            kart = tohum[kod]
+            hesap_planı[kod] = ChartAccount(
+                code=kart.code,
+                name=kart.name,
+                account_type=kart.account_type,
+                is_contra=kart.is_contra,
+            )
+            session.add(hesap_planı[kod])
+        await session.flush()
+        session.add_all(
+            [
+                PostingRule(
+                    source_type=JournalSourceType.payment,
+                    role_key=rol,
+                    account_id=hesap_planı[kod].id,
+                )
+                for rol, kod in _ESLEME
+            ]
+        )
         await session.flush()
 
         account = BankAccount(
@@ -173,7 +224,14 @@ async def _kur(
             payment_id = payment.id
 
         await session.commit()
-        return _Kurulum(invoice.id, account.id, [a.id for a in aktorler], role.id, payment_id)
+        return _Kurulum(
+            invoice.id,
+            account.id,
+            [a.id for a in aktorler],
+            role.id,
+            [h.id for h in hesap_planı.values()],
+            payment_id,
+        )
 
 
 async def _gorevleri_bosalt(*gorevler: asyncio.Task | None) -> None:
@@ -196,6 +254,26 @@ async def _temizle(kurulum: _Kurulum) -> None:
     async with _SessionFactory() as session:
         await session.execute(delete(Payment).where(Payment.invoice_id == kurulum.invoice_id))
         await session.execute(delete(Invoice).where(Invoice.id == kurulum.invoice_id))
+        # 🔴 MU-3C — fiş SIRASI ÖNEMLİ: `journal_lines` başlıktan CASCADE gelir,
+        # ama `posting_rules` ve `chart_of_accounts` FİŞ SİLİNMEDEN silinemez
+        # (`journal_lines.account_id` RESTRICT'tir).
+        await session.execute(
+            delete(JournalEntry).where(JournalEntry.source_type == JournalSourceType.payment)
+        )
+        await session.execute(
+            delete(PostingRule).where(PostingRule.source_type == JournalSourceType.payment)
+        )
+        await session.execute(
+            delete(ChartAccount).where(ChartAccount.id.in_(kurulum.chart_account_ids))
+        )
+        await session.execute(
+            delete(JournalEntryCounter).where(JournalEntryCounter.year == _DONEM[0])
+        )
+        await session.execute(
+            delete(AccountingPeriod)
+            .where(AccountingPeriod.year == _DONEM[0])
+            .where(AccountingPeriod.month == _DONEM[1])
+        )
         await session.execute(delete(BankAccount).where(BankAccount.id == kurulum.account_id))
         await session.execute(delete(User).where(User.id.in_(kurulum.actor_ids)))
         await session.execute(delete(Role).where(Role.id == kurulum.role_id))
