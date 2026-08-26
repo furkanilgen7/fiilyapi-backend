@@ -108,14 +108,25 @@ async def test_ILK_ADIM_pending_approval_FIS_YAZMAZ(db_session, donem, dort_tip,
     koşul yazılsaydı `draft → pending_approval` adımında da fiş kesilir ve
     ONAYLANMAMIŞ bir bordro mizana girerdi.
 
-    Bu test kurulumu `compute`suz kurar: `compute` dönemi kendiliğinden
-    `pending_approval`a taşıdığı için (T6) `draft` adımı aksi hâlde HİÇ
-    KOŞMAZDI ve kanca bu dalda ölçülmeden kalırdı.
+    🔴 **KURULUM SATIRLI OLMAK ZORUNDA — ilk yazımda DEĞİLDİ ve mutant SAĞ
+    KALDI.** Test önce `compute`suz koşuyordu; satır olmadığı için
+    `post_payroll_period` zaten `None` dönüyor ve kanca NEREYE bağlanırsa
+    bağlansın hiçbir şey yazılmıyordu. Yani iddia doğruydu ama HİÇBİR ŞEYİ
+    BEKÇİLEMİYORDU (ölçüldü: kancayı `if True:` yapan mutant 24/24 YEŞİL
+    geçti).
+
+    `compute` dönemi kendiliğinden `pending_approval`a taşır (T6), bu yüzden
+    "satırlı ama `draft`" hâli ELLE kurulur. Fixture'ların durumu doğrudan
+    yazması bu depoda yerleşik bir kurulum desenidir (`fatura_fabrikasi`).
     """
-    assert donem.status is PayrollPeriodStatus.draft
+    await service.compute_period(db_session, donem.id)
+    donem.status = PayrollPeriodStatus.draft
+    await db_session.flush()
+
     sonuc, _ = await service.approve_period(db_session, kaydeden, donem.id)
 
     assert sonuc.period_status is PayrollPeriodStatus.pending_approval
+    assert sonuc.approved > 0, "kurulumda onaylanacak satır YOK — bekçi yine kör olurdu"
     assert await bordro_fisi(db_session, donem.id) is None, (
         "ONAYLANMAMIŞ dönem fişlendi — kanca hedef duruma değil eyleme bağlanmış"
     )
@@ -280,3 +291,48 @@ def test_ROL_ADLARI_OTEKI_AILELERINKIYLE_CAKISMAZ() -> None:
     fatura = {rol for rol, _kod in INVOICE_POSTING_RULES}
     assert not (bordro & fatura)
     assert Decimal("0") == Decimal("0.00")  # ölçek eşitliği: sabitler kuruşlu yazılır
+
+
+async def test_FISLEME_YOLU_TAM_BIR_KEZ_CAGRILIR(
+    db_session, donem, dort_tip, kaydeden, monkeypatch
+) -> None:
+    """🔴 EKSİK BEKÇİ — MUTASYON TURUNDA BULUNDU (sahte-yeşilin 9. hâli).
+
+    İki mutant hiçbir testi kırmadan sağ kaldı ve ikisi de AYNI körlükten
+    besleniyordu: **`post_document` İDEMPOTANDIR.**
+
+    * kanca `if True:` yapıldı (her onay adımında koşar) → 24/24 YEŞİL;
+    * kanca `pay_period`e de eklendi → 24/24 YEŞİL.
+
+    İkincisinde dönemin CANLI fişi zaten vardır, çağrı idempotanlık dalına
+    düşer ve **SESSİZCE hiçbir şey yazmaz.** Fiş SAYAN her test yeşil kalır;
+    "yanlış kancanın bedeli bir hata değil bir SESSİZLİKTİR" tam olarak budur.
+
+    Sayının ölçemediğini ölçen tek şey ÇAĞRININ KENDİSİDİR: fişleme yolu
+    dönem başına TAM BİR KEZ ve YALNIZ `approved` hedefinde denenmelidir.
+
+    🔴 Yama `service.approvals`ın GÖRDÜĞÜ ada yapılır (`approvals.posting.
+    post_payroll_period`), `payroll.posting`e değil: modül nesnesi paylaşıldığı
+    için ikisi aynı yere düşer, ama niyet çağıranın yolunu ölçmektir.
+    """
+    from app.modules.payroll.service import approvals
+
+    cagrilar: list[str] = []
+    gercek = posting.post_payroll_period
+
+    async def izle(session, actor, period, lines, rates):
+        cagrilar.append(period.status.value)
+        return await gercek(session, actor, period, lines, rates)
+
+    monkeypatch.setattr(approvals.posting, "post_payroll_period", izle)
+
+    await service.compute_period(db_session, donem.id)
+    while donem.status is not PayrollPeriodStatus.approved:
+        await service.approve_period(db_session, kaydeden, donem.id)
+    await service.pay_period(db_session, donem.id)
+
+    assert cagrilar == [PayrollPeriodStatus.approved.value], (
+        "FİŞLEME YOLU yanlış sayıda/yerde denendi. Her fazladan çağrı bir ÇİFT "
+        "SAYIM ADAYIDIR ve idempotanlık onu SESSİZCE yutar — fiş sayan hiçbir "
+        f"test bunu göremez. çağrılar={cagrilar}"
+    )
