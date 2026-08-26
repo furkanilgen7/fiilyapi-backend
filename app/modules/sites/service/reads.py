@@ -4,6 +4,9 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+# BOLUM BOQ SAYACLARININ (`boq_item_count` · `budget`) TEK kaynagi (BLM-SAY):
+# `timesheet` ile ayni gerekce — `sites` kendi tahsis sorgusunu yazmaz.
+from app.modules.boq import counts as boq_counts
 from app.modules.projects.models import Project
 from app.modules.sites import repository
 from app.modules.sites.models import Section, Site
@@ -57,17 +60,24 @@ async def build_site_detail(
     gecer: okuma ve yazma ayni zarfi tasimazsa ekran kaydettikten sonra sayaci
     kaybeder."""
     site_counts = await timesheet_counts.by_site(session, [site.id])
-    section_counts = await timesheet_counts.by_section(session, [s.id for s in site.sections])
+    section_ids = [s.id for s in site.sections]
+    section_counts = await timesheet_counts.by_section(session, section_ids)
+    section_boq = await boq_counts.by_section(session, section_ids)
     # Milestone koleksiyonu SENKRON donusturucuye girmeden ONCE yuklenir
     # (gerekcesi `repository.ensure_milestones_loaded` docstring'inde).
     await repository.ensure_milestones_loaded(session, site.sections)
-    return to_detail(site, project, site_counts.get(site.id, 0), section_counts)
+    return to_detail(site, project, site_counts.get(site.id, 0), section_counts, section_boq)
 
 
 async def build_section_detail(session: AsyncSession, section: Section) -> SectionDetailResponse:
     section_counts = await timesheet_counts.by_section(session, [section.id])
+    section_boq = await boq_counts.by_section(session, [section.id])
     await repository.ensure_milestones_loaded(session, [section])
-    return to_section_detail(section, section_counts.get(section.id, 0))
+    return to_section_detail(
+        section,
+        section_counts.get(section.id, 0),
+        section_boq.get(section.id, boq_counts.EMPTY),
+    )
 
 
 async def get_site_detail(
@@ -82,11 +92,20 @@ async def list_sections_for_site(
 ) -> SectionListResponse:
     site, _ = await _visible_site(session, actor, site_id)
     sections = await repository.list_sections(session, site.id)
-    section_counts = await timesheet_counts.by_section(session, [s.id for s in sections])
+    section_ids = [s.id for s in sections]
+    section_counts = await timesheet_counts.by_section(session, section_ids)
+    section_boq = await boq_counts.by_section(session, section_ids)
     await repository.ensure_milestones_loaded(session, sections)
     return SectionListResponse(
         counts=_section_counts(sections),
-        items=[to_section(s, section_counts.get(s.id, 0)) for s in sections],
+        items=[
+            to_section(
+                s,
+                section_counts.get(s.id, 0),
+                section_boq.get(s.id, boq_counts.EMPTY),
+            )
+            for s in sections
+        ],
     )
 
 

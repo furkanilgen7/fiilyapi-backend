@@ -104,6 +104,11 @@ def test_section_response_carries_four_placeholders():
         boq_item_count=CountPlaceholder(pending_module="boq"),
         budget=MetricPlaceholder(pending_module="boq"),
         worker_count=CountPlaceholder(pending_module="timesheet"),
+        # BLM-SAY: kayitli iki kolon LISTE semasina tasindi — VARSAYILANLARI
+        # YOKTUR (yukaridaki P11 gerekcesi): dolduran taraf unutursa
+        # ValidationError patlar, sessizce `None` DOGMAZ.
+        planned_worker_count=None,
+        budget_amount=None,
         # P11 additive alanlari (spec §3): VARSAYILANLARI YOKTUR — alani
         # doldurmayi unutan bir donusturucu sessizce degil, ValidationError ile
         # patlamalidir; bu yuzden dogrudan kurulan her govde de onlari verir.

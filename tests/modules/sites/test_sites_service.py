@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import timedelta
+from decimal import Decimal
 
 import pytest
 
@@ -239,8 +240,17 @@ async def test_detail_and_section_placeholders(seeded_db, user_factory, project_
     assert detail.contract_amount.pending_module == "contracts"
     assert detail.contract_amount.available is False
     assert section.progress_pct.pending_module == "progress_payments"
+    assert section.progress_pct.available is False
+    # 🔴 BLM-SAY: BOQ ikilisi BAGLANDI. Tahsisi olmayan bolumde ikisi de
+    # OLCULMUS sifirdir (yer tutucu DEGIL) — `worker_count` emsalinin ayni.
+    # `CountPlaceholder` dolu hâlde `pending_module` TASIR, `MetricPlaceholder`
+    # TASIMAZ (P10 T3): iki zarf sinifinin kurallari FARKLIDIR.
+    assert section.boq_item_count.available is True
+    assert section.boq_item_count.count == 0
     assert section.boq_item_count.pending_module == "boq"
-    assert section.budget.pending_module == "boq"
+    assert section.budget.available is True
+    assert section.budget.value == Decimal("0.00")
+    assert section.budget.pending_module is None
     # T4: bolum sayaci da BAGLANDI — kaydi olmayan bolumde `available` true, sayi 0.
     assert section.worker_count.available is True
     assert section.worker_count.count == 0
