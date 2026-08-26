@@ -304,3 +304,106 @@ async def test_ODEME_damgasi_IKINCI_bir_fis_URETMEZ(seeded_db, user_factory):
     sonra = (await seeded_db.execute(select(func.count()).select_from(JournalEntry))).scalar_one()
 
     assert sonra == once, "ödeme damgası YENİ bir fiş üretti — çift sayım"
+
+
+# --------------------------------------------------------------------------- #
+# 🔴 İŞ 5 — TÜREV TUTARIN BAYATLAMASI: FİŞİN KENDİSİ SNAPSHOT'TIR
+# --------------------------------------------------------------------------- #
+
+
+async def test_SOZLESME_BEDELI_sonradan_degisse_de_FISIN_TUTARI_DONMUSTUR(seeded_db, user_factory):
+    """🔴 MK-2 kanonu: *türev para N çarpandan oluşuyorsa snapshot N'in HEPSİNİ
+    kapsar.*
+
+    ## Ölçülen bayatlama
+
+    Bu ailede para SAKLANMAZ (K3). Çarpanların bir kısmı donmuştur
+    (`contract_unit_price` · `coefficient` · `quantity` satırda, oranlar
+    başlıkta) — **ama avans mahsubu BAYATLAR** ve iki canlı girdisi vardır:
+
+    * `contract_amount` = `project_contracts.amount`, her okumada CANLI;
+    * `advance_recovered` = önceki hakedişlerin ZİNCİRLEME kümülatifi.
+
+    Deponun bu aile için MEVCUT bir snapshot deseni YOKTUR (ölçüldü: `net`,
+    `gross`, `advance_recovered` — hiçbirinin kolonu yok). Bu dilimde snapshot
+    **FİŞİN KENDİSİDİR** ve bu açıkça seçilmiştir: `journal_lines.debit/credit`
+    yazıldığı anda donar ve bir daha ASLA yeniden hesaplanmaz.
+
+    ## Bu test ne çakıyor
+
+    Sözleşme bedeli fişten SONRA düşürülür — avans tavanı daralır, yani hakediş
+    EKRANI yeni bir net gösterecektir. MİZAN ise onayın alındığı andaki gerçeği
+    göstermeye DEVAM ETMELİDİR.
+
+    🔴 Bu ayrışma bir kusur DEĞİL, iki yüzeyin FARKLI sorulara cevap vermesidir:
+    ekran *"bugün ne ödenmeli"*, defter *"o gün ne karara bağlandı"*. Fiş canlı
+    okusaydı geçmiş ayların mizanı bir sözleşme düzeltmesiyle SESSİZCE değişir
+    ve kapanmış bir dönem geriye dönük olarak yalan söylerdi.
+    """
+    from tests.modules.posting._mu3d import hesap_neti
+
+    await esleme_kur(seeded_db)
+    kullanici = await aktor(seeded_db, user_factory)
+    payment, contract, _project = await isveren_hakedisi(seeded_db, kullanici)
+    await isveren_transitions.perform(seeded_db, kullanici, payment.id, PaymentAction.approve)
+
+    fis = await canli_fis(seeded_db, JournalSourceType.progress_payment, payment.id)
+    assert await bacaklar(seeded_db, fis) == [
+        (KOD_ALICILAR, "45000.00", "0.00"),
+        (KOD_SATIS, "0.00", "45000.00"),
+    ]
+
+    # 🔴 SÖZLEŞME BEDELİ DEĞİŞİYOR: 5.000.000 → 10.000. Avans tavanı
+    #    5.000.000×%20 = 1.000.000'dan 10.000×%20 = 2.000'e DÜŞER, yani canlı
+    #    hesap artık 12.000 yerine 2.000 avans keser ve taban 55.000 olurdu.
+    contract.amount = Decimal("10000")
+    await seeded_db.flush()
+
+    # Canlı hesabın GERÇEKTEN değiştiğini çakar — değişmeseydi bu test hiçbir
+    # şey ölçmez, bir eşdeğer mutant gibi sessizce yeşil kalırdı.
+    from app.modules.progress_payments.posting import posting_base_for
+
+    assert posting_base_for(payment, contract.amount, Decimal("0")) == Decimal("55000.00"), (
+        "kurulum yanlış: sözleşme bedeli değişimi canlı tabanı OYNATMADI"
+    )
+
+    # 🔴 FİŞ DONMUŞ.
+    await seeded_db.refresh(fis)
+    assert await bacaklar(seeded_db, fis) == [
+        (KOD_ALICILAR, "45000.00", "0.00"),
+        (KOD_SATIS, "0.00", "45000.00"),
+    ], "FİŞ CANLI OKUYOR — geçmiş mizan bir sözleşme düzeltmesiyle DEĞİŞTİ"
+    assert await hesap_neti(seeded_db, KOD_ALICILAR) == Decimal("45000.00")
+
+
+async def test_KIRA_ailesinde_tutar_YAPISAL_OLARAK_bayatlamaz(seeded_db, user_factory):
+    """🟢 Kira hakedişi HİÇ bayatlamaz — kendi DONMUŞ kolonundan okur.
+
+    Envanterin *"hakedişlerde hiç para kolonu yok"* kaydı BU AİLE İÇİN
+    YANLIŞTIR: `equipment_rental_invoices.invoice_amount` bir kolondur ve
+    hiçbir canlı girdiye bağlı değildir. Bu test o ayrımı kayda geçirir —
+    ileride bir "tutarı satırlardan türet" refactor'ü bu aileyi de öteki
+    ikisinin durumuna düşürürse KIRMIZI verir.
+    """
+    await esleme_kur(seeded_db)
+    kullanici = await aktor(seeded_db, user_factory)
+    invoice, _s = await kira_hakedisi(seeded_db)
+    await rental_service.approve_invoice(seeded_db, kullanici, invoice.id)
+
+    fis = await canli_fis(seeded_db, JournalSourceType.equipment_rental_invoice, invoice.id)
+    once = await bacaklar(seeded_db, fis)
+
+    # Onaydan SONRA tutar düzeltilemez zaten (`EDIT_LOCKED_STATUSES`), ama
+    # kolon doğrudan oynatılsa bile FİŞ değişmemelidir.
+    invoice.invoice_amount = Decimal("1.00")
+    await seeded_db.flush()
+    await seeded_db.refresh(fis)
+
+    assert (
+        await bacaklar(seeded_db, fis)
+        == once
+        == [
+            (KOD_GIDER, "100000.00", "0.00"),
+            (KOD_SATICILAR, "0.00", "100000.00"),
+        ]
+    )
