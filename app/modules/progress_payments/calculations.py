@@ -113,6 +113,38 @@ def net_amount(gross: Decimal, vat: Decimal, advance: Decimal, retention: Decima
     return quantize2(gross + vat - advance - retention)
 
 
+def posting_base(gross: Decimal, advance: Decimal, retention: Decimal) -> Decimal:
+    """🔴 MU-3D — hakediş fişinin KDV'SİZ tabanı: `brüt − avans − teminat`.
+
+    ## Neden `net` DEĞİL
+
+    `net_amount` KDV'yi İÇERİR (`gross + vat − advance − retention`). Hakediş
+    fişi KDV'SİZDİR (kullanıcı kararı 2026-08-26) ve gerekçesi ölçülmüştür:
+    `accounting.vat_return` beyannameyi YALNIZ `invoices`tan türetir ve kaynak
+    süzgeci yoktur; hakedişe bir KDV bacağı yazılsaydı MU-3B'nin *"beyanname ==
+    yevmiye"* kimliği kuruş toleransı olmadan ve SESSİZCE bozulurdu. KDV yalnız
+    FATURADA doğar.
+
+    ## Neden `gross` DE DEĞİL
+
+    Bu büyüklük `invoicing.amounts`ın 4. adımıyla — yani `invoices.tax_base` ile
+    — BİREBİR AYNI şekildedir (`subtotal − advance_amount − retention_amount`).
+    Aynı olması ZORUNLUDUR ve İŞ 2'nin bütün mantığı buna dayanır: hakedişten
+    fatura kesildiğinde hakediş fişi STORNO edilir ve faturanın fişi aynı
+    hesaba AYNI tutarı yazar. Taban `gross` seçilseydi, storno ile faturanın
+    gider/hasılat bacağı `advance + retention` kadar AYRIŞIR ve mizan her
+    faturalanan hakedişte sessizce kayardı — hiçbir kolon farkı bunu ele
+    vermezdi (MU-3C kanonu: bakiye SAKLANMAZ).
+
+    🔴 Sonuç NEGATİF OLAMAZ: `advance` `gross`un yüzdesiyle ve kümülatif tavanla
+    sınırlıdır, `retention` da `gross`un yüzdesidir; ikisinin toplamı `gross`u
+    ancak `advance_pct + retainage_pct > 100` iken aşardı ve o oranlar DB'de
+    `0..100` ile sınırlıdır. Yine de fiş yazan taraf sıfır/negatif tabanı
+    FİŞLEMEZ (bacak `ck_journal_lines_single_side`ı ihlal ederdi).
+    """
+    return quantize2(gross - advance - retention)
+
+
 def gross_total(payment_lines: Iterable[LineLike]) -> Decimal:
     """Satır tutarlarının brüt toplamı — `line_total`'ın TEK toplama kopyası.
 

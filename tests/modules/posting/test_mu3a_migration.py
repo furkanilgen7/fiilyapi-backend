@@ -58,6 +58,13 @@ SOURCE_ENUM = "journal_source_type"
 RULE_TABLE = "posting_rules"
 
 #: 🔴 Üye SIRASI kilitlidir (`ALTER TYPE … ADD VALUE` SONA ekler).
+#:
+#: 🔴 Bu liste **MU-3A REVİZYONUNDAKİ DB hâlini** tarif eder, modelin BUGÜNKÜ
+#: hâlini DEĞİL (`_mu1_migration.EXPECTED_ENUM_LABELS` deseni). `a2d6b11efdcf`a
+#: çıkan bir veritabanında tip BEŞ üyelidir; altıncı üye
+#: (`equipment_rental_invoice`) MU-3D'nin `b7c8d9e0f1a2` migration'ıyla gelir.
+#: İkisi karıştırılırsa bu test, ölçtüğünü sandığı şeyi değil sonraki
+#: dilimlerin şemasını ölçmeye başlar.
 EXPECTED_LABELS = [
     "invoice",
     "payment",
@@ -210,9 +217,28 @@ async def test_tur_donusu_IKINCI_upgrade_de_gecer():
         await _drop_scratch_database(database)
 
 
-def test_MODEL_enum_uyeleri_MIGRATION_ile_AYNIDIR():
-    """İki liste ayrışırsa canlı ile test kümesi FARKLI kümeleri kabul ederdi."""
-    assert [uye.value for uye in JournalSourceType] == EXPECTED_LABELS
+#: MU-3A'dan SONRA eklenen üyeler — eklendikleri revizyon SIRASIYLA.
+#: Yeni bir aile fişlendiğinde buraya EKLENİR; eklenmezse aşağıdaki iddia
+#: kırılır ve üyenin bir migration'ı olduğu SORULUR.
+LATER_LABELS = [
+    "equipment_rental_invoice",  # MU-3D · b7c8d9e0f1a2
+]
+
+
+def test_MODEL_enum_uyeleri_MIGRATION_ZINCIRIYLE_AYNIDIR():
+    """🔴 Model = MU-3A tabanı + sonradan `ADD VALUE` ile eklenenler, SIRASIYLA.
+
+    Model doğrudan `EXPECTED_LABELS` ile karşılaştırılamaz: o liste MU-3A
+    revizyonundaki DB hâlidir ve MU-3D altıncı üyeyi eklemiştir. Ama
+    karşılaştırma BÜTÜNÜYLE de kaldırılamazdı — kaldırılsaydı modele eklenip
+    hiçbir migration'a yazılmayan bir üye canlıda `invalid input value for
+    enum` ile YALNIZ ÜRETİMDE patlardı.
+
+    🔴 SIRA da iddianın parçasıdır: `ALTER TYPE … ADD VALUE` üyeyi DAİMA SONA
+    ekler ve `enum_range` o sırayı döner. Model sınıfında üye araya sokulsaydı
+    iki katman AYRIŞIR ve `enum_range`e güvenen her ölçüm yanılırdı.
+    """
+    assert [uye.value for uye in JournalSourceType] == EXPECTED_LABELS + LATER_LABELS
 
 
 # --------------------------------------------------------------------------- #

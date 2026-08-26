@@ -434,3 +434,38 @@ async def gorunmeyen_gunluk(
 ) -> uuid.UUID:
     entry = await gunluk_fabrikasi(gorunmeyen_santiye, admin_kullanicisi)
     return entry.id
+
+
+@pytest.fixture(autouse=True)
+async def _mu3d_esleme(seeded_db: AsyncSession) -> None:
+    """🔴 MU-3D — İKİ hakediş ailesinin `posting_rules` eşlemesi, **AUTOUSE**.
+
+    Bu paket hakediş ONAYLARINI koşturur (`test_subcontractor_diary_stamp.py`
+    ve `test_employer_diary_stamp.py`, günlükten gelen miktarın onayla
+    DONDUĞUNU ölçerler). MU-3D'den sonra onay bir YEVMİYE FİŞİ yazar ve eşleme
+    yoksa **422** verir — yani bu dosyalar fişleme yüzünden kırmızı olurdu.
+
+    Eşleme burada `seeded_db`nin rol matrisi gibi bir ALTYAPI ÖN KOŞULUDUR;
+    bu paketin ölçtüğü kural DAMGANIN DONMASIDIR, fişleme değil.
+
+    🔴 Fail-closed dalı MASKELENMEZ: eşlemesiz onayın **422** verdiği ve
+    geçişin GERİ ALINDIĞI `tests/modules/posting/test_mu3d_hakedis_fisleme.py::
+    test_ESLEME_YOKSA_422_ve_ONAY_da_GERI_ALINIR`da, autouse'un ULAŞMADIĞI
+    yerde ölçülür.
+
+    🔴 İKİ aile birden kurulur: bu paket hem işveren hem taşeron günlüğünü
+    ölçer ve yalnız biri kurulsaydı öteki dosya sessizce kırmızı kalırdı.
+    """
+    from app.modules.accounting.models import JournalSourceType
+    from app.modules.progress_payments.posting import PROGRESS_PAYMENT_POSTING_RULES
+    from app.modules.subcontractor_progress_payments.posting import (
+        SUBCONTRACTOR_POSTING_RULES,
+    )
+    from tests._hakedis_esleme import esleme_kur
+
+    await esleme_kur(seeded_db, JournalSourceType.progress_payment, PROGRESS_PAYMENT_POSTING_RULES)
+    await esleme_kur(
+        seeded_db,
+        JournalSourceType.subcontractor_progress_payment,
+        SUBCONTRACTOR_POSTING_RULES,
+    )

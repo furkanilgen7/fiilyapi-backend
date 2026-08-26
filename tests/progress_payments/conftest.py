@@ -17,6 +17,9 @@ dizindeki testler sessizce başka bir fixture alırdı. Bölme öncesi ve sonras
 toplanan test sayısı birebir aynıdır (6140).
 """
 
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from ._fixtures_base import (  # noqa: F401
     _auth,
     _dagit,
@@ -79,3 +82,44 @@ from ._fixtures_summary import (  # noqa: F401
     tavana_dayanan_iki_proje,
     zincir_onaycilari,
 )
+
+
+@pytest.fixture(autouse=True)
+async def _mu3d_esleme(seeded_db: AsyncSession) -> None:
+    """🔴 MU-3D — işveren hakedişi `posting_rules` eşlemesi, **AUTOUSE**.
+
+    ## Neden autouse
+
+    MU-3D'den sonra `approve` bir YEVMİYE FİŞİ yazar ve eşleme yoksa **422**
+    verir. Bu paketteki testlerin ölçtüğü şey geçiş tablosu · kota bekçisi ·
+    denetim günlüğü · onay zinciridir — fişleme DEĞİL. Eşleme onlar için
+    `seeded_db`nin rol matrisi gibi bir ALTYAPI ÖN KOŞULUDUR; her testin
+    imzasına elle eklenseydi, eklenmeyi unutulan bir test kuralı değil
+    kurulumu gösteren bir kırmızı verirdi.
+
+    ## 🔴 Bu, fail-closed dalını MASKELEMEZ
+
+    Eşlemesiz onayın **422** verdiği ve geçişin GERİ ALINDIĞI ayrı bir pakette,
+    autouse'un ULAŞMADIĞI yerde ölçülür:
+    `tests/modules/posting/test_mu3d_hakedis_fisleme.py::
+    test_ESLEME_YOKSA_422_ve_ONAY_da_GERI_ALINIR`. O test bu fixture'ı
+    BİLEREK görmez.
+
+    ## 🔴 `test_concurrency.py` BU FIXTURE'I KAPATIR
+
+    O dosya `seeded_db`yi BİLEREK KULLANMAZ: iki bağımsız bağlantı açar ve
+    GERÇEKTEN COMMIT eder (kilit davranışı ancak öyle ölçülür). Autouse onu
+    oraya da zorla soktuğunda `seed_reference_data`nın commit EDİLMEMİŞ
+    `modules` satırları ile testin kendi commit'i aynı benzersiz anahtarda
+    çakıştı ve tam küme koşusu bir DEADLOCK'ta ASILI KALDI (ölçüldü:
+    `pg_stat_activity`de `wait_event_type='Lock'`, `transactionid`).
+
+    Çare pytest'in kendi mekanizmasıdır: o dosya AYNI ADLA boş bir fixture
+    tanımlar ve bunu GÖLGELER. Eşlemeye zaten ihtiyacı yoktur — satırsız
+    hakedişle koşar, taban sıfırdır ve fiş HİÇ AÇILMAZ.
+    """
+    from app.modules.accounting.models import JournalSourceType
+    from app.modules.progress_payments.posting import PROGRESS_PAYMENT_POSTING_RULES
+    from tests._hakedis_esleme import esleme_kur
+
+    await esleme_kur(seeded_db, JournalSourceType.progress_payment, PROGRESS_PAYMENT_POSTING_RULES)

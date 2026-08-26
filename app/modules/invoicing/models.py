@@ -129,6 +129,69 @@ class InvoicePaymentMethod(str, enum.Enum):
     credit_card = "credit_card"  # Kredi Karti
 
 
+#: 🔴 MU-3D — KAYNAK TEKİLLİĞİNİN KAPSAMI.
+#:
+#: ## "İPTAL EDİLMİŞ FATURA" BU ÜRÜNDE BİR DURUM DEĞİLDİR (ÖLÇÜLDÜ)
+#:
+#: `InvoiceStatus`ın ALTI üyesinin (`draft`/`sent`/`collected`/`pending`/
+#: `approved`/`disputed`) HİÇBİRİ iptal anlamına gelmez ve sınıfın kendi
+#: docstring'i bunu açıkça yazar: *"İptal/iade geçişi ve `approved` sonrası
+#: ÖDEME durumu YOKTUR"*. `transitions.py` de aynı şeyi söyler: `collected`/
+#: `approved`/`disputed` TERMİNALDİR, hiçbir çiftte KAYNAK değillerdir. Yani
+#: kesilmiş bir fatura ne geri alınabilir ne silinebilir (silme YALNIZ `draft`
+#: içindir, `DELETABLE_STATUS`).
+#:
+#: `disputed` de bir iptal DEĞİLDİR: gelen faturaya İTİRAZDIR, satır ayakta
+#: kalır ve karşı tarafın belgesi geçerliliğini sürdürür.
+#:
+#: ## Geri almanın TEK modeli: `document_type='refund'`
+#:
+#: Bu üründe bir faturayı geri alan tek belge AYRI bir faturadır — İade
+#: Faturası (`InvoiceDocumentType.refund`, FK:136-139 kapalı kümesi). Bu yüzden
+#: kaynak tekilliğinin süzgeci DURUMA değil **BELGE TİPİNE** bakar: bir
+#: hakedişe kesilmiş faturanın iadesi MEŞRUDUR ve aynı kaynağa bağlanabilmelidir,
+#: ama İKİNCİ BİR ASIL FATURA bağlanamaz.
+#:
+#: 🔴 Metin ELLE YAZILMAZ, enum üyesinden TÜRETİLİR (`LIVE_SOURCE_WHERE`
+#: kanonu): elle yazılsaydı üye yeniden adlandırıldığında süzgeç sessizce
+#: HİÇBİR SATIRI süzmez ve tekillik iadeleri de kapsayarak FAZLA daralırdı —
+#: yani meşru bir iade faturası kesilemez hâle gelirdi ve kusur ancak ilk
+#: iadede, canlıda görünürdü.
+BINDING_SOURCE_WHERE = f"document_type <> '{InvoiceDocumentType.refund.value}'"
+
+#: 🔴 MU-3D — kaynak FK'si başına TEKİLLİK indeksleri: `(kolon adı, indeks adı)`.
+#:
+#: ## Neden GEREKLİ (ölçülmüş açık)
+#:
+#: MU-3D öncesi `ck_invoices_single_source` YALNIZCA *"bir faturada en fazla BİR
+#: kaynak kolonu dolu olsun"* diyordu — *"bir kaynağa en fazla BİR fatura
+#: bağlansın"* DEMİYORDU. Aynı `progress_payment_id` sınırsız sayıda faturaya
+#: yazılabiliyordu ve bunu engelleyen HİÇBİR ŞEY yoktu: servis katmanında da
+#: (`_assert_references` yalnız VARLIK ve KAPSAM bakar) bir sayım yoktu.
+#:
+#: Bedeli bir çift sayımdır ve İKİ yüzeyde birden görünür:
+#:   · `vat_return` aynı hakedişin KDV'sini İKİ KEZ beyan eder (beyanname
+#:     yalnız `invoices`tan türer ve kaynak FK'sini HİÇ görmez);
+#:   · MU-3D'nin storno kuralı ikinci faturada çalışacak bir fiş BULAMAZ —
+#:     hakediş fişi zaten ilk faturada stornolanmıştır — ve ikinci fatura
+#:     gideri/hasılatı İKİNCİ KEZ deftere yazar.
+#:
+#: ## 🔴 `UniqueConstraint` DEĞİL `Index(unique=True)`
+#:
+#: PG'de bir UNIQUE KISITI kısmi olamaz (`WHERE` kabul etmez); `WHERE`li
+#: tekillik YALNIZ `CREATE UNIQUE INDEX` ile kurulur. `NOT VALID` de bir seçenek
+#: değildir: o kip YALNIZCA `CHECK` ve `FOREIGN KEY` içindir.
+#:
+#: 🔴 NULL'lar PG'de ayrıktır (`NULLS DISTINCT` varsayılanı) → kaynağa
+#: BAĞLANMAMIŞ faturalar (çoğunluk) bu indekslerden HİÇ ETKİLENMEZ.
+SOURCE_UNIQUE_INDEXES: tuple[tuple[str, str], ...] = (
+    ("progress_payment_id", "uq_invoices_progress_payment"),
+    ("subcontractor_progress_payment_id", "uq_invoices_subcontractor_progress_payment"),
+    ("equipment_rental_invoice_id", "uq_invoices_equipment_rental_invoice"),
+    ("purchase_order_id", "uq_invoices_purchase_order"),
+)
+
+
 def _dolu_sayisi(*kolonlar: str) -> str:
     """`en fazla biri dolu` CHECK'inin SQL metnini uretir.
 
@@ -207,6 +270,14 @@ class Invoice(Base):
             name="ck_invoices_amounts_non_negative",
         ),
         CheckConstraint(_ORAN_CHECK, name="ck_invoices_rates_percentage"),
+        # 🔴 MU-3D — KAYNAK BAŞINA TEK ASIL FATURA. Gerekçe ve neden
+        # `UniqueConstraint` DEĞİL: `SOURCE_UNIQUE_INDEXES` sabitinin yanında.
+        # Demetten ÜRETİLİR: elle dört kez yazılsaydı beşinci bir kaynak kolonu
+        # eklendiğinde biri unutulur ve açık YALNIZ o kolonda kalırdı.
+        *(
+            Index(_ad, _kolon, unique=True, postgresql_where=text(BINDING_SOURCE_WHERE))
+            for _kolon, _ad in SOURCE_UNIQUE_INDEXES
+        ),
         # FK'ler otomatik indeks URETMEZ; liste suzgecleri bu sutunlardan gecer.
         Index("ix_invoices_issue_date", "issue_date"),
         Index("ix_invoices_project_id", "project_id"),

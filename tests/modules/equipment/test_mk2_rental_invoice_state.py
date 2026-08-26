@@ -101,7 +101,10 @@ async def akis_faturasi(
 
 
 async def test_K5_ileri_zincir_ADIM_ATLAMAZ(
-    client: AsyncClient, admin_headers: dict[str, str], akis_faturasi: dict
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    akis_faturasi: dict,
+    kira_eslemesi,
 ) -> None:
     """`draft → pending_verification → approved`; her `approve` TEK adımdır."""
     resp = await client.post(
@@ -142,7 +145,10 @@ async def test_K5_dogrulama_bekleyen_fatura_ODENEMEZ(
 
 
 async def test_K5_odenmis_fatura_IKINCI_KEZ_odenemez(
-    client: AsyncClient, admin_headers: dict[str, str], akis_faturasi: dict
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    akis_faturasi: dict,
+    kira_eslemesi,
 ) -> None:
     """🔴 `paid` bir UÇ DAMGADIR: ikinci çağrı 409 (çift ödeme kapısı)."""
     await _durum_ilerlet(client, admin_headers, akis_faturasi["id"], 2)
@@ -159,7 +165,10 @@ async def test_K5_odenmis_fatura_IKINCI_KEZ_odenemez(
 
 
 async def test_K5_onaylanmis_fatura_TEKRAR_onaylanamaz(
-    client: AsyncClient, admin_headers: dict[str, str], akis_faturasi: dict
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    akis_faturasi: dict,
+    kira_eslemesi,
 ) -> None:
     """`approved`ın ileri komşusu `paid`tir ve onun KENDİ ucu vardır: `approve`
     ikinci kez basıldığında ödeme damgası VURULMAZ, 409 döner."""
@@ -171,7 +180,10 @@ async def test_K5_onaylanmis_fatura_TEKRAR_onaylanamaz(
 
 
 async def test_K5_odenmis_fatura_ONAYLANAMAZ(
-    client: AsyncClient, admin_headers: dict[str, str], akis_faturasi: dict
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    akis_faturasi: dict,
+    kira_eslemesi,
 ) -> None:
     await _durum_ilerlet(client, admin_headers, akis_faturasi["id"], 2)
     await client.post(
@@ -184,7 +196,10 @@ async def test_K5_odenmis_fatura_ONAYLANAMAZ(
 
 
 async def test_K5_red_onayi_DOGRULAMA_BEKLIYORA_geri_alir(
-    client: AsyncClient, admin_headers: dict[str, str], akis_faturasi: dict
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    akis_faturasi: dict,
+    kira_eslemesi,
 ) -> None:
     """🔴 Ayrı bir `rejected` durumu YOKTUR: red `approved → pending_verification`
     geri geçişidir ve fatura yeniden DÜZENLENEBİLİR hâle gelir."""
@@ -215,7 +230,10 @@ async def test_K5_taslak_fatura_REDDEDILEMEZ(
 
 
 async def test_K5_odenmis_fatura_REDDEDILEMEZ(
-    client: AsyncClient, admin_headers: dict[str, str], akis_faturasi: dict
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    akis_faturasi: dict,
+    kira_eslemesi,
 ) -> None:
     """Banka çıkışı olmuş bir kaydı geri sarmak, kayıt ile para hareketi
     arasındaki bağı koparırdı."""
@@ -230,7 +248,10 @@ async def test_K5_odenmis_fatura_REDDEDILEMEZ(
 
 
 async def test_K5_onaylanmis_faturada_BASLIK_PATCHi_409(
-    client: AsyncClient, admin_headers: dict[str, str], akis_faturasi: dict
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    akis_faturasi: dict,
+    kira_eslemesi,
 ) -> None:
     await _durum_ilerlet(client, admin_headers, akis_faturasi["id"], 2)
     resp = await client.patch(
@@ -242,7 +263,10 @@ async def test_K5_onaylanmis_faturada_BASLIK_PATCHi_409(
 
 
 async def test_K5_onaylanmis_faturada_SATIR_PATCHi_409(
-    client: AsyncClient, admin_headers: dict[str, str], akis_faturasi: dict
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    akis_faturasi: dict,
+    kira_eslemesi,
 ) -> None:
     """🔴 İK-3 S5 emsali: `approved`ta HİÇBİR ŞEY düzenlenemez — satır dahil.
 
@@ -260,7 +284,10 @@ async def test_K5_onaylanmis_faturada_SATIR_PATCHi_409(
 
 
 async def test_K5_onaylanmis_faturada_SATIR_SILME_409(
-    client: AsyncClient, admin_headers: dict[str, str], akis_faturasi: dict
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    akis_faturasi: dict,
+    kira_eslemesi,
 ) -> None:
     await _durum_ilerlet(client, admin_headers, akis_faturasi["id"], 2)
     resp = await client.delete(

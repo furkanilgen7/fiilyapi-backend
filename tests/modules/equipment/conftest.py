@@ -21,6 +21,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.accounting.models import ChartAccount
 from app.modules.equipment.models import Equipment, EquipmentCategory, EquipmentStatus
 from app.modules.projects.models import Project
 from app.modules.sites.models import Site
@@ -150,3 +151,54 @@ def ekipman_fabrikasi(seeded_db: AsyncSession):
         return equipment
 
     return _create
+
+
+@pytest.fixture
+async def kira_eslemesi(seeded_db: AsyncSession) -> dict[str, ChartAccount]:
+    """🔴 MU-3D — kira hakedişi ailesinin `posting_rules` ÜRÜN eşlemesi.
+
+    Canlıda bu satırları `a4b5c6d7e8f9` migration'ı tohumlar; test kümesi
+    migration koşmaz (`Base.metadata.create_all`), bu yüzden faturayı
+    `approved`a taşıyan HER test onu kurmak zorundadır. Eksik olduğunda
+    `/approve` **422** verir ve onay HİÇ GERÇEKLEŞMEZ — fail-closed olan ve
+    olması gereken taraf budur (`test_mu3d_hakedis_fisleme.py` o dalı BİLEREK
+    bu fixture'sız ölçer).
+
+    🔴 Hesabın TÜRÜ elle yazılmaz, TDHP tohumundan (`chart_seed_data`) okunur:
+    elle yazılsaydı `740`ı `revenue` sayan bir kurulum `balance.SIGN`ın
+    işaretini sessizce ters çevirir ve mutabakat testi yanlış bir büyüklükle
+    tutardı.
+
+    Eşleme `rental_posting.RENTAL_POSTING_RULES`ten kurulur: testte elle
+    yazılsaydı üründeki demet bozulduğunda bu kurulum yeşil kalırdı.
+    """
+    from app.modules.accounting.chart_seed_data import CHART_ACCOUNTS
+    from app.modules.accounting.models import JournalSourceType
+    from app.modules.equipment.rental_posting import RENTAL_POSTING_RULES
+    from app.modules.posting.models import PostingRule
+
+    tohum = {satir.code: satir for satir in CHART_ACCOUNTS}
+    hesaplar: dict[str, ChartAccount] = {}
+    for _role_key, kod in RENTAL_POSTING_RULES:
+        if kod in hesaplar:
+            continue
+        kart = tohum[kod]
+        hesap = ChartAccount(
+            code=kart.code,
+            name=kart.name,
+            account_type=kart.account_type,
+            is_contra=kart.is_contra,
+        )
+        seeded_db.add(hesap)
+        await seeded_db.flush()
+        hesaplar[kod] = hesap
+    for role_key, kod in RENTAL_POSTING_RULES:
+        seeded_db.add(
+            PostingRule(
+                source_type=JournalSourceType.equipment_rental_invoice,
+                role_key=role_key,
+                account_id=hesaplar[kod].id,
+            )
+        )
+    await seeded_db.flush()
+    return hesaplar

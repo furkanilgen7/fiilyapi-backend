@@ -268,9 +268,9 @@ class JournalSourceType(str, enum.Enum):
 
     * **`purchase_order` / stok hareketi** — KARAR-7: satınalma ve stok fiş
       ATMAZ. Stokta değerleme yöntemi yoktur, sarf fişinin tutarı hesaplanamaz.
-    * **`equipment_rental_invoice`** — MK-2'nin kira hakedişi bir belgedir ama
-      MU-3B/C/D/E kapsamında ADI GEÇMEZ; üye ICAT EDILMEZ, fişlendiği dilimde
-      `ALTER TYPE` ile eklenir.
+    * ~~`equipment_rental_invoice`~~ — **MU-3D'de EKLENDİ** (`b7c8d9e0f1a2`).
+      MU-3A'da "üye ICAT EDILMEZ, fişlendiği dilimde `ALTER TYPE` ile eklenir"
+      diye bırakılmıştı; fişlendiği dilim budur.
 
     Üye SIRASI kilitlidir: `ALTER TYPE … ADD VALUE` üyeyi SONA ekler ve
     `enum_range` o sırayı döner (migration testi bunu ölçer).
@@ -281,6 +281,10 @@ class JournalSourceType(str, enum.Enum):
     payroll_period = "payroll_period"  # `payroll_periods` — bordro DÖNEM bazlı fişlenir
     progress_payment = "progress_payment"  # `progress_payments` (işveren hakedişi)
     subcontractor_progress_payment = "subcontractor_progress_payment"
+    # 🔴 MU-3D — `equipment_rental_invoices` (MK-2 kira hakedişi). SONA eklendi:
+    # `ALTER TYPE … ADD VALUE` üyeyi daima sona koyar ve `enum_range` o sırayı
+    # döner; migration testi sırayı KİLİTLER.
+    equipment_rental_invoice = "equipment_rental_invoice"
 
 
 #: 🔴 MU-3A — kaynak çifti BÜTÜNDÜR: ya İKİSİ de dolu (otomatik fiş) ya İKİSİ de

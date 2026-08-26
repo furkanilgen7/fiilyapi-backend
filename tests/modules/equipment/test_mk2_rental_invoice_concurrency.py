@@ -72,6 +72,48 @@ class _Kurulum:
         self.role_id = role_id
 
 
+async def _eslemeyi_kur(session) -> None:
+    """MU-3D kira eşlemesi — hesap TÜRÜ TDHP tohumundan okunur, elle YAZILMAZ.
+
+    Bu dosya kendi oturumunu açıp COMMIT ettiği için `conftest`in
+    `kira_eslemesi` fixture'ı burada KULLANILAMAZ (o `seeded_db` üzerinde
+    çalışır ve bu testin gördüğü transaction'a düşmez).
+    """
+    from app.modules.accounting.chart_seed_data import CHART_ACCOUNTS
+    from app.modules.accounting.models import ChartAccount, JournalSourceType
+    from app.modules.equipment.rental_posting import RENTAL_POSTING_RULES
+    from app.modules.posting.models import PostingRule
+
+    tohum = {satir.code: satir for satir in CHART_ACCOUNTS}
+    hesaplar: dict[str, uuid.UUID] = {}
+    for _rol, kod in RENTAL_POSTING_RULES:
+        if kod in hesaplar:
+            continue
+        mevcut = (
+            await session.execute(select(ChartAccount).where(ChartAccount.code == kod))
+        ).scalar_one_or_none()
+        if mevcut is None:
+            kart = tohum[kod]
+            mevcut = ChartAccount(
+                code=kart.code,
+                name=kart.name,
+                account_type=kart.account_type,
+                is_contra=kart.is_contra,
+            )
+            session.add(mevcut)
+            await session.flush()
+        hesaplar[kod] = mevcut.id
+    for rol, kod in RENTAL_POSTING_RULES:
+        session.add(
+            PostingRule(
+                source_type=JournalSourceType.equipment_rental_invoice,
+                role_key=rol,
+                account_id=hesaplar[kod],
+            )
+        )
+    await session.flush()
+
+
 async def _kur(*, status: RentalInvoiceStatus) -> _Kurulum:
     async with _SessionFactory() as session:
         role = Role(key=_ROL_ANAHTARI, name="Kira Hakedişi Eşzamanlılık Rolü")
@@ -89,6 +131,10 @@ async def _kur(*, status: RentalInvoiceStatus) -> _Kurulum:
             status=status,
         )
         session.add(invoice)
+        # 🔴 MU-3D — `approve_invoice` artık FİŞ YAZAR ve eşlemesiz **422** verir
+        #    (fail-closed). Eşleme kurulmasaydı bu dosya kilidi değil eksik
+        #    eşlemeyi ölçen bir kırmızı gösterirdi.
+        await _eslemeyi_kur(session)
         aktorler = [
             User(
                 email=eposta,
@@ -126,6 +172,57 @@ async def _gorevleri_bosalt(*gorevler: asyncio.Task | None) -> None:
             await gorev
 
 
+async def _fisleri_temizle(session, invoice_id: uuid.UUID) -> None:
+    """MU-3D'nin yazdığı fişleri, kuralları ve hesapları düşürür.
+
+    Bu dosya COMMIT ettiği için kalıntı bırakırsa sonraki koşu
+    `uq_chart_of_accounts_code`a çarpardı.
+    """
+    from app.modules.accounting.models import (
+        ChartAccount,
+        JournalEntry,
+        JournalLine,
+        JournalSourceType,
+    )
+    from app.modules.equipment.rental_posting import RENTAL_POSTING_RULES
+    from app.modules.posting.models import PostingRule
+
+    fis_idleri = (
+        (
+            await session.execute(
+                select(JournalEntry.id).where(
+                    JournalEntry.source_type == JournalSourceType.equipment_rental_invoice,
+                    JournalEntry.source_id == invoice_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # Storno fişleri orijinale `reversal_of_id` ile bağlıdır (RESTRICT).
+    if fis_idleri:
+        storno_idleri = (
+            (
+                await session.execute(
+                    select(JournalEntry.id).where(JournalEntry.reversal_of_id.in_(fis_idleri))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        hepsi = [*storno_idleri, *fis_idleri]
+        await session.execute(delete(JournalLine).where(JournalLine.entry_id.in_(hepsi)))
+        for fis_id in hepsi:
+            await session.execute(delete(JournalEntry).where(JournalEntry.id == fis_id))
+    kodlar = sorted({kod for _rol, kod in RENTAL_POSTING_RULES})
+    await session.execute(
+        delete(PostingRule).where(
+            PostingRule.source_type == JournalSourceType.equipment_rental_invoice
+        )
+    )
+    await session.execute(delete(ChartAccount).where(ChartAccount.code.in_(kodlar)))
+
+
 async def _temizle(kurulum: _Kurulum) -> None:
     async with _SessionFactory() as session:
         await session.execute(
@@ -136,6 +233,9 @@ async def _temizle(kurulum: _Kurulum) -> None:
         await session.execute(
             delete(EquipmentRentalInvoice).where(EquipmentRentalInvoice.id == kurulum.invoice_id)
         )
+        # 🔴 MU-3D — fiş ve satırları ÖNCE düşer: `journal_lines.account_id`
+        #    RESTRICT'tir, hesaplar ondan sonra silinebilir.
+        await _fisleri_temizle(session, kurulum.invoice_id)
         await session.execute(delete(Supplier).where(Supplier.id == kurulum.supplier_id))
         await session.execute(delete(User).where(User.id.in_(kurulum.actor_ids)))
         await session.execute(delete(Role).where(Role.id == kurulum.role_id))
