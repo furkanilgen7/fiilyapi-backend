@@ -111,6 +111,16 @@ class PostingOutcome:
     Çağıran (MU-3B/C/D/E) denetim günlüğüne "fiş kesildi" satırını YALNIZ
     `created=True` iken yazmalıdır; yoksa her yeniden deneme mali izde yeni bir
     fiş kesilmiş gibi görünür ve denetim, olmayan bir işi anlatırdı.
+
+    🔴 **`created=False` "fişli" DEMEK DEĞİLDİR — `entry.status` OKUNMALIDIR.**
+    Bir belge fişlenip STORNOLANIRSA orijinal fiş `reversed` durumunda ayakta
+    kalır ve `uq_journal_entries_source` slotunu HÂLÂ tutar; yeniden onay
+    `created=False` + `status=reversed` döndürür. Mali iz NETLENMİŞTİR (posted
+    + reversed = 0), yani belge fiilen FİŞSİZDİR. Bu, kısıtın doğrudan sonucudur
+    ve fail-closed olan taraftır (alternatifi aynı belgeye N fiş açardı), ama
+    MU-3B için AÇIK BİR KARARDIR. Bekçisi
+    `tests/modules/posting/test_mu3a_post_document.py::
+    test_STORNOLANMIS_belge_YENIDEN_fislenemez_MEVCUDU_doner`.
     """
 
     entry: JournalEntry
