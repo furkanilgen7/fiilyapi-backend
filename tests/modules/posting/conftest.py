@@ -55,7 +55,7 @@ def kural_fabrikasi(seeded_db: AsyncSession):
 
 
 @pytest.fixture
-async def temsili_esleme(hesap_fabrikasi, kural_fabrikasi):  # noqa: ANN001
+async def temsili_esleme(hesap_fabrikasi, kural_fabrikasi):  # noqa: ANN001, F811
     """KARAR-1 + KARAR-2'nin temsilî eşlemesi: `740` borç · `320` alacak.
 
     Kodlar `chart_seed_data`daki TDHP kodlarıyla aynıdır ama hesaplar burada

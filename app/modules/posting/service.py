@@ -66,8 +66,8 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.accounting import numbering, periods_service, service as accounting_service
-from app.modules.accounting import validation
+from app.modules.accounting import numbering, periods_service, validation
+from app.modules.accounting import service as accounting_service
 from app.modules.accounting.models import (
     ChartAccount,
     JournalEntry,

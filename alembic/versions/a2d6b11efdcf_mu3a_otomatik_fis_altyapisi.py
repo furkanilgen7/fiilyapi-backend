@@ -111,8 +111,18 @@ def upgrade() -> None:
         sa.Column("source_type", kaynak_enum, nullable=False),
         sa.Column("role_key", sa.String(40), nullable=False),
         sa.Column("account_id", postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
         # RESTRICT: eşlemesi olan hesap SİLİNEMEZ (`journal_lines.account_id` deseni).
         sa.ForeignKeyConstraint(
             ["account_id"], ["chart_of_accounts.id"], ondelete="RESTRICT"

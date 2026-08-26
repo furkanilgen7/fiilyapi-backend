@@ -130,8 +130,12 @@ async def _yaris_ortami():  # noqa: ANN201
             )
             kurulum.add(user)
 
-            gider = ChartAccount(code="740", name="Yarış Gider", account_type=ChartAccountType.expense)
-            cari = ChartAccount(code="320", name="Yarış Satıcı", account_type=ChartAccountType.liability)
+            gider = ChartAccount(
+                code="740", name="Yarış Gider", account_type=ChartAccountType.expense
+            )
+            cari = ChartAccount(
+                code="320", name="Yarış Satıcı", account_type=ChartAccountType.liability
+            )
             kurulum.add_all([gider, cari])
             await kurulum.flush()
             kurulum.add_all(
