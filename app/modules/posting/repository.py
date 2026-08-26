@@ -5,7 +5,12 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.accounting.models import ChartAccount, JournalEntry, JournalSourceType
+from app.modules.accounting.models import (
+    ChartAccount,
+    JournalEntry,
+    JournalEntryStatus,
+    JournalSourceType,
+)
 from app.modules.posting.models import PostingRule
 
 __all__ = ["entry_for_source", "lock_source", "rules_for"]
@@ -16,6 +21,13 @@ __all__ = ["entry_for_source", "lock_source", "rules_for"]
 #: Değer keyfidir ve DEĞİŞMEMELİDİR: değişirse eski ve yeni kod aynı belgeyi
 #: AYRI kilitlerle korur ve deploy penceresinde yarış yeniden açılır.
 POSTING_LOCK_KEY = 30301
+
+#: 🔴 "İPTAL EDİLMİŞ" fişin TEK tanımı — `models.LIVE_SOURCE_WHERE` ile AYNI
+#: enum üyesinden okunur. İki yerde ayrı yazılsaydı Python süzgeci ile SQL
+#: indeksinin koşulu bir gün ayrışır ve `post_document` DB'nin izin verdiği
+#: fişi yazmayı reddederdi (ya da tersi: `scalar_one_or_none` iki satır bulup
+#: patlardı).
+CANCELLED_STATUS = JournalEntryStatus.reversed
 
 
 async def lock_source(
@@ -54,7 +66,18 @@ async def lock_source(
 async def entry_for_source(
     session: AsyncSession, source_type: JournalSourceType, source_id: uuid.UUID
 ) -> JournalEntry | None:
-    """*"Bu belge fişlendi mi?"* — MU-3A'dan önce SORULAMAYAN soru.
+    """*"Bu belgenin CANLI fişi var mı?"* — MU-3A'dan önce SORULAMAYAN soru.
+
+    🔴 MU-3B — SÜZGEÇ `uq_journal_entries_source`un KISMİ KOŞULUYLA AYNI
+    KÜMEYİ tarif eder ve etmek ZORUNDADIR: burada `reversed` fişler süzülmezse
+    servis "fişli" der, DB indeksi ise yeni fişe İZİN VERİR — iki katman
+    ayrışır ve `post_document` stornodan sonra hiç yazamazdı. Ayrıştıklarını
+    hiçbir kolon farkı ele vermezdi; bekçisi
+    `tests/modules/posting/test_mu3b_repost.py`.
+
+    🔴 `scalar_one_or_none()` KORUNUR ve bu bir iddiadır: süzgeçten sonra en
+    fazla BİR satır kalabilir (indeks bunu garanti eder). İkinci bir canlı fiş
+    belirirse sorgu SESSİZCE ilkini döndürmez, gürültülü biçimde patlar.
 
     🔴 `populate_existing=True`: kazanan BAŞKA bir oturumda yazdıysa bu
     oturumun kimlik haritasında satır yoktur ve taze yüklenir; ama aynı
@@ -64,7 +87,11 @@ async def entry_for_source(
     """
     stmt = (
         select(JournalEntry)
-        .where(JournalEntry.source_type == source_type, JournalEntry.source_id == source_id)
+        .where(
+            JournalEntry.source_type == source_type,
+            JournalEntry.source_id == source_id,
+            JournalEntry.status != CANCELLED_STATUS,
+        )
         .execution_options(populate_existing=True)
     )
     return (await session.execute(stmt)).scalar_one_or_none()

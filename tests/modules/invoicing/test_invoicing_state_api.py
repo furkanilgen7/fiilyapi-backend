@@ -1,4 +1,9 @@
-"""FAT-1 T4 — durum geçiş uçları (spec §7 md. 8, 9, 10, 11).
+"""🔴 MU-3B NOTU: `send`/`approve` artık FİŞ KESER (`invoicing/posting.py`), yani
+`posting_rules` eşlemesi olmadan **422** verirler. Bu uçları ölçen testler
+`fatura_eslemesi` fixture'ını ister — canlıda o satırları `c0d1e2f3a4b5`
+migration'ı tohumlar, test kümesi migration koşmaz.
+
+FAT-1 T4 — durum geçiş uçları (spec §7 md. 8, 9, 10, 11).
 
 ## Bu dosyanın kilitlediği kararlar
 
@@ -45,7 +50,7 @@ _PARA_ALANLARI = (
 
 
 async def test_send_taslak_giden_faturayi_gonderir(
-    client, muhasebe_headers, fatura_fabrikasi, gorunen_proje, seeded_db
+    client, muhasebe_headers, fatura_fabrikasi, gorunen_proje, seeded_db, fatura_eslemesi
 ) -> None:
     fatura = await fatura_fabrikasi(project=gorunen_proje)
     resp = await client.post(f"{_YOL}/{fatura.id}/send", headers=muhasebe_headers)
@@ -56,7 +61,7 @@ async def test_send_taslak_giden_faturayi_gonderir(
 
 
 async def test_send_denetim_satiri_yazar(
-    client, muhasebe_headers, fatura_fabrikasi, gorunen_proje, seeded_db
+    client, muhasebe_headers, fatura_fabrikasi, gorunen_proje, seeded_db, fatura_eslemesi
 ) -> None:
     """Yeni `AuditAction` üyesi AÇILMADI (TB3/T3 kanonu) — ayrım METİNDEDİR."""
     fatura = await fatura_fabrikasi(project=gorunen_proje, invoice_no="FILSEND00001")
@@ -173,7 +178,7 @@ async def test_mark_collected_kalemsiz_faturada_K6_UYGULANMAZ(
 
 
 async def test_approve_bekleyen_gelen_faturayi_onaylar(
-    client, muhasebe_headers, fatura_fabrikasi, gorunen_proje, seeded_db
+    client, muhasebe_headers, fatura_fabrikasi, gorunen_proje, seeded_db, fatura_eslemesi
 ) -> None:
     fatura = await fatura_fabrikasi(
         project=gorunen_proje,
@@ -301,6 +306,7 @@ async def test_gecis_para_alanlarini_YENIDEN_HESAPLAMAZ(
     fatura_fabrikasi,
     gorunen_proje,
     seeded_db,
+    fatura_eslemesi,
     islem: str,
     durum: InvoiceStatus,
     yon: InvoiceDirection,

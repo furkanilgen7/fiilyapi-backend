@@ -112,15 +112,23 @@ class PostingOutcome:
     `created=True` iken yazmalıdır; yoksa her yeniden deneme mali izde yeni bir
     fiş kesilmiş gibi görünür ve denetim, olmayan bir işi anlatırdı.
 
-    🔴 **`created=False` "fişli" DEMEK DEĞİLDİR — `entry.status` OKUNMALIDIR.**
-    Bir belge fişlenip STORNOLANIRSA orijinal fiş `reversed` durumunda ayakta
-    kalır ve `uq_journal_entries_source` slotunu HÂLÂ tutar; yeniden onay
-    `created=False` + `status=reversed` döndürür. Mali iz NETLENMİŞTİR (posted
-    + reversed = 0), yani belge fiilen FİŞSİZDİR. Bu, kısıtın doğrudan sonucudur
-    ve fail-closed olan taraftır (alternatifi aynı belgeye N fiş açardı), ama
-    MU-3B için AÇIK BİR KARARDIR. Bekçisi
-    `tests/modules/posting/test_mu3a_post_document.py::
-    test_STORNOLANMIS_belge_YENIDEN_fislenemez_MEVCUDU_doner`.
+    🔴 **DÖNÜŞ SÖZLEŞMESİ (MU-3B, kullanıcı kararı 2026-08-26):**
+
+    | Dönüş | Anlamı | Çağıranın işi |
+    |---|---|---|
+    | `created=True` | fiş BU ÇAĞRIDA kesildi | denetime "fiş kesildi" YAZ |
+    | `created=False` | belge ZATEN FİŞLİ (canlı fişi var) | denetime YAZMA |
+
+    🔴 `created=False` artık **"belge FİŞLİ" DEMEKTİR** ve `entry` DAİMA CANLI
+    bir fiştir. MU-3A'da değildi: tekillik TAM olduğu için stornolanmış bir
+    belge `created=False` + `status=reversed` döndürüyor, çağıranın `entry.
+    status`u ayrıca okuması gerekiyordu — okumayan bir çağıran mali izi
+    netlenmiş (posted + reversed = 0), yani FİİLEN FİŞSİZ bir belgeyi fişli
+    sayardı. MU-3B tekilliği `uq_journal_entries_source`ta CANLI fişlerle
+    sınırladı (`models.LIVE_SOURCE_WHERE`) ve o yükümlülüğü KALDIRDI.
+
+    Bekçisi `tests/modules/posting/test_mu3b_repost.py::
+    test_created_FALSE_donen_fis_HER_ZAMAN_CANLIDIR`.
     """
 
     entry: JournalEntry
