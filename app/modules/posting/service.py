@@ -172,9 +172,7 @@ async def post_document(
     cozum = _resolve(lines, await repository.rules_for(session, source_type))
     # Eksik eşleme K1'in engelleriyle AYNI 422'de toplanır; hesaplar çözülemeden
     # yaprak denetimi de koşamaz, bu yüzden eksik varsa BURADA durulur.
-    accounting_service.raise_blockers(
-        [guards.rule_missing(cozum.missing)] if cozum.missing else []
-    )
+    accounting_service.raise_blockers([guards.rule_missing(cozum.missing)] if cozum.missing else [])
     accounting_service.raise_blockers(
         await validation.balance_blockers(session, lines, cozum.accounts)
     )

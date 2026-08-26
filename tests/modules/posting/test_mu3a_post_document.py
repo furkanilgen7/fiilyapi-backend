@@ -119,12 +119,16 @@ async def test_bacaklar_ESLEMEDEN_cozulur_ve_SIRALIDIR(seeded_db, kullanici_id, 
     sonuc = await _fisle(seeded_db, kullanici_id)
 
     satir_kayitlari = (
-        await seeded_db.execute(
-            select(JournalLine)
-            .where(JournalLine.entry_id == sonuc.entry.id)
-            .order_by(JournalLine.sort_order)
+        (
+            await seeded_db.execute(
+                select(JournalLine)
+                .where(JournalLine.entry_id == sonuc.entry.id)
+                .order_by(JournalLine.sort_order)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert [(s.account_id, s.debit, s.credit) for s in satir_kayitlari] == [
         (gider.id, Decimal("1000.00"), Decimal("0")),
         (cari.id, Decimal("0"), Decimal("1000.00")),
@@ -145,7 +149,9 @@ async def test_baslik_toplamlari_BACAKLARDAN_turetilir(seeded_db, kullanici_id, 
 
 
 async def test_AYNI_belge_IKINCI_kez_fislenmez_MEVCUT_fis_doner(
-    seeded_db, kullanici_id, temsili_esleme  # noqa: ANN001
+    seeded_db,
+    kullanici_id,
+    temsili_esleme,  # noqa: ANN001
 ):
     """🔴 Bu dilimin ASIL sebebi: iki kez onaylanan fatura İKİ FİŞ DOĞURMAZ.
 
@@ -180,7 +186,9 @@ async def test_FARKLI_belgeler_AYRI_fis_alir(seeded_db, kullanici_id, temsili_es
 
 
 async def test_ESLEMESI_OLMAYAN_rol_422_ve_HICBIR_SEY_yazilmaz(
-    seeded_db, kullanici_id, temsili_esleme  # noqa: ANN001
+    seeded_db,
+    kullanici_id,
+    temsili_esleme,  # noqa: ANN001
 ):
     """🔴 FAIL-CLOSED: eşlemesi olmayan rol çözülemez, fiş YARIM YAZILMAZ.
 
@@ -203,7 +211,10 @@ async def test_ESLEMESI_OLMAYAN_rol_422_ve_HICBIR_SEY_yazilmaz(
 
 
 async def test_BASKA_ailenin_kurali_KULLANILMAZ(
-    seeded_db, kullanici_id, hesap_fabrikasi, kural_fabrikasi  # noqa: ANN001
+    seeded_db,
+    kullanici_id,
+    hesap_fabrikasi,
+    kural_fabrikasi,  # noqa: ANN001
 ):
     """Eşleme anahtarı `(source_type, role_key)`dir — rol tek başına DEĞİL.
 
@@ -249,7 +260,10 @@ async def test_TEK_bacak_422(seeded_db, kullanici_id, temsili_esleme):  # noqa: 
 
 
 async def test_YAPRAK_OLMAYAN_hesaba_eslenmis_kural_422(
-    seeded_db, kullanici_id, temsili_esleme, hesap_fabrikasi  # noqa: ANN001
+    seeded_db,
+    kullanici_id,
+    temsili_esleme,
+    hesap_fabrikasi,  # noqa: ANN001
 ):
     """🔴 MU-4 UYARISI CANLI: `320.04` açıldığı an `320`e bakan kural 422 verir.
 
@@ -266,7 +280,10 @@ async def test_YAPRAK_OLMAYAN_hesaba_eslenmis_kural_422(
 
 
 async def test_KAPALI_doneme_otomatik_fis_409(
-    seeded_db, kullanici_id, temsili_esleme, donem_fabrikasi  # noqa: ANN001
+    seeded_db,
+    kullanici_id,
+    temsili_esleme,
+    donem_fabrikasi,  # noqa: ANN001
 ):
     """🔴 KARAR-6'nın KOD AYAĞI: kapalı dönem otomatik fişe de KAPALIDIR.
 
@@ -283,7 +300,10 @@ async def test_KAPALI_doneme_otomatik_fis_409(
 
 
 async def test_ZATEN_fislenmis_belge_KAPALI_donemde_de_MEVCUDU_doner(
-    seeded_db, kullanici_id, temsili_esleme, donem_fabrikasi  # noqa: ANN001
+    seeded_db,
+    kullanici_id,
+    temsili_esleme,
+    donem_fabrikasi,  # noqa: ANN001
 ):
     """İdempotan dönüş dönem kapısından ÖNCEDİR ve bu bilinçlidir.
 

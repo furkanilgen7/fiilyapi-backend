@@ -97,9 +97,7 @@ def upgrade() -> None:
     # `ADD COLUMN` tabloyu ACCESS EXCLUSIVE ile kilitler; kısıtlar AYNI kilidin
     # altında eklenir (ikinci bir kilit turu yok).
     op.add_column(ENTRY_TABLE, sa.Column("source_type", kaynak_enum, nullable=True))
-    op.add_column(
-        ENTRY_TABLE, sa.Column("source_id", postgresql.UUID(as_uuid=True), nullable=True)
-    )
+    op.add_column(ENTRY_TABLE, sa.Column("source_id", postgresql.UUID(as_uuid=True), nullable=True))
     op.create_unique_constraint(
         "uq_journal_entries_source", ENTRY_TABLE, ["source_type", "source_id"]
     )
@@ -124,9 +122,7 @@ def upgrade() -> None:
             nullable=False,
         ),
         # RESTRICT: eşlemesi olan hesap SİLİNEMEZ (`journal_lines.account_id` deseni).
-        sa.ForeignKeyConstraint(
-            ["account_id"], ["chart_of_accounts.id"], ondelete="RESTRICT"
-        ),
+        sa.ForeignKeyConstraint(["account_id"], ["chart_of_accounts.id"], ondelete="RESTRICT"),
         sa.UniqueConstraint("source_type", "role_key", name="uq_posting_rules_source_role"),
         sa.CheckConstraint(
             f"role_key ~ '{ROLE_KEY_PATTERN}'", name="ck_posting_rules_role_key_format"

@@ -241,26 +241,38 @@ async def test_migrate_edilmis_semada_kisitlar_ISIRIR():
 
             # 2. Aynı belgeye İKİNCİ fiş → UNIQUE.
             await _insert_entry(
-                conn, user_id, entry_no="YEV-2026-0003",
-                source_type=JournalSourceType.invoice.value, source_id=belge_id,
+                conn,
+                user_id,
+                entry_no="YEV-2026-0003",
+                source_type=JournalSourceType.invoice.value,
+                source_id=belge_id,
             )
             with pytest.raises(asyncpg.UniqueViolationError):
                 await _insert_entry(
-                    conn, user_id, entry_no="YEV-2026-0004",
-                    source_type=JournalSourceType.invoice.value, source_id=belge_id,
+                    conn,
+                    user_id,
+                    entry_no="YEV-2026-0004",
+                    source_type=JournalSourceType.invoice.value,
+                    source_id=belge_id,
                 )
 
             # 3. FARKLI aile, AYNI kimlik → serbest.
             await _insert_entry(
-                conn, user_id, entry_no="YEV-2026-0005",
-                source_type=JournalSourceType.payment.value, source_id=belge_id,
+                conn,
+                user_id,
+                entry_no="YEV-2026-0005",
+                source_type=JournalSourceType.payment.value,
+                source_id=belge_id,
             )
 
             # 4. YARIM çift → CHECK.
             with pytest.raises(asyncpg.CheckViolationError):
                 await _insert_entry(
-                    conn, user_id, entry_no="YEV-2026-0006",
-                    source_type=JournalSourceType.invoice.value, source_id=None,
+                    conn,
+                    user_id,
+                    entry_no="YEV-2026-0006",
+                    source_type=JournalSourceType.invoice.value,
+                    source_id=None,
                 )
         finally:
             await conn.close()
@@ -278,16 +290,17 @@ async def test_posting_rules_kisitlari_ISIRIR():
             # 🔴 `320` TDHP seed migration'ıyla ZATEN VARDIR (elle eklemek
             # `uq_chart_of_accounts_code`e çarpar) — ve KARAR-2'nin cari ana
             # hesabı tam olarak odur, uydurma bir kod ölçümü zayıflatırdı.
-            account_id = await conn.fetchval(
-                "SELECT id FROM chart_of_accounts WHERE code = '320'"
-            )
+            account_id = await conn.fetchval("SELECT id FROM chart_of_accounts WHERE code = '320'")
             assert account_id is not None, "TDHP seed'inde `320 Satıcılar` yok"
 
             async def _kural(role_key: str, *, source: str = "invoice") -> None:
                 await conn.execute(
                     "INSERT INTO posting_rules (id, source_type, role_key, account_id) "
                     f"VALUES ($1, $2::{SOURCE_ENUM}, $3, $4)",
-                    uuid.uuid4(), source, role_key, account_id,
+                    uuid.uuid4(),
+                    source,
+                    role_key,
+                    account_id,
                 )
 
             await _kural("payable")

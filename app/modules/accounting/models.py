@@ -231,7 +231,6 @@ POSTING_BALANCED_CHECK = (
 )
 
 
-
 class JournalSourceType(str, enum.Enum):
     """🔴 MU-3A — otomatik fişi DOĞURAN belgenin AİLESİ (`journal_entries.source_type`).
 

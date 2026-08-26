@@ -104,13 +104,24 @@ async def test_AYNI_belgeye_IKINCI_fis_DB_kisitina_carpar(
     `uq_journal_entries_entry_no`dan gelir ve bu dosya kaynak tekilliğini
     HİÇ ÖLÇMEMİŞ olurdu (sahte-yeşilin aynası: DOĞRU SEBEPLE kırmızı).
     """
-    await _yaz(seeded_db, _fis(entry_no="YEV-2026-0001", kullanici_id=kullanici_id,
-                               source_type=KAYNAK, source_id=BELGE_ID))
+    await _yaz(
+        seeded_db,
+        _fis(
+            entry_no="YEV-2026-0001",
+            kullanici_id=kullanici_id,
+            source_type=KAYNAK,
+            source_id=BELGE_ID,
+        ),
+    )
 
     hata = await _yazmayi_dene(
         seeded_db,
-        _fis(entry_no="YEV-2026-0002", kullanici_id=kullanici_id,
-             source_type=KAYNAK, source_id=BELGE_ID),
+        _fis(
+            entry_no="YEV-2026-0002",
+            kullanici_id=kullanici_id,
+            source_type=KAYNAK,
+            source_id=BELGE_ID,
+        ),
     )
 
     assert hata is not None, (
@@ -146,10 +157,24 @@ async def test_FARKLI_belge_ailesi_AYNI_kimlikle_CAKISMAZ(
     UUID'yi taşıması ikinciyi engellerdi — kimlikler tablolar arasında paylaşılan
     bir uzayda YAŞAMAZ.
     """
-    await _yaz(seeded_db, _fis(entry_no="YEV-2026-0001", kullanici_id=kullanici_id,
-                               source_type=JournalSourceType.invoice, source_id=BELGE_ID))
-    await _yaz(seeded_db, _fis(entry_no="YEV-2026-0002", kullanici_id=kullanici_id,
-                               source_type=JournalSourceType.payment, source_id=BELGE_ID))
+    await _yaz(
+        seeded_db,
+        _fis(
+            entry_no="YEV-2026-0001",
+            kullanici_id=kullanici_id,
+            source_type=JournalSourceType.invoice,
+            source_id=BELGE_ID,
+        ),
+    )
+    await _yaz(
+        seeded_db,
+        _fis(
+            entry_no="YEV-2026-0002",
+            kullanici_id=kullanici_id,
+            source_type=JournalSourceType.payment,
+            source_id=BELGE_ID,
+        ),
+    )
 
     assert await _fis_sayisi(seeded_db) == 2
 
@@ -176,8 +201,12 @@ async def test_YARIM_kaynak_cifti_REDDEDILIR(
     """
     hata = await _yazmayi_dene(
         seeded_db,
-        _fis(entry_no="YEV-2026-0009", kullanici_id=kullanici_id,
-             source_type=source_type, source_id=source_id),
+        _fis(
+            entry_no="YEV-2026-0009",
+            kullanici_id=kullanici_id,
+            source_type=source_type,
+            source_id=source_id,
+        ),
     )
 
     assert hata is not None, "yarım kaynak çifti YAZILDI — `ck_journal_entries_source_pair` yok"
