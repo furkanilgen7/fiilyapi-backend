@@ -225,8 +225,16 @@ async def bacaklar(session: AsyncSession, entry: JournalEntry) -> list[tuple[str
     return [(kod, str(borc), str(alacak)) for kod, borc, alacak in rows]
 
 
-async def hesap_neti(session: AsyncSession, kod: str) -> Decimal:
+async def hesap_neti(
+    session: AsyncSession, kod: str, *, ay: tuple[int, int] | None = None
+) -> Decimal:
     """🔴 YEVMİYEDEN türeyen HAM net: `Σ borç − Σ alacak`.
+
+    `ay` verilirse `entry_date` O AYA daraltılır. 🔴 Bu parametre bir kolaylık
+    DEĞİL, ölçülmüş bir kör nokta kapatmasıdır: `/treasury/cash-flow` AYLIK bir
+    büyüklüktür ve KÜMÜLATİF bir netle karşılaştırılırsa, veri tek aya sığdığı
+    sürece TUTAR — `entry_date`i `paid_on` yerine BUGÜNE yazan bir mutant
+    (M4) o karşılaştırmayı KIRMIYORDU. Pencere iki tarafta da AYNI olmalıdır.
 
     `balance.posting_filter()` kullanılır, yani `posted` **+ `reversed`**:
     stornolanan fiş defterden ÇIKMAZ, ters kaydıyla nötrlenir. Çıplak
@@ -243,9 +251,25 @@ async def hesap_neti(session: AsyncSession, kod: str) -> Decimal:
             .join(ChartAccount, ChartAccount.id == JournalLine.account_id)
             .where(ChartAccount.code == kod)
             .where(posting_filter())
+            .where(*_ay_kosullari(ay))
         )
     ).scalar_one()
     return Decimal(net)
+
+
+def _ay_kosullari(ay: tuple[int, int] | None):
+    """Ay penceresi — `cash_flow.month_bounds` ile AYNI KAYNAKTAN.
+
+    İkinci bir sınır aritmetiği yazılsaydı (Aralık taşması · ay uzunlukları)
+    test ile ürün farklı pencereler kurar ve mutabakat sınır günlerinde
+    sessizce ayrışırdı.
+    """
+    if ay is None:
+        return ()
+    from app.modules.treasury.cash_flow import month_bounds
+
+    ilk, son = month_bounds(*ay)
+    return (JournalEntry.entry_date >= ilk, JournalEntry.entry_date <= son)
 
 
 async def canli_fis(

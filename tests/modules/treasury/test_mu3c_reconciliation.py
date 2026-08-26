@@ -173,7 +173,13 @@ async def test_NAKIT_AKISI_toplamlari_da_yevmiyeyle_TUTAR(seeded_db, user_factor
     await _kumeyi_kur(seeded_db, user_factory)
 
     seri = await cash_flow.build_cash_flow(seeded_db, year=TARIH.year, month=TARIH.month)
-    yevmiye_nakit = await hesap_neti(seeded_db, KOD_BANKA) + await hesap_neti(seeded_db, KOD_KASA)
+    # 🔴 PENCERE İKİ TARAFTA DA AYNI: kümülatif bir netle karşılaştırılsaydı
+    #    fişi başka bir güne yazan bir kusur, veri tek aya sığdığı sürece
+    #    görünmezdi (M4 mutantı bunu ölçtü).
+    ay = (TARIH.year, TARIH.month)
+    yevmiye_nakit = await hesap_neti(seeded_db, KOD_BANKA, ay=ay) + await hesap_neti(
+        seeded_db, KOD_KASA, ay=ay
+    )
 
     assert seri.inflow_total - seri.outflow_total == yevmiye_nakit, (
         f"NAKİT AKIŞI ayrıştı: giriş {seri.inflow_total} − çıkış {seri.outflow_total} "
