@@ -56,7 +56,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ConflictError, SiteValidationError
 from app.modules.approvals import service as approvals_service
 from app.modules.approvals.models import ApprovalDocumentType
-from app.modules.progress_payments import calculations, guards, lines, repository, service
+from app.modules.progress_payments import (
+    calculations,
+    guards,
+    lines,
+    posting,
+    repository,
+    service,
+)
 from app.modules.progress_payments.models import ProgressPayment, ProgressPaymentStatus
 from app.modules.projects.models import Project, ProjectContract
 from app.modules.users.models import User
@@ -175,6 +182,62 @@ async def _revalidate_quota(session: AsyncSession, payment: ProgressPayment) -> 
         completed_quantity = completed.get(key, (_ZERO, _ZERO))[0]
         if completed_quantity + line.quantity > quota:
             raise SiteValidationError(guards.QUANTITY_EXCEEDS_QUOTA)
+
+
+async def _fisle(
+    session: AsyncSession,
+    actor: User,
+    payment: ProgressPayment,
+    project: Project,
+    contract: ProjectContract,
+    action: PaymentAction,
+    new_status: ProgressPaymentStatus,
+) -> None:
+    """🔴 MU-3D — hakedişin yevmiye fişi. Damgadan SONRA, AYNI transaction'da.
+
+    ## 🔴 KANCA GEÇİŞE DEĞİL BELGEYE BAĞLIDIR
+
+    Ölçüt `action is approve` DEĞİL, `new_status is approved`tir. `approve`
+    eylemi TEK BAŞINA yetmez: onay zinciri (OK-1A) tamamlanmadıysa `perform`
+    bu satıra HİÇ ULAŞMADAN erken döner ve durum `pending_approval` KALIR.
+    Eyleme bağlansaydı fiş, henüz onaylanmamış bir hakediş için yazılırdı — ve
+    bunun bedeli bir hata değil bir SESSİZLİKTİR (MU-3C dersi).
+
+    ## Sıra: damga → fiş
+
+    Fiş yazılamazsa (kapalı dönem **409** · eksik eşleme **422**) geçiş de GERİ
+    ALINIR, yani "onaylı ama fişsiz" bir hakediş DOĞMAZ. `perform` commit
+    etmez; hata çağıranın transaction'ını devirir.
+
+    ## KARAR-5 — `unapprove` STORNO yazar
+
+    Onay geri çekildiğinde kayıt kümülatif kümeden ÇIKAR; fişi ayakta bırakmak,
+    onaylı olmayan bir hakedişin hasılatını mizanda tutmak olurdu. Yeniden onay
+    SERBESTTİR (tekillik CANLI fişlerle sınırlıdır, MU-3B).
+    """
+    if action is PaymentAction.unapprove:
+        await posting.reverse_progress_payment(session, actor, payment.id)
+        return
+    if new_status is not ProgressPaymentStatus.approved:
+        return
+    # 🔴 Zincir `sequence_no` ARTAN sırada olmalıdır (avans tavanı sıralıdır) —
+    #    repository öyle döner. `before_sequence_no` kaydın KENDİSİNİ dışlar.
+    prior = await repository.list_completed_payments(
+        session, payment.project_id, before_sequence_no=payment.sequence_no
+    )
+    advance_recovered = calculations.cumulative_state(prior, contract.amount).advance_recovered
+    await posting.post_progress_payment(
+        session,
+        actor,
+        payment,
+        base=posting.posting_base_for(payment, contract.amount, advance_recovered),
+        # 🔴 ONAY GÜNÜ — hakedişin dönemi (`period_year`/`period_month`) DEĞİL.
+        #    Döneme yazılsaydı geçmiş bir aya kesilen hakediş KAPALI bir döneme
+        #    fiş atmayı dener ve KARAR-6'yı delerdi. `_stamp` bu satırdan hemen
+        #    ÖNCE koştuğu için damga DAİMA doludur.
+        entry_date=payment.approved_at.date(),
+        employer_name=project.employer_name,
+    )
 
 
 def _stamp(payment: ProgressPayment, action: PaymentAction, actor: User) -> None:
@@ -364,6 +427,7 @@ async def perform(
 
     payment.status = new_status
     _stamp(payment, action, actor)
+    await _fisle(session, actor, payment, project, contract, action, new_status)
     await session.flush()
     # `updated_at` server `onupdate` ile yenilendiği için expire olur; açık
     # refresh olmadan yanıt inşası `MissingGreenlet` verir.

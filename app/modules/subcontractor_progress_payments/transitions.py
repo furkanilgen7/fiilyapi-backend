@@ -47,7 +47,13 @@ from app.modules.contracts.models import SubcontractorContract
 from app.modules.progress_payments import calculations
 from app.modules.progress_payments.transitions import PaymentAction, build_transition_table
 from app.modules.projects.models import Project
-from app.modules.subcontractor_progress_payments import guards, lines, repository, service
+from app.modules.subcontractor_progress_payments import (
+    guards,
+    lines,
+    posting,
+    repository,
+    service,
+)
 from app.modules.subcontractor_progress_payments.models import (
     SubcontractorPaymentStatus,
     SubcontractorProgressPayment,
@@ -109,6 +115,49 @@ async def _revalidate_quota(
         if item is None:
             continue
         lines.check_quota(item, completed.get(item.id, _ZERO), line.quantity)
+
+
+async def _fisle(
+    session: AsyncSession,
+    actor: User,
+    payment: SubcontractorProgressPayment,
+    contract: SubcontractorContract,
+    action: PaymentAction,
+    new_status: SubcontractorPaymentStatus,
+) -> None:
+    """🔴 MU-3D — taşeron hakedişinin yevmiye fişi. İşveren ailesinin AYNASI.
+
+    Gerekçelerin tamamı (kanca neden GEÇİŞE değil BELGEYE bağlı · sıra neden
+    damga → fiş · `unapprove` neden STORNO yazar) kardeş dosyada
+    `progress_payments.transitions._fisle`de TEK KOPYA olarak durur.
+
+    🔴 Bu ailede sözleşme bedeli bir KOLON DEĞİLDİR: `subcontractor_contracts`ta
+    `amount` yoktur, bedel her okumada kalemlerden toplanır
+    (`repository.get_contract_amount`). Avans tavanı buna bağlı olduğu için
+    fişin tabanı da buradan geçer — ve fiş yazıldıktan sonra bir kalem
+    düzeltilse bile fişin tutarı DEĞİŞMEZ (fişin kendisi snapshot'tır).
+    """
+    if action is PaymentAction.unapprove:
+        await posting.reverse_subcontractor_payment(session, actor, payment.id)
+        return
+    if new_status is not SubcontractorPaymentStatus.approved:
+        return
+    contract_amount = await repository.get_contract_amount(session, payment.contract_id)
+    # 🔴 `sequence_no` ARTAN sıra ŞARTTIR: avans mahsubu zinciri sıralıdır ve
+    #    her adımın tavanı bir öncekinin sonucuna bağlıdır.
+    prior = await repository.list_completed_payments(
+        session, payment.contract_id, before_sequence_no=payment.sequence_no
+    )
+    advance_recovered = calculations.cumulative_state(prior, contract_amount).advance_recovered
+    await posting.post_subcontractor_payment(
+        session,
+        actor,
+        payment,
+        base=posting.posting_base_for(payment, contract_amount, advance_recovered),
+        # 🔴 ONAY GÜNÜ — `period_year`/`period_month` DEĞİL (gerekçe kardeş dosyada).
+        entry_date=payment.approved_at.date(),
+        subcontractor_name=contract.subcontractor_name,
+    )
 
 
 def _stamp(
@@ -281,6 +330,7 @@ async def perform(
 
     payment.status = new_status
     _stamp(payment, action, actor, trimmed_reason)
+    await _fisle(session, actor, payment, contract, action, new_status)
     await session.flush()
     # `updated_at` server `onupdate` ile yenilendiği için expire olur; açık
     # refresh olmadan yanıt inşası `MissingGreenlet` verir.

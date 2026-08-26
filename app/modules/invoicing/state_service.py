@@ -53,7 +53,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import InvoicingValidationError
 from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
-from app.modules.invoicing import posting, repository, service, transitions, validation
+from app.modules.invoicing import (
+    posting,
+    repository,
+    service,
+    source_posting,
+    transitions,
+    validation,
+)
 from app.modules.invoicing.models import Invoice
 from app.modules.invoicing.transitions import InvoiceAction
 from app.modules.users.models import User
@@ -121,6 +128,17 @@ async def perform_transition(
     #     `amounts.compute` bu dosyadan hâlâ ÇAĞRILMAZ.
     if action in posting.POSTING_ACTIONS:
         await posting.post_invoice(session, actor, invoice)
+        # 🔴 MU-3D İŞ 2 — TAKAS: faturanın fişi yazıldıysa kaynak hakedişin
+        #    fişi STORNO edilir. AYNI transaction, faturanın fişinden HEMEN
+        #    SONRA: sıra tersine çevrilseydi gider bir an için defterden
+        #    tamamen düşerdi ve araya giren bir hata onu ORADA bırakırdı.
+        #
+        #    🔴 Tetikleyici burada, `create_invoice`te DEĞİL — gerekçe
+        #    `source_posting` modül docstring'inde ÖLÇÜLEREK yazılıdır:
+        #    fatura `draft`/`pending` doğar ve fişi ANCAK BU GEÇİŞTE yazılır;
+        #    oluşturmada storno atılsaydı, gönderilmeyen (ya da silinen) bir
+        #    taslak yüzünden gider mizandan KALICI olarak kaybolurdu.
+        await source_posting.reverse_source_entry(session, actor, invoice)
 
     await session.flush()
     # `updated_at` sunucu damgasıdır; UPDATE'ten sonra ORM'deki değer bayattır
