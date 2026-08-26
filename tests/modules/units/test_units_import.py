@@ -395,22 +395,38 @@ async def test_import_owner_side_in_non_land_share_project_returns_422(
     assert await _count_units(db_session, project.id) == 0
 
 
-async def test_import_does_not_persist_file(client, db_session, user_factory, project_factory):
+async def test_import_does_not_persist_file(
+    client, db_session, user_factory, project_factory, tmp_path, monkeypatch
+):
     """DOSYA IZI TESTI (plan B9 test 19). Istek sonrasi gecici dizinde YENI dosya
     yok ve DB'de dosya icerigi tasiyan hicbir satir yok — belge saklama
-    altyapisinin gerekmedigi kaniti (spec §7.8)."""
+    altyapisinin gerekmedigi kaniti (spec §7.8).
+
+    🔴 IDDIA BU ISTEGE DARALTILDI (TB-TMPDIR, 2026-08-26): eskiden kuresel
+    `tempfile.gettempdir()` once/sonra karsilastiriliyordu; bu depoda 12 test
+    dosyasi `openpyxl` kullaniyor ve `-n 4 --dist loadfile` altinda BASKA BIR
+    ISCI SURECI ayni dizine `openpyxl.*` yaziyordu → rastgele kirmizi (PR #82).
+    Artik `tempfile` yalnizca ISTEK SURESINCE bu teste ozel BOS bir dizine
+    yonlendiriliyor; oraya duesen her sey ucun KENDI izidir. Kendi
+    `_xlsx()` cagrimiz yama ONCESINDE yapilir, yoksa kendi izimizi olcerdik.
+    (`tests/conftest.py`teki isci basina TMPDIR yalitimi ayni sinifi genel
+    olarak kapatir; bu daraltma iddianin kendisini de kesinlestirir.)
+    """
     project = await project_factory("B9-15", project_type="kendi_yatirim")
     site = await _site(db_session, project)
     await _block(db_session, project, site, name="A Blok")
     token = await _login(client, user_factory, "system_admin")
     content = _xlsx([_row(unit_no=str(n)) for n in range(1, 6)])
-    temp_dir = tempfile.gettempdir()
-    before = set(os.listdir(temp_dir))
+    istek_dizini = tmp_path / "istek-izi"
+    istek_dizini.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(istek_dizini))
+    monkeypatch.setenv("TMPDIR", str(istek_dizini))
+    assert os.listdir(istek_dizini) == []
 
     resp = await _post_import(client, project, content, token)
 
     assert resp.status_code == 200
-    assert set(os.listdir(temp_dir)) - before == set()
+    assert os.listdir(istek_dizini) == []
     # Dosya icerigi hicbir sutuna sizmadi: `.xlsx` bir ZIP'tir ve "PK" ile baslar.
     units = (
         (await db_session.execute(select(Unit).where(Unit.project_id == project.id)))

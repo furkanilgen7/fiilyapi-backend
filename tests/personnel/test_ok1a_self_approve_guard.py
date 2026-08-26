@@ -29,7 +29,6 @@ dönüşürdü. İstisna denetim günlüğüne `messages.APPROVAL_ON_BEHALF_MARK
 geçer — 🔴 yeni `AuditAction` üyesi AÇILMADI, ayrım METİNDEDİR.
 """
 
-import uuid
 from datetime import timedelta
 
 import pytest
@@ -44,6 +43,7 @@ from app.modules.personnel import guards
 from app.modules.personnel.models import LeaveRequest, LeaveStatus, LeaveType, Personnel
 from app.modules.site_diary.models import WorkerSource
 from app.modules.users.models import User
+from tests.personnel._ik2_leave_decision import _yeni_denetim_metinleri
 
 # ~2 yıl 2 ay kıdem → 4857 birinci kademe (14 gün). Bugüne göre türetilir ki
 # test bir yıl sonra sessizce başka bir kıdem penceresine kaymasın.
@@ -93,11 +93,6 @@ async def yillik(seeded_db: AsyncSession) -> LeaveType:
     seeded_db.add(tip)
     await seeded_db.flush()
     return tip
-
-
-async def _yeni_denetim_metinleri(session: AsyncSession, onceki: set[uuid.UUID]) -> list[str]:
-    rows = await session.scalars(select(AuditLog))
-    return [row.detail for row in rows if row.id not in onceki]
 
 
 # --- 1. Normal kullanıcı: KENDİ talebi → 403 -------------------------------
