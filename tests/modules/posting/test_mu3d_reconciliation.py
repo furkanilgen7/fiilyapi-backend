@@ -19,10 +19,10 @@ kör noktayı kapatır: kümede hakediş DE vardır.
 
 ## İki kimlik, İKİ AYRI kader — ölçüldü
 
-| Kimlik | Hakediş varken | Neden |
-|---|---|---|
-| **KDV** (`391`/`191` ↔ beyanname) | 🟢 **TUTAR** | hakediş fişi KDV'SİZDİR |
-| **MATRAH** (`600`/`740` ↔ beyanname) | 🔴 **TUTMAZ, TUTMAMALI** | faturalanmayan hakedişin gideri deftere GİRER (kararın 1. vaadi) |
+* **KDV** (`391`/`191` ↔ beyanname) — 🟢 **TUTAR**, çünkü hakediş fişi
+  KDV'SİZDİR.
+* **MATRAH** (`600`/`740` ↔ beyanname) — 🔴 **TUTMAZ ve TUTMAMALI**, çünkü
+  faturalanmayan hakedişin gideri deftere GİRER (kararın 1. vaadi).
 
 🔴 İkincisi bir kusur DEĞİL, **SEÇENEK B'nin tanımıdır**. Ama bu, mutabakatın
 bırakılabileceği anlamına gelmez — kimlik yeniden yazılır:
