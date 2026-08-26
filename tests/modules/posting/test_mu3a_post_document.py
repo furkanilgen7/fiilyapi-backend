@@ -354,41 +354,10 @@ async def test_STORNO_kaynak_damgasini_TASIMAZ(seeded_db, kullanici_id, temsili_
     assert sonuc.entry.status is JournalEntryStatus.reversed
 
 
-async def test_STORNOLANMIS_belge_YENIDEN_fislenemez_MEVCUDU_doner(
-    seeded_db,
-    kullanici_id,
-    temsili_esleme,  # noqa: ANN001
-):
-    """🔴 **MU-3B'YE AÇIK KARAR** — davranış burada ÇAKILIR, sürpriz olmasın.
-
-    Bir belge fişlenip sonra STORNOLANIRSA (`KARAR-5`), orijinal fiş
-    `reversed` durumunda AYAKTA KALIR ve `uq_journal_entries_source` slotunu
-    HÂLÂ TUTAR. Dolayısıyla belge yeniden onaylanırsa `post_document`
-    `created=False` ile o `reversed` fişi döndürür — YENİ FİŞ KESMEZ.
-
-    Bu, kısıtın DOĞRUDAN sonucudur ve bugün için FAIL-CLOSED olan taraftır:
-    alternatifi (durumu süzen bir tekillik) aynı belgeye N tane fiş açardı.
-    Ama çağıran `created=False` gördüğünde "zaten fişli" sanır; oysa mali iz
-    NETLENMİŞTİR (`posted` + `reversed` toplamı sıfır).
-
-    🔴 Çağıran (MU-3B/C/D/E) bu yüzden `outcome.entry.status`u OKUMAK
-    ZORUNDADIR: `reversed` ise belge FİŞSİZ sayılmalıdır. Karar netleşene
-    kadar davranış BUDUR ve bu test onun bekçisidir — sessizce değişirse
-    kırmızı verir.
-    """
-    from app.modules.accounting import state_service
-    from app.modules.accounting.transitions import JournalAction
-
-    belge_id = yeni_kaynak_id()
-    ilk = await _fisle(seeded_db, kullanici_id, source_id=belge_id)
-    await state_service.perform_transition(
-        seeded_db, await _aktor(seeded_db, kullanici_id), ilk.entry.id, JournalAction.reverse
-    )
-
-    yeniden = await _fisle(seeded_db, kullanici_id, source_id=belge_id)
-
-    assert yeniden.created is False
-    assert yeniden.entry.id == ilk.entry.id
-    assert yeniden.entry.status is JournalEntryStatus.reversed
-    # Storno + orijinal = İKİ fiş; belgenin damgası YALNIZ orijinaldedir.
-    assert await _fis_sayisi(seeded_db) == 2
+#: 🔴 MU-3B — `test_STORNOLANMIS_belge_YENIDEN_fislenemez_MEVCUDU_doner` BURADAN
+#: KALDIRILDI. O test MU-3A'nın "MU-3B'ye AÇIK KARAR" diye işaretlediği davranışın
+#: bekçisiydi; kullanıcı 2026-08-26'da kararı verdi ve davranış TERSİNE DÖNDÜ:
+#: **stornolanan belge yeniden fişlenir**. Yerini alan küme
+#: `tests/modules/posting/test_mu3b_repost.py`tir ve orada hem servis hem DB
+#: katmanı ayrı ayrı ölçülür. Test burada BIRAKILIP `xfail` işaretlenseydi kapı
+#: hiçbir şey bekçilemez, yalnız eski kararın anısını taşırdı.

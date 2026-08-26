@@ -296,6 +296,16 @@ SOURCE_PAIR_CHECK = (
     "(source_type IS NOT NULL AND source_id IS NOT NULL)"
 )
 
+#: 🔴 MU-3B — "İPTAL EDİLMİŞ" FİŞİN TEK TANIMI (kullanıcı kararı 2026-08-26).
+#:
+#: `JOURNAL_TRANSITIONS` matrisinde `reversed` TERMİNALDİR (hiçbir çiftte kaynak
+#: değildir) ve bir fişi mali olarak SİLEN tek durum odur. `draft` iptal DEĞİL
+#: YARIM'dır (ve otomatik fişte hiç doğmaz, KARAR-3), `posted` CANLIdır.
+#: Sabit `JournalEntryStatus`tan TÜRETİLİR: değer elle yazılsaydı enum üyesi
+#: yeniden adlandırıldığında süzgeç sessizce HİÇBİR SATIRI süzmez olurdu ve
+#: kısıt fark edilmeden TAM tekilliğe geri dönerdi.
+LIVE_SOURCE_WHERE = f"status <> '{JournalEntryStatus.reversed.value}'"
+
 
 #: 🔴 TEK `Enum` NESNESİ — `posting_rules.source_type` de BUNU kullanır.
 #: İki ayrı `Enum(JournalSourceType, name="journal_source_type")` kurulsaydı
@@ -542,7 +552,26 @@ class JournalEntry(Base):
         # birbirini ENGELLEMEZ. `NULLS NOT DISTINCT` yazılsaydı muhasebecinin
         # ikinci elle fişi gerekçesiz bir 409 alırdı. Ölçüldü, varsayılmadı:
         # `tests/modules/posting/test_mu3a_source_stamp.py`.
-        UniqueConstraint("source_type", "source_id", name="uq_journal_entries_source"),
+        #
+        # 🔴 MU-3B — TEKİLLİK "CANLI FİŞLER ARASINDA"DIR (kullanıcı kararı
+        # 2026-08-26). Bir belge fişlenip STORNOLANIRSA orijinal fiş `reversed`
+        # durumda AYAKTA KALIR ve kaynak damgasını hâlâ taşır; TAM tekillikte o
+        # belge BİR DAHA HİÇ fişlenemezdi — mali iz netlenmiş (posted+reversed=0)
+        # olduğu hâlde sistem onu fişli sayar ve mizan KALICI olarak eksik
+        # kalırdı. Kısmi süzgeç iki iddiayı BİRLİKTE ayakta tutar:
+        #   · aynı anda EN FAZLA BİR CANLI fiş → idempotanlık korunur;
+        #   · ölü fişlerin SAYISI sınırsız → belge yeniden onaylanabilir.
+        #
+        # 🔴 `UniqueConstraint` DEĞİL `Index(unique=True)`: PG'de bir UNIQUE
+        # KISITI kısmi olamaz (`WHERE` kabul etmez), yalnız unique İNDEKS olabilir.
+        # Ad KORUNUR — hata metni ve dokümanlar aynı adı gösterir.
+        Index(
+            "uq_journal_entries_source",
+            "source_type",
+            "source_id",
+            unique=True,
+            postgresql_where=text(LIVE_SOURCE_WHERE),
+        ),
         # 🔴 Çift BÜTÜNDÜR — gerekçe `SOURCE_PAIR_CHECK` sabitinin yanındadır.
         CheckConstraint(SOURCE_PAIR_CHECK, name="ck_journal_entries_source_pair"),
         CheckConstraint(PERIOD_MATCHES_DATE_CHECK, name="ck_journal_entries_period_matches_date"),
