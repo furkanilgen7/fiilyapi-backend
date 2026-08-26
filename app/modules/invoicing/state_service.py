@@ -53,7 +53,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import InvoicingValidationError
 from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
-from app.modules.invoicing import repository, service, transitions, validation
+from app.modules.invoicing import posting, repository, service, transitions, validation
 from app.modules.invoicing.models import Invoice
 from app.modules.invoicing.transitions import InvoiceAction
 from app.modules.users.models import User
@@ -111,6 +111,17 @@ async def perform_transition(
         raise InvoicingValidationError(" · ".join(engeller))
 
     invoice.status = yeni_durum
+
+    # 🔴 MU-3B — 5.5. FİŞLEME. Damgadan SONRA ve AYNI transaction'da: fiş
+    #     yazılamazsa (kapalı dönem 409 · eksik eşleme 422) geçiş de GERİ ALINIR,
+    #     yani "gönderilmiş ama fişsiz" bir fatura DOĞMAZ. Kapıların hangisi
+    #     olduğu `posting/service.py`dedir ve burada TEKRARLANMAZ.
+    #
+    #     K7 KORUNUR: `posting.lines_for` faturanın DONMUŞ kolonlarını okur,
+    #     `amounts.compute` bu dosyadan hâlâ ÇAĞRILMAZ.
+    if action in posting.POSTING_ACTIONS:
+        await posting.post_invoice(session, actor, invoice)
+
     await session.flush()
     # `updated_at` sunucu damgasıdır; UPDATE'ten sonra ORM'deki değer bayattır
     # ve yanıt şeması onu okuduğunda async bağlamda `MissingGreenlet` = 500

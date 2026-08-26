@@ -36,6 +36,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.accounting.models import ChartAccount
 from app.modules.contracts.models import Subcontractor
 from app.modules.customers.models import Customer, CustomerType
 from app.modules.invoicing.models import (
@@ -304,3 +305,64 @@ async def kullanici_kimligi(seeded_db: AsyncSession):
         return (await seeded_db.execute(select(User).where(User.email == email))).scalar_one().id
 
     return _resolve
+
+
+# --------------------------------------------------------------------------- #
+# 🔴 MU-3B — MUHASEBE FABRİKALARI BURADAN YENİDEN DIŞA VURULUR
+#
+# Fatura fişlemesi (`test_mu3b_invoice_posting.py`) hesap planı + dönem satırı
+# ister. Fabrikalar KOPYALANMAZ (`tests/modules/posting/conftest.py` ile aynı
+# gerekçe): iki kopya bir gün AYRIŞIR ve biri bir parametre kazandığında öteki
+# kalırdı. Buraya alınmalarının sebebi teknik: test dosyasında `import` edilen
+# bir fixture, aynı adı taşıyan test parametresiyle `F811` üretir.
+# --------------------------------------------------------------------------- #
+from tests.modules.accounting.conftest import (  # noqa: E402, F401
+    donem_fabrikasi,
+    hesap_fabrikasi,
+    kullanici_id,
+)
+
+
+@pytest.fixture
+async def fatura_eslemesi(seeded_db: AsyncSession, hesap_fabrikasi) -> dict[str, ChartAccount]:  # noqa: F811
+    """🔴 MU-3B — fatura ailesinin `posting_rules` ÜRÜN eşlemesi.
+
+    Canlıda bu satırları `c0d1e2f3a4b5` migration'ı tohumlar; test kümesi
+    migration koşmaz (`Base.metadata.create_all`), bu yüzden geçiş uçlarını
+    ölçen HER test onu burada kurmak zorundadır. Eksik olduğunda `send`/
+    `approve` **422** verir — fail-closed olan ve olması gereken taraf budur
+    (`test_mu3b_invoice_posting.py::test_ESLEME_YOKSA_422_ve_GECIS_de_GERI_ALINIR`
+    o dalı BİLEREK bu fixture'sız ölçer).
+
+    🔴 Hesabın TÜRÜ elle yazılmaz, TDHP tohumundan (`chart_seed_data`) okunur:
+    elle yazılsaydı `600`ü `expense` sayan bir kurulum mizanın işaretini
+    (`balance.SIGN`) sessizce ters çevirir ve mutabakat testi yanlış bir
+    büyüklükle tutardı.
+
+    Eşleme `posting.INVOICE_POSTING_RULES`ten kurulur: testte elle yazılsaydı
+    üründeki demet bozulduğunda bu kurulum yeşil kalırdı.
+    """
+    from app.modules.accounting.chart_seed_data import CHART_ACCOUNTS
+    from app.modules.accounting.models import JournalSourceType
+    from app.modules.invoicing.posting import INVOICE_POSTING_RULES
+    from app.modules.posting.models import PostingRule
+
+    tohum = {satir.code: satir for satir in CHART_ACCOUNTS}
+    hesaplar: dict[str, ChartAccount] = {}
+    for _role_key, kod in INVOICE_POSTING_RULES:
+        if kod in hesaplar:
+            continue
+        kart = tohum[kod]
+        hesaplar[kod] = await hesap_fabrikasi(
+            kod, name=kart.name, account_type=kart.account_type, is_contra=kart.is_contra
+        )
+    for role_key, kod in INVOICE_POSTING_RULES:
+        seeded_db.add(
+            PostingRule(
+                source_type=JournalSourceType.invoice,
+                role_key=role_key,
+                account_id=hesaplar[kod].id,
+            )
+        )
+    await seeded_db.flush()
+    return hesaplar
