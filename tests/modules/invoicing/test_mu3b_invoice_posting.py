@@ -57,6 +57,12 @@ from app.modules.invoicing.models import (
     InvoiceStatus,
 )
 from app.modules.invoicing.transitions import InvoiceAction
+from app.modules.treasury.models import (
+    BankAccount,
+    BankAccountType,
+    Payment,
+    PaymentMethodKind,
+)
 from app.modules.users.models import User
 
 TARIH = date(2026, 7, 17)
@@ -153,6 +159,38 @@ async def _gecis(seeded_db, kullanici_id, invoice: Invoice, action: InvoiceActio
     return await state_service.perform_transition(
         seeded_db, await _aktor(seeded_db, kullanici_id), invoice.id, action
     )
+
+
+async def _tam_odeme(seeded_db, kullanici_id, invoice: Invoice) -> None:
+    """🔴 MU-3E İŞ 2 — `mark-collected` kapısının aradığı ödeme satırı.
+
+    `payments_service.create_payment` ÇAĞRILMAZ: o yol aynı işlemde bir NAKİT
+    fişi de yazar (MU-3C) ve bu dosyanın FİŞ SAYAN iddialarını kurulumun
+    kendisi bozardı. Buradaki tek iş kapının aradığı olguyu kurmaktır.
+    """
+    account = (
+        await seeded_db.execute(select(BankAccount).where(BankAccount.bank_name == "Ziraat"))
+    ).scalar_one_or_none()
+    if account is None:
+        account = BankAccount(
+            bank_name="Ziraat",
+            account_type=BankAccountType.checking,
+            iban=None,
+            opening_balance=Decimal("0.00"),
+        )
+        seeded_db.add(account)
+        await seeded_db.flush()
+    seeded_db.add(
+        Payment(
+            invoice_id=invoice.id,
+            bank_account_id=account.id,
+            method=PaymentMethodKind.transfer,
+            amount=invoice.total,
+            paid_on=invoice.issue_date,
+            created_by_id=(await _aktor(seeded_db, kullanici_id)).id,
+        )
+    )
+    await seeded_db.flush()
 
 
 async def _fis(seeded_db: AsyncSession, invoice: Invoice) -> JournalEntry | None:
@@ -281,6 +319,10 @@ async def test_MARK_COLLECTED_IKINCI_fis_URETMEZ(seeded_db, kullanici_id, fatura
         kalemler=[("1", "1000.00", "20")],
     )
     await _gecis(seeded_db, kullanici_id, invoice, InvoiceAction.send)
+    # MU-3E İŞ 2 — kapı ödeme arar. Satır DOĞRUDAN yazılır: `create_payment`
+    # kullanılsaydı kurulumun kendisi ikinci bir (nakit) fiş açar ve bu testin
+    # saydığı sayıyı oynatırdı.
+    await _tam_odeme(seeded_db, kullanici_id, invoice)
 
     await _gecis(seeded_db, kullanici_id, invoice, InvoiceAction.mark_collected)
 
@@ -486,6 +528,13 @@ async def _mutabakat_kumesini_kur(seeded_db, kullanici_id) -> None:
             kalemler=kalemler,
             withholding_rate=tevkifat,
         )
+        # 🔴 MU-3E İŞ 2 — tahsilat damgası artık ödeme arar. Satır kümeden
+        # DÜŞÜRÜLMEDİ: `mark-collected` bu mutabakatta "KDV'ye HİÇBİR ŞEY
+        # KATMAYAN geçiş" rolünü oynar ve düşürülseydi kimliğin o dalı hiç
+        # koşmazdı. Ödeme, geçişten ÖNCE ve doğrudan yazılır — nakit fişi
+        # (MU-3C) `191`/`391`e dokunmaz, yani KDV kimliği etkilenmez.
+        if InvoiceAction.mark_collected in gecisler:
+            await _tam_odeme(seeded_db, kullanici_id, invoice)
         for action in gecisler:
             await _gecis(seeded_db, kullanici_id, invoice, action)
 

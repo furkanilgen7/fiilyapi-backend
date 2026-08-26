@@ -337,7 +337,8 @@ async def replace_invoice_lines_endpoint(
 # kilidi ya da K6 kapısını birinde unutmak mümkün olurdu.
 #
 # 🔴 Ortak sözleşme: **409** yön dışı ya da matris dışı geçiş · **422** kalemsiz
-# `send`/`approve` (K6) · **404** görünmeyen fatura · **403** `full` altı yetki.
+# `send`/`approve` (K6) ya da ödemesiz `mark-collected` (MU-3E İŞ 2) · **404**
+# görünmeyen fatura · **403** `full` altı yetki.
 # Geçiş yalnız `status` damgalar — para alanları YENİDEN HESAPLANMAZ (K7).
 # --------------------------------------------------------------------------- #
 
@@ -349,6 +350,15 @@ _GECIS_YANITLARI = {
 _KAPILI_GECIS_YANITLARI = {
     **_GECIS_YANITLARI,
     422: {"description": "Kalemsiz fatura gönderilemez / onaylanamaz (K6)"},
+}
+
+#: 🔴 MU-3E İŞ 2 — `mark-collected` de artık 422 verebilir, ama SEBEBİ K6 DEĞİL.
+#: `_KAPILI_GECIS_YANITLARI` yeniden kullanılsaydı OpenAPI, kalemsiz bir
+#: faturanın tahsil edilemediğini söyler ve istemci kullanıcıya YANLIŞ İŞİ
+#: yaptırırdı (kalem eklemek yerine ödeme girmesi gerekir).
+_TAHSILAT_GECIS_YANITLARI = {
+    **_GECIS_YANITLARI,
+    422: {"description": "Faturanın toplamını karşılayan ödeme kaydı yok (MU-3E İŞ 2)"},
 }
 
 
@@ -392,7 +402,7 @@ async def send_invoice_endpoint(
 @router.post(
     "/invoices/{invoice_id}/mark-collected",
     response_model=InvoiceDetailResponse,
-    responses=_GECIS_YANITLARI,
+    responses=_TAHSILAT_GECIS_YANITLARI,
     dependencies=[_FULL],
 )
 async def mark_collected_invoice_endpoint(
@@ -409,6 +419,13 @@ async def mark_collected_invoice_endpoint(
     döner ve uydurma alan olur.
 
     K6 kapısı UYGULANMAZ: `sent` bir fatura zaten kapıdan geçmiştir.
+
+    🔴 **MU-3E İŞ 2 — ÖDEME ARANIR (kullanıcı kararı 2026-08-26).** Faturanın
+    toplamını karşılayan ödeme kaydı yoksa **422**. Ödemesiz damga muhasebede
+    `120 Alıcılar`ı AÇIK bırakıyor ve mizan alıcıları fazla gösteriyordu:
+    nakit bacağı `payments` satırından doğar (MU-3C), ödeme yoksa fiş de
+    yoktur. Doğru yol `POST /payments`tir — tahsilat girildiğinde bu damga
+    KENDİLİĞİNDEN basılır (K5) ve nakit fişi de aynı işlemde yazılır.
     """
     return await _gecis(request, session, user, invoice_id, InvoiceAction.mark_collected)
 

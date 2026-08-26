@@ -30,6 +30,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import ConflictError
 from app.core.security import hash_password
+from app.modules.accounting.chart_seed_data import CHART_ACCOUNTS
+from app.modules.accounting.models import (
+    AccountingPeriod,
+    ChartAccount,
+    JournalEntry,
+    JournalLine,
+    JournalSourceType,
+)
 from app.modules.payroll import service
 from app.modules.payroll.models import (
     PayrollLine,
@@ -38,7 +46,9 @@ from app.modules.payroll.models import (
     PayrollPeriodStatus,
     PayrollRate,
 )
+from app.modules.payroll.posting import PAYROLL_POSTING_RULES
 from app.modules.personnel.models import Personnel
+from app.modules.posting.models import PostingRule
 from app.modules.roles.models import Role
 from app.modules.site_diary.models import WorkerSource
 from app.modules.users.models import User
@@ -122,6 +132,12 @@ async def _kur(
             days=5,
             gross_amount=Decimal("9000.00"),
             deduction_amount=Decimal("1350.00"),
+            # 🔴 MU-3E — `income_tax_amount` DOLU olmak ZORUNDA: `posting.
+            #    totals_for` bileşeni eksik satırda fail-closed 422 verir ve
+            #    `approved` adımı HİÇ tamamlanmazdı. 0,00 burada bir OLGUDUR:
+            #    9.000 brüt, 2026 asgari ücret istisnasının ALTINDADIR
+            #    (kesinti = SGK %14 1.260 + işsizlik %1 90 = 1.350).
+            income_tax_amount=Decimal("0.00"),
             net_amount=SIRKET_NET,
             bank_amount=SIRKET_NET,
             cash_amount=Decimal("0.00"),
@@ -139,6 +155,24 @@ async def _kur(
             excluded_reason="Taşeron işçisi bordrodan ödenmez",
         )
         session.add_all([odenebilir, taseron])
+        # 🔴 MU-3E — `approved` adımı artık FİŞ KESER. Oran seti ve
+        #    `posting_rules` OLMADAN `approve_period` 422 alır ve bu dosyanın
+        #    ölçtüğü YARIŞ hiç kurulamazdı. Kurulum GERÇEKTEN COMMIT edilir
+        #    (bu dosyanın deseni) ve `_temizle` hepsini geri alır.
+        session.add(
+            PayrollRate(
+                year=_YIL,
+                personnel_source=WorkerSource.company,
+                sgk_employee_pct=Decimal("14.000"),
+                unemployment_employee_pct=Decimal("1.000"),
+                income_tax_pct=None,
+                stamp_tax_pct=Decimal("0.759"),
+                sgk_employer_pct=Decimal("20.500"),
+                unemployment_employer_pct=Decimal("2.000"),
+                short_work_pct=Decimal("1.000"),
+            )
+        )
+        await _fisleme_eslemesi(session)
         await session.flush()
         await session.commit()
         return _Kurulum(
@@ -149,6 +183,68 @@ async def _kur(
             actor_ids=[a.id for a in aktorler],
             role_id=role.id,
         )
+
+
+@pytest.fixture(autouse=True)
+async def _mu3e_esleme() -> None:
+    """🔴 MU-3E — conftest'teki AYNI ADLI autouse fixture'ı GÖLGELER (kapatır).
+
+    Bu dosya `db_session`i BİLEREK KULLANMAZ (modül docstring'i): iki bağımsız
+    bağlantı açar ve GERÇEKTEN COMMIT eder. Conftest'in eşleme fixture'ı
+    `db_session`e bağlıdır ve autouse olduğu için onu BU dosyaya da zorla
+    sokardı; commit EDİLMEMİŞ `chart_of_accounts`/`posting_rules` satırları ile
+    buradaki gerçek commit aynı benzersiz anahtarda çakışır ve tam küme koşusu
+    bir DEADLOCK'ta ASILI KALIRDI (MU-3D'de `pg_stat_activity`de
+    `wait_event_type='Lock'` olarak ölçüldü).
+
+    🔴 Eşlemenin BULUNMAMASI bir eksiklik değildir: `_kur` onu kendisi kurar
+    (`_fisleme_eslemesi`) ve `_temizle` geri alır — bu dosyanın kurulumu zaten
+    baştan sona ELLE ve GERÇEK COMMIT'lidir.
+    """
+    return None
+
+
+async def _fisleme_eslemesi(session: AsyncSession) -> None:
+    """MU-3E `posting_rules` eşlemesi — ÜRÜN demetinden kurulur, elle YAZILMAZ.
+
+    Elle yazılsaydı `PAYROLL_POSTING_RULES` bozulduğunda bu kurulum yeşil
+    kalırdı. Hesap kartları `chart_seed_data`dan okunur (tip/kontra dahil).
+
+    Idempotent: `_kur` dosya boyunca birden çok kez koşar ve
+    `uq_posting_rules_source_role` ikinci turda çarpardı.
+    """
+    tohum = {satir.code: satir for satir in CHART_ACCOUNTS}
+    for role_key, kod in PAYROLL_POSTING_RULES:
+        account = (
+            await session.execute(select(ChartAccount).where(ChartAccount.code == kod))
+        ).scalar_one_or_none()
+        if account is None:
+            kart = tohum[kod]
+            account = ChartAccount(
+                code=kart.code,
+                name=kart.name,
+                account_type=kart.account_type,
+                is_contra=kart.is_contra,
+            )
+            session.add(account)
+            await session.flush()
+        mevcut = (
+            await session.execute(
+                select(PostingRule).where(
+                    PostingRule.source_type == JournalSourceType.payroll_period,
+                    PostingRule.role_key == role_key,
+                )
+            )
+        ).scalar_one_or_none()
+        if mevcut is None:
+            session.add(
+                PostingRule(
+                    source_type=JournalSourceType.payroll_period,
+                    role_key=role_key,
+                    account_id=account.id,
+                )
+            )
+    await session.flush()
 
 
 async def _gorevleri_bosalt(*gorevler: asyncio.Task | None) -> None:
@@ -178,6 +274,40 @@ async def _temizle(kurulum: _Kurulum) -> None:
         await session.execute(delete(PayrollPeriod).where(PayrollPeriod.id == kurulum.period_id))
         # T5: oran yarışı senaryosu bu yıl için satır YARATABİLİR (upsert).
         await session.execute(delete(PayrollRate).where(PayrollRate.year == _YIL))
+        # 🔴 MU-3E — dönemin fişi ve eşlemesi. Fiş ÖNCE gider (`journal_lines`
+        #    CASCADE ile düşer), sonra kural, en sonra hesap kartı: `posting_
+        #    rules.account_id` ve `journal_lines.account_id` RESTRICT'tir.
+        fis_idleri = (
+            (
+                await session.execute(
+                    select(JournalEntry.id).where(
+                        JournalEntry.source_type == JournalSourceType.payroll_period,
+                        JournalEntry.source_id == kurulum.period_id,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if fis_idleri:
+            await session.execute(delete(JournalLine).where(JournalLine.entry_id.in_(fis_idleri)))
+            await session.execute(delete(JournalEntry).where(JournalEntry.id.in_(fis_idleri)))
+        await session.execute(
+            delete(PostingRule).where(PostingRule.source_type == JournalSourceType.payroll_period)
+        )
+        await session.execute(
+            delete(ChartAccount).where(
+                ChartAccount.code.in_([kod for _rol, kod in PAYROLL_POSTING_RULES])
+            )
+        )
+        # 🔴 ÖLÇÜLMÜŞ SIZINTI — `post_document`in dönem kapısı
+        #    (`periods_service.lock_period`) UPSERT-SONRA-KİLİTLE yapar ve satırı
+        #    YOKSA `open` olarak AÇAR. Bu dosya GERÇEKTEN commit ettiği için o
+        #    satır veritabanında KALIR ve `tests/modules/accounting/
+        #    test_mu2_periods_api.py`nin dönem SAYAN/SIRALAYAN testlerini tam
+        #    küme koşusunda kırar (ölçüldü: 2099/3 ve 2099/4 satırları, 4 test).
+        #    Sızıntı hiçbir yerde GÖRÜNMEZ — kırmızı BAŞKA bir pakette çıkar.
+        await session.execute(delete(AccountingPeriod).where(AccountingPeriod.year == _YIL))
         await session.execute(delete(Personnel).where(Personnel.id.in_(kurulum.personnel_ids)))
         await session.execute(delete(User).where(User.id.in_(kurulum.actor_ids)))
         await session.execute(delete(Role).where(Role.id == kurulum.role_id))
@@ -344,7 +474,11 @@ async def _toplu_onayla_ve_tut(
     kilidi_birak: asyncio.Event,
 ) -> tuple[int, str]:
     async with _SessionFactory() as session:
-        sonuc, _ = await service.approve_period(session, actor_id, period_id)
+        # 🔴 MU-3E — `approve_period` artık `User` alır (`actor_id` DEĞİL):
+        #    `post_document` fişin `created_by_id`sini yazar.
+        sonuc, _ = await service.approve_period(
+            session, await session.get(User, actor_id), period_id
+        )
         kilit_alindi.set()
         await kilidi_birak.wait()
         await session.commit()
@@ -353,7 +487,9 @@ async def _toplu_onayla_ve_tut(
 
 async def _toplu_onayla(period_id: uuid.UUID, actor_id: uuid.UUID) -> tuple[int, str]:
     async with _SessionFactory() as session:
-        sonuc, _ = await service.approve_period(session, actor_id, period_id)
+        sonuc, _ = await service.approve_period(
+            session, await session.get(User, actor_id), period_id
+        )
         await session.commit()
         return sonuc.approved, sonuc.period_status.value
 

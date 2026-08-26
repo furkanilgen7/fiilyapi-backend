@@ -266,6 +266,20 @@ async def test_MARK_COLLECTED_gecisi_NAKIT_fisi_URETMEZ(seeded_db, user_factory)
     await invoicing_state_service.perform_transition(
         seeded_db, kullanici, invoice.id, InvoiceAction.send
     )
+    # 🔴 MU-3E İŞ 2 — damga artık ödeme arar. Satır DOĞRUDAN yazılır, servisten
+    # DEĞİL: `create_payment` kendi nakit fişini açar ve tam da bu testin
+    # "geçişten nakit fişi doğmaz" iddiasını kurulumla yeşile boyardı.
+    seeded_db.add(
+        Payment(
+            invoice_id=invoice.id,
+            bank_account_id=(await banka_hesabi(seeded_db)).id,
+            method=PaymentMethodKind.transfer,
+            amount=invoice.total,
+            paid_on=invoice.issue_date,
+            created_by_id=kullanici.id,
+        )
+    )
+    await seeded_db.flush()
 
     await invoicing_state_service.perform_transition(
         seeded_db, kullanici, invoice.id, InvoiceAction.mark_collected
@@ -278,7 +292,7 @@ async def test_MARK_COLLECTED_gecisi_NAKIT_fisi_URETMEZ(seeded_db, user_factory)
             .where(JournalEntry.source_type == JournalSourceType.payment)
         )
         == 0
-    )
+    ), "GEÇİŞTEN nakit fişi doğdu — ödeme satırı elle yazıldı, servis çağrılmadı"
     assert await _fis_sayisi(seeded_db) == 1
 
 

@@ -50,6 +50,12 @@ from app.modules.invoicing.models import (
 from app.modules.procurement.models import PurchaseOrder, PurchaseOrderStatus, Supplier
 from app.modules.projects.models import Employer, Project
 from app.modules.sites.models import Site
+from app.modules.treasury.models import (
+    BankAccount,
+    BankAccountType,
+    Payment,
+    PaymentMethodKind,
+)
 from app.modules.users.models import User, UserProjectAccess
 
 
@@ -366,3 +372,51 @@ async def fatura_eslemesi(seeded_db: AsyncSession, hesap_fabrikasi) -> dict[str,
         )
     await seeded_db.flush()
     return hesaplar
+
+
+@pytest.fixture
+def tam_odeme(seeded_db: AsyncSession, user_factory):
+    """🔴 MU-3E İŞ 2 — faturanın toplamını KARŞILAYAN ödeme satırını kurar.
+
+    `mark-collected` artık `Σ payments >= total` arar (kullanıcı kararı
+    2026-08-26). Ödemesiz damga muhasebede `120 Alıcılar`ı açık bırakıyordu.
+
+    🔴 Satır `payments_service.create_payment` ile DEĞİL, DOĞRUDAN yazılır ve
+    bu bilinçlidir (`fatura_fabrikasi`nın "uçlardan geçilerek kurulamaz"
+    gerekçesinin kardeşi): servis yolu aynı işlemde bir NAKİT FİŞİ de yazar ve
+    "mark-collected ikinci fiş üretmez" gibi FİŞ SAYAN testlerin ölçtüğü sayıyı
+    kurulumun kendisi oynatırdı. Buradaki tek iş, kapının aradığı OLGUYU
+    (ödeme satırı var ve toplamı karşılıyor) kurmaktır.
+    """
+
+    async def _create(invoice: Invoice) -> Payment:
+        account = (
+            await seeded_db.execute(select(BankAccount).where(BankAccount.bank_name == "Ziraat"))
+        ).scalar_one_or_none()
+        if account is None:
+            account = BankAccount(
+                bank_name="Ziraat",
+                account_type=BankAccountType.checking,
+                iban=None,
+                opening_balance=Decimal("0.00"),
+            )
+            seeded_db.add(account)
+            await seeded_db.flush()
+        creator = (
+            await seeded_db.execute(select(User).where(User.email == "odeme@fatura.co"))
+        ).scalar_one_or_none() or await user_factory(
+            email="odeme@fatura.co", password="parola1234", role_key="system_admin"
+        )
+        payment = Payment(
+            invoice_id=invoice.id,
+            bank_account_id=account.id,
+            method=PaymentMethodKind.transfer,
+            amount=invoice.total,
+            paid_on=invoice.issue_date,
+            created_by_id=creator.id,
+        )
+        seeded_db.add(payment)
+        await seeded_db.flush()
+        return payment
+
+    return _create

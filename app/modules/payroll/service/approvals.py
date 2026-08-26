@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
 from app.modules.audit import messages
-from app.modules.payroll import guards, schemas, transitions
+from app.modules.payroll import guards, posting, schemas, transitions
 from app.modules.payroll.models import (
     PayrollLine,
     PayrollLineStatus,
@@ -27,7 +27,9 @@ from app.modules.payroll.service.core import (
     _lock_period,
     _locked_line,
     _locked_period_lines,
+    rates_by_source,
 )
+from app.modules.users.models import User
 
 # --- T4: onay + ödeme yolu -------------------------------------------------
 #
@@ -130,7 +132,7 @@ async def reject_line(
 
 
 async def approve_period(
-    session: AsyncSession, actor_id: uuid.UUID, period_id: uuid.UUID
+    session: AsyncSession, actor: User, period_id: uuid.UUID
 ) -> tuple[schemas.PayrollPeriodApproveResult, str]:
     """`POST /payroll/periods/{id}/approve` — BY 303 "Tümünü Onayla" + BY 56.
 
@@ -146,6 +148,30 @@ async def approve_period(
 
     🔴 Atlananlar SEBEBE GÖRE sayılır (WORKFLOW §3): `excluded` (K2) ve
     `uncomputed` (S4) ayrı ayrı raporlanır — kullanıcının yapacağı iş farklıdır.
+
+    🔴 **MU-3E — TAHAKKUK FİŞİ TAM OLARAK BURADA DOĞAR** (`hedef is approved`
+    iken). Gerekçe `payroll/posting.py`nin modül docstring'inde ÖLÇÜLEREK
+    yazılıdır ve burada TEKRARLANMAZ; özeti: bu, kilidin düştüğü ve tutarların
+    DONDUĞU tek geçiştir.
+
+    ⚠️ **Kanca GEÇİŞE DEĞİL HEDEF DURUMA bağlıdır.** Bu uç TEK ADIM ilerletir
+    (S8), yani aynı fonksiyon `draft → pending_approval` için de koşar ve o
+    çağrıda fiş YAZILMAZ. `action is approve` gibi bir koşul yazılsaydı ilk
+    tıkta da fiş kesilir, bordro onaylanmadan mizana girerdi.
+
+    🔴 Fiş satırlar `approved` yapıldıktan SONRA yazılır: `posting.
+    postable_lines` `PAYABLE_LINE_STATUSES` kümesine bakar ve sıra tersine
+    çevrilseydi henüz `pending` olan satırlar da fişe girerdi — bugün aynı
+    sonucu verir (`pending` de o kümededir) ama kümenin daralması hâlinde
+    sessizce ayrışırdı.
+
+    🔴 `actor` bir `User`dır, `actor_id` DEĞİL: `post_document` fişin
+    `created_by_id`sini yazar. Kimliği alıp burada kullanıcıyı yeniden okumak
+    ikinci bir sorgu ve ikinci bir "bulunamadı" dalı açardı.
+
+    Fiş yazılamazsa (kapalı dönem **409** · eksik eşleme ya da eksik bileşen
+    **422**) ONAY DA GERİ ALINIR — AYNI transaction'dadır. "Onaylı ama fişsiz"
+    bir bordro DOĞMAZ.
     """
     period = await _lock_period(session, period_id)
     hedef = transitions.next_period_step(period.status)
@@ -154,7 +180,10 @@ async def approve_period(
     transitions.assert_period_transition(period.status, hedef)
 
     onaylanan = atlanan_uncomputed = atlanan_excluded = atlanan_onayli = 0
-    for line in await _locked_period_lines(session, period.id):
+    # Satır listesi DEĞİŞKENE ALINIR: MU-3E fişi AYNI kümeyi tutarlar. Yeniden
+    # okunsaydı fiş, onaylanan satırlardan BAŞKA bir küme üzerinde tanımlanabilirdi.
+    satirlar = await _locked_period_lines(session, period.id)
+    for line in satirlar:
         if line.status is PayrollLineStatus.uncomputed:
             atlanan_uncomputed += 1
             continue
@@ -170,8 +199,15 @@ async def approve_period(
 
     period.status = hedef
     if hedef is PayrollPeriodStatus.approved:
-        period.approved_by_id = actor_id
+        period.approved_by_id = actor.id
         period.approved_at = datetime.now(UTC)
+        await posting.post_payroll_period(
+            session,
+            actor,
+            period,
+            satirlar,
+            await rates_by_source(session, period.year),
+        )
 
     await session.flush()
     return (

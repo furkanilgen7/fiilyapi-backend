@@ -14,9 +14,16 @@ yalnız YOLU barındırır (spec §5 rota sırası tuzağı), tek satır kural t
 ## 🔴 Import yönü TEK YÖNLÜDÜR (P10 `cost_cards` dersi)
 
 `treasury` → `invoicing` okur (`service.visible_invoice`, `transitions`,
-`guards`); `invoicing` paket düzeyinde `treasury`yi OKUMAZ — tek bağ
-`invoicing/router.py`nin bu modülü ithal etmesidir ve router'ı kimse ithal
-etmez. Çember bu yüzden AÇILMAZ ve gecikmeli import'a da gerek kalmaz.
+`guards`); `invoicing` paket düzeyinde `treasury`yi bir tek yerde okur.
+
+🔴 **MU-3E İŞ 2 — O TEK YER `invoicing/state_service.py`dir** ve ödemesiz
+`mark-collected` kapısı için `treasury.repository`yi (YALNIZ onu) ithal eder.
+Çember AÇILMAZ, ölçüldü: `treasury.repository` → `treasury.balance` →
+`invoicing.models`, ve `invoicing.models` bir YAPRAKTIR. 🔴 **BU MODÜL
+(`payments_service`) `invoicing`ten ASLA ithal edilemez** — o gerçek bir
+çemberdir (`payments_service` → `invoicing.service` → …). Kural budur:
+`invoicing` yalnız `treasury.repository`yi okur, `treasury`nin iş mantığını
+DEĞİL.
 
 ## 🔴 K7 — EŞİK = KİLİT (WORKFLOW §4, İK-2/İK-3 kanonu)
 

@@ -342,7 +342,10 @@ async def reject_payroll_line_endpoint(
 @router.post(
     "/payroll/periods/{period_id}/approve",
     response_model=PayrollPeriodApproveResult,
-    responses={409: {"description": "Dönem onay adımına geçirilemez"}},
+    responses={
+        409: {"description": "Dönem onay adımına geçirilemez ya da muhasebe dönemi kapalı"},
+        422: {"description": "Bordro fişi yazılamadı: hesap eşlemesi ya da satır bileşeni eksik"},
+    },
     dependencies=[_FULL],
 )
 async def approve_payroll_period_endpoint(
@@ -359,8 +362,13 @@ async def approve_payroll_period_endpoint(
     🔴 "Tümünü" onaylamaz: `uncomputed` (S4) ve taşeron (K2) satırlar ATLANIR ve
     yanıtta **sebebe göre ayrı sayılarla** raporlanır — sessiz atlama yoktur
     (WORKFLOW §3).
+
+    🔴 **MU-3E:** `approved` adımında bordronun TAHAKKUK FİŞİ kesilir
+    (`730` gider · `335` personele borç · `360` vergi · `361` SGK). Fiş
+    yazılamazsa onay da geri alınır: hedef ayın muhasebe dönemi kapalıysa
+    **409**, hesap eşlemesi ya da satır bileşeni eksikse **422**.
     """
-    sonuc, detail = await service.approve_period(session, user.id, period_id)
+    sonuc, detail = await service.approve_period(session, user, period_id)
     await _audit(request, session, user, AuditAction.approve, detail)
     return sonuc
 
