@@ -34,6 +34,7 @@ açılmaz**.
 import uuid
 from decimal import Decimal
 
+import pytest
 from sqlalchemy import select
 
 from app.modules.audit import messages
@@ -45,7 +46,10 @@ from app.modules.treasury.models import (
     FinancialInstrumentStatus,
     Payment,
 )
-from app.modules.treasury.payments_service import PAYMENT_INSTRUMENT_DIRECTION_MISMATCH
+from app.modules.treasury.payments_service import (
+    PAYMENT_INSTRUMENT_DIRECTION_MISMATCH,
+    PAYMENT_INSTRUMENT_NOT_PORTFOLIO,
+)
 
 
 def _yol(invoice) -> str:  # noqa: ANN001
@@ -183,18 +187,60 @@ async def test_GELEN_faturaya_VERILEN_senet_baglanir_201(
     assert await _kolon(seeded_db, resp.json()["id"]) == senet.id
 
 
-async def test_PORTFOY_DISI_cek_de_baglanabilir(
-    client, muhasebe_headers, fatura_fabrikasi, hesap_fabrikasi, cek_fabrikasi, odeme_eslemesi
+@pytest.mark.parametrize(
+    "terminal",
+    [
+        FinancialInstrumentStatus.collected,
+        FinancialInstrumentStatus.returned,
+        FinancialInstrumentStatus.cancelled,
+    ],
+)
+async def test_PORTFOY_DISI_ceke_odeme_BAGLANAMAZ_422(
+    client,
+    muhasebe_headers,
+    fatura_fabrikasi,
+    hesap_fabrikasi,
+    cek_fabrikasi,
+    odeme_eslemesi,
+    terminal,
 ) -> None:
-    """Durum denetimi YOKTUR ve uydurulmaz: tahsil edilmiş bir çekin ödemesi
-    tam olarak o çek tahsil edildiği için kaydedilir. `portfolio` şartı
-    konsaydı gerçek akış (önce tahsil, sonra kayıt) reddedilirdi."""
+    """🔴 ODM-1 D4 — FIN-PAY'in *"durum denetimi YOKTUR ve uydurulmaz"* kararı
+    TERSİNE ÇEVRİLDİ ve gerekçesi ODM-1'de DOĞDU (o gün yoktu):
+
+    bağlı bir ödemenin nakit bacağı `101`/`103`e yazılır; o ara hesabı
+    boşaltan TEK olay `instruments.service.change_status`ın `collected`/`paid`
+    geçişidir; `TERMINAL_STATUSES`ten **ÇIKIŞ YOKTUR**. Yani terminal bir
+    evraka bağlanan ödeme `101`i sonsuza dek borçlu bırakır — kalıcı bir
+    "yolda" para. Doğru yol bağsız ödemedir (para zaten hesaba indi).
+
+    ÜÇ terminal durumun ÜÇÜ de denenir: yalnız `collected` yazılsaydı
+    `returned` üzerinden AYNI kalıntı sessizce açılabilirdi.
+    """
     invoice = await fatura_fabrikasi(direction=InvoiceDirection.outgoing, total="1000.00")
     account = await hesap_fabrikasi()
     cek = await cek_fabrikasi(
         direction=FinancialInstrumentDirection.received,
-        status=FinancialInstrumentStatus.collected,
+        status=terminal,
     )
+
+    resp = await client.post(
+        _yol(invoice),
+        json=_govde(account, "100.00", financial_instrument_id=str(cek.id)),
+        headers=muhasebe_headers,
+    )
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"] == PAYMENT_INSTRUMENT_NOT_PORTFOLIO
+
+
+async def test_PORTFOYDEKI_ceke_odeme_BAGLANIR_201_POZITIF_KONTROL(
+    client, muhasebe_headers, fatura_fabrikasi, hesap_fabrikasi, cek_fabrikasi, odeme_eslemesi
+) -> None:
+    """🔴 Yukarıdaki bekçinin POZİTİF KONTROLÜ. Onsuz, bağı KOŞULSUZ reddeden
+    bozuk bir kod da yeşil geçerdi (K-IKIZ deseni)."""
+    invoice = await fatura_fabrikasi(direction=InvoiceDirection.outgoing, total="1000.00")
+    account = await hesap_fabrikasi()
+    cek = await cek_fabrikasi(direction=FinancialInstrumentDirection.received)
 
     resp = await client.post(
         _yol(invoice),

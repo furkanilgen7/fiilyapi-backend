@@ -8,12 +8,17 @@
 2. **Turevler.** `is_due` ve KPI pencereleri `derive.py`dedir.
 3. **Yetki.** Uc kapi (`view`/`full`/`admin`) router'dadir (`require_permission`).
 
-## 🔴 K5 — MUHASEBE FISI ATILMAZ
+## 🔴 ODM-1 — K5 GECERSIZ: GECIS ARTIK FIS ATAR (2026-08-27)
 
-Cek tahsil edilince/odenince yevmiye fisi atmak AYRI bir dilimin isidir (MU-3).
-Bu modul `accounting/` altinda tek satir degistirmez ve oradan HICBIR SEY
-import etmez. Portfoy bir ENVANTERDIR; deftere baglanmasi ayri bir karar
-zinciri gerektirir.
+FIN-1'in K5 karari *"cek tahsil edilince yevmiye fisi atmak AYRI bir dilimin
+isidir"* diyordu ve o dilim ODM-1'dir. `change_status` artik iki sinif is yapar
+(`_post_transition`): `collected`/`paid` yeni bir fis YAZAR (`101`/`103`
+kapanir), `returned`/`cancelled` ise bagli odemelerin fisini STORNO eder.
+
+Modul yine de `accounting/` altinda tek satir degistirmez: fisleme
+`posting.post_document` ve `accounting.state_service`in KENDI kapilarindan
+gecer. Portfoy artik yalnizca bir ENVANTER degil, defterin `101`/`103` ara
+hesaplarinin KARSILIGIDIR.
 
 ## Hangi kural hangi koda duser
 
@@ -51,7 +56,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ConflictError, NotFoundError, TreasuryValidationError
 from app.modules.audit import messages
 from app.modules.projects.service import visible_projects
-from app.modules.treasury.instruments import derive, guards, repository, summary, transitions
+from app.modules.treasury import posting as treasury_posting
+from app.modules.treasury.instruments import (
+    derive,
+    guards,
+    posting,
+    repository,
+    summary,
+    transitions,
+)
 from app.modules.treasury.instruments.schemas import (
     FinancialInstrumentCreate,
     FinancialInstrumentListResponse,
@@ -323,6 +336,44 @@ async def update_instrument(
 # --- Uc 5: durum gecisi ---
 
 
+async def _post_transition(
+    session: AsyncSession,
+    actor: User,
+    instrument: FinancialInstrument,
+    target: FinancialInstrumentStatus,
+) -> None:
+    """🔴 ODM-1 — geçişin MALİ karşılığı. İKİ sınıf, İKİ ayrı yol.
+
+    * `collected`/`paid` → **YENİ FİŞ**: `101`/`103` kapanır, para nakde iner.
+      Tutar Σ BAĞLI ÖDEMELERDİR (D3, gerekçe `instruments/posting.py`de) ve
+      bağlı ödeme yoksa HİÇBİR ŞEY yazılmaz.
+    * `returned`/`cancelled` → **STORNO** (D6): karşılıksız/iptal bir çekte
+      cari KAPANMAMIŞ olmalıdır. Bağlı HER ödemenin fişi
+      `treasury.posting.reverse_payment` ile tersine çevrilir (`120 B / 101 A`),
+      alacak yeniden AÇILIR ve `101` boşalır. 🔴 Fonksiyon **ÇAĞRILIR,
+      KOPYALANMAZ** (K3): ikinci bir storno yazımı bir gün `state_service`
+      yerine fiş silmeye kayar ve mali iz sessizce kaybolurdu.
+      🔴 Ödeme SATIRI SİLİNMEZ — mali iz kalır; o parayı nakitten dışlayan şey
+      `balance.cash_realized_condition()`ın süzgecidir (D2).
+
+    Kilit sırası BOZULMAZ: satır kilidi çağıranın İLK işidir ve buraya yalnız
+    KİLİTLİ satırla gelinir; `post_document` kendi danışma kilidini EN SONDA
+    alır, yani satır kilidi sırasına yeni bir halka SOKMAZ.
+
+    🔴 Fiş AYNI transaction'dadır: kapalı dönem (**409**) ya da eksik eşleme
+    (**422**) durum damgasını da geri alır — "tahsil edilmiş ama fişsiz" bir
+    evrak DOĞMAZ.
+    """
+    if target not in posting.POSTING_STATUSES and target not in posting.REVERSING_STATUSES:
+        return
+    odemeler = await repository.payments_with_accounts(session, instrument.id)
+    if target in posting.POSTING_STATUSES:
+        await posting.post_instrument(session, actor, instrument, odemeler)
+        return
+    for payment, _account in odemeler:
+        await treasury_posting.reverse_payment(session, actor, payment.id)
+
+
 async def change_status(
     session: AsyncSession,
     actor: User,
@@ -341,6 +392,7 @@ async def change_status(
     instrument.status = target
     await session.flush()
     await session.refresh(instrument)
+    await _post_transition(session, actor, instrument, target)
     return instrument, messages.financial_instrument_status_changed(
         instrument.serial_no, instrument.drawer_name, target.value
     )

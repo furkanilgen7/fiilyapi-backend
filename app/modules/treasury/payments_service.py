@@ -72,6 +72,8 @@ damgalanır ve damga **matrisin TANIDIĞI geçişle sınırlıdır**
 | Biçim ihlali (ölçek, `gt=0`, `limit` tavanı, bilinmeyen alan) | 422 | Pydantic |
 | **Aşırı tahsilat (K6)** · pasif hesap | 422 | `TreasuryValidationError` |
 | **Çek/senet YÖN çelişkisi (FIN-PAY K3)** | 422 | `TreasuryValidationError` |
+| 🔴 **Bağlanan çek/senet PORTFÖYDE DEĞİL (ODM-1 D4)** | 422 | `TreasuryValidationError` |
+| 🔴 **Portföy dışı çeke bağlı ödemenin SİLİNMESİ (ODM-1 D5)** | 409 | `ConflictError` |
 
 ## 🔴 FIN-PAY — çek/senet bağı (`financial_instrument_id`)
 
@@ -106,6 +108,13 @@ BÜTÜN gerekçesini taşır; burada TEKRARLANMAZ. Bu dosyayı ilgilendiren üç
 * **Fiş AYNI transaction'dadır.** Kapalı dönem (**409**) ya da eksik eşleme
   (**422**) ödemeyi de geri alır — "parası girmiş ama fişsiz" bir tahsilat
   DOĞMAZ.
+🔴 **ODM-1 (2026-08-27) — BAĞLI ÖDEMENİN NAKİT BACAĞI `101`/`103`E KAYAR.**
+Tetikleyici `financial_instrument_id` BAĞIDIR, `method` etiketi değil (D1,
+gerekçe `posting.payment_cash_role`ta). Bu dosyaya iki YENİ KAPI düşer:
+`_instrument_or_none` portföy dışı evrakı **422** ile reddeder (D4) ve
+`_assert_instrument_deletable` portföy dışı evrağa bağlı ödemenin silinmesini
+**409** ile durdurur (D5). İkisinin de gerekçesi kalıcı bir `101` kalıntısıdır.
+
 * **`_rederive_status` FİŞ ATMAZ.** `collected` damgası bir GEÇİŞTİR, para
   hareketi DEĞİL; para zaten ödeme satırından fişlenmiştir. Aynı sebeple
   `InvoiceAction.mark_collected` `invoicing.posting.POSTING_ACTIONS` dışında
@@ -117,7 +126,7 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import NotFoundError, TreasuryValidationError
+from app.core.errors import ConflictError, NotFoundError, TreasuryValidationError
 from app.modules.audit import messages
 from app.modules.invoicing import guards as invoicing_guards
 from app.modules.invoicing import service as invoicing_service
@@ -130,12 +139,15 @@ from app.modules.treasury.models import (
     BankAccount,
     FinancialInstrument,
     FinancialInstrumentDirection,
+    FinancialInstrumentStatus,
     Payment,
 )
 from app.modules.treasury.schemas import PaymentCreate, PaymentListResponse, PaymentResponse
 from app.modules.users.models import User
 
 __all__ = [
+    "PAYMENT_INSTRUMENT_NOT_PORTFOLIO",
+    "PAYMENT_INSTRUMENT_NOT_PORTFOLIO_DELETE",
     "PERMISSION_MODULE",
     "create_payment",
     "delete_payment",
@@ -173,6 +185,18 @@ PAYMENT_EXCEEDS_TOTAL = "Toplam tahsilat fatura tutarını aşamaz"
 # demektir. `instruments.guards.DIRECTION_MISMATCH`ten de AYRIDIR: o, DURUM
 # GEÇİŞİNİN yönle çelişmesidir (409) — bu ise ödeme ile portföyün yön çelişkisi.
 PAYMENT_INSTRUMENT_DIRECTION_MISMATCH = "Seçilen çek/senedin yönü, faturanın yönüyle uyuşmuyor"
+
+# 🔴 422 — ODM-1 D4. Ayrı bir metindir çünkü kullanıcının yapabileceği şey de
+# ayrıdır: yön hatası "başka bir çek seç", bu ise "bu evrak KAPANDI — parası
+# zaten hesabına indi, ödemeyi çeke BAĞLAMADAN yaz" demektir.
+PAYMENT_INSTRUMENT_NOT_PORTFOLIO = "Yalnızca portföydeki çek/senede ödeme bağlanabilir"
+
+# 🔴 409 — ODM-1 D5. Tahsil/ödeme fişi `101`/`103`ü ZATEN boşalttı; bu ödemenin
+# fişini stornolamak ara hesabı NEGATİFE düşürür ve nakit hesabında kaynağı
+# olmayan bir para bırakırdı. Mizan yine dengeli görünürdü — kusuru hiçbir kolon
+# farkı ele vermezdi. 409'dur (422 değil): gövde kusurlu DEĞİL, kaydın DURUMU
+# bu işlemi imkânsız kılıyor (`instruments.guards.TERMINAL_STATUS_DELETE` emsali).
+PAYMENT_INSTRUMENT_NOT_PORTFOLIO_DELETE = "Portföyden çıkmış bir çek/senede bağlı ödeme silinemez"
 
 #: 🔴 FIN-PAY K3 — UYUMLU YÖN ÇİFTLERİ. Eşleme koddan ÖLÇÜLDÜ, tahmin edilmedi
 #: (`balance.inflow_condition()` ve `models.FinancialInstrumentDirection`):
@@ -287,17 +311,73 @@ async def _instrument_or_none(
     YAZILMAZ; ikinci bir yazım bir gün tersine dönebilir ve iki yer sessizce
     ayrışırdı.
 
+    🔴 **ODM-1 D4 — DURUM `portfolio` OLMALIDIR, yoksa 422.** FIN-PAY *"durum
+    denetimi YOKTUR ve uydurulmaz"* diyordu; ODM-1 o kararı DEĞİŞTİRİR ve
+    gerekçe fişlemeyle birlikte DOĞDU (o gün yoktu, bugün ölçüldü):
+
+    * bağlı bir ödemenin nakit bacağı `101`/`103`e yazılır (D1);
+    * `101`/`103`ü boşaltan TEK olay `instruments.service.change_status`ın
+      `collected`/`paid` geçişidir;
+    * `transitions.TERMINAL_STATUSES`ten **ÇIKIŞ YOKTUR**.
+
+    Yani `collected`/`returned`/`cancelled` bir evraka yeni bir ödeme
+    bağlanırsa `101` borçlanır ve onu boşaltacak geçiş bir daha ASLA doğamaz —
+    **kalıcı bir `101` kalıntısı**, yani defterde sonsuza dek "yolda" görünen
+    bir para. Kullanıcının bugünkü doğru yolu bağsız ödeme yazmaktır (o para
+    zaten hesaba inmiştir).
+
     🔴 **KİLİT ALINMAZ** (K6): burada bir EŞİK/SAYAÇ semantiği YOKTUR — bir üst
-    sınır sayılmıyor, yalnız var olan bir satırın yönü okunuyor. İK-2'nin
-    "EŞİK = KİLİT" kanonu bu yüzden geçerli değildir; gereksiz bir
-    `FOR UPDATE` yalnızca portföy uçlarıyla çekişme üretirdi.
+    sınır sayılmıyor, yalnız var olan bir satırın yönü ve durumu okunuyor.
+    İK-2'nin "EŞİK = KİLİT" kanonu bu yüzden geçerli değildir; gereksiz bir
+    `FOR UPDATE` yalnızca portföy uçlarıyla çekişme üretirdi. Yarış hâlinde
+    (aynı anda tahsil + ödeme yazımı) en kötü sonuç, tahsil fişinin ödemeyi
+    kaçırmasıdır — `101` kalıntısı KALICI olur ama bu, kilitsiz okumanın
+    bilinen ve kabul edilen sınırıdır; kapatılması enstrüman satırının ödeme
+    yazma yolunda da kilitlenmesini gerektirir (ODM-3 borcu, raporda).
     """
     if instrument_id is None:
         return None
     instrument = await instruments_service.visible_instrument(session, actor, instrument_id)
     if _UYUMLU_YON.get(invoice.direction) is not instrument.direction:
         raise TreasuryValidationError(PAYMENT_INSTRUMENT_DIRECTION_MISMATCH)
+    if instrument.status is not FinancialInstrumentStatus.portfolio:
+        raise TreasuryValidationError(PAYMENT_INSTRUMENT_NOT_PORTFOLIO)
     return instrument
+
+
+async def _assert_instrument_deletable(session: AsyncSession, payment: Payment) -> None:
+    """🔴 ODM-1 D5 — bağlı evrak `portfolio` DEĞİLSE silme **409**.
+
+    Silme yolu fişi STORNO eder (KARAR-5): `120 B / 101 A`. Evrak hâlâ
+    portföydeyse bu TAM DOĞRUDUR — ödeme fişi `101`i açmıştı, storno onu kapatır
+    ve net sıfırlanır.
+
+    Evrak tahsil edilmişse (`collected`/`paid`) tahsil fişi `101`i ZATEN
+    boşaltmıştır. O hâlde storno `101`i **NEGATİFE** düşürür ve nakit hesabında
+    kaynağı olmayan bir para bırakır: iki fiş de tek başına dengelidir, mizan
+    doğru görünür ve kusur hiçbir kolon farkıyla ele verilmez (bu deponun tekrar
+    tekrar ölçtüğü sınıf).
+
+    `returned`/`cancelled` de kapsanır ve bu bilinçlidir: o geçişler ödemenin
+    fişini ZATEN stornoladı (D6); ikinci bir storno `reverse_payment`ta sessizce
+    `False` dönerdi (canlı fiş kalmadı) ve kullanıcı, mali izi silinmiş bir
+    ödemeyi tabloda kaybederdi. Tek kural TEK cümleyle bildirilir: **portföy
+    dışı evrakın ödemesi silinmez.**
+
+    🔴 Enstrüman KİLİTLENMEZ: burada bir eşik sayılmıyor (`_instrument_or_none`
+    ile AYNI gerekçe) ve silme yolunun kilit sırası (fatura → ödeme → hesap)
+    KORUNUR — araya ikinci bir tablo kilidi sokmak yeni bir deadlock yolu açardı.
+    """
+    if payment.financial_instrument_id is None:
+        return
+    instrument = await session.get(FinancialInstrument, payment.financial_instrument_id)
+    # `SET NULL` FK'si yüzünden satır silinmiş olabilir: bağ kolonu doluyken
+    # satırın YOK olması yapısal olarak imkânsızdır ama okuma yine de savunmalıdır
+    # (yok ise engelleyecek bir durum da yoktur).
+    if instrument is None:
+        return
+    if instrument.status is not FinancialInstrumentStatus.portfolio:
+        raise ConflictError(PAYMENT_INSTRUMENT_NOT_PORTFOLIO_DELETE)
 
 
 # --- Uç 6: GET /invoices/{id}/payments ---
@@ -436,6 +516,8 @@ async def delete_payment(session: AsyncSession, actor: User, payment_id: uuid.UU
     # Hesap kilit sırasının SON halkasıdır ve yalnız denetim METNİ için okunur;
     # `bank_account_id` NOT NULL + FK RESTRICT olduğu için satır YAPISAL OLARAK
     # vardır (404 dalı ulaşılamazdır ama korkuluk olarak durur).
+    await _assert_instrument_deletable(session, payment)
+
     account = await _account_or_404(session, payment.bank_account_id)
     # Denetim metni silmeden ÖNCE kurulur; sonra kurulsaydı hesap/numara
     # güvenilir okunamaz ve silinenin NE OLDUĞU kaybolurdu.

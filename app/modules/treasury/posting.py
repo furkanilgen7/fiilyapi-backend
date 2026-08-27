@@ -51,43 +51,34 @@ yaşam döngüsüne bağlanır: **yazıldığında fişlenir, silindiğinde STOR
 BIRAKIR. Bu bilinen bir boşluktur ve burada İCAT EDİLMEZ: fişlenecek bir para
 yoktur (bkz. madde 1). Raporun `KAPSAM DIŞI` başlığındadır.
 
-## 🔴 ÇEK/SENET DURUM GEÇİŞLERİ FİŞ ATMAZ — ölçülmüş karar
+## 🔴 ODM-1 — ÇEK/SENET GEÇİŞLERİ ARTIK FİŞ ATAR (2026-08-27)
 
-⚠️ **BU BÖLÜM ODM-1'DE (2026-08-27) GEÇERSİZ KILINDI ve TARİHSEL olarak
-durur.** Aşağıdaki üç ölçüm o günün kodu için DOĞRUYDU; ODM-1 üçünün de
-dayanağını kaldırdı: nakdin tanımı `balance.py`de değişti (bağlı ödeme
-`collected`/`paid` değilse nakde GİRMEZ, yani çift sayım yapısal olarak
-imkânsız), `101`/`103` `posting_rules`ta AÇILDI ve
-`JournalSourceType.financial_instrument` üyesi eklendi. Bölümün son
-paragrafı zaten bunun *"bir ÜRÜN KARARI"* olduğunu ve verilmeyi beklediğini
-söylüyordu. Fişleme kodu `treasury/instruments/posting.py`dedir.
+MU-3C burada *"çek/senet durum geçişleri fiş ATMAZ"* diyordu ve gerekçesini ÜÇ
+ölçüme dayandırıyordu. Aynı bölüm son paragrafında doğrusunun `101`/`103` ara
+hesapları olduğunu ve bunun **bir ÜRÜN KARARI** olduğunu da yazıyordu. ODM-1 o
+karardır; üç dayanağın ÜÇÜ de kapandı ve **nasıl** kapandığı aşağıdadır.
 
-`instruments/transitions.py` altı geçiş tanımlar
-(`portfolio → collected|returned|cancelled` ve `portfolio → paid|returned|
-cancelled`). Hiçbiri BURADAN fişlenmez ve gerekçe ÜÇ ÖLÇÜMDÜR:
+1. **"Nakdin TEK tanımı `payments`tır"** → nakit tanımı bir SÜZGEÇ kazandı
+   (`balance.cash_realized_condition()`): bağsız ödeme daima nakittir, BAĞLI
+   ödeme ise YALNIZ enstrüman `collected`/`paid` iken nakittir. Yani ödeme
+   fişinin nakit bacağı `101`/`103`e kaydığı ANDA Hazine bakiyesi de o parayı
+   saymayı bırakır — iki taraf AYNI olguya bakar ve mutabakat (D9) portföy
+   ânında da tahsil ânında da TUTAR. Sapma kapatılmadan önce vardı; ölçüldü.
+2. **"Bağlı çekte ÇİFT SAYIM kesindir"** → çift sayım artık YAPISAL olarak
+   imkânsızdır, çünkü iki fiş AYNI parayı İKİ KEZ nakde yazmaz: ödeme fişi
+   parayı `101`e KOYAR (nakde değil), tahsil fişi onu `101`den ALIP nakde
+   koyar. `101`e giren ile çıkan aynı büyüklüktür (D3: tahsil fişinin tutarı
+   `instrument.amount` DEĞİL, **Σ bağlı ödemeler**) ve `101` net SIFIRA kapanır.
+3. **"`JournalSourceType`ta ÜYE YOKTUR"** → üye `f5a6b7c8d9e0` migration'ıyla
+   AÇILDI (`financial_instrument`, üye = TABLO) ve `posting_rules` tohumu
+   `a6b7c8d9e0f1` ile geldi. Fişleme kodu `treasury/instruments/posting.py`de,
+   çağıranı `instruments/service.change_status`tadır.
 
-* **Nakdin TEK tanımı `payments`tır.** `treasury/balance.py` bakiyeyi
-  YALNIZCA `Σ payments.amount`tan türetir; portföy o formüle HİÇBİR terim
-  katmaz. Bir çek tahsilatı `102`ye fiş atsaydı yevmiyeden türeyen nakit,
-  Hazine'nin kendi bakiyesinden SAPARDI — ve bakiye SAKLANMADIĞI için farkı
-  HİÇBİR KOLON ele vermezdi (bu dilimin mutabakat testi tam olarak orada
-  kırmızıya döner).
-* **Bağlı çekte ÇİFT SAYIM kesindir.** `payments.financial_instrument_id`
-  ile bir ödemeye bağlı çek tahsil edildiğinde aynı para hem ödeme fişinden
-  hem çek fişinden geçerdi. `payments_service` bunu zaten yazılı olarak
-  reddediyor: *"Hiçbir para türevine girdi eklenmez… aynı para İKİ KEZ
-  sayılırdı"* (FIN-PAY K4).
-* **`JournalSourceType`ta ÜYE YOKTUR.** `financial_instruments` bir üye değildir
-  ve `ALTER TYPE` ile İCAT EDİLMEZ (`JournalSourceType` docstring'i: *"üye
-  ICAT EDILMEZ, fişlendiği dilimde eklenir"*). FIN-1 K5 kararı da aynı yerde
-  duruyor: *"Muhasebe fişi YOKTUR… portföy bir ENVANTERDIR"*.
+🔴 **TETİKLEYİCİ BAĞDIR, `method` ETİKETİ DEĞİL** (D1) — gerekçe `lines_for`
+docstring'indedir.
 
-Doğru muhasebe `101 Alınan Çekler` / `103 Verilen Çekler` ara hesaplarını ister
-(ikisi de TDHP tohumunda VARDIR) ve ödeme fişinin nakit bacağını da onlara
-kaydırmayı gerektirir — bu, `balance.py`nin nakit tanımını değiştirmek demektir
-ve bir ÜRÜN KARARIDIR, bir kod tercihi değil. Raporun `KAPSAM DIŞI` başlığında.
-
-🔴 Kümeyi (sayıyı değil) ölçen bekçi: `test_mu3c_posted_set.py`.
+🔴 Kümeyi (sayıyı değil) ölçen bekçi: `test_mu3c_posted_set.py` — ODM-1'de
+TERSİNE ÇEVRİLDİ: `collected`/`paid` artık kümenin ÜYESİDİR.
 
 ## KARAR-2 · CARİ ANA HESAP (`320`/`120`), alt hesap AÇILMAZ
 
@@ -143,6 +134,7 @@ __all__ = [
     "cash_role_for",
     "description_for",
     "lines_for",
+    "payment_cash_role",
     "post_payment",
     "reverse_payment",
 ]
@@ -240,17 +232,67 @@ def cash_role_for(account: BankAccount) -> str:
     return role_key
 
 
-def description_for(invoice: Invoice, account: BankAccount) -> str:
-    """`Tahsilat FIL2026000184 — Ziraat Bank`.
+#: 🔴 ODM-1 D1 — bağlı ödemede nakit bacağının YERİNE geçen ara hesap rolü,
+#: FATURANIN yönüne göre. `payment.financial_instrument_id` bir bağdır; hangi
+#: ara hesaba düşeceğini paranın YÖNÜ söyler (tahsilat → elimizdeki `101`,
+#: ödeme → verdiğimiz `103`). Enstrümanın kendi `direction`'ı OKUNMAZ ve
+#: okunmamalıdır: bağın yön uyumu `payments_service._instrument_or_none`ta
+#: ZATEN 422 ile kapatılmıştır (FIN-PAY K3), burada ikinci kez okunsaydı aynı
+#: kural iki yerde yaşar ve biri gevşediğinde öteki sessizce telafi ederdi.
+_INSTRUMENT_ROLE: dict[InvoiceDirection, str] = {
+    InvoiceDirection.outgoing: ROLE_INSTRUMENT_RECEIVABLE,
+    InvoiceDirection.incoming: ROLE_INSTRUMENT_PAYABLE,
+}
+
+#: 🔴 Bağlı ödemenin fiş açıklamasına eklenen AYIRAÇ. Fişin hangi hâl olduğu
+#: (para hesapta mı, evrakta mı) açıklamadan OKUNABİLMELİDİR: iki hâl aynı
+#: cümleyi taşısaydı mizanda `101`i gören muhasebeci, o satırın hangi ödemeden
+#: geldiğini yalnız hesap kodundan çıkarmak zorunda kalırdı.
+#: 🔴 TUTAR metne GİRMEZ (HZ-1 kanonu) — burada da girmez.
+_INSTRUMENT_SUFFIX = " (çek/senet)"
+
+
+def description_for(payment: Payment, invoice: Invoice, account: BankAccount) -> str:
+    """`Tahsilat FIL2026000184 — Ziraat Bank` (+ bağlıysa ` (çek/senet)`).
 
     Hesabın adı `display_name` varsa ondan okunur (Kasa satırında banka adı
     `Merkez Kasa` gibi bir etiketle birlikte anlamsızdır, E9:83) — `messages.
     payment_created` ile AYNI ikili, ama metin ORADAN çağrılmaz: denetim
     günlüğü cümlesi ile yevmiye açıklaması iki AYRI yüzeydir ve biri
     düzeltildiğinde ötekinin sessizce değişmesi istenmez.
+
+    🔴 Hesap adı BAĞLI hâlde de basılır ve bu bilinçlidir: para henüz o hesaba
+    girmemiştir ama tahsil edildiğinde TAM ORAYA girecektir (tahsil fişinin
+    nakit bacağı ödemenin kendi hesabından üretilir, `instruments/posting.py`).
     """
     hesap_adi = account.display_name or account.bank_name
-    return f"{_DESCRIPTION_PREFIX[invoice.direction]} {invoice.invoice_no} — {hesap_adi}"
+    ayirac = "" if payment.financial_instrument_id is None else _INSTRUMENT_SUFFIX
+    return f"{_DESCRIPTION_PREFIX[invoice.direction]} {invoice.invoice_no} — {hesap_adi}{ayirac}"
+
+
+def payment_cash_role(payment: Payment, invoice: Invoice, account: BankAccount) -> str:
+    """🔴 ODM-1 D1 — ödemenin nakit bacağının rolü. TEK karar noktası.
+
+    **TETİKLEYİCİ `payment.financial_instrument_id IS NOT NULL`tır,
+    `method='cheque'` ETİKETİ DEĞİL.** Üç ölçüme dayanır:
+
+    1. **FIN-1 K4 kanonu** (`models.py:105`): *"etiket ile varlik AYRI iki
+       olgudur ve biri otekini ima ETMEZ"*. `method` bir SEÇİM KUTUSUDUR;
+       portföyde karşılığı olan bir evrak ancak BAĞ ile bilinir.
+    2. **Bağsız çekin TAHSİL OLAYI YOKTUR.** `method`e bağlansaydı o para
+       `101`e girer ve onu oradan çıkaracak hiçbir uç bulunmazdı (çıkışın tek
+       kapısı `instruments.service.change_status`tır ve BAĞLI ödemeleri
+       fişler) — kalıcı bir `101` kalıntısı, yani kalıcı bir nakit KAYBI.
+    3. **Canlıdaki `method='cheque'` satırlarının hepsi BAĞSIZDIR** (FIN-1 K4:
+       migration onları dolduramadı). `method`e bağlanan bir kural canlı
+       bakiyeleri SESSİZCE değiştirirdi.
+
+    Bağ YOKSA davranış MU-3C'deki gibidir: `cash_role_for` hesabın TİPİNDEN
+    (`102`/`100`) seçer ve bilinmeyen tipte **422** verir (fail-closed).
+    """
+    if payment.financial_instrument_id is None:
+        return cash_role_for(account)
+    return _INSTRUMENT_ROLE[invoice.direction]
 
 
 def lines_for(payment: Payment, invoice: Invoice, account: BankAccount) -> list[PostingLine]:
@@ -260,8 +302,14 @@ def lines_for(payment: Payment, invoice: Invoice, account: BankAccount) -> list[
     `ck_payments_amount_positive` sıfır/negatif tutarı DB'de reddeder, yani
     `(0, 0)` bacağı yapısal olarak doğamaz. Bir süzgeç yazılsaydı hiçbir zaman
     koşmayan bir dal, okuyucuya var olmayan bir hâli varmış gibi gösterirdi.
+
+    🔴 **ODM-1 D1 — nakit bacağı BAĞLI ödemede `101`/`103`e KAYAR.** Cari bacağı
+    (`120`/`320`) DEĞİŞMEZ: alacak/borç çekin alınmasıyla KAPANIR, çünkü
+    müşteri borcunu ödemiştir; henüz kapanmamış olan şey paranın HESABA
+    girmesidir ve tam olarak onu `101` taşır. İki bacak da AYNI
+    `payments.amount`tır, yani denge YAPISAL olarak korunur.
     """
-    nakit = cash_role_for(account)
+    nakit = payment_cash_role(payment, invoice, account)
     if invoice.direction is InvoiceDirection.outgoing:
         # TAHSİLAT: para GİRER, alıcı carisi KAPANIR.
         return [
@@ -304,7 +352,7 @@ async def post_payment(
         # KARAR-6'nın ayağı buradan sarkar: geriye dönük bir `paid_on` kapalı
         # dönemde **409** alır ve ödeme HİÇ KAYDEDİLMEZ.
         entry_date=payment.paid_on,
-        description=description_for(invoice, account),
+        description=description_for(payment, invoice, account),
         lines=lines_for(payment, invoice, account),
     )
 

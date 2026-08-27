@@ -42,16 +42,19 @@ from sqlalchemy import ColumnElement, Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.treasury.models import (
+    BankAccount,
     FinancialInstrument,
     FinancialInstrumentDirection,
     FinancialInstrumentKind,
     FinancialInstrumentStatus,
+    Payment,
 )
 
 __all__ = [
     "count_instruments",
     "get_instrument",
     "list_instruments",
+    "payments_with_accounts",
     "scope_clause",
 ]
 
@@ -197,3 +200,32 @@ async def get_instrument(
         .execution_options(populate_existing=True)
     )
     return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def payments_with_accounts(
+    session: AsyncSession, instrument_id: uuid.UUID
+) -> list[tuple[Payment, BankAccount]]:
+    """🔴 ODM-1 D3 — enstrumana BAGLI odemeler, HESAPLARIYLA birlikte.
+
+    Tahsil/odeme fisinin tutari `instrument.amount` DEGIL bu kumenin
+    toplamidir: bag ISTEGE BAGLIDIR (FIN-1 K4) ve kismi tahsilat mumkundur,
+    yani iki buyukluk mesru olarak AYRISABILIR. `instrument.amount`tan
+    yazilsaydi `101`e giren ile cikan farklasir ve ara hesap HIC KAPANMAZDI.
+
+    Hesap AYNI sorguda okunur (N+1 YOK) ve okunmak ZORUNDADIR: nakit bacaginin
+    rolu ODEME BASINA o odemenin `bank_account.account_type`indan secilir
+    (`treasury.posting.cash_role_for`) — kasadan ve bankadan bagli iki odeme
+    karisiksa tek bir nakit rolu ikisini de bankaya yazar ve mizanda ikisi de
+    "Hazir Degerler" altinda toplandigi icin TOPLAM tutmaya devam ederdi.
+
+    Sira DETERMINISTIKTIR (`paid_on`, `id`): esitlik bozucu olmadan ayni gunlu
+    iki odemenin bacak sirasi kosudan kosuya degisir ve fis satirlarinin
+    `sort_order`i sabit kalmazdi.
+    """
+    stmt = (
+        select(Payment, BankAccount)
+        .join(BankAccount, BankAccount.id == Payment.bank_account_id)
+        .where(Payment.financial_instrument_id == instrument_id)
+        .order_by(Payment.paid_on, Payment.id)
+    )
+    return [(payment, account) for payment, account in (await session.execute(stmt)).all()]
