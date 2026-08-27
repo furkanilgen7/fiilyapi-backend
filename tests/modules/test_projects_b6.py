@@ -166,7 +166,18 @@ async def test_dashboard_excludes_draft_from_active_count(seeded_db, user_factor
 
 
 async def test_list_avoids_n_plus_one_for_employer_contract(seeded_db, user_factory):
-    """employer/contract selectin ile toplu yüklenir — proje sayısıyla sorgu büyümez."""
+    """employer/contract selectin ile toplu yüklenir — proje sayısıyla sorgu büyümez.
+
+    ⚠️ **ILR-1/2'DE GUCLENDIRILDI (2026-08-27).** Eski hâli sabit bir BUTCE
+    cakiyordu (`query_count <= 12`) ve bu, testin KENDI gerekcesinden
+    ("proje sayisiyla sorgu buyumez") DAHA ZAYIFTI: butce, yeni bir O(1) toplu
+    okuyucu eklendiginde N+1 OLMASA DA kirilir; tersine, butcenin altinda
+    kalan gercek bir N+1'i (3 proje × 1 sorgu) FARK ETMEZDI.
+
+    Yeni iddia gerekceyi DOGRUDAN olcer: 3 projeyle ve 6 projeyle sorgu sayisi
+    **BIREBIR AYNI** olmalidir. ILR ilerleme turevleri (`progress_cards`) de
+    O(1)'dir ve bu bekci tam olarak onu kanitlar.
+    """
     employer = Employer(name="Toplu İşveren", tax_number="9876543210")
     seeded_db.add(employer)
     await seeded_db.flush()
@@ -198,8 +209,35 @@ async def test_list_avoids_n_plus_one_for_employer_contract(seeded_db, user_fact
         query_count += 1
 
     overview = await list_projects_overview(seeded_db, user, None, None)
+    uc_proje_sorgusu = query_count
 
     assert len(overview.items) == 3
-    # 3 proje için employer/contract N+1 olsaydı sorgu sayısı proje başına artardı.
-    # selectin ile employer + contract tek IN sorgusuyla gelir; toplam küçük kalır.
-    assert query_count <= 12
+
+    # --- Ayni kurulum ÜÇ proje DAHA ekleyip TEKRAR olculur ---
+    for i in range(3, 6):
+        await create_project(
+            seeded_db,
+            ProjectCreate(
+                name=f"P{i}",
+                project_type="taahhut",
+                city="Bursa",
+                start_date="2026-01-01",
+                end_date="2026-12-31",
+                employer_id=employer.id,
+                contract=ProjectContractInput(
+                    contract_no=f"SZL-2026-{i:03d}",
+                    signature_date="2026-01-02",
+                    amount=Decimal("1000000.00"),
+                    has_price_escalation=False,
+                ),
+            ),
+        )
+    query_count = 0
+    overview6 = await list_projects_overview(seeded_db, user, None, None)
+    alti_proje_sorgusu = query_count
+
+    assert len(overview6.items) == 6
+    assert alti_proje_sorgusu == uc_proje_sorgusu, (
+        f"sorgu sayisi proje sayisiyla BUYUDU: 3 proje={uc_proje_sorgusu}, "
+        f"6 proje={alti_proje_sorgusu} — bir toplu okuyucu N+1'e dondu"
+    )

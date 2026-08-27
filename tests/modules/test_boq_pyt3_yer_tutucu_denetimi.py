@@ -379,13 +379,14 @@ async def test_VERI_VARKEN_DE_zarflar_BOS_KALIR(client, seeded_db, user_factory,
     kalem = govde["groups"][0]["items"][0]
     # TAM KUME karsilastirmasi (art arda `assert` maskelemesi yok): veri varken
     # DOLAN her alan tek seferde gorunur.
+    # ⚠️ ILR-1: `grand_progress_pct` ve `progress_pct` bu KUMEDEN CIKARILDI —
+    # ikisi de artik BAGLI ve dolu olmalari BEKLENIR. Kumede kalan DORDU
+    # hakedis/sozlesme zarflaridir; K4 gerekcesi yalniz onlar icin gecerlidir.
     dolanlar = {
         alan: govde["totals"][alan]
-        for alan in ("contract_total", "realized_total", "remaining_total", "grand_progress_pct")
+        for alan in ("contract_total", "realized_total", "remaining_total", "revision_total")
         if govde["totals"][alan]["available"] or govde["totals"][alan]["value"] is not None
     }
-    if kalem["progress_pct"]["available"] or kalem["progress_pct"]["value"] is not None:
-        dolanlar["progress_pct"] = kalem["progress_pct"]
 
     assert dolanlar == {}, (
         f"veri KURULUYKEN su HAKEDIS zarflari doldu: {sorted(dolanlar)} — engel veri "
