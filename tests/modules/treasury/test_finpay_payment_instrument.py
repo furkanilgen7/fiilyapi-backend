@@ -17,9 +17,15 @@ açılmaz**.
    *giden* fatura bizim kestiğimizdir → tahsilat → elimize *alınan* (`received`)
    çek girer; *gelen* fatura bize kesilmiştir → ödeme → *verilen* (`issued`) çek
    çıkar. Ters çift **422**dir.
-4. 🔴 **K4 — ÇİFT SAYIM YOK.** Bağ bir ETİKETTİR: hiçbir para türevine girdi
-   EKLEMEZ. Bağlı bir ödeme banka bakiyesini, nakit akışını ve çek/senet
-   `summary` kartlarını bağsız bir ödemeyle **BİREBİR AYNI** oynatır.
+4. 🔴 **K4 — ÇİFT SAYIM YOK** (ODM-1 D2 ile YENİDEN YAZILDI). Bağ bir para
+   türevine girdi EKLEMEZ; ODM-1'den itibaren bağın etkisi TERSİDİR: portföyde
+   duran bir çeke bağlı ödeme nakit türevlerini **HİÇ** oynatmaz (para henüz
+   bankada değildir, `balance.cash_realized_condition`). Aynı para artık tam
+   olarak TEK yüzeyde görünür — çek portföyünde. Çek `collected` olduğunda
+   nakde geçer ve o an bağsız bir ödemeyle BİREBİR aynı etkiyi yapar; portföy
+   kartlarından da o an düşer. Eski hâli ("bağlı ödeme bağsızla AYNI oynatır")
+   parayı İKİ yüzeyde birden sayıyordu ve ODM-1 onu düzeltir. Nakdin tanımının
+   tam bekçi kümesi: `test_odm1_cash_definition.py`.
 5. **K7 — `PaymentResponse` yalnız SAKLANAN kolonu döndürür**; çek no/vade gibi
    türev alan eklenmez (tek kaynak kuralı).
 6. **K8 — denetim günlüğü DEĞİŞMEZ**: satır sayısı da metin de bağdan etkilenmez.
@@ -329,18 +335,37 @@ async def _para_goruntusu(client, headers) -> dict:  # noqa: ANN001
     }
 
 
-async def test_K4_bagli_odeme_para_turevlerini_bagsiz_odemeyle_AYNI_oynatir(
-    client, admin_headers, fatura_fabrikasi, hesap_fabrikasi, cek_fabrikasi, odeme_eslemesi
+async def test_K4_PORTFOYDEKI_ceke_bagli_odeme_nakit_turevlerini_HIC_OYNATMAZ(
+    seeded_db,  # noqa: ANN001
+    client,  # noqa: ANN001
+    admin_headers,  # noqa: ANN001
+    fatura_fabrikasi,  # noqa: ANN001
+    hesap_fabrikasi,  # noqa: ANN001
+    cek_fabrikasi,  # noqa: ANN001
+    odeme_eslemesi,  # noqa: ANN001
 ) -> None:
-    """🔴 K4 — bağ bir ETİKETTİR, hiçbir para türevine GİRDİ EKLEMEZ.
+    """🔴 K4, ODM-1 D2 ile TERSİNE ÇEVRİLDİ — çift sayımın ASIL çözümü.
 
-    `balance.py` bakiyeyi `Σ payments.amount` üzerinden türetir; çek/senet
-    portföyü AYRI bir yüzeydir. Bağ bir türeve sızsaydı aynı para İKİ KEZ
-    sayılırdı ve hiçbir kolon farkı bunu ele vermezdi (bakiye SAKLANMIYOR).
+    ESKİ KARAR: "bağlı ödeme para türevlerini bağsız ödemeyle BİREBİR AYNI
+    oynatır." O hâlde aynı para İKİ yüzeyde birden görünüyordu: banka
+    bakiyesinde (henüz tahsil edilmemiş bir çek nakitmiş gibi) VE çek
+    portföyünde. Kullanıcı elinde olmayan parayı harcanabilir sanıyordu.
 
-    Yöntem: aynı tutarlı İKİ ödeme — biri bağsız, biri bağlı — ve iki ödemenin
-    ÜÇ yüzeydeki etkisinin BİREBİR aynı olduğu iddia edilir. Tek bir ödemeyle
-    yazılsaydı "hiç oynamadı" ile "aynı oynadı" ayırt edilemezdi.
+    YENİ KARAR (ODM-1 D2): nakit süzgeci `balance.cash_realized_condition`tır.
+    Portföydeki çeke bağlı ödeme nakit türevlerine **0** katar; para YALNIZ
+    portföy yüzeyinde durur. Çek tahsil edilince (`collected`) aynı satır
+    süzgeçten geçer ve bakiyeye O AN girer — ikinci bir ödeme kaydı GEREKMEZ,
+    yani hiçbir aşamada çift sayım oluşmaz.
+
+    Yöntem ÜÇ ANLIDIR ve üçü de gereklidir: bağsız ödeme (süzgecin fazla geniş
+    olmadığını gösterir), bağlı+portföy (süzgecin VAR olduğunu gösterir),
+    bağlı+collected (süzgecin parayı kalıcı olarak yutmadığını gösterir). İkisi
+    yazılıp üçüncüsü atlansaydı, hep sayan ya da hiç saymayan bozuk kod yeşil
+    geçerdi (K-IKIZ1).
+
+    🔴 `_govde` ödemeleri `method='cheque'` ile gönderir; bağsız olanın yine de
+    500 oynatması ODM-1 D1'in uçtan bekçisidir — tetikleyici BAĞDIR, `method`
+    ETİKETİ DEĞİL.
     """
     account = await hesap_fabrikasi(opening_balance="0.00")
     cek = await cek_fabrikasi(direction=FinancialInstrumentDirection.received, amount="500.00")
@@ -350,7 +375,9 @@ async def test_K4_bagli_odeme_para_turevlerini_bagsiz_odemeyle_AYNI_oynatir(
     baslangic = await _para_goruntusu(client, admin_headers)
 
     bagsiz = await client.post(
-        _yol(fatura_a), json=_govde(account, "500.00"), headers=admin_headers
+        _yol(fatura_a),
+        json=_govde(account, "500.00"),
+        headers=admin_headers,
     )
     assert bagsiz.status_code == 201, bagsiz.text
     bagsiz_sonrasi = await _para_goruntusu(client, admin_headers)
@@ -364,30 +391,37 @@ async def test_K4_bagli_odeme_para_turevlerini_bagsiz_odemeyle_AYNI_oynatir(
     assert bagli.json()["financial_instrument_id"] == str(cek.id)
     bagli_sonrasi = await _para_goruntusu(client, admin_headers)
 
-    # 1) BAKİYE — iki ödeme de hesabı TAM 500 oynatır.
     def _bakiye(goruntu: dict) -> Decimal:
         return Decimal(goruntu["bakiyeler"][str(account.id)])
 
-    bagsiz_delta = _bakiye(bagsiz_sonrasi) - _bakiye(baslangic)
-    bagli_delta = _bakiye(bagli_sonrasi) - _bakiye(bagsiz_sonrasi)
-    assert bagsiz_delta == Decimal("500.00")
-    assert bagli_delta == bagsiz_delta
-
-    # 2) NAKİT AKIŞI — aynı gün, aynı giriş artışı.
     def _giris(goruntu: dict) -> Decimal:
         return Decimal(goruntu["nakit"]["inflow_total"])
 
+    # 1) BAĞSIZ ödeme — `method='cheque'` olmasına RAĞMEN tam 500 oynatır (D1).
+    assert _bakiye(bagsiz_sonrasi) - _bakiye(baslangic) == Decimal("500.00")
     assert _giris(bagsiz_sonrasi) - _giris(baslangic) == Decimal("500.00")
-    assert _giris(bagli_sonrasi) - _giris(bagsiz_sonrasi) == Decimal("500.00")
+
+    # 2) BAĞLI + PORTFÖY — nakit türevleri KILI KIPIRDAMAZ.
+    assert _bakiye(bagli_sonrasi) == _bakiye(bagsiz_sonrasi)
+    assert _giris(bagli_sonrasi) == _giris(bagsiz_sonrasi)
     assert Decimal(bagli_sonrasi["nakit"]["outflow_total"]) == Decimal(
         baslangic["nakit"]["outflow_total"]
     )
 
-    # 3) ÇEK/SENET ÖZETİ — 🔴 üç anda da BİREBİR AYNI. Çek zaten portföydeydi;
-    #    bir ödemeye bağlanması onu portföyden ÇIKARMAZ ve kartları oynatmaz
-    #    (durum geçişi AYRI bir uçtur, K5 emsali).
+    # 3) ÇEK/SENET ÖZETİ — bağlama anında BİREBİR AYNI. Çek zaten portföydeydi;
+    #    bir ödemeye bağlanması onu portföyden ÇIKARMAZ (durum geçişi AYRI uç).
     assert bagsiz_sonrasi["ozet"] == baslangic["ozet"]
     assert bagli_sonrasi["ozet"] == baslangic["ozet"]
+
+    # 4) TAHSİL — süzgeç parayı YUTMAZ; aynı satır bağsız ödemeyle AYNI etkiyi
+    #    yapar. Durum kolona doğrudan yazılır: bu dosya bağın PARA etkisini
+    #    ölçer, geçiş kapısını değil (`test_fin1_transitions.py`).
+    cek.status = FinancialInstrumentStatus.collected
+    await seeded_db.flush()
+    tahsil_sonrasi = await _para_goruntusu(client, admin_headers)
+
+    assert _bakiye(tahsil_sonrasi) - _bakiye(bagli_sonrasi) == Decimal("500.00")
+    assert _giris(tahsil_sonrasi) - _giris(bagli_sonrasi) == Decimal("500.00")
 
 
 # --------------------------------------------------------------------------- #
