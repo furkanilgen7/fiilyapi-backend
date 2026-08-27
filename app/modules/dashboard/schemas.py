@@ -5,17 +5,31 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.modules.projects.models import ProjectStatus
 
+# Yer tutucu sozlesmesi TEK yerde tanimlidir (B6/P1, spec §2.3): kopyalanmaz,
+# projects modulunden import edilir (`boq/schemas.py:11` emsali).
+#
+# 🔴 NICIN BIRLESTIRILDI (DASH-1): panelin KENDI kopyasi `pending_module`u
+# ZORUNLU tutuyordu ve dogrulayicisi YOKTU — yani zarf UC hâlden yalnizca
+# IKISINI ifade edebiliyordu. `portfolio` baglandiginda ucuncu hâl gerekti:
+#   * `available=True`  + `pending_module is None`  -> DOLU
+#   * `available=False` + `pending_module` dolu     -> soru hic sorulmadi
+#   * `available=False` + `pending_module is None`  -> ROLUN IZNI YOK (ILR-1/2,
+#     kullanici karari 2026-08-27; yalnizca `restricted()` fabrikasindan kurulur)
+# Kopya zarf ucuncu hâli KURAMAZDI (`pending_module` zorunlu) ve ilkini de
+# DOGRULAYAMAZDI. Iki tanim yerine tek tanim: kural bir kez yazilir.
+#
+# 🔴 `ListPlaceholder` / `PendingApprovalsPlaceholder` BILINCLI olarak DISARIDA:
+# orada dolu zarfin `pending_module` tasimasi emsaldir (`CountPlaceholder`
+# notu) — "dolu ⇒ modul yok" kurali YALNIZ `MetricPlaceholder`indir.
+from app.modules.projects.schemas import MetricPlaceholder
 
-class MetricPlaceholder(BaseModel):
-    """Tek degerli KPI karti. v1'de veri kaynagi olmayan kartlar icin.
-
-    available alani bilincli olarak vardir: frontend sabite degil veriye dallanir,
-    ilgili alt-proje geldiginde backend true dondurmeye baslar (spec §2.3).
-    """
-
-    available: bool = False
-    value: Decimal | None = None
-    pending_module: str
+__all__ = [
+    "MetricPlaceholder",
+    "ListPlaceholder",
+    "PendingApprovalsPlaceholder",
+    "DashboardProjectCard",
+    "DashboardSummaryResponse",
+]
 
 
 class ListPlaceholder(BaseModel):

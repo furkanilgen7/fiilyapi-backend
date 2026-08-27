@@ -93,7 +93,14 @@ async def test_summary_returns_projects_for_permitted_role(
     assert [p["code"] for p in body["projects"]] == ["GK-A", "OSB-1"]
     assert body["active_project_count"] == 1
     assert body["role_name"] == "Patron"
-    assert body["portfolio"]["available"] is False
+    # DASH-1: portfoy BAGLANDI. Iki gorunur proje var, hakedis yok -> zarf
+    # DOLU gelir ve degeri `0.00`dir: bu sifir OTORITERDIR ("tamamlanmis
+    # hakedisiniz yok"), "bilinmiyor" degil. Bos zarf (`available=false`)
+    # artik YALNIZ gorunur proje HIC yokken ya da izin yokken doner
+    # (`test_dash1_portfolio.py`).
+    assert body["portfolio"]["available"] is True
+    assert body["portfolio"]["value"] == "0.00"
+    assert body["portfolio"]["pending_module"] is None
     assert body["pending_approvals"]["count"] == 0
     assert "password_hash" not in resp.text
 

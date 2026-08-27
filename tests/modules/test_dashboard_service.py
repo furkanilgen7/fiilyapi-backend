@@ -25,12 +25,11 @@ async def test_summary_uses_role_display_name(seeded_db, user_factory):
 
 
 async def test_summary_placeholders_are_unavailable(seeded_db, user_factory):
-    """P-YT2 denetimi: BEŞ karttan DÖRDÜ hâlâ yer tutucudur, biri BAĞLANDI.
+    """P-YT2 denetimi: BEŞ karttan ÜÇÜ hâlâ yer tutucudur, İKİSİ BAĞLANDI.
 
-    🔴 `pending_approvals` bilerek bu kümeden ÇIKARILDI — beklediği motor
-    OK-1A/OK-1C ile canlıya çıktı ve rozet artık gerçek sayıyı basar
-    (`test_dashboard_pyt2_onay_sayaci.py`). Kalan dördün sınıflandırma
-    gerekçeleri `dashboard/service.py`de kartların yanındadır.
+    🔴 `pending_approvals` ve (DASH-1 ile) `portfolio` bu kümeden bilerek
+    ÇIKARILDI. Kalan üçün gerekçeleri `dashboard/service.py`de kartların
+    yanındadır; `average_margin`ınki DASH-1'de üç ölçülmüş engelle büyüdü.
 
     Anahtar STRINGLERİ değişmedi: yanıt gövdesindedir ve frontend onlara
     dallanabilir.
@@ -39,7 +38,6 @@ async def test_summary_placeholders_are_unavailable(seeded_db, user_factory):
 
     summary = await build_summary(seeded_db, user)
 
-    assert summary.portfolio.pending_module == "progress_payments"
     assert summary.receivables.pending_module == "invoicing"
     assert summary.average_margin.pending_module == "progress_payments"
     assert summary.pending_approvals.pending_module == "approvals"
@@ -47,16 +45,20 @@ async def test_summary_placeholders_are_unavailable(seeded_db, user_factory):
     assert not any(
         card.available
         for card in (
-            summary.portfolio,
             summary.receivables,
             summary.average_margin,
             summary.risks,
         )
-    ), "dört kart hâlâ (C) TUZAK — bağlanmaları ürün/izin kararı bekliyor"
+    ), "üç kart hâlâ (C) TUZAK — bağlanmaları ürün/izin kararı bekliyor"
     assert summary.pending_approvals.available is True, (
         "onay rozeti BAĞLANDI: canlı motorun verdiği sıfır 'bilinmiyor' değildir (K2)"
     )
     assert summary.pending_approvals.count == 0
+    # 🔴 PORTFOY BAĞLANDI ama bu aktörün GÖRÜNÜR PROJESİ YOK: boş zarf, kaynağını
+    # bildirir (2. hâl). Uydurma bir `0.00` DEĞİL — ayrıntılı beş bekçi
+    # `test_dash1_portfolio.py`dedir.
+    assert summary.portfolio.available is False
+    assert summary.portfolio.pending_module == "progress_payments"
 
 
 async def test_summary_empty_when_no_project_access(seeded_db, user_factory, project_factory):

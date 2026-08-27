@@ -352,7 +352,20 @@ async def test_onay_rolu_OLAN_aktorun_panel_MALIYETI_CAKILDI(seeded_db, aktor, p
       +3 — `visible_projects` (izin + proje + iliskiler)
       +7 — proje `selectin` bagintilarinin motor tarafindaki TEKRARI
       +2 — sayim + (bos) sayfa
-    Tavanin gevsemesi bir SEBEP ister; sessizce gevsememeli."""
+      +10 — DASH-1 `portfolio` BAGLANDI (asagida kalem kalem)
+    Tavanin gevsemesi bir SEBEP ister; sessizce gevsememeli.
+
+    🔴 DASH-1'de ONBIR degil ON eklendi ve fark OLCULDU:
+      +1 `can_read("progress_payments")` — ALAN kapisi (K4)
+      +1 `visible_projects` izin okumasi (`projects: admin` atlamasi icin)
+      +2 `user_project_access` + `projects`
+      +5 projenin `selectin` bagintilari (sozlesme · yatirim · santiyeler ·
+         arsa payi · hissedarlar)
+      +1 `cumulative_gross_by_projects` hakedis okumasi
+    ⚠️ ONBIRINCI sorgu (hakedis `lines` `selectin`i) bu kurulumda HIC ACILMAZ:
+    burada ISVEREN hakedisi yoktur, ust sorgu sifir satir doner. Kurulum bir
+    gun tamamlanmis isveren hakedisi tasirsa tavan 32 olur — ve bu, tavanin
+    sessizce degil SEBEPLE gevsemesi gereken tam o durumdur."""
     yaratan = await aktor("pyt2-y10@d.co", approval_roles=())
     sef = await aktor("pyt2-sef10@d.co", approval_roles=[ApprovalRole.site_chief])
     await _zincirler(seeded_db, project_factory, yaratan, ["PYT2-K1", "PYT2-K2"])
@@ -361,8 +374,8 @@ async def test_onay_rolu_OLAN_aktorun_panel_MALIYETI_CAKILDI(seeded_db, aktor, p
         ozet = await build_summary(seeded_db, sef)
 
     assert ozet.pending_approvals.count == 2
-    assert len(sorgular) == 21, (
-        f"onay rolu tasiyan aktorun panel maliyeti {len(sorgular)} sorgu oldu (beklenen 21) — "
+    assert len(sorgular) == 31, (
+        f"onay rolu tasiyan aktorun panel maliyeti {len(sorgular)} sorgu oldu (beklenen 31) — "
         "rozet icin sayfa GOVDESI de cekiliyor olabilir (`limit` degisti mi?)"
     )
 
@@ -372,7 +385,12 @@ async def test_onay_rolu_YOKSA_panel_TEK_ek_sorgu_oder(seeded_db, aktor, project
     yalnız BİR ek sorgu öder — motor rol kümesi boşken erkenden döner.
 
     Sayı TAVAN olarak çakılır: rol sorgusundan sonra ikinci bir sorgu açan bir
-    değişiklik (örneğin kapsamı rolden ÖNCE çözmek) tam burada kırılır."""
+    değişiklik (örneğin kapsamı rolden ÖNCE çözmek) tam burada kırılır.
+
+    🔴 DASH-1: taban 8 + onay rolü 1 + **`portfolio` bağlandı 10** = 19. Onun
+    on kalemi `test_onay_rolu_OLAN_aktorun_panel_MALIYETI_CAKILDI` docstring'inde
+    tek tek yazılıdır; onay rolünden BAĞIMSIZ olduğu için iki tavana da AYNI
+    sayıyla girer."""
     rolsuz = await aktor("pyt2-rolsuz2@d.co", role_key="patron", approval_roles=())
     await project_factory("PYT2-J", name="Güneşkent J")
 
@@ -380,6 +398,6 @@ async def test_onay_rolu_YOKSA_panel_TEK_ek_sorgu_oder(seeded_db, aktor, project
         ozet = await build_summary(seeded_db, rolsuz)
 
     assert ozet.pending_approvals.count == 0
-    assert len(sorgular) == 9, (
-        f"rolsüz aktörün panel maliyeti {len(sorgular)} sorgu — ölçülen taban 8 + onay rolü 1"
+    assert len(sorgular) == 19, (
+        f"rolsüz aktörün panel maliyeti {len(sorgular)} sorgu — taban 8 + onay rolü 1 + portföy 10"
     )
