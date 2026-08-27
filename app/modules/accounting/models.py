@@ -271,6 +271,11 @@ class JournalSourceType(str, enum.Enum):
     * ~~`equipment_rental_invoice`~~ — **MU-3D'de EKLENDİ** (`b7c8d9e0f1a2`).
       MU-3A'da "üye ICAT EDILMEZ, fişlendiği dilimde `ALTER TYPE` ile eklenir"
       diye bırakılmıştı; fişlendiği dilim budur.
+    * ~~`financial_instrument`~~ — **ODM-1'de EKLENDİ** (`f5a6b7c8d9e0`).
+      MU-3C üyeyi açmamıştı çünkü nakdin tanımı `Σ payments`tı; ODM-1 o tanımı
+      değiştirdi (bağlı ödeme yalnız `collected`/`paid` iken nakit) ve
+      MU-3C'nin *"bu bir ÜRÜN KARARIDIR"* diye beklettiği kararı verdi.
+      Gerekçenin tamamı `treasury/instruments/posting.py` docstring'indedir.
 
     Üye SIRASI kilitlidir: `ALTER TYPE … ADD VALUE` üyeyi SONA ekler ve
     `enum_range` o sırayı döner (migration testi bunu ölçer).
@@ -285,6 +290,9 @@ class JournalSourceType(str, enum.Enum):
     # `ALTER TYPE … ADD VALUE` üyeyi daima sona koyar ve `enum_range` o sırayı
     # döner; migration testi sırayı KİLİTLER.
     equipment_rental_invoice = "equipment_rental_invoice"
+    # 🔴 ODM-1 — `financial_instruments` (çek/senet portföyü). SONA eklendi;
+    # `ALTER TYPE … ADD VALUE` başka türlüsünü zaten yapamaz.
+    financial_instrument = "financial_instrument"
 
 
 #: 🔴 MU-3A — kaynak çifti BÜTÜNDÜR: ya İKİSİ de dolu (otomatik fiş) ya İKİSİ de

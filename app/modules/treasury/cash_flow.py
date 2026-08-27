@@ -19,13 +19,23 @@ docstring'de de yazılıdır ki "hangisi doğru?" sorusu cevapsız kalmasın
 (`accounting/cash_flow_statement.py` karşılığı; bekçisi
 `test_mt1_cash_flow_statement.py`).
 
-## 🔴 Yön: `balance.py`den TÜRETİLİR, yeniden yazılmaz
+## 🔴 Yön VE nakdin tanımı: `balance.py`den TÜRETİLİR, yeniden yazılmaz
 
 İşaretin tek kaynağı `balance.inflow_condition()`tır (K2/K4): giden faturaya
 yapılan ödeme GİRİŞ, gelen faturaya yapılan ödeme ÇIKIŞ. Burada ikinci bir kez
 `direction == outgoing` yazılsaydı iki gerçek kaynak olur, biri bir gün
 değişir ve bakiye kartı ile nakit akışı grafiği TERS işaret basardı — ikisi de
 "bir sayı" gösterdiği için kusur ekranda görünmezdi.
+
+Aynı gerekçe NAKDİN TANIMI için de geçerlidir (ODM-1 D2): bir ödemenin nakde
+girip girmediğini `balance.cash_realized_condition()` söyler — bağsız ödeme
+daima nakittir, bağlı ödeme YALNIZ enstrüman `collected`/`paid` damgası
+aldığında nakittir. Bu uç `signed_legs()`i kullanamaz (o hesap bazında NET
+toplar, burası GÜN ve YÖN bazında ayırır) ama süzgeci ONDAN ALIR: ikinci bir
+`status IN (...)` yazımı olsaydı portföydeki bir çek kartta nakit sayılmayıp
+grafikte sayılabilirdi. Enstrüman satırına erişim `balance.join_instrument()`
+ile kurulur ve OUTER'dır (gerekçesi orada; INNER olsaydı bağsız ödemeler —
+yani neredeyse hepsi — grafikten düşerdi).
 
 Bakiye (T2) aynı ödemelerin NET toplamıdır; bu uç aynı ödemeleri GÜNE ve YÖNE
 göre ayırır. Yani seri, kullanıcının aynı ekranda okuduğu bakiyenin zaman
@@ -77,7 +87,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.timezone import today
 from app.modules.invoicing.models import Invoice
-from app.modules.treasury.balance import ZERO, inflow_condition
+from app.modules.treasury.balance import (
+    ZERO,
+    cash_realized_condition,
+    inflow_condition,
+    join_instrument,
+)
 from app.modules.treasury.models import Payment
 from app.modules.treasury.schemas import CashFlowBucket, CashFlowResponse
 
@@ -111,13 +126,23 @@ def month_bounds(year: int, month: int) -> tuple[date, date]:
     return ilk, sonraki_ay - timedelta(days=1)
 
 
+def _nakit(tutar):
+    """ODM-1 D2 süzgeci: nakde GİRMEMİŞ ödeme her iki bacağa da **0** katar.
+
+    Süzgeç iki bacağın ORTAK sarmalıdır; her bacağa ayrı ayrı yazılsaydı biri
+    bir gün güncellenir öteki kalır ve portföydeki bir çek grafikte yalnız
+    ÇIKIŞ tarafında görünürdü (giriş/çıkış toplamları bakiyeden sapardı).
+    """
+    return case((cash_realized_condition(), tutar), else_=literal(ZERO))
+
+
 def _giris_tutari():
     """Giriş bacağı: yön koşulu sağlanıyorsa tutar, aksi hâlde 0.
 
     `else_=0` ŞART: `else_` yazılmasaydı `CASE` NULL üretir, `SUM` onu yutar ve
     yalnız ÇIKIŞ içeren bir gün girişte NULL basardı.
     """
-    return case((inflow_condition(), Payment.amount), else_=literal(ZERO))
+    return _nakit(case((inflow_condition(), Payment.amount), else_=literal(ZERO)))
 
 
 def _cikis_tutari():
@@ -127,7 +152,7 @@ def _cikis_tutari():
     tümleyeni OLMAYABİLİRDİ (yeni bir yön değeri eklendiğinde tutar sessizce
     hiçbir bacağa girmez, toplamlar bakiyeden sapardı).
     """
-    return case((inflow_condition(), literal(ZERO)), else_=Payment.amount)
+    return _nakit(case((inflow_condition(), literal(ZERO)), else_=Payment.amount))
 
 
 def _kosullar(ilk: date, son: date):
@@ -140,14 +165,20 @@ def _kosullar(ilk: date, son: date):
 
 
 def _joined(stmt):
-    """`payments` → `invoices` INNER join.
+    """`payments` → `invoices` **INNER** + `financial_instruments` **OUTER**.
 
-    INNER'dır ve öyle kalır (`balance.signed_legs` gerekçesi): `invoice_id`
-    NOT NULL + RESTRICT FK olduğu için faturasız ödeme YAPISAL OLARAK
-    imkânsızdır; OUTER yapmak var olmayan bir satır sınıfı için YÖNSÜZ bir dal
-    açardı ve o dal hiçbir bacağa girmeden toplamdan düşerdi.
+    Fatura bağı INNER'dır ve öyle kalır (`balance.signed_legs` gerekçesi):
+    `invoice_id` NOT NULL + RESTRICT FK olduğu için faturasız ödeme YAPISAL
+    OLARAK imkânsızdır; OUTER yapmak var olmayan bir satır sınıfı için YÖNSÜZ
+    bir dal açardı ve o dal hiçbir bacağa girmeden toplamdan düşerdi.
+
+    Enstrüman bağı ise `balance.join_instrument()` ile kurulur ve gerekçe TERSİNE
+    döner: `financial_instrument_id` NULLABLE'dır, INNER olsaydı bağsız ödemeler
+    (canlıdaki neredeyse HEPSİ) grafikten sessizce düşerdi. Join iki sorgunun da
+    ORTAK kurucusundadır — biri sarmalanmasaydı seri ile E9:104-105'in iki rakamı
+    farklı kümeleri özetlerdi.
     """
-    return stmt.join(Invoice, Invoice.id == Payment.invoice_id)
+    return join_instrument(stmt.join(Invoice, Invoice.id == Payment.invoice_id))
 
 
 def series_statement(ilk: date, son: date) -> Select:

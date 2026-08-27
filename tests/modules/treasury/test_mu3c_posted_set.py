@@ -7,10 +7,15 @@ fişlenen eylem kümesine yeni bir üye eklendiğinde **KIRMIZIYA DÖNMEDİ** �
 çünkü `post_document` idempotandır, ikinci çağrı `created=False` döner ve
 FİŞ SAYISI yine 1 kalır. Test SONUCU ölçüyordu, KÜMEYİ değil.
 
-MU-3C fişlenen olay kümesini GENİŞLETİYOR (ödeme yazımı) ve genişlememesi
-gerekenler (çek/senet durum geçişleri · tahsilat damgası) tam olarak bu
-dilimin çift sayım riskidir. Bu yüzden burada ölçülen şey **KÜMENİN
-KENDİSİDİR** ve evren BAĞIMSIZ BİR KAYNAKTAN türetilir:
+MU-3C fişlenen olay kümesini GENİŞLETMİŞTİ (ödeme yazımı). 🔴 **ODM-1 onu bir
+kez daha GENİŞLETİR ve bu dosya TERSİNE ÇEVRİLİR:** `collected`/`paid`
+geçişleri artık kümenin ÜYESİDİR (`101`/`103` ara hesabı kapanır), ama
+`returned`/`cancelled` **DEĞİLDİR** — onlar bağlı ödemelerin fişini STORNO eder
+ve storno kaynak damgası TAŞIMAZ (D6). Kümenin bu dilimde ölçtüğü asıl şey
+budur: dört terminal durumun İKİSİ fişler, İKİSİ fişlemez.
+
+Ölçülen şey yine **KÜMENİN KENDİSİDİR** ve evren BAĞIMSIZ BİR KAYNAKTAN
+türetilir:
 
 * çek/senet olayları `instruments.transitions.TRANSITIONS` tablosundan
   (elle yazılmış bir liste, tablo büyüdüğünde SESSİZCE eksik kalırdı);
@@ -28,11 +33,20 @@ storno bir "fişleme olayı" DEĞİLDİR ve karşılığı `test_mu3c_payment_po
 
 * `create_payment`ten `post_payment` çağrısı SİLİNİRSE → küme `payment` üyesini
   KAYBEDER → KIRMIZI.
-* `instruments.service.change_status` fiş atmaya BAŞLARSA → küme yeni bir üye
+* `change_status`ten `_post_transition` çağrısı SİLİNİRSE → küme İKİ üye
+  KAYBEDER → KIRMIZI.
+* `returned`/`cancelled` STORNO yerine YENİ FİŞ yazmaya başlarsa → küme İKİ üye
   KAZANIR → KIRMIZI.
 
-İkisi de programı GERÇEKTEN değiştirir (eşdeğer mutant değildir): biri yazılan
-fişi yok eder, öteki yeni bir fiş yazar.
+Üçü de programı GERÇEKTEN değiştirir (eşdeğer mutant değildir).
+
+## 🔴 KURULUMUN ZORUNLU AYAĞI: HER ENSTRÜMANIN BAĞLI ÖDEMESİ VAR
+
+ODM-1 öncesi bu dosya enstrümanları ÖDEMESİZ kuruyordu. O kurulum bugün
+SAHTE-YEŞİL üretirdi: bağlı ödemesi olmayan bir çekin tahsili `101`e girmiş bir
+para bulamaz ve HİÇ FİŞ YAZMAZ (D3) — yani `_post_transition` tümüyle silinse
+bile küme değişmezdi. Bu yüzden her geçiş, tutarı bilinen BAĞLI bir ödemeyle
+kurulur ve `test_KURULUM_...` ayrıca çakar.
 """
 
 from decimal import Decimal
@@ -46,7 +60,9 @@ from app.modules.treasury.instruments import service as instruments_service
 from app.modules.treasury.instruments import transitions as instrument_transitions
 from app.modules.treasury.models import (
     FinancialInstrument,
+    FinancialInstrumentDirection,
     FinancialInstrumentKind,
+    FinancialInstrumentStatus,
     Payment,
     PaymentMethodKind,
 )
@@ -63,6 +79,74 @@ from tests.modules.treasury._mu3c import (
 #: sabittir çünkü bir uç KALDIRILIRSA test `AttributeError` ile patlamalıdır,
 #: sessizce küçülen bir evrenle yeşil kalmamalıdır.
 ODEME_OLAYLARI = ("payment.create", "payment.delete")
+
+#: 🔴 ODM-1 — kümenin BEKLENEN hâli. Elle yazılır ve öyle KALMALIDIR: üründen
+#: türetilseydi (ör. `posting.POSTING_STATUSES`ten) test, ölçtüğü kararı ölçtüğü
+#: koddan okur ve o karar değiştiğinde SESSİZCE onunla birlikte değişirdi.
+BEKLENEN_FISLEYEN = {
+    "payment.create",
+    "instrument.received.portfolio->collected",
+    "instrument.issued.portfolio->paid",
+}
+
+#: Fatura yönü ↔ çek yönü — FIN-PAY K3'ün uyumlu çifti. Ters çift 422'dir, yani
+#: kurulumun kendisi bu tabloya UYMAK ZORUNDADIR.
+_FATURA_YONU = {
+    FinancialInstrumentDirection.received: (InvoiceDirection.outgoing, InvoiceStatus.sent),
+    FinancialInstrumentDirection.issued: (InvoiceDirection.incoming, InvoiceStatus.approved),
+}
+
+CEK_TUTARI = Decimal("500.00")
+
+
+async def _bagli_cek(
+    seeded_db,
+    kullanici,
+    account,
+    *,
+    yon: FinancialInstrumentDirection,
+    kaynak,
+) -> FinancialInstrument:
+    """Bir çek + ona BAĞLI bir ödeme kurar.
+
+    🔴 Ödeme `payments_service.create_payment`ten geçer, elle YAZILMAZ: fişi
+    olmayan bir ödeme `101`e hiç para koymaz ve tahsil geçişi de çıkaracak bir
+    şey bulamazdı — kurulum, ölçmek istediği dalı hiç açmamış olurdu.
+    """
+    yon_bilgisi, durum = _FATURA_YONU[yon]
+    instrument = FinancialInstrument(
+        instrument_kind=FinancialInstrumentKind.cheque,
+        direction=yon,
+        serial_no="0123456789",
+        drawer_name="Güneşkent A.Ş.",
+        issue_date=TARIH,
+        due_date=TARIH,
+        amount=CEK_TUTARI,
+        status=FinancialInstrumentStatus.portfolio,
+    )
+    seeded_db.add(instrument)
+    await seeded_db.flush()
+
+    invoice = await fatura(
+        seeded_db, kullanici, direction=yon_bilgisi, total=str(CEK_TUTARI), status=durum
+    )
+    await payments_service.create_payment(
+        seeded_db,
+        kullanici,
+        invoice.id,
+        PaymentCreate(
+            bank_account_id=account.id,
+            method=PaymentMethodKind.cheque,
+            amount=CEK_TUTARI,
+            paid_on=TARIH,
+            financial_instrument_id=instrument.id,
+        ),
+    )
+    # Kaynak durum tabloda `portfolio`dur; bağ kurulduktan SONRA damgalanır
+    # (D4: terminal evraka ödeme bağlanamaz — kurulumun kendisi o kapıdan geçer).
+    instrument.status = kaynak
+    await seeded_db.flush()
+    return instrument
 
 
 def _cek_olaylari() -> tuple[str, ...]:
@@ -112,18 +196,7 @@ async def test_FISLENEN_OLAY_KUMESI_bagimsiz_evrenden_TURETILIR(seeded_db, user_
         for kaynak, hedef in sorted(ciftler, key=lambda c: (c[0].value, c[1].value)):
             olay = f"instrument.{yon.value}.{kaynak.value}->{hedef.value}"
             denenen.append(olay)
-            instrument = FinancialInstrument(
-                instrument_kind=FinancialInstrumentKind.cheque,
-                direction=yon,
-                serial_no="0123456789",
-                drawer_name="Güneşkent A.Ş.",
-                issue_date=TARIH,
-                due_date=TARIH,
-                amount=Decimal("500.00"),
-                status=kaynak,
-            )
-            seeded_db.add(instrument)
-            await seeded_db.flush()
+            instrument = await _bagli_cek(seeded_db, kullanici, account, yon=yon, kaynak=kaynak)
 
             once = await _kaynak_damgalari(seeded_db)
             await instruments_service.change_status(seeded_db, kullanici, instrument.id, hedef)
@@ -166,11 +239,14 @@ async def test_FISLENEN_OLAY_KUMESI_bagimsiz_evrenden_TURETILIR(seeded_db, user_
     assert sorted(denenen) == sorted(_cek_olaylari() + ODEME_OLAYLARI), (
         "evren eksik denendi — `TRANSITIONS` tablosu ile denenen olaylar AYRIŞTI"
     )
-    assert fisleyen == {"payment.create"}, (
-        "FİŞLENEN OLAY KÜMESİ DEĞİŞTİ. Nakdin tek tanımı `treasury/balance.py`dir "
-        "ve o YALNIZ `payments`ı sayar; çek/senet geçişleri fiş atarsa nakit "
-        "mutabakatı yapısal olarak kırılır (gerekçe `treasury/posting.py`). "
-        f"fişleyen={sorted(fisleyen)}"
+    assert fisleyen == BEKLENEN_FISLEYEN, (
+        "FİŞLENEN OLAY KÜMESİ DEĞİŞTİ. ODM-1'de fişleyen olaylar tam olarak "
+        "şunlardır: ödeme yazımı (`101`/`103`e ya da nakde) ve çek/senedin "
+        "TAHSİL/ÖDEME geçişi (`101`/`103`ü kapatır). `returned`/`cancelled` "
+        "STORNO yazar, kaynak damgalı YENİ fiş DEĞİL (D6); ödeme silme de "
+        "öyledir. Beklenen ile fark: "
+        f"fazla={sorted(fisleyen - BEKLENEN_FISLEYEN)} · "
+        f"eksik={sorted(BEKLENEN_FISLEYEN - fisleyen)}"
     )
 
 

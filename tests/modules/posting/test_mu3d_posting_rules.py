@@ -160,7 +160,16 @@ async def test_ENUM_uyesi_SONA_eklenir_ve_tohum_UC_AILEYI_de_kurar():
         conn = await asyncpg.connect(_asyncpg_dsn(database))
         try:
             etiketler = await _enum_labels(conn)
-            assert etiketler == [uye.value for uye in JournalSourceType], (
+            # 🔴 Model demeti DEĞİL, MU-3D'nin BİTTİĞİ ANDAKİ küme ölçülür:
+            # bu test bir REVİZYONA çakılıdır ve ondan sonraki her dilim
+            # (ODM-1'in `financial_instrument`ı gibi) modele yeni üye ekler.
+            # Doğrudan `[uye.value for uye in JournalSourceType]` yazılsaydı bu
+            # test her yeni üyede kırılır ve kırmızısı MU-3D hakkında HİÇBİR
+            # ŞEY söylemezdi. Sıra iddiası KORUNUR: model sırasının BAŞTAN
+            # `equipment_rental_invoice`a kadarki dilimiyle karşılaştırılır.
+            model_sirasi = [uye.value for uye in JournalSourceType]
+            mu3d_sonu = model_sirasi.index(JournalSourceType.equipment_rental_invoice.value) + 1
+            assert etiketler == model_sirasi[:mu3d_sonu], (
                 f"enum SIRASI modelden ayrıştı: {etiketler}"
             )
             assert etiketler[-1] == JournalSourceType.equipment_rental_invoice.value, (

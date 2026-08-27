@@ -39,6 +39,7 @@ from app.modules.invoicing.models import (
 )
 from app.modules.invoicing.posting import INVOICE_POSTING_RULES
 from app.modules.posting.models import PostingRule
+from app.modules.treasury.instruments.posting import INSTRUMENT_POSTING_RULES
 from app.modules.treasury.models import BankAccount, BankAccountType
 from app.modules.treasury.posting import PAYMENT_POSTING_RULES
 from app.modules.users.models import User
@@ -48,6 +49,8 @@ from app.modules.users.models import User
 #: hesaba çevrildiğinde yeşil kalırlardı.
 KOD_KASA = "100"
 KOD_BANKA = "102"
+KOD_ALINAN_CEK = "101"
+KOD_VERILEN_CEK = "103"
 KOD_ALICILAR = "120"
 KOD_SATICILAR = "320"
 KOD_SATIS = "600"
@@ -80,7 +83,7 @@ async def tdhp_hesabi(session: AsyncSession, code: str) -> ChartAccount:
 
 
 async def esleme_kur(session: AsyncSession) -> dict[str, ChartAccount]:
-    """MU-3B + MU-3C `posting_rules` ÜRÜN eşlemesinin TAMAMI.
+    """MU-3B + MU-3C + ODM-1 `posting_rules` ÜRÜN eşlemesinin TAMAMI.
 
     İKİSİ birden kurulur ve bu ŞARTTIR: mutabakat testi faturanın fişi ile
     ödemenin fişini AYNI veri kümesinde ister — `120`yi açan MU-3B, kapatan
@@ -92,6 +95,12 @@ async def esleme_kur(session: AsyncSession) -> dict[str, ChartAccount]:
     aile_kurallari = (
         (JournalSourceType.invoice, INVOICE_POSTING_RULES),
         (JournalSourceType.payment, PAYMENT_POSTING_RULES),
+        # 🔴 ODM-1 — ÇEK/SENET ailesi de kurulur ve kurulmak ZORUNDADIR: `101`e
+        #    GİREN ödeme fişi ile onu ÇIKARAN tahsil fişi AYNI veri kümesinde
+        #    ölçülür. Yalnız `payment` kurulsaydı tahsil geçişi `post_document`in
+        #    eksik eşleme dalından 422 alır ve kırmızı, ölçülen kuralı değil
+        #    KURULUMU gösterirdi.
+        (JournalSourceType.financial_instrument, INSTRUMENT_POSTING_RULES),
     )
     hesaplar: dict[str, ChartAccount] = {}
     for _source_type, kurallar in aile_kurallari:
