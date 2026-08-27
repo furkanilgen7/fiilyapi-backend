@@ -38,7 +38,9 @@ bordroyu İKİ KEZ ödemişti). Bu yüzden:
     5. yazma + K5 damgası
 
 Kilit **TÜM denetimlerden ÖNCEDİR** (TOCTOU) ve sıra **SABİTTİR**: fatura →
-ödemeler → hesap. Ters yönden giren bir yol karşılıklı kilitlenme üretirdi.
+ödemeler → hesap → (ODM-1) enstrüman. Ters yönden giren bir yol karşılıklı
+kilitlenme üretirdi; enstrüman satırını ÖNCE kilitleyip `invoices`a SONRA giden
+bir yol ölçüldü ve YOKTUR.
 Uç 8 (silme) de durumu YENİDEN TÜRETTİĞİ için AYNI kilidi alır — okuma
 tarafında kilitsiz bir silme, eşzamanlı bir tahsilatla birleşince faturayı
 `collected` bırakıp parayı geri alırdı.
@@ -134,6 +136,7 @@ from app.modules.invoicing import transitions
 from app.modules.invoicing.models import Invoice, InvoiceDirection, InvoiceStatus
 from app.modules.invoicing.transitions import InvoiceAction
 from app.modules.treasury import posting, repository
+from app.modules.treasury.instruments import repository as instruments_repository
 from app.modules.treasury.instruments import service as instruments_service
 from app.modules.treasury.models import (
     BankAccount,
@@ -326,18 +329,43 @@ async def _instrument_or_none(
     bir para. Kullanıcının bugünkü doğru yolu bağsız ödeme yazmaktır (o para
     zaten hesaba inmiştir).
 
-    🔴 **KİLİT ALINMAZ** (K6): burada bir EŞİK/SAYAÇ semantiği YOKTUR — bir üst
-    sınır sayılmıyor, yalnız var olan bir satırın yönü ve durumu okunuyor.
-    İK-2'nin "EŞİK = KİLİT" kanonu bu yüzden geçerli değildir; gereksiz bir
-    `FOR UPDATE` yalnızca portföy uçlarıyla çekişme üretirdi. Yarış hâlinde
-    (aynı anda tahsil + ödeme yazımı) en kötü sonuç, tahsil fişinin ödemeyi
-    kaçırmasıdır — `101` kalıntısı KALICI olur ama bu, kilitsiz okumanın
-    bilinen ve kabul edilen sınırıdır; kapatılması enstrüman satırının ödeme
-    yazma yolunda da kilitlenmesini gerektirir (ODM-3 borcu, raporda).
+    🔴 **SATIR KİLİTLENİR** (`for_update=True`) — ve bu karar ODM-1 içinde
+    DEĞİŞTİ. FIN-PAY *"kilit alınmaz, burada bir eşik sayılmıyor"* demişti ve o
+    gün DOĞRUYDU: bağın hiçbir mali sonucu yoktu, en kötü ihtimalle yanlış bir
+    etiket yazılırdı. ODM-1 bağa BİR MALİ SONUÇ yükledi ve kusuru KENDİSİ
+    doğurdu:
+
+    * "ödeme yaz" (bu yol) enstrümanı okur ve D4 kapısından `portfolio` diye
+      geçer;
+    * "tahsil et" (`instruments.service.change_status`) satırı `FOR UPDATE` ile
+      kilitler, `Σ` BAĞLI ÖDEMELERİ okur (D3) ve fişi o toplamdan yazar.
+
+    İkisi eşzamanlı koşarsa tahsil fişi, henüz commit etmemiş yeni ödemeyi
+    KAÇIRIR. Ödeme `101`i borçlandırır, tahsil fişi onu boşaltmaz ve
+    `TERMINAL_STATUSES`ten ÇIKIŞ OLMADIĞI için o borcu boşaltacak ikinci bir
+    geçiş bir daha DOĞAMAZ — D4'ün kapattığı kalıcı `101` kalıntısının
+    eşzamanlılık hâli. Bakiye SAKLANMADIĞI için hiçbir kolon farkı ele vermez.
+
+    🔴 Kilit DENETİMLERDEN ÖNCE alınır (EŞİK = KİLİT, İK-2): `visible_instrument`
+    satırı önce kilitler, kapsam ve D4 durum denetimi KİLİTLİ satır üzerinde
+    koşar. Kilit denetimden sonra alınsaydı TOCTOU penceresi açık kalırdı.
+    Kilit tek başına da yetmez: `repository.get_instrument` `FOR UPDATE`
+    sorgusunu `populate_existing=True` ile koşar, aksi hâlde kimlik
+    haritasındaki BAYAT nesne dönerdi ve kilit hiçbir şey bekçilemezdi.
+
+    🔴 DEADLOCK YOK — ölçüldü. Bu yolun kilit sırası
+    `invoices → payments → financial_instruments`tır. Ters sırayla (enstrüman
+    ÖNCE, fatura SONRA) kilitleyen bir yol YOKTUR: `change_status`,
+    `update_instrument` ve `delete_instrument` YALNIZ `financial_instruments`
+    satırını kilitler; ardından koştukları fişleme/storno yolu
+    (`posting.post_document`, `accounting.state_service`) `journal_entries` ve
+    danışma kilidi alır, `invoices`a HİÇ DOKUNMAZ.
     """
     if instrument_id is None:
         return None
-    instrument = await instruments_service.visible_instrument(session, actor, instrument_id)
+    instrument = await instruments_service.visible_instrument(
+        session, actor, instrument_id, for_update=True
+    )
     if _UYUMLU_YON.get(invoice.direction) is not instrument.direction:
         raise TreasuryValidationError(PAYMENT_INSTRUMENT_DIRECTION_MISMATCH)
     if instrument.status is not FinancialInstrumentStatus.portfolio:
@@ -364,13 +392,23 @@ async def _assert_instrument_deletable(session: AsyncSession, payment: Payment) 
     ödemeyi tabloda kaybederdi. Tek kural TEK cümleyle bildirilir: **portföy
     dışı evrakın ödemesi silinmez.**
 
-    🔴 Enstrüman KİLİTLENMEZ: burada bir eşik sayılmıyor (`_instrument_or_none`
-    ile AYNI gerekçe) ve silme yolunun kilit sırası (fatura → ödeme → hesap)
-    KORUNUR — araya ikinci bir tablo kilidi sokmak yeni bir deadlock yolu açardı.
+    🔴 **SATIR KİLİTLENİR** — `_instrument_or_none` ile AYNI gerekçe (ODM-1'in
+    kendi doğurduğu yarış): kilitsiz okunsaydı bir silme ile eşzamanlı bir
+    `mark-collected` birbirini kaçırırdı — silme evrağı `portfolio` görüp ödeme
+    fişini stornolar, tahsil geçişi ise AYNI ödemeyi Σ'ya katıp `101`i boşaltır
+    ve ara hesap NEGATİFE düşerdi. Kilit sırası BOZULMAZ: `invoices` satırı
+    zaten alınmıştır ve enstrüman ondan SONRA gelir — yazma yolundaki
+    (`create_payment`) sırayla BİREBİR aynı, yani yeni bir deadlock halkası yok.
+
+    Kapsam süzgeci burada KOŞMAZ (`visible_instrument` değil, depo doğrudan):
+    ödemenin faturası ZATEN görünürdür ve bağ kolonu doludur; ikinci bir kapsam
+    denetimi, silme yetkisi olan bir kullanıcıyı kendi kaydında 404'e düşürürdü.
     """
     if payment.financial_instrument_id is None:
         return
-    instrument = await session.get(FinancialInstrument, payment.financial_instrument_id)
+    instrument = await instruments_repository.get_instrument(
+        session, payment.financial_instrument_id, for_update=True
+    )
     # `SET NULL` FK'si yüzünden satır silinmiş olabilir: bağ kolonu doluyken
     # satırın YOK olması yapısal olarak imkânsızdır ama okuma yine de savunmalıdır
     # (yok ise engelleyecek bir durum da yoktur).
@@ -440,9 +478,9 @@ async def create_payment(
     # 🔴 FIN-PAY — çek/senet bağı, kilit sırasının SONUNA eklenir ve yukarıdaki
     # dört adıma (kilitli fatura → Σ oku → hesap → eşik) DOKUNMAZ. Araya
     # sokulsaydı belgelenmiş sıra bozulur ve eşik kararı ile kilit arasına yeni
-    # bir sorgu girerdi. Enstrüman satırı KİLİTLENMEZ (K6 gerekçesi
-    # `_instrument_or_none` docstring'indedir), dolayısıyla yeni bir deadlock
-    # yolu da açılmaz.
+    # bir sorgu girerdi. 🔴 ODM-1 — enstrüman satırı artık KİLİTLENİR ve kilit
+    # sıranın SONUNDADIR (`invoices → payments → financial_instruments`);
+    # gerekçe ve deadlock ölçümü `_instrument_or_none` docstring'indedir.
     instrument = await _instrument_or_none(session, actor, invoice, data.financial_instrument_id)
 
     payment = Payment(
