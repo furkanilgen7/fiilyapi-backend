@@ -1,0 +1,252 @@
+"""ILR-1 — FIZIKSEL ilerleme: **PARA AGIRLIKLI** gerceklesme orani.
+
+🔴 **TEK KAYNAK BOQ'DUR.** `sites/service/presenters.py`in bilerek acik biraktigi
+formul burada, BIR kez yazilir; bolum ekrani da santiye ekrani da proje karti da
+bu modulu CAGIRIR. Ikinci bir carpim yazmak (K3) ayni bolum icin iki farkli "%"
+uretirdi — presenter'in yer tutucuyu yerinde birakma gerekcesi tam olarak buydu.
+
+FORMUL
+------
+    ilerleme % = Σ(gerceklesen miktar × birim fiyat) / Σ(taban miktar × birim fiyat)
+
+🔴 **NICIN PARA AGIRLIKLI, MIKTAR AGIRLIKLI DEGIL:** m² ile ton'un ortalamasi
+alinamaz. Canlidaki gercek ornek (`A1 · Kenar Ayak`): 7.440 adet filiz ekimi
+(412,50 ₺/adet) ve 98 ton demir (96.250 ₺/ton). Duz miktar ortalamasi filiz
+ekimini demirden **75 kat onemli** sayar ve sayi SESSIZCE sacmalar — yuzde yine
+0-100 arasinda ve "makul" gorunur. Bekcisi:
+`tests/modules/test_ilr_fiziksel_ilerleme.py::test_MUTANT_para_agirligi_*`.
+
+🔴 **FIYAT IKI TARAFTA DA CANLI `BoqItem.unit_price`TIR** — gunluk satirinin
+kendi `unit_price` anlik goruntusu DEGIL. Gerekce: oran ancak PAY ve PAYDA ayni
+fiyatla tartilirsa anlamlidir; snapshot kullanilsaydi bir fiyat guncellemesi
+oranin kendisini kaydirir, %100'u asabilirdi. Emsal AYNIDIR:
+`progress_payments/service.py:534` de `live_item.unit_price` kullanir.
+
+KAPSAM (K-IKIZ1 karsit kanit bekcileri bunlari cakar)
+----------------------------------------------------
+* YALNIZ `submitted` gunluk sayilir — `draft` girmez (henuz beyan degildir).
+* Poz baginin KOPMUS oldugu satir (`boq_item_id IS NULL`) girmez.
+* Kapsam suzgeci `boq_items.site_id` / gunlugun `section_id`i uzerindendir;
+  baska santiyenin/bolumun gunlugu ASLA girmez.
+"""
+
+import uuid
+from decimal import ROUND_HALF_UP, Decimal
+
+from sqlalchemy import Select, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.modules.boq.models import BoqItem, BoqItemSectionAllocation
+from app.modules.site_diary.models import DiaryStatus, SiteDiaryEntry, SiteDiaryLine
+from app.modules.sites.models import Site
+
+_ZERO = Decimal("0")
+_HUNDRED = Decimal("100")
+_PCT = Decimal("0.01")
+
+
+def quantize_pct(value: Decimal) -> Decimal:
+    """Yuzde hassasiyeti 0,01 — `progress_payments.calculations.quantize2` emsali."""
+    return value.quantize(_PCT, rounding=ROUND_HALF_UP)
+
+
+def weighted_pct(numerator: Decimal, denominator: Decimal) -> Decimal | None:
+    """🔑 ORANIN TEK TANIMI. Payda 0/negatifse yuzde YOKTUR (`None`) — sifira
+    bolmek yerine zarf bos kalir; "0 %" demek "hic is yok"u "hic ilerleme yok"
+    sanmaktir ve ikisi ayni sey degildir.
+    """
+    if denominator <= _ZERO:
+        return None
+    return quantize_pct(numerator / denominator * _HUNDRED)
+
+
+def _realized_line_sums(
+    section_id: uuid.UUID | None = None,
+) -> Select[tuple[uuid.UUID, Decimal]]:
+    """`boq_item_id` -> GONDERILMIS gunluklerdeki toplam miktar.
+
+    🔴 `DiaryStatus.submitted` suzgeci BURADA, tek yerdedir: her cagri yerinde
+    tekrarlansaydi biri unutuldugunda taslak uretim sessizce yuzdeye girerdi.
+
+    🔴 `section_id` verilirse PAY da o bolume daraltilir. Bolum kirilimi
+    SATIRDA degil BASLIKTA'dir (`SiteDiaryEntry.section_id`, models.py:116);
+    bolum etiketi olmayan gunluk santiye yuzdesine girer, hicbir BOLUM
+    yuzdesine girmez — ve bu dogru davranistir, cunku o uretimin hangi bolume
+    ait oldugu BEYAN EDILMEMISTIR.
+    """
+    stmt = (
+        select(
+            SiteDiaryLine.boq_item_id.label("boq_item_id"),
+            func.coalesce(func.sum(SiteDiaryLine.quantity), 0).label("realized"),
+        )
+        .join(SiteDiaryEntry, SiteDiaryEntry.id == SiteDiaryLine.entry_id)
+        .where(
+            SiteDiaryLine.boq_item_id.is_not(None),
+            SiteDiaryEntry.status == DiaryStatus.submitted,
+        )
+        .group_by(SiteDiaryLine.boq_item_id)
+    )
+    if section_id is not None:
+        stmt = stmt.where(SiteDiaryEntry.section_id == section_id)
+    return stmt
+
+
+async def realized_by_item(
+    session: AsyncSession, item_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, Decimal]:
+    """Poz basina GERCEKLESEN miktar. Bos istekte sorgu ACILMAZ (N+1 kurali)."""
+    if not item_ids:
+        return {}
+    alt = _realized_line_sums().where(SiteDiaryLine.boq_item_id.in_(item_ids)).subquery()
+    rows = await session.execute(select(alt.c.boq_item_id, alt.c.realized))
+    return {row[0]: Decimal(row[1]) for row in rows}
+
+
+async def _weighted_for_scope(
+    session: AsyncSession,
+    taban: Select[tuple[uuid.UUID, Decimal, Decimal]],
+    section_id: uuid.UUID | None = None,
+) -> tuple[Decimal, Decimal]:
+    """`(poz_id, taban_miktar, birim_fiyat)` uclusunden PAY ve PAYDA'yi toplar.
+
+    Kapsami cagiran belirler (santiye / bolum / proje); agirliklandirma ve
+    `submitted` suzgeci HER kapsamda ayni kalir.
+    """
+    taban_alt = taban.subquery()
+    realized_alt = _realized_line_sums(section_id).subquery()
+    # 🔴 PAY **KIRPILMAZ** (`least(...)` YOK): tabani asan uretim gercek bir
+    # olgudur (fazla imalat ya da hatali girdi) ve %100'e kirpmak onu SESSIZCE
+    # gizlerdi. Emsal ayni: `progress_payments/service.py:563` de kirpmaz.
+    stmt = select(
+        func.coalesce(
+            func.sum(func.coalesce(realized_alt.c.realized, 0) * taban_alt.c.unit_price),
+            0,
+        ),
+        func.coalesce(func.sum(taban_alt.c.taban * taban_alt.c.unit_price), 0),
+    ).select_from(
+        taban_alt.join(
+            realized_alt, realized_alt.c.boq_item_id == taban_alt.c.boq_item_id, isouter=True
+        )
+    )
+    pay, payda = (await session.execute(stmt)).one()
+    return Decimal(pay), Decimal(payda)
+
+
+def _site_taban(site_id: uuid.UUID) -> Select[tuple[uuid.UUID, Decimal, Decimal]]:
+    """PAYDA = SANTIYE BOQ'u: pozun KENDI `quantity`si (santiye kotasi)."""
+    return select(
+        BoqItem.id.label("boq_item_id"),
+        BoqItem.quantity.label("taban"),
+        BoqItem.unit_price.label("unit_price"),
+    ).where(BoqItem.site_id == site_id)
+
+
+def _section_taban(section_id: uuid.UUID) -> Select[tuple[uuid.UUID, Decimal, Decimal]]:
+    """PAYDA = BOLUM TAHSISI (`BoqItemSectionAllocation`), pozun kotasi DEGIL.
+
+    🔴 Gerekce: bolumun is evreni o boluma TAHSIS EDILEN miktardir. Pozun
+    santiye kotasini payda yapmak, 1.200 m³ betonun 400'u tahsis edilmis bir
+    bolumu 1.200 uzerinden olcerdi ve bolum %100 imal etse bile %33 gosterirdi.
+    """
+    return (
+        select(
+            BoqItemSectionAllocation.boq_item_id.label("boq_item_id"),
+            BoqItemSectionAllocation.quantity.label("taban"),
+            BoqItem.unit_price.label("unit_price"),
+        )
+        .join(BoqItem, BoqItem.id == BoqItemSectionAllocation.boq_item_id)
+        .where(BoqItemSectionAllocation.section_id == section_id)
+    )
+
+
+def _project_taban(project_id: uuid.UUID) -> Select[tuple[uuid.UUID, Decimal, Decimal]]:
+    """PAYDA = PROJE geneli BOQ: projenin TUM santiyelerinin pozlari."""
+    return (
+        select(
+            BoqItem.id.label("boq_item_id"),
+            BoqItem.quantity.label("taban"),
+            BoqItem.unit_price.label("unit_price"),
+        )
+        .join(Site, Site.id == BoqItem.site_id)
+        .where(Site.project_id == project_id)
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Genel API — hepsi TEK sorgu acar, hicbiri dongu icinde cagrilmaz (N+1 kurali)
+# --------------------------------------------------------------------------- #
+
+
+async def physical_for_site(session: AsyncSession, site_id: uuid.UUID) -> Decimal | None:
+    pay, payda = await _weighted_for_scope(session, _site_taban(site_id))
+    return weighted_pct(pay, payda)
+
+
+async def physical_for_section(session: AsyncSession, section_id: uuid.UUID) -> Decimal | None:
+    pay, payda = await _weighted_for_scope(
+        session, _section_taban(section_id), section_id=section_id
+    )
+    return weighted_pct(pay, payda)
+
+
+async def physical_for_project(session: AsyncSession, project_id: uuid.UUID) -> Decimal | None:
+    pay, payda = await _weighted_for_scope(session, _project_taban(project_id))
+    return weighted_pct(pay, payda)
+
+
+async def physical_for_sections(
+    session: AsyncSession, section_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, Decimal | None]:
+    """TOPLU bolum yuzdesi — bolum LISTESI ekrani icin TEK sorgu.
+
+    🔴 Bolum basina `physical_for_section` cagirmak N+1 acardi; `sites` liste
+    ucu bolumleri dongu icinde sunar (`presenters.to_section`).
+    """
+    if not section_ids:
+        return {}
+    taban = (
+        select(
+            BoqItemSectionAllocation.section_id.label("section_id"),
+            BoqItemSectionAllocation.boq_item_id.label("boq_item_id"),
+            BoqItemSectionAllocation.quantity.label("taban"),
+            BoqItem.unit_price.label("unit_price"),
+        )
+        .join(BoqItem, BoqItem.id == BoqItemSectionAllocation.boq_item_id)
+        .where(BoqItemSectionAllocation.section_id.in_(section_ids))
+        .subquery()
+    )
+    realized = (
+        select(
+            SiteDiaryEntry.section_id.label("section_id"),
+            SiteDiaryLine.boq_item_id.label("boq_item_id"),
+            func.coalesce(func.sum(SiteDiaryLine.quantity), 0).label("realized"),
+        )
+        .join(SiteDiaryEntry, SiteDiaryEntry.id == SiteDiaryLine.entry_id)
+        .where(
+            SiteDiaryLine.boq_item_id.is_not(None),
+            SiteDiaryEntry.status == DiaryStatus.submitted,
+            SiteDiaryEntry.section_id.in_(section_ids),
+        )
+        .group_by(SiteDiaryEntry.section_id, SiteDiaryLine.boq_item_id)
+        .subquery()
+    )
+    stmt = (
+        select(
+            taban.c.section_id,
+            func.coalesce(func.sum(func.coalesce(realized.c.realized, 0) * taban.c.unit_price), 0),
+            func.coalesce(func.sum(taban.c.taban * taban.c.unit_price), 0),
+        )
+        .select_from(
+            taban.join(
+                realized,
+                (realized.c.section_id == taban.c.section_id)
+                & (realized.c.boq_item_id == taban.c.boq_item_id),
+                isouter=True,
+            )
+        )
+        .group_by(taban.c.section_id)
+    )
+    rows = await session.execute(stmt)
+    olculen = {row[0]: weighted_pct(Decimal(row[1]), Decimal(row[2])) for row in rows}
+    # Tahsisi HIC olmayan bolum sorgudan DONMEZ; yuzdesi "yok"tur (0 DEGIL).
+    return {sid: olculen.get(sid) for sid in section_ids}
