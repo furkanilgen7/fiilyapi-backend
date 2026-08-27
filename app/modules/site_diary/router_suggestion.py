@@ -1,4 +1,4 @@
-"""Hakediş "günlükten doldur" öneri uçları (T5; spec §4, §7 S2/S5).
+"""Hakediş "günlükten doldur" öneri uçları (T5; spec §4, §7 S2).
 
 Yollar HAKEDİŞ modüllerinin altındadır ama kod BURADA yaşar: okunan veri
 günlüktür, kararlar (yalnız `submitted`, dönem süzgeci, BOQ köprüsü) günlük
@@ -97,8 +97,10 @@ async def subcontractor_diary_suggestion_endpoint(
 ) -> SubcontractorDiarySuggestion:
     """Taşeron hakedişi için "günlükten doldur" ÖNERİSİ — **hiçbir şey yazmaz**.
 
-    Yalnız sözleşmenin ŞANTİYESİNİN günlüğü sayılır (spec §7 S5); şantiyesiz
-    (proje geneli) sözleşmede liste boş döner ve `reason` nedenini söyler.
+    Kapsam sözleşmeden gelir: şantiyeye bağlı sözleşmede YALNIZ o şantiyenin
+    günlüğü, şantiyesiz (proje geneli) sözleşmede ise projenin TÜM şantiyelerinin
+    günlüğü toplanır (kullanıcı kararı 2026-08-27 — eski spec §7 S5 "kapsam
+    dışıdır" kuralı TERSİNE ÇEVRİLDİ). Gruplama her iki hâlde de yalnız KALEMDİR.
     """
     _assert_period(year, month)
     return await suggestion.subcontractor_suggestion(

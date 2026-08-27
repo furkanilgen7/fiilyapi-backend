@@ -340,7 +340,7 @@ class SiteDiarySummary(BaseModel):
     total_amount: Decimal
 
 
-# --- T5: hakediş "günlükten doldur" önerisi (spec §4, §7 S2/S5) ---
+# --- T5: hakediş "günlükten doldur" önerisi (spec §4, §7 S2) ---
 #
 # `lines[]` tipi HAKEDİŞ MODÜLLERİNİN KENDİ giriş şemasıdır — yeni bir "öneri
 # satırı" şeması TANIMLANMAZ. Sözleşme şudur: yanıtın `lines` alanı DEĞİŞTİRİLMEDEN
@@ -381,8 +381,11 @@ class EmployerDiarySuggestion(_DiarySuggestionBase):
 class SubcontractorDiarySuggestion(_DiarySuggestionBase):
     """`GET /subcontractor-contracts/{contract_id}/progress-payments/diary-suggestion`.
 
-    `site_id` sözleşmenin şantiyesidir; `None` ise (proje geneli sözleşme) öneri
-    kapsam DIŞIDIR (spec §7 S5) ve `reason` bunu AÇIKÇA söyler.
+    `site_id` sözleşmenin şantiyesidir. `None` ise (proje geneli sözleşme) öneri
+    kapsam dışı DEĞİLDİR: miktarlar sözleşmenin PROJESİNDEKİ TÜM şantiyelerin
+    günlüğünden toplanır (kullanıcı kararı 2026-08-27 — eski spec §7 S5 kuralı
+    TERSİNE ÇEVRİLDİ). Alan yine de NULL döner, çünkü sözleşme gerçekten
+    şantiyesizdir; `lines` gruplaması her iki hâlde de yalnız KALEMDİR.
     """
 
     contract_id: uuid.UUID

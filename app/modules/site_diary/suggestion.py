@@ -1,4 +1,4 @@
-"""Hakediş "günlükten doldur" ÖNERİSİ (T5; spec §4, §7 S2/S5).
+"""Hakediş "günlükten doldur" ÖNERİSİ (T5; spec §4, §7 S2).
 
 ## 🛑 Bu modül HİÇBİR ŞEY YAZMAZ
 
@@ -110,31 +110,24 @@ async def subcontractor_suggestion(
 ) -> SubcontractorDiarySuggestion:
     """`GET /subcontractor-contracts/{contract_id}/progress-payments/diary-suggestion`.
 
-    Spec §7 S5 (ONAYLI): `site_id` NULL olan proje-geneli sözleşme kapsam
-    DIŞIDIR. Boş liste SESSİZCE dönmez — `reason` alanı nedeni söyler, çünkü
-    "şantiyesiz sözleşme" ile "bu ay miktar yok" kullanıcı için tamamen farklı
-    iki durumdur ve ilkinin çözümü sözleşmeye şantiye bağlamaktır.
+    Kapsam SÖZLEŞMENİN kendisinden gelir ve İKİ HÂLİ VARDIR (kullanıcı kararı
+    2026-08-27; eski spec §7 S5 "proje-geneli sözleşme kapsam DIŞIDIR" kuralı
+    TERSİNE ÇEVRİLDİ): `site_id` doluysa o şantiyenin günlüğü, NULL ise
+    sözleşmenin PROJESİNDEKİ TÜM şantiyelerin günlüğü. Ayrı bir erken dönüş
+    YOKTUR — tek yol iki hâli de yürütür, ikinci bir yol damga ile öneriyi
+    ayrıştırma riskini geri getirirdi.
 
-    Şantiyesiz sözleşmede köprü sayacı da KOŞMAZ: hangi şantiyenin günlüğüne
-    bakılacağı belirsizken "köprüsüz poz" saymak uydurma bir sayı üretirdi.
+    Yanıttaki `site_id` yine sözleşmenin şantiyesidir (proje-genelinde NULL
+    kalır); gruplama her iki hâlde de yalnız KALEMDİR (spec §2).
+
+    Sorgu sayısı SABİTTİR (kapsam + satırlar + köprüsüz sayacı).
     """
     contract, _ = await visible_contract(session, actor, contract_id)
-    if contract.site_id is None:
-        return SubcontractorDiarySuggestion(
-            contract_id=contract.id,
-            site_id=None,
-            year=year,
-            month=month,
-            lines=[],
-            skipped_unbridged_count=0,
-            reason=guards.SUGGESTION_CONTRACT_WITHOUT_SITE,
-        )
-
     rows = await repository.subcontractor_suggestion_rows(
-        session, contract.id, contract.site_id, year=year, month=month
+        session, contract.id, contract.site_id, contract.project_id, year=year, month=month
     )
     skipped = await repository.subcontractor_unbridged_item_count(
-        session, contract.id, contract.site_id, year=year, month=month
+        session, contract.id, contract.site_id, contract.project_id, year=year, month=month
     )
     lines = [
         SubcontractorProgressPaymentLineInput(contract_item_id=item_id, quantity=total)
