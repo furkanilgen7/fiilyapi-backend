@@ -11,7 +11,7 @@ from app.core.errors import (
     ProjectValidationError,
 )
 from app.core.timezone import today
-from app.modules.projects import cost_cards, messages, repository
+from app.modules.projects import cost_cards, messages, progress_cards, repository
 from app.modules.projects.cards import (
     _contracting_card,
     _investment_card,
@@ -28,6 +28,7 @@ from app.modules.projects.models import (
     ProjectStatus,
     ProjectType,
 )
+from app.modules.projects.progress_cards import CardProgress
 from app.modules.projects.schemas import (
     EmployerCreate,
     EmployerResponse,
@@ -86,7 +87,10 @@ async def create_employer(session: AsyncSession, data: EmployerCreate) -> Employ
 
 
 def _to_item(
-    project: Project, worker_count: int, card_costs: ProjectCardCosts = cost_cards.EMPTY
+    project: Project,
+    worker_count: int,
+    card_costs: ProjectCardCosts = cost_cards.EMPTY,
+    progress: CardProgress = progress_cards.EMPTY,
 ) -> ProjectListItem:
     """ProjectListItem.model_validate(project) calisamaz: ORM nesnesinde
     contracting/investment/land_share alanlari (bunlar turetilmis karttir, DB
@@ -120,29 +124,41 @@ def _to_item(
         is_draft=project.is_draft,
         budget=project.budget,
         progress_pct=project.progress_pct,
-        contracting=_contracting_card(worker_count, card_costs) if is_contracting else None,
+        contracting=(
+            _contracting_card(worker_count, card_costs, progress) if is_contracting else None
+        ),
         investment=_investment_card(project, card_costs) if is_investment else None,
         land_share=_land_share_card(project, card_costs) if is_land_share else None,
     )
 
 
 def to_detail(
-    project: Project, worker_count: int, card_costs: ProjectCardCosts = cost_cards.EMPTY
+    project: Project,
+    worker_count: int,
+    card_costs: ProjectCardCosts = cost_cards.EMPTY,
+    progress: CardProgress = progress_cards.EMPTY,
 ) -> ProjectDetailResponse:
     """Saf donusturucu — DB'ye DOKUNMAZ. Maliyet turevleri de `worker_count` gibi
     PARAMETREDIR (P10 T3): toplu okuma cagirandadir, verilmezse zarflar bos kalir."""
     return ProjectDetailResponse(
-        **_to_item(project, worker_count, card_costs).model_dump(), site_count=len(project.sites)
+        **_to_item(project, worker_count, card_costs, progress).model_dump(),
+        site_count=len(project.sites),
     )
 
 
-async def build_project_detail(session: AsyncSession, project: Project) -> ProjectDetailResponse:
+async def build_project_detail(
+    session: AsyncSession, project: Project, actor: User
+) -> ProjectDetailResponse:
     """Proje detay zarfi + isci sayaci. YAZMA uclarinin yaniti da buradan gecer:
     okuma ve yazma ayni zarfi tasimazsa ekran kaydettikten sonra sayaci kaybeder."""
     worker_counts = await timesheet_counts.by_project(session, [project.id])
     card_costs = await cost_cards.by_projects(session, [project])
+    progress = await progress_cards.by_projects(session, actor, [project])
     return to_detail(
-        project, worker_counts.get(project.id, 0), card_costs.get(project.id, cost_cards.EMPTY)
+        project,
+        worker_counts.get(project.id, 0),
+        card_costs.get(project.id, cost_cards.EMPTY),
+        progress.get(project.id, progress_cards.EMPTY),
     )
 
 
@@ -213,10 +229,16 @@ async def list_projects_overview(
     # P10 T3: kart maliyet/kâr türevleri TEK toplu okumadan gelir — proje başına
     # sorgu YASAK (spec §4, `timesheet_counts.by_project` ile aynı desen).
     card_costs = await cost_cards.by_projects(session, page)
+    card_progress = await progress_cards.by_projects(session, actor, page)
     return ProjectListResponse(
         counts=_counts(visible),
         items=[
-            _to_item(p, worker_counts.get(p.id, 0), card_costs.get(p.id, cost_cards.EMPTY))
+            _to_item(
+                p,
+                worker_counts.get(p.id, 0),
+                card_costs.get(p.id, cost_cards.EMPTY),
+                card_progress.get(p.id, progress_cards.EMPTY),
+            )
             for p in page
         ],
         total=len(selected),
@@ -242,7 +264,8 @@ async def _visible_project(session: AsyncSession, actor: User, project_id: uuid.
 async def get_project_detail(
     session: AsyncSession, actor: User, project_id: uuid.UUID
 ) -> ProjectDetailResponse:
-    return await build_project_detail(session, await _visible_project(session, actor, project_id))
+    project = await _visible_project(session, actor, project_id)
+    return await build_project_detail(session, project, actor)
 
 
 def _ensure_type_consistency(

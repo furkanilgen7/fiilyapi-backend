@@ -271,3 +271,28 @@ async def get_contract_items_total_value(session: AsyncSession, project_id: uuid
     ).where(EmployerContractItem.project_id == project_id)
     result = await session.execute(stmt)
     return Decimal(result.scalar_one())
+
+
+async def get_contract_items_total_by_projects(
+    session: AsyncSession, project_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, Decimal]:
+    """`get_contract_items_total_value`in TOPLU hâli (ILR-2, N+1 yasagi).
+
+    Tekil hâl KALIR ve gerekcesi aynidir; burada yalnizca kapsam `IN (…)`
+    oldugu icin ayri bir sorgu gerekir — carpim/`coalesce` kurali BIREBIR ayni.
+    """
+    if not project_ids:
+        return {}
+    stmt = (
+        select(
+            EmployerContractItem.project_id,
+            func.coalesce(
+                func.sum(EmployerContractItem.quantity * EmployerContractItem.unit_price), 0
+            ),
+        )
+        .where(EmployerContractItem.project_id.in_(project_ids))
+        .group_by(EmployerContractItem.project_id)
+    )
+    rows = await session.execute(stmt)
+    olculen = {row[0]: Decimal(row[1]) for row in rows}
+    return {pid: olculen.get(pid, Decimal("0")) for pid in project_ids}

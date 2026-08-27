@@ -207,8 +207,10 @@ async def test_list_placeholders_use_correct_pending_modules(
     assert card.worker_count.available is True
     assert card.worker_count.count == 0
     assert card.worker_count.pending_module == "timesheet"
+    # ⚠️ ILR-1: SANTIYE karti yuzdesi BAGLANDI, sahibi GUNLUK. Bu santiyenin
+    # BOQ'u bos → payda YOK → zarf bos ama anahtari `site_diary`dir.
     assert card.progress_pct.available is False
-    assert card.progress_pct.pending_module == "progress_payments"
+    assert card.progress_pct.pending_module == "site_diary"
     assert result.totals.total_progress_payment.pending_module == "progress_payments"
     assert result.totals.subcontractor_count.pending_module == "subcontracts"
     # T4: alt KPI seridinde YALNIZ `active_worker_count` baglandi.
@@ -239,7 +241,9 @@ async def test_detail_and_section_placeholders(seeded_db, user_factory, project_
     assert detail.total_progress_payment.pending_module == "progress_payments"
     assert detail.contract_amount.pending_module == "contracts"
     assert detail.contract_amount.available is False
-    assert section.progress_pct.pending_module == "progress_payments"
+    # ⚠️ ILR-1: bolum yuzdesi BAGLANDI; tahsis yok → payda yok → bos, anahtar
+    # `site_diary`. (Izin yoklugu OLSAYDI `pending_module is None` olurdu.)
+    assert section.progress_pct.pending_module == "site_diary"
     assert section.progress_pct.available is False
     # 🔴 BLM-SAY: BOQ ikilisi BAGLANDI. Tahsisi olmayan bolumde ikisi de
     # OLCULMUS sifirdir (yer tutucu DEGIL) — `worker_count` emsalinin ayni.

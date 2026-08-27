@@ -26,6 +26,8 @@ from decimal import Decimal
 
 from app.modules.projects.cost_cards import ProjectCardCosts
 from app.modules.projects.models import Project
+from app.modules.projects.progress_cards import EMPTY as PROGRESS_EMPTY
+from app.modules.projects.progress_cards import CardProgress
 from app.modules.projects.schemas import (
     ContractingCard,
     CountPlaceholder,
@@ -119,7 +121,9 @@ def _side_unit_count(value: int | None) -> CountPlaceholder:
     return CountPlaceholder(available=True, count=value, pending_module=_UNITS)
 
 
-def _contracting_card(worker_count: int, card_costs: ProjectCardCosts) -> ContractingCard:
+def _contracting_card(
+    worker_count: int, card_costs: ProjectCardCosts, progress: CardProgress = PROGRESS_EMPTY
+) -> ContractingCard:
     """E4 181/206/231/256 "Harcanan" P10 T4'te ZARFIN ICINDE gercege baglandi.
 
     Kaynak TASERON hakedisidir (spec §2), isveren hakedisi DEGIL: taahhut
@@ -143,7 +147,13 @@ def _contracting_card(worker_count: int, card_costs: ProjectCardCosts) -> Contra
         # ⚠️ Kolay olani (harcama orani) baglamak, FIZIKSEL etiketin altina MALI
         # bir sayi basar: makul gorunur ve YANLISTIR. Baglayacak kisi ONCE alanin
         # bu ikisinden HANGISI oldugunu karara baglamak zorundadir.
-        physical_progress=_metric(_PROGRESS_PAYMENTS),
+        # ✅ ILR-1'DE BAGLANDI — kaynak GUNLUK (`boq.progress`), hakedis DEGIL.
+        # Mockup'in bastigi `Harcanan / Sözleşme Bedeli` MALI bir sayiydi ve
+        # etiketi FIZIKSEL diyordu; artik etiket de sayi da fizikseldir.
+        physical_progress=progress.physical,
+        # ✅ ILR-2'DE EKLENDI — ONAYLANMIS isveren hakedisi. Fizikselin
+        # gerisinde kalmasi BEKLENIR ve DOGRUDUR.
+        financial_progress=progress.financial,
         # 🔴 SINIF (C) TUZAK — engel VERI degil, KART SOZLESMESI.
         # Mockup etiketi "Final Hakediş"tir (E4 277), "Son Hakediş" DEGIL: o dize
         # hicbir mockup'ta ALAN ETIKETI olarak gecmez (yalnizca superseded

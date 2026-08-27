@@ -169,10 +169,12 @@ async def test_get_boq_happy_path_matches_spec_5_1_shape(
         "pending_module": "contracts",
     }
     assert totals["grand_total"] == "347200.00"
+    # ⚠️ ILR-1: BAGLANDI. Rol izinli, BOQ dolu ama gonderilmis gunluk YOK →
+    # deger GERCEKTEN 0,00 (bilinmiyor DEGIL); dolu zarf anahtar TASIMAZ.
     assert totals["grand_progress_pct"] == {
-        "available": False,
-        "value": None,
-        "pending_module": "progress_payments",
+        "available": True,
+        "value": "0.00",
+        "pending_module": None,
     }
 
     assert len(body["groups"]) == 1
@@ -190,10 +192,11 @@ async def test_get_boq_happy_path_matches_spec_5_1_shape(
     assert item_body["unit_price"] == "280.00"
     assert item_body["amount"] == "347200.00"
     assert item_body["sort_order"] == 1
+    # ⚠️ ILR-1: BAGLANDI (uretim yok → 0,00; dolu zarf anahtar TASIMAZ).
     assert item_body["progress_pct"] == {
-        "available": False,
-        "value": None,
-        "pending_module": "progress_payments",
+        "available": True,
+        "value": "0.00",
+        "pending_module": None,
     }
 
 
@@ -333,10 +336,11 @@ async def test_create_boq_item_happy_path(client, db_session, user_factory, proj
     assert body["quantity"] == "10.500"
     assert body["unit_price"] == "150.00"
     assert body["amount"] == "1575.00"
+    # ⚠️ ILR-1: BAGLANDI (yeni acilan pozda uretim yok → 0,00).
     assert body["progress_pct"] == {
-        "available": False,
-        "value": None,
-        "pending_module": "progress_payments",
+        "available": True,
+        "value": "0.00",
+        "pending_module": None,
     }
 
 

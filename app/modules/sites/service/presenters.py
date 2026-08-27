@@ -16,6 +16,7 @@ from app.core.timezone import today
 from app.modules.boq.counts import EMPTY as _BOQ_EMPTY
 from app.modules.boq.counts import SectionBoqTotals
 from app.modules.projects.models import Project
+from app.modules.projects.schemas import restricted
 from app.modules.sites.models import Section, SectionMilestone, SectionStatus, Site, SiteStatus
 from app.modules.sites.schemas import (
     CountPlaceholder,
@@ -197,18 +198,29 @@ def to_section(
     section: Section,
     worker_count: int,
     boq_totals: SectionBoqTotals = _BOQ_EMPTY,
+    progress: MetricPlaceholder | None = None,
 ) -> SectionResponse:
     """Bolum satiri. DORT yer tutucusundan IKISI BLM-SAY'de BAGLANDI.
 
-    ⛔ `progress_pct` — **(B) GECERLI, YER TUTUCU KALIR.** Bekleyen sey
-    `progress_payments` modulu degil, o modulden turemesi gereken FIZIKSEL
-    ILERLEME yuzdesidir — ve o turev BESLEYENIN KENDISINDE de hâlâ yer
-    tutucudur: `boq/schemas.py` `BoqItemResponse.progress_pct` ve
-    `BoqTotals.grand_progress_pct`. Burada bir yuzde uretmek, BOQ'nun bilerek
-    acik biraktigi formulu ikinci ve daha dar bir baglamda ICAT etmek olurdu;
-    iki ekran ayni bolum icin farkli "%" basardi. Mockup (`Bölüm Detay.dc.html:
-    71-73`, %62) bu yuzdeyi BoQ tablosunun "Gerç. %" toplamiyla AYNI sayi olarak
-    cizer — yani tek kaynak BOQ'dur. BLM-SAY bu alana DOKUNMADI.
+    ✅ `progress_pct` — **ILR-1'DE BAGLANDI (2026-08-27).**
+
+    Eski not *"(B) GECERLI, YER TUTUCU KALIR"* diyordu ve gerekcesi DOGRUYDU:
+    burada bir yuzde uretmek, BOQ'nun bilerek acik biraktigi formulu ikinci ve
+    daha dar bir baglamda ICAT etmek olurdu; iki ekran ayni bolum icin farkli
+    "%" basardi. Mockup (`Bölüm Detay.dc.html:71-73`, %62) bu yuzdeyi BoQ
+    tablosunun "Gerç. %" toplamiyla AYNI sayi olarak cizer.
+
+    🔑 **O SART KARSILANDI: formul ICAT EDILMEDI, TEK KAYNAKTAN CAGRILIYOR.**
+    Yuzde `boq/progress.py`de BIR kez yazildi; bu presenter da BOQ ekrani da
+    proje karti da AYNI fonksiyonu cagirir — ikinci bir carpim YOKTUR (K3).
+    Kaynak `progress_payments` DEGIL **gonderilmis santiye gunlugudur** ve
+    formul PARA AGIRLIKLIDIR; PAYDA bu baglamda BOLUM TAHSISIDIR
+    (`BoqItemSectionAllocation`), pozun santiye kotasi degil.
+
+    🔴 Zarf **IZNE DUYARLIDIR**: `sites`i okuyup `site_diary`yi okuyamayan
+    roller VAR (olculdu: `accounting`, `hr_manager`, `procurement`); onlarda
+    `restricted()` doner. Varsayilan da `restricted()`tir (fail-closed) —
+    izin olcmeyi unutan yeni bir cagri yeri sessizce yuzde BASAMAZ.
 
     ✅ `boq_item_count` — **BLM-SAY'de BAGLANDI.** P-YT2'nin (C) gerekcesi
     ("mockup TEK sayi basmiyor: 16 / 26") OLCULDU ve YARISI hâlâ gecerli:
@@ -243,7 +255,11 @@ def to_section(
         start_date=section.start_date,
         end_date=section.end_date,
         sort_order=section.sort_order,
-        progress_pct=_metric(_PROGRESS_PAYMENTS),
+        # ✅ ILR-1'DE BAGLANDI — kaynak `boq.progress` (TEK kaynak, K3).
+        # 🔴 Varsayilan `restricted()`: cagiran izni OLCMEDIYSE alan KAPALI
+        # dogar. Fail-closed bilinclidir — varsayilan "bagli degil" olsaydi,
+        # izin olcmeyi unutan yeni bir cagri yeri sessizce yuzde basardi.
+        progress_pct=progress if progress is not None else restricted(),
         boq_item_count=_boq_item_count(boq_totals.item_count),
         budget=_boq_budget(boq_totals.amount),
         worker_count=_worker_count(worker_count),
@@ -264,6 +280,7 @@ def to_section_detail(
     section: Section,
     worker_count: int,
     boq_totals: SectionBoqTotals = _BOQ_EMPTY,
+    progress: MetricPlaceholder | None = None,
 ) -> SectionDetailResponse:
     """P6 §5 — bolum detay govdesi: `to_section`in TUM alanlari + T1 kolonlari.
 
@@ -277,7 +294,7 @@ def to_section_detail(
     hata — istenen budur.
     """
     return SectionDetailResponse(
-        **to_section(section, worker_count, boq_totals).model_dump(),
+        **to_section(section, worker_count, boq_totals, progress).model_dump(),
         site_id=section.site_id,
         section_type=section.section_type,
         description=section.description,
@@ -289,7 +306,9 @@ def to_section_detail(
     )
 
 
-def _card_fields(site: Site, project: Project, worker_count: int) -> dict:
+def _card_fields(
+    site: Site, project: Project, worker_count: int, progress: MetricPlaceholder | None = None
+) -> dict:
     """Santiye kartinin ortak alanlari (`to_card` + `to_detail`).
 
     🔴 `progress_pct` — **(B) GECERLI**, `to_section`taki AYNI gerekce: bekleyen
@@ -313,7 +332,9 @@ def _card_fields(site: Site, project: Project, worker_count: int) -> dict:
         "remaining_days": _remaining_days(site),
         "section_count": len(site.sections),
         "worker_count": _worker_count(worker_count),
-        "progress_pct": _metric(_PROGRESS_PAYMENTS),
+        # ✅ ILR-1'DE BAGLANDI — kaynak GUNLUK (`boq.progress`), PAYDA santiye
+        # BOQ'u. Fail-closed: cagiran izni olcmediyse `restricted()`.
+        "progress_pct": progress if progress is not None else restricted(),
         # --- Santiye formu genislemesi (§6.2): YALNIZ EKLEME ---
         "is_draft": site.is_draft,
         "site_manager_user_id": site.site_manager_user_id,
@@ -334,8 +355,10 @@ def _card_fields(site: Site, project: Project, worker_count: int) -> dict:
     }
 
 
-def to_card(site: Site, project: Project, worker_count: int) -> SiteCard:
-    return SiteCard(**_card_fields(site, project, worker_count))
+def to_card(
+    site: Site, project: Project, worker_count: int, progress: MetricPlaceholder | None = None
+) -> SiteCard:
+    return SiteCard(**_card_fields(site, project, worker_count, progress))
 
 
 def to_detail(
@@ -344,6 +367,8 @@ def to_detail(
     worker_count: int,
     section_worker_counts: Mapping[uuid.UUID, int],
     section_boq_totals: Mapping[uuid.UUID, SectionBoqTotals],
+    section_progress: Mapping[uuid.UUID, MetricPlaceholder] | None = None,
+    site_progress: MetricPlaceholder | None = None,
 ) -> SiteDetailResponse:
     """Santiye detayi. IKI yer tutucusu P-YT2'de denetlendi, IKISI de **(C)**.
 
@@ -374,7 +399,7 @@ def to_detail(
     """
     sections = list(site.sections)
     return SiteDetailResponse(
-        **_card_fields(site, project, worker_count),
+        **_card_fields(site, project, worker_count, site_progress),
         project=SiteProjectSummary.model_validate(project),
         section_status_counts=_section_counts(sections),
         sections=[
@@ -382,6 +407,7 @@ def to_detail(
                 s,
                 section_worker_counts.get(s.id, 0),
                 section_boq_totals.get(s.id, _BOQ_EMPTY),
+                (section_progress or {}).get(s.id),
             )
             for s in sections
         ],

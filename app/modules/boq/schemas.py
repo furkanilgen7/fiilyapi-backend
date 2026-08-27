@@ -60,24 +60,31 @@ class BoqItemResponse(BaseModel):
     """Spec §5.1 poz kalemi satiri. `amount` turevdir, saklanmaz — quantity *
     unit_price, para hassasiyetine (0.01) yuvarlanir.
 
-    🔴 `progress_pct` — **(C) TUZAK** (P-YT3 denetimi, 2026-08-23). Eski yorum
-    *"hakediş (P7) yer tutucusudur"* diyordu; bu BAYATTI — `progress_payments`
-    modulu CANLI ve birlestirme anahtari da VAR:
+    ✅ `progress_pct` — **ILR-1'DE BAGLANDI (2026-08-27). KAYNAK GUNLUKTUR.**
 
-        boq_items.contract_item_id ──> employer_contract_items.id
-                                                ^
-                  progress_payment_lines.(contract_item_id, site_id)
+    P-YT3 (2026-08-23) bu alani (C) TUZAK diye BOS birakmisti ve gerekcesi
+    **IZIN KAPISIYDI (K4)**: `procurement` `boq=view/limited` ama
+    `progress_payments=none`; zarfi doldurmak isverene kesilen hakedisin
+    gerceklesme oranini satinalmaya BOQ ekranindan acardi.
 
-    Yani "gerceklesen miktar / poz miktari" ilkece HESAPLANABILIR. Alan yine de
-    bagli DEGIL ve sebep veri degil **IZIN KAPISIDIR (K4, P-YT2 kanonu)**:
-    tohumlanmis matriste `procurement` `boq=view/limited` (2026-07-30 kullanici
-    karari) ama `progress_payments=none`. Zarfi doldurmak, isverene kesilen
-    hakedisin gerceklesme oranini satinalmaya BOQ ekranindan acardi — o modulun
-    `require_permission` kapisi hic calismadan.
+    🔴 **O GEREKCE CURUMEDI — KARSILANDI.** Iki sey degisti:
+      1. **Kaynak degisti.** Kullanici karari (2026-08-27): FIZIKSEL ilerleme
+         hakedisten DEGIL, **gonderilmis santiye gunlugunden** turer
+         (`boq/progress.py`). Hakedisten turemis MALI ilerleme AYRI bir
+         kavramdir ve BU alanda DEGILDIR.
+      2. **Kapi kalkmadi, ALANA TASINDI.** Kaynak degisince sizinti kumesi de
+         degisti (olculdu: `boq` okuyup `site_diary` okuyamayan roller =
+         `accounting`, `procurement`) — yani kapi HALA GEREKLI. Bu yuzden zarf
+         **IZNE DUYARLIDIR**: izinsiz rolde `restricted()` doner
+         (`available=False` + `pending_module is None`), izinli rolde DOLAR.
 
-    Bekci: `tests/modules/test_boq_pyt3_yer_tutucu_denetimi.py` — veri KURULUP
-    zarfin yine de bos kaldigi ayri bir testle cakilidir; matris ayrismasi
-    kapanirsa `test_K4_*` haber verir.
+    🔴 Formul **PARA AGIRLIKLI**: `Σ(gerceklesen × fiyat) / Σ(taban × fiyat)`.
+    PAYDA = SUNULAN miktar — bolum suzgecinde o bolumun TAHSISI, aksi hâlde
+    pozun santiye kotasi (asagidaki "iki anlam" notuyla birebir tutarli).
+
+    Bekciler: `tests/modules/test_ilr_ilerleme.py` (cift yonlu izin + para
+    agirligi mutanti) ve `test_boq_pyt3_yer_tutucu_denetimi.py` (`test_K4_*`
+    kumeyi hâlâ cakar — matris ayrismasi kapanirsa haber verir).
     """
 
     id: uuid.UUID
@@ -122,6 +129,11 @@ class BoqGroupResponse(BaseModel):
 class BoqTotals(BaseModel):
     """Spec §5.1 ust KPI seridi. `grand_total` GERCEK deger (gruplarin toplami).
 
+    ⚠️ **ILR-1 (2026-08-27): `grand_progress_pct` BAGLANDI** — kaynagi hakedis
+    DEGIL **gunluktur** ve `boq/progress.py`den TEK kaynaktan gelir (grup
+    satirlarindan yeniden toplanmaz). Kalan DORT zarfin gerekcesi AYNEN
+    gecerlidir. Asagidaki tablo o dort satir icin okunur.
+
     🔴 **P-YT3 DENETIMI (2026-08-23) — BES ZARFIN DE SINIFI VE SEBEBI.** Eski
     yorum *"sozlesme/hakediş bu dilimde yazilmiyor"* diyordu ve BAYATTI: iki
     modul de aylardir canli. Bugunku olgu:
@@ -132,7 +144,7 @@ class BoqTotals(BaseModel):
     | `realized_total` | (C) TUZAK | **K4** — `procurement` `progress_payments`ta `none` |
     | `remaining_total` | (C) TUZAK | `contract_total − realized_total`; iki ucu da K4 kapali |
     | `revision_total` | (B) GECERLI | 🔑 **repoda REVIZYON KAVRAMI YOK** — kaynak yok |
-    | `grand_progress_pct` | (C) TUZAK | **K4** — `realized_total`in turevi |
+    | `grand_progress_pct` | ✅ **BAGLANDI** | ILR-1: kaynak GUNLUK, izne duyarli |
 
     🔑 `contract_total`in formulu ZATEN YAZILI ve TEK KOPYA:
     `contracts/distribution.py::_site_summaries` santiye basina

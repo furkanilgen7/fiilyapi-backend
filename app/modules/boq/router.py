@@ -161,7 +161,7 @@ async def create_boq_item_endpoint(
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
-    return await service.item_response(session, item)
+    return await service.item_response(session, item, user)
 
 
 @router.patch("/boq/groups/{group_id}", response_model=BoqGroupResponse, dependencies=[_FULL])
@@ -199,7 +199,7 @@ async def update_boq_item_endpoint(
         actor_user_id=user.id,
         ip_address=client_ip(request),
     )
-    return await service.item_response(session, item)
+    return await service.item_response(session, item, user)
 
 
 @router.get(

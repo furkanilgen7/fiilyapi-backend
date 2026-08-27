@@ -187,10 +187,15 @@ async def test_BOLUM_zarflari__anahtar_ve_bos_durum_alan_alan(
 
     satir = (await service.list_sections_for_site(seeded_db, user, site.id)).items[0]
 
+    # ⚠️ ILR-1'DE DEGISTI: alan BAGLANDI ve sahibi artik GUNLUKTUR. Bu bolumun
+    # TAHSISI YOK (payda 0) — yuzde "0" degil, YOKTUR; zarf bos kalir ama artik
+    # `site_diary` anahtarini tasir. Rol `patron`, yani IZIN VAR: bu bos hâl
+    # izin kapisi DEGIL, payda yoklugudur (ucuncu hâl `pending_module is None`
+    # olurdu — karistirilmasin).
     assert (satir.progress_pct.available, satir.progress_pct.pending_module) == (
         False,
-        "progress_payments",
-    ), "(B) — modul canli ama turev BOQ'da da yer tutucu"
+        "site_diary",
+    ), "ILR-1: tahsisi olmayan bolumde payda YOK; anahtar gunlugu gostermeli"
     assert (satir.boq_item_count.available, satir.boq_item_count.pending_module) == (
         True,
         "boq",
@@ -222,10 +227,13 @@ async def test_SANTIYE_DETAY_zarflari__ikisi_de_C_olarak_kaldi(
         False,
         "contracts",
     ), "(C) — santiye duzeyinde sozlesme bedeli SEMADA YOK"
+    # ⚠️ ILR-1'DE DEGISTI — bu alan SANTIYE kartinin yuzdesidir (`SiteCard`,
+    # `SectionResponse` DEGIL) ve o da baglandi. Santiyenin BOQ'u bos oldugu
+    # icin payda 0 → yuzde YOK, anahtar `site_diary`.
     assert (detay.progress_pct.available, detay.progress_pct.pending_module) == (
         False,
-        "progress_payments",
-    ), "(B) — kart ile bolum AYNI turevden beslenmelidir"
+        "site_diary",
+    ), "ILR-1: BOQ'u bos santiyede payda YOK; kart ile bolum AYNI turevden beslenir"
 
 
 async def test_ALT_KPI_seridi__uc_bos_bir_bagli(seeded_db, user_factory, project_factory):

@@ -12,7 +12,8 @@ from app.core.errors import (
     RelatedRecordsExistError,
     SiteValidationError,
 )
-from app.modules.boq import repository
+from app.core.permissions import can_read
+from app.modules.boq import progress, repository
 from app.modules.boq.models import BoqGroup, BoqItem, BoqItemSectionAllocation
 from app.modules.boq.schemas import (
     BoqGroupCreate,
@@ -35,6 +36,7 @@ from app.modules.boq.schemas import (
 # `sites.service._visible_site` yeniden kullanilir. Ayni desen zaten
 # `projects.service`'in `sites.service._next_site_code`'u yeniden
 # kullanmasinda var (bkz. app/modules/projects/service.py).
+from app.modules.projects.schemas import metric, restricted
 from app.modules.sites import guards as sites_guards
 from app.modules.sites import repository as sites_repository
 from app.modules.sites.models import Section, Site
@@ -67,17 +69,38 @@ _QUANTITY_BELOW_ALLOCATED = "Poz miktarı bölümlere dağıtılan toplamın alt
 # ile ISIMLE cakilidir.
 _CONTRACTS = "contracts"
 _PROGRESS_PAYMENTS = "progress_payments"
+# ILR-1: FIZIKSEL ilerlemenin sahibi gunluktur (isveren hakedisi DEGIL).
+_SITE_DIARY = "site_diary"
 
 
 def _metric(pending_module: str) -> MetricPlaceholder:
     return MetricPlaceholder(pending_module=pending_module)
 
 
+def _progress_metric(
+    realized: Decimal | None, taban: Decimal, *, izinli: bool
+) -> MetricPlaceholder:
+    """ILR-1 zarfi — UC hâl, biri IZIN (K-ZARF).
+
+    🔴 `izinli=False` ⇒ `restricted()`: `pending_module` TASIMAZ. `site_diary`
+    yazmak, "yetkin yok"u "modul bekleniyor" diye gostermek olurdu; ekran
+    yalan soylerdi (kullanici karari 2026-08-27).
+    """
+    if not izinli:
+        return restricted()
+    return metric(progress.weighted_pct(realized or _ZERO_QUANTITY, taban), _SITE_DIARY)
+
+
 _ZERO_QUANTITY = Decimal("0.000")
 
 
 def to_item(
-    item: BoqItem, *, allocated: Decimal, quantity: Decimal | None = None
+    item: BoqItem,
+    *,
+    allocated: Decimal,
+    quantity: Decimal | None = None,
+    realized: Decimal | None = None,
+    izinli: bool = False,
 ) -> BoqItemResponse:
     """`allocated` ANAHTAR KELIMEDIR ve varsayilani YOKTUR (BOQ-SEC K6).
 
@@ -89,23 +112,42 @@ def to_item(
     `unallocated` ise HER ZAMAN pozun GERCEK kotasi uzerinden hesaplanir — bkz.
     `BoqItemResponse`taki "iki anlam" notu.
     """
+    taban = item.quantity if quantity is None else quantity
     return BoqItemResponse(
         id=item.id,
         code=item.code,
         description=item.description,
         unit=item.unit,
-        quantity=item.quantity if quantity is None else quantity,
+        quantity=taban,
         unit_price=item.unit_price,
-        progress_pct=_metric(_PROGRESS_PAYMENTS),
+        # 🔴 PAYDA = SUNULAN miktar: bolum suzgecinde o bolumun TAHSISI, aksi
+        # hâlde pozun santiye kotasi. Iki anlam notuyla (schemas.py:88) birebir
+        # tutarli — ekranda gorunen miktarin yuzdesi basilir.
+        progress_pct=_progress_metric(realized, taban, izinli=izinli),
         sort_order=item.sort_order,
         allocated_quantity=allocated,
         unallocated_quantity=item.quantity - allocated,
     )
 
 
-async def item_response(session: AsyncSession, item: BoqItem) -> BoqItemResponse:
-    """Tekil kalem yaniti — tahsis toplamini DB'den okur (yazma uclari icin)."""
-    return to_item(item, allocated=await repository.allocated_total_for_item(session, item.id))
+async def item_response(session: AsyncSession, item: BoqItem, actor: User) -> BoqItemResponse:
+    """Tekil kalem yaniti — tahsis toplamini DB'den okur (yazma uclari icin).
+
+    🔴 `actor` ILR-1'de EKLENDI ve varsayilani YOKTUR: yazma ucunun yaniti da
+    OKUMA ucuyle AYNI zarfi tasimalidir, aksi hâlde ekran kaydettikten sonra
+    yuzdeyi KAYBEDER (`build_site_detail` docstring'indeki ayni kanon). Izin de
+    burada olculur — yazma ucu okuma kapisini atlayamaz.
+    """
+    izinli = await can_read(session, actor, _SITE_DIARY)
+    realized = (
+        (await progress.realized_by_item(session, [item.id])).get(item.id) if izinli else None
+    )
+    return to_item(
+        item,
+        allocated=await repository.allocated_total_for_item(session, item.id),
+        realized=realized,
+        izinli=izinli,
+    )
 
 
 def to_group(
@@ -113,19 +155,30 @@ def to_group(
     *,
     allocated_totals: dict[uuid.UUID, Decimal],
     section_quantities: dict[uuid.UUID, Decimal] | None = None,
+    realized_totals: dict[uuid.UUID, Decimal] | None = None,
+    izinli: bool = False,
 ) -> BoqGroupResponse:
     """`section_quantities` verilmisse (bolum suzgeci, K5) o bolume TAHSISI OLMAYAN
     kalemler listeden DUSER — sifir miktarli hayalet satir basilmaz."""
     items = []
     for item in group.items:
         allocated = allocated_totals.get(item.id, _ZERO_QUANTITY)
+        realized = (realized_totals or {}).get(item.id)
         if section_quantities is None:
-            items.append(to_item(item, allocated=allocated))
+            items.append(to_item(item, allocated=allocated, realized=realized, izinli=izinli))
             continue
         section_quantity = section_quantities.get(item.id)
         if section_quantity is None:
             continue
-        items.append(to_item(item, allocated=allocated, quantity=section_quantity))
+        items.append(
+            to_item(
+                item,
+                allocated=allocated,
+                quantity=section_quantity,
+                realized=realized,
+                izinli=izinli,
+            )
+        )
     return BoqGroupResponse(
         id=group.id,
         name=group.name,
@@ -143,7 +196,9 @@ async def group_response(session: AsyncSession, group: BoqGroup) -> BoqGroupResp
     return to_group(group, allocated_totals=allocated_totals)
 
 
-def _totals(groups: list[BoqGroupResponse]) -> BoqTotals:
+def _totals(
+    groups: list[BoqGroupResponse], grand_progress: MetricPlaceholder | None = None
+) -> BoqTotals:
     """Spec §5.1: `grand_total` GERCEK (gruplarin toplami), geri kalani yer
     tutucu. Toplama Decimal ile yapilir (float ASLA); bos BOQ "0.00" doner."""
     grand_total = quantize_money(sum((group.group_total for group in groups), Decimal("0")))
@@ -153,7 +208,13 @@ def _totals(groups: list[BoqGroupResponse]) -> BoqTotals:
         remaining_total=_metric(_PROGRESS_PAYMENTS),
         revision_total=_metric(_CONTRACTS),
         grand_total=grand_total,
-        grand_progress_pct=_metric(_PROGRESS_PAYMENTS),
+        # 🔴 TEK KAYNAK: bolum/santiye kapsaminin yuzdesi `boq.progress`ten
+        # gelir — grup satirlarindan YENIDEN toplanmaz. Ikinci bir toplama,
+        # `sites` ekraniyla `boq` ekraninin ayni bolum icin farkli "%" basmasi
+        # demekti (presenters.py:203 gerekcesi).
+        grand_progress_pct=grand_progress
+        if grand_progress is not None
+        else _metric(_PROGRESS_PAYMENTS),
     )
 
 
@@ -196,13 +257,40 @@ async def get_boq_export_for_site(
         if section is None
         else await repository.section_allocations_for_site(session, site.id, section.id)
     )
+    boq_groups = await repository.list_groups_for_site(session, site.id)
+
+    # --- ILR-1 FIZIKSEL ILERLEME (izne duyarli) ---
+    #
+    # 🔴 K4: `boq`yu okuyup `site_diary`yi OKUYAMAYAN roller VAR (olculdu:
+    # `accounting`, `procurement`). Onlara gunlukten turemis bir yuzde basmak,
+    # `site_diary` kapisi hic calismadan o veriyi BOQ ekranindan acardi.
+    izinli = await can_read(session, actor, _SITE_DIARY)
+    realized_totals: dict[uuid.UUID, Decimal] = {}
+    grand_progress: MetricPlaceholder | None = restricted()
+    if izinli:
+        item_ids = [item.id for group in boq_groups for item in group.items]
+        kapsam_section = None if section is None else section.id
+        realized_totals = await progress.realized_by_item(session, item_ids, kapsam_section)
+        pct = (
+            await progress.physical_for_site(session, site.id)
+            if section is None
+            else await progress.physical_for_section(session, section.id)
+        )
+        grand_progress = metric(pct, _SITE_DIARY)
+
     groups = [
-        to_group(group, allocated_totals=allocated_totals, section_quantities=section_quantities)
-        for group in await repository.list_groups_for_site(session, site.id)
+        to_group(
+            group,
+            allocated_totals=allocated_totals,
+            section_quantities=section_quantities,
+            realized_totals=realized_totals,
+            izinli=izinli,
+        )
+        for group in boq_groups
     ]
     if section is not None:
         groups = [group for group in groups if group.items]
-    return site, BoqListResponse(totals=_totals(groups), groups=groups)
+    return site, BoqListResponse(totals=_totals(groups, grand_progress), groups=groups)
 
 
 async def get_boq_for_site(

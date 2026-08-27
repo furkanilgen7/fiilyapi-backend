@@ -217,7 +217,7 @@ async def _bos_boq(seeded_db, project_factory, kod: str) -> Site:
     return site
 
 
-async def test_zarflar_ALTISI_DE_BOS__anahtar_ve_durum_alan_alan(
+async def test_zarflar_DORDU_BOS_IKISI_BAGLI__anahtar_ve_durum_alan_alan(
     client, seeded_db, user_factory, project_factory
 ):
     """🔴 `available is False` TEK BASINA zayif iddiadir (alan zaten oyle dogar)
@@ -228,6 +228,16 @@ async def test_zarflar_ALTISI_DE_BOS__anahtar_ve_durum_alan_alan(
     dizilmis alti `assert`te ilki kirilirsa digerleri HIC KOSMAZ ve denetim
     tablosunun yalniz bir satiri gorunur. Tek karsilastirma alti sapmayi da
     ayni anda basar.
+
+    ⚠️ **ILR-1'DE DEGISTI (2026-08-27) — SILINMEDI, KAPSAMI DARALDI.** Eski adi
+    *"ALTISI DE BOS"*ti ve alti zarfin da yer tutucu kalmasini cakiyordu. Iki
+    ilerleme zarfi (`progress_pct`, `grand_progress_pct`) ARTIK BAGLI; geri
+    kalan DORT HAKEDIS/SOZLESME zarfinin gerekcesi (K4) AYNEN gecerlidir ve
+    burada cakili kalir. Yani iddia zayiflamadi, IKIYE AYRILDI.
+
+    🔴 Bu yanit `patron` rolundendir — yani IZINLI dal. Izinsiz dalin karsit
+    kanidi `test_ilr_ilerleme.py`dedir; tek yon yazmak (K-IKIZ1) her role bos
+    donduren bozuk bir kodu yesil gecirirdi.
     """
     site = await _bos_boq(seeded_db, project_factory, "YT3-1")
     headers = await _login_with_access(client, seeded_db, user_factory, "patron", "yt3a@t.co")
@@ -250,15 +260,16 @@ async def test_zarflar_ALTISI_DE_BOS__anahtar_ve_durum_alan_alan(
         olculen[alan] = (totals[alan]["available"], totals[alan]["pending_module"])
 
     assert olculen == {
-        # (C) TUZAK — hakedis verisi VAR, engel `procurement` icin izin kapisi (K4)
-        "progress_pct": (False, "progress_payments"),
+        # ✅ ILR-1'DE BAGLANDI — kaynak GUNLUK. Bos BOQ'da uretim yok, yuzde 0,00.
+        "progress_pct": (True, None),
         # (C) TUZAK — sozlesme bedeli hesaplanabilir; site_chief/procurement gormemeli
         "contract_total": (False, "contracts"),
         "realized_total": (False, "progress_payments"),
         "remaining_total": (False, "progress_payments"),
         # (B) GECERLI — repoda REVIZYON KAVRAMI HIC YOK; modul canli, kaynak degil
         "revision_total": (False, "contracts"),
-        "grand_progress_pct": (False, "progress_payments"),
+        # ✅ ILR-1'DE BAGLANDI.
+        "grand_progress_pct": (True, None),
     }, "P-YT3 siniflandirma tablosu KAYDI — schemas.BoqTotals docstring'i bayatladi"
 
     assert govde["totals"]["grand_total"] == "250000.00", (
@@ -276,6 +287,11 @@ async def test_VERI_VARKEN_DE_zarflar_BOS_KALIR(client, seeded_db, user_factory,
 
     Bu bekci olmadan, ileride biri "zaten veri yok" sanip alani sessizce
     baglayabilirdi.
+
+    ⚠️ **ILR-1'DE DEGISTI — IDDIA CIFT YONLU OLDU.** Ayni yanitta HAKEDIS
+    zarflari BOS kalirken ILERLEME zarflari DOLU olmalidir. Eski hâli yalniz
+    "hepsi bos" diyordu; o hâliyle her zarfi bos donduren bir kod da gecerdi.
+    Iki yon birlikte cakilir.
     """
     project = await project_factory("YT3-2")
     seeded_db.add(ProjectContract(project_id=project.id, amount=Decimal("15000000.00")))
@@ -363,19 +379,28 @@ async def test_VERI_VARKEN_DE_zarflar_BOS_KALIR(client, seeded_db, user_factory,
     kalem = govde["groups"][0]["items"][0]
     # TAM KUME karsilastirmasi (art arda `assert` maskelemesi yok): veri varken
     # DOLAN her alan tek seferde gorunur.
+    # ⚠️ ILR-1: `grand_progress_pct` ve `progress_pct` bu KUMEDEN CIKARILDI —
+    # ikisi de artik BAGLI ve dolu olmalari BEKLENIR. Kumede kalan DORDU
+    # hakedis/sozlesme zarflaridir; K4 gerekcesi yalniz onlar icin gecerlidir.
     dolanlar = {
         alan: govde["totals"][alan]
-        for alan in ("contract_total", "realized_total", "remaining_total", "grand_progress_pct")
+        for alan in ("contract_total", "realized_total", "remaining_total", "revision_total")
         if govde["totals"][alan]["available"] or govde["totals"][alan]["value"] is not None
     }
-    if kalem["progress_pct"]["available"] or kalem["progress_pct"]["value"] is not None:
-        dolanlar["progress_pct"] = kalem["progress_pct"]
 
     assert dolanlar == {}, (
-        f"veri KURULUYKEN su zarflar doldu: {sorted(dolanlar)} — engel veri degil "
-        "izin kapisidir (K4); baglama karari once matris ayrismasini kapatmalidir"
+        f"veri KURULUYKEN su HAKEDIS zarflari doldu: {sorted(dolanlar)} — engel veri "
+        "degil izin kapisidir (K4); baglama karari once matris ayrismasini kapatmalidir"
     )
-    assert kalem["progress_pct"]["pending_module"] == "progress_payments"
+
+    # 🔴 KARSIT KANIT (K-IKIZ1): ayni yanitta ILERLEME zarflari DOLU olmalidir.
+    # Bu iki iddia olmadan, HER zarfi bos donduren bozuk bir kod da yesil gecerdi
+    # ve yukaridaki "hakedis zarflari bos" cumlesi hicbir sey bekcilemezdi.
+    assert (kalem["progress_pct"]["available"], kalem["progress_pct"]["pending_module"]) == (
+        True,
+        None,
+    ), "ILR-1 fiziksel ilerleme BAGLI degil — bu yanit izinli (`patron`) roldendir"
+    assert govde["totals"]["grand_progress_pct"]["available"] is True
 
 
 async def test_sozlesme_BEDELI_boq_yanitinda_HICBIR_ALANDA_gecmez(

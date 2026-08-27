@@ -382,8 +382,16 @@ async def test_govdeye_konan_progress_pct_POST_ve_PATCH_te_YOK_SAYILIR(client, u
 #   (C) TUZAK  — bağlamak AKTİF OLARAK YANLIŞ olurdu: ya mockup kendi etiketiyle
 #                çelişiyor, ya zarfın ŞEKLİ alanı ifade edemiyor, ya da anahtar
 #                yapısal olarak karşılanamaz.
+# ⚠️ **ILR-1'DE BIR SATIR DUSTU (2026-08-27):**
+# `("contracting", "physical_progress", "progress_payments", "C")` SILINDI —
+# cunku (C) gerekcesi ÇÜRÜDÜ. O gerekce *"mockup kendi kendiyle celisiyor:
+# etiket FIZIKSEL ama sayi MALI (`Harcanan / Sözleşme Bedeli`)"* diyordu ve
+# "baglayacak kisi ONCE alanin hangisi oldugunu karara baglamali" diye
+# bekletiyordu. Kullanici 2026-08-27'de KARARI VERDI: ikisi AYRI alandir.
+# `physical_progress` artik GUNLUKTEN turer (`site_diary`), yaninda YENI
+# `financial_progress` onaylanmis isveren hakedisinden turer. Bekcileri
+# `tests/modules/test_ilr_ilerleme.py`dedir.
 _DENETIM_2026_08_22 = (
-    ("contracting", "physical_progress", "progress_payments", "C"),
     ("contracting", "final_progress_payment", "progress_payments", "C"),
     ("contracting", "subcontractor_count", "subcontracts", "A"),
     ("investment", "sold_amount", "units", "A"),
@@ -399,10 +407,10 @@ _KART_TIPI = {
 }
 
 
-async def test_denetimin_YEDI_yer_tutucusu_hala_BOS_ve_anahtarini_TASIYOR(
+async def test_denetimin_ALTI_yer_tutucusu_hala_BOS_ve_anahtarini_TASIYOR(
     client, db_session, user_factory, project_factory
 ):
-    """🔴 Gerekçe ÇÜRÜME bekçisi — yedi alanın hepsi tek tabloda çakılı.
+    """🔴 Gerekçe ÇÜRÜME bekçisi — altı alanın hepsi tek tabloda çakılı.
 
     Bu test alanların bağlanmasını YASAKLAMAZ; bağlayanı, kaydedilmiş gerekçeyi
     OKUMAYA ZORLAR. Biri `service.py`deki tuzak/bayat notunu okumadan bir alanı
