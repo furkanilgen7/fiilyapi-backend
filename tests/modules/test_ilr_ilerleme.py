@@ -13,6 +13,7 @@ C. KUME — yuzdenin EVRENI bagimsiz kaynaktan (ham SQL) dogrulanir
 D. PAYDA — bolum tahsisi ↔ santiye kotasi ↔ payda 0
 E. IZIN — her biri CIFT YONLU (izinli DOLAR ↔ izinsiz KISITLI)
 F. MALI ↔ FIZIKSEL ayrisimi
+G. BESINCI YUZEY — santiye karti (`physical_for_sites`; mutasyon denetiminden dogdu)
 
 🔴 IZIN BEKCILERI NICIN CIFT YONLU: tek yon yazilsaydi ("izinsiz rolde bos")
 her role bos donen bozuk bir kod da yesil gecerdi. Iki yon AYNI testte olculur.
