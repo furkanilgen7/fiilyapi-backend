@@ -175,6 +175,9 @@ async def isveren_kalemi(
     """Isveren sozlesmesi kalemi — MALI yuzdenin PAYDASI. `ProjectContract` de
     acilir: `progress_payments.project_id` FK'si ona bakar."""
     session.add(ProjectContract(project_id=project.id, amount=Decimal("100000000.00")))
+    # 🔴 ONCE flush: `employer_contract_groups.project_id` FK'si `project_contracts`e
+    # bakar (projeye DEGIL) — sozlesme kaydi yazilmadan grup acilamaz.
+    await session.flush()
     sozlesme_grup = EmployerContractGroup(project_id=project.id, name="TOPRAK")
     session.add(sozlesme_grup)
     await session.flush()
