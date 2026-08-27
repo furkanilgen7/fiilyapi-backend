@@ -89,8 +89,13 @@ class MetricPlaceholder(BaseModel):
       gelince dolacak" bilgisi TASIMASI anlamsizdir; eski hâlinde `pending_module`
       zorunlu oldugu icin dolu zarf bile bir modul adi tasimak zorundaydi ve
       ekran o alani "hâlâ eksik" sanabiliyordu.
-    * `available=False` ⇒ `pending_module` ZORUNLU — bos zarf kaynagini bildirmek
-      zorundadir, aksi hâlde ekran "—" basip nedenini soyleyemez.
+    * `available=False` + `pending_module` DOLU — alan henuz BAGLANMADI; bos zarf
+      kaynagini bildirir, aksi hâlde ekran "—" basip nedenini soyleyemez.
+    * `available=False` + `pending_module is None` — 🔴 **ILR-1/2 UCUNCU HAL:
+      ROLUN IZNI YOK** (kullanici karari 2026-08-27). `pending_module` IZIN
+      anlamiyla YUKLENMEZ: *"bu modul daha yazilmadi"* ile *"bunu gormeye yetkin
+      yok"* farkli iki durumdur ve ilkini ikincisi icin kullanmak ekrani YALANCI
+      yapar. Bu hâl YALNIZ `restricted()` fabrikasindan kurulur.
 
     Alan TIPI DEGISMEDI (`MetricPlaceholder` kalir): bu zarflari tuketen UI
     CANLIDA (E4 proje kartlari) ve kirici bir sema degisikligi yapilmaz.
@@ -107,8 +112,6 @@ class MetricPlaceholder(BaseModel):
     def _validate_envelope(self) -> Self:
         if self.available and self.pending_module is not None:
             raise ValueError("Dolu zarf pending_module taşımaz (available=True ⇒ None).")
-        if not self.available and self.pending_module is None:
-            raise ValueError("Boş zarf pending_module bildirmek zorundadır.")
         return self
 
 
@@ -123,6 +126,24 @@ def metric(value: Decimal | None, pending_module: str) -> MetricPlaceholder:
     if value is None:
         return MetricPlaceholder(pending_module=pending_module)
     return MetricPlaceholder(available=True, value=value)
+
+
+def restricted() -> MetricPlaceholder:
+    """ILR-1/2 — ÜÇÜNCÜ hâl: **rolün izni yok.**
+
+    🔴 Bu, "alan henüz bağlanmadı"dan AYRI bir durumdur ve `pending_module`
+    TAŞIMAZ. Gerekçe (kullanıcı kararı 2026-08-27): *"bu modül daha yazılmadı"*
+    ile *"bunu görmeye yetkin yok"* kullanıcı için tamamen farklı iki durumdur;
+    ilkini ikincisi için kullanmak ekranı YALANCI yapar. Ekran `available`
+    bayrağına dallanır (ölçüldü: `frontend/src/components/project-detail/
+    SiteCard.tsx:209,222`) ve "—" basar, sahte bir gerekçe söylemez.
+
+    ⚠️ `MetricPlaceholder()` çıplak çağrısı artık ValidationError ATMAZ (kural
+    gevşetildi, çünkü pydantic bu hâli varsayılanlardan ayırt edemez). Disiplini
+    AST bekçisi korur: üretim kodunda `pending_module`suz zarf YALNIZ bu
+    fabrika üzerinden kurulur.
+    """
+    return MetricPlaceholder(available=False, value=None, pending_module=None)
 
 
 class CountPlaceholder(BaseModel):
