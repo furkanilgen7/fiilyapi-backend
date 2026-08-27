@@ -4,62 +4,31 @@
 
 * köprü İKİ ADIMLIDIR (`boq_items.contract_item_id` → `subcontractor_contract_items.
   source_contract_item_id`) ve şantiye süzgeci SÖZLEŞMEDEN gelir,
-* `site_id` NULL olan proje-geneli sözleşmede günlük köprüsü YOKTUR (öneri ucunun
-  spec §7 S5 kuralı) → o satırlar HER ZAMAN `manual`.
+* `site_id` NULL olan proje-geneli sözleşmede köprü PROJENİN TÜM ŞANTİYELERİNİN
+  günlüğüdür (kullanıcı kararı 2026-08-27, spec §7 S5 TERSİNE ÇEVRİLDİ). Eskiden
+  o satırlar HER ZAMAN `manual` damgalanırdı.
 
 Damga taşeron yanıt şemasında zaten VARDIR (`quantity_source`), bu yüzden
 doğrulama uçtan uca yanıttan okunur.
 """
 
 from datetime import date
-from decimal import Decimal
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.contracts.models import SubcontractorContractItem
+from ._suggestion import (
+    HAKEDIS_DONEM as DONEM,
+)
+from ._suggestion import (
+    _damgalar,
+    _hakedis,
+    _kalem_id,
+    _kaydet,
+)
 
 pytestmark = pytest.mark.asyncio
-
-DONEM = {"period_year": 2026, "period_month": 7}
-
-
-async def _hakedis(client: AsyncClient, headers: dict[str, str], contract_id, **govde) -> dict:
-    yanit = await client.post(
-        f"/subcontractor-contracts/{contract_id}/progress-payments", json=govde, headers=headers
-    )
-    assert yanit.status_code == 201, yanit.text
-    return yanit.json()
-
-
-async def _kaydet(client: AsyncClient, headers: dict[str, str], payment_id, satirlar: list[dict]):
-    return await client.put(
-        f"/subcontractor-progress-payments/{payment_id}/lines",
-        json={"lines": satirlar},
-        headers=headers,
-    )
-
-
-async def _kalem_id(session: AsyncSession, contract_id, code: str):
-    return (
-        await session.execute(
-            select(SubcontractorContractItem.id).where(
-                SubcontractorContractItem.contract_id == contract_id,
-                SubcontractorContractItem.code == code,
-            )
-        )
-    ).scalar_one()
-
-
-def _damgalar(govde: dict) -> dict[str, str]:
-    """Yalnız miktarı olan satırlar: hakediş açılışı TÜM kalemleri 0 ile kurar."""
-    return {
-        satir["contract_item_id"]: satir["quantity_source"]
-        for satir in govde["lines"]
-        if Decimal(satir["quantity"]) != 0
-    }
 
 
 @pytest.fixture
@@ -216,37 +185,68 @@ async def test_KOPRUSUZ_taseron_kalemi_manual_kalir(
     assert _damgalar(yanit.json()) == {str(tkx): "manual"}
 
 
-async def test_SANTIYESIZ_sozlesmede_damga_BASILMAZ(
+async def test_SANTIYESIZ_sozlesmede_PROJE_TOPLAMI_diary_damgalanir(
     client: AsyncClient,
     seeded_db: AsyncSession,
     admin_headers,
+    proje,
     santiye,
+    santiye_fabrikasi,
     sozlesme_kalemi_fabrikasi,
     taseron_sozlesmesi_fabrikasi,
     gunluk_api,
 ) -> None:
-    """Spec §7 S5'in yazma-yolu karşılığı: proje-geneli sözleşmede hangi
-    şantiyenin günlüğüne bakılacağı belirsizdir → köprü yok, `manual`."""
-    site, project, items = santiye
-    kalem_a = sorted(items, key=lambda i: i.code)[0]
-    sozlesme_a = await sozlesme_kalemi_fabrikasi(kalem_a, project)
+    """Spec §7 S5 TERSİNE ÇEVRİLDİ, kullanıcı kararı 2026-08-27.
+
+    ESKİ İDDİA (yerine geçtiği test `test_SANTIYESIZ_sozlesmede_damga_BASILMAZ`):
+    proje-geneli sözleşmede hangi şantiyenin günlüğüne bakılacağı belirsizdir →
+    köprü yok, damga HER ZAMAN `manual`.
+
+    YENİ İDDİA: proje-geneli sözleşmenin doğru cevabı PROJENİN TÜM
+    ŞANTİYELERİNİN toplamıdır. İki ayrı şantiyenin gönderilmiş günlüğünün
+    TOPLAMIYLA (12 + 5 = 17) birebir eşit satır `diary` damgalanır — TEK bir
+    şantiyenin toplamıyla eşit satır (12) ise `manual` KALIR, yoksa "proje
+    toplamı" iddiası sessizce "herhangi bir şantiye yeter"e çürürdü.
+    """
+    site_a, project, pozlar_a = santiye
+    poz_a = sorted(pozlar_a, key=lambda item: item.code)[0]
+    sozlesme_kalemi = await sozlesme_kalemi_fabrikasi(poz_a, project)
+
+    site_b, _, pozlar_b = await santiye_fabrikasi("SD-GENEL-B", project=proje)
+    poz_b = sorted(pozlar_b, key=lambda item: item.code)[0]
+    poz_b.contract_item_id = sozlesme_kalemi.id
+    await seeded_db.flush()
+
     contract = await taseron_sozlesmesi_fabrikasi(
-        project, site=None, kalemler=[("TK-1", sozlesme_a)], code="TS-GENEL"
+        project, site=None, kalemler=[("TK-1", sozlesme_kalemi)], code="TS-GENEL"
     )
     await gunluk_api(
         admin_headers,
-        site.id,
+        site_a.id,
         date(2026, 7, 10),
-        [{"boq_item_id": str(kalem_a.id), "quantity": "12"}],
+        [{"boq_item_id": str(poz_a.id), "quantity": "12"}],
+    )
+    await gunluk_api(
+        admin_headers,
+        site_b.id,
+        date(2026, 7, 11),
+        [{"boq_item_id": str(poz_b.id), "quantity": "5"}],
     )
     tk1 = await _kalem_id(seeded_db, contract.id, "TK-1")
 
     hakedis = await _hakedis(client, admin_headers, contract.id, **DONEM)
-    yanit = await _kaydet(
+
+    tek_santiye = await _kaydet(
         client, admin_headers, hakedis["id"], [{"contract_item_id": str(tk1), "quantity": "12"}]
     )
-    assert yanit.status_code == 200, yanit.text
-    assert _damgalar(yanit.json()) == {str(tk1): "manual"}
+    assert tek_santiye.status_code == 200, tek_santiye.text
+    assert _damgalar(tek_santiye.json()) == {str(tk1): "manual"}
+
+    proje_toplami = await _kaydet(
+        client, admin_headers, hakedis["id"], [{"contract_item_id": str(tk1), "quantity": "17"}]
+    )
+    assert proje_toplami.status_code == 200, proje_toplami.text
+    assert _damgalar(proje_toplami.json()) == {str(tk1): "diary"}
 
 
 # --- Dönem süzgeci ---
@@ -560,22 +560,46 @@ async def test_sozlesme_BASKA_santiyeye_TASININCA_diary_damgasi_DUSER(
     assert _damgalar(await _hakedis_oku(client, admin_headers, payment_id)) == {tk1: "manual"}
 
 
-async def test_sozlesme_PROJE_GENELINE_dusunce_diary_damgasi_DUSER(
+async def test_sozlesme_PROJE_GENELINE_dusunce_damga_PROJE_TOPLAMINA_gore_TAZELENIR(
     client: AsyncClient, seeded_db: AsyncSession, admin_headers, tasima_kurulumu, gunluk_api
 ) -> None:
-    """`site_id: null` = köprü TÜMDEN düşer (spec §7 S5) — damga da düşmelidir."""
-    (site_a, poz_a), _, contract = tasima_kurulumu
+    """Spec §7 S5 TERSİNE ÇEVRİLDİ, kullanıcı kararı 2026-08-27.
+
+    ESKİ İDDİA (`test_sozlesme_PROJE_GENELINE_dusunce_diary_damgasi_DUSER`):
+    `site_id: null` = köprü TÜMDEN düşer, damga da düşer (`manual`).
+
+    YENİ İDDİA: `site_id: null` köprüyü DÜŞÜRMEZ, GENİŞLETİR — süzgeç şantiyeden
+    projeye çıkar. A'da 12, B'de 3 varken A'ya bağlı sözleşmede 15'lik satır
+    `manual`dır (A'nın toplamı 12); sözleşme proje geneline düşünce aynı satır
+    proje toplamıyla (15) eşleşir ve `diary` OLUR. Tazelemenin yönü tek taraflı
+    bir SİLME değil, iddianın yeniden sınanmasıdır.
+    """
+    (site_a, poz_a), (site_b, poz_b), contract = tasima_kurulumu
     await gunluk_api(
         admin_headers,
         site_a.id,
         date(2026, 7, 10),
         [{"boq_item_id": str(poz_a.id), "quantity": "12"}],
     )
-    payment_id, tk1 = await _damgali_hakedis(client, seeded_db, admin_headers, contract, "diary")
+    await gunluk_api(
+        admin_headers,
+        site_b.id,
+        date(2026, 7, 11),
+        [{"boq_item_id": str(poz_b.id), "quantity": "3"}],
+    )
+    tk1 = await _kalem_id(seeded_db, contract.id, "TK-1")
+    hakedis = await _hakedis(client, admin_headers, contract.id, **DONEM)
+    yanit = await _kaydet(
+        client, admin_headers, hakedis["id"], [{"contract_item_id": str(tk1), "quantity": "15"}]
+    )
+    assert yanit.status_code == 200, yanit.text
+    assert _damgalar(yanit.json()) == {str(tk1): "manual"}
 
     yama = await _sozlesme_yamasi(client, admin_headers, contract.id, site_id=None)
     assert yama.status_code == 200, yama.text
-    assert _damgalar(await _hakedis_oku(client, admin_headers, payment_id)) == {tk1: "manual"}
+    assert _damgalar(await _hakedis_oku(client, admin_headers, hakedis["id"])) == {
+        str(tk1): "diary"
+    }
 
 
 async def test_sozlesme_GUNLUGU_OLAN_santiyeye_tasininca_damga_BASILIR(

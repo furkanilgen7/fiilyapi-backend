@@ -27608,7 +27608,7 @@
         "type": "object"
       },
       "SubcontractorDiarySuggestion": {
-        "description": "`GET /subcontractor-contracts/{contract_id}/progress-payments/diary-suggestion`.\n\n`site_id` sözleşmenin şantiyesidir; `None` ise (proje geneli sözleşme) öneri\nkapsam DIŞIDIR (spec §7 S5) ve `reason` bunu AÇIKÇA söyler.",
+        "description": "`GET /subcontractor-contracts/{contract_id}/progress-payments/diary-suggestion`.\n\n`site_id` sözleşmenin şantiyesidir. `None` ise (proje geneli sözleşme) öneri\nkapsam dışı DEĞİLDİR: miktarlar sözleşmenin PROJESİNDEKİ TÜM şantiyelerin\ngünlüğünden toplanır (kullanıcı kararı 2026-08-27 — eski spec §7 S5 kuralı\nTERSİNE ÇEVRİLDİ). Alan yine de NULL döner, çünkü sözleşme gerçekten\nşantiyesizdir; `lines` gruplaması her iki hâlde de yalnız KALEMDİR.",
         "properties": {
           "contract_id": {
             "format": "uuid",
@@ -52993,7 +52993,7 @@
     },
     "/subcontractor-contracts/{contract_id}/progress-payments/diary-suggestion": {
       "get": {
-        "description": "Taşeron hakedişi için \"günlükten doldur\" ÖNERİSİ — **hiçbir şey yazmaz**.\n\nYalnız sözleşmenin ŞANTİYESİNİN günlüğü sayılır (spec §7 S5); şantiyesiz\n(proje geneli) sözleşmede liste boş döner ve `reason` nedenini söyler.",
+        "description": "Taşeron hakedişi için \"günlükten doldur\" ÖNERİSİ — **hiçbir şey yazmaz**.\n\nKapsam sözleşmeden gelir: şantiyeye bağlı sözleşmede YALNIZ o şantiyenin\ngünlüğü, şantiyesiz (proje geneli) sözleşmede ise projenin TÜM şantiyelerinin\ngünlüğü toplanır (kullanıcı kararı 2026-08-27 — eski spec §7 S5 \"kapsam\ndışıdır\" kuralı TERSİNE ÇEVRİLDİ). Gruplama her iki hâlde de yalnız KALEMDİR.",
         "operationId": "subcontractor_diary_suggestion_endpoint_subcontractor_contracts__contract_id__progress_payments_diary_suggestion_get",
         "parameters": [
           {

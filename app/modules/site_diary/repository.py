@@ -315,10 +315,37 @@ async def employer_suggestion_rows(
     return [(row[0], row[1], row[2]) for row in (await session.execute(stmt)).all()]
 
 
+def _subcontractor_scope_conditions(site_id: uuid.UUID | None, project_id: uuid.UUID) -> list:
+    """Taşeron köprüsünün KAPSAM süzgeci — TEK kopya (iki sorgu da bunu çağırır).
+
+    `site_id` DOLUYSA sözleşmenin şantiyesi; NULL ise (proje-geneli sözleşme)
+    sözleşmenin projesindeki TÜM şantiyeler (kullanıcı kararı 2026-08-27 —
+    spec §7 S5 TERSİNE ÇEVRİLDİ).
+
+    **Neden tek kopya:** öneri satırları (`subcontractor_suggestion_rows`) ile
+    "öneriye giremedi" sayacı (`subcontractor_unbridged_item_count`) AYNI günlük
+    kümesini kapsamak zorundadır. İki kopya zamanla ayrışır, iki sorgu hangi
+    günlüklerin sayıldığı konusunda ÇELİŞİR ve kullanıcı "miktar yok ama sayaç
+    var" gibi kendi kendisiyle tutarsız bir ekran görürdü —
+    `submitted_period_conditions` ve `_list_stmt` ile AYNI gerekçe.
+
+    **Neden `SiteDiaryEntry.project_id`, `sites` üzerinden JOIN DEĞİL:** emsal
+    işveren sorguları (`employer_suggestion_rows` / `employer_unbridged_item_count`)
+    da bu snapshot sütununu kullanır; üstelik sütun BAYATLAYAMAZ, çünkü bir
+    şantiye başka projeye TAŞINAMAZ (`sites/schemas.py::SiteUpdate` — `project_id`
+    güncellenebilir alan değildir). JOIN eklemek ikinci bir kapsam kaynağı
+    doğurur, kazancı olmazdı.
+    """
+    if site_id is not None:
+        return [SiteDiaryEntry.site_id == site_id]
+    return [SiteDiaryEntry.project_id == project_id]
+
+
 async def subcontractor_suggestion_rows(
     session: AsyncSession,
     contract_id: uuid.UUID,
-    site_id: uuid.UUID,
+    site_id: uuid.UUID | None,
+    project_id: uuid.UUID,
     *,
     year: int | None,
     month: int | None,
@@ -326,12 +353,14 @@ async def subcontractor_suggestion_rows(
     """Taşeron önerisinin ham satırları: `(subcontractor_contract_item_id, miktar)`.
 
     Köprü İKİ ADIMLIDIR: günlük satırı → `boq_items.contract_item_id` (işveren
-    kalemi) → `subcontractor_contract_items.source_contract_item_id`. Şantiye
-    süzgeci ÇAĞIRANDAN gelir (spec §7 S5 kararı bu modülün işi değildir).
+    kalemi) → `subcontractor_contract_items.source_contract_item_id`. Kapsam
+    süzgeci ÇAĞIRANDAN gelir (`_subcontractor_scope_conditions`): şantiyeye bağlı
+    sözleşmede ŞANTİYE, proje-geneli sözleşmede PROJE.
 
-    Taşeron satırında şantiye kırılımı YOKTUR (spec §2) — sözleşme zaten TEK
-    şantiyeye bağlıdır, bu yüzden gruplama yalnız kalemdir. Sıralama sözleşme
-    kaleminin kendi sırasıdır (`items` ilişkisinin `order_by`'ı ile aynı).
+    Taşeron satırında şantiye kırılımı YOKTUR (spec §2), bu yüzden gruplama
+    proje-geneli sözleşmede de yalnız KALEMDİR: aynı kaleme köprülü iki
+    şantiyenin miktarı TEK satırda toplanır. Sıralama sözleşme kaleminin kendi
+    sırasıdır (`items` ilişkisinin `order_by`'ı ile aynı).
     """
     total = func.sum(SiteDiaryLine.quantity)
     stmt = (
@@ -342,7 +371,7 @@ async def subcontractor_suggestion_rows(
         )
         .with_only_columns(SubcontractorContractItem.id, total)
         .where(
-            SiteDiaryEntry.site_id == site_id,
+            *_subcontractor_scope_conditions(site_id, project_id),
             SubcontractorContractItem.contract_id == contract_id,
         )
         .group_by(
@@ -386,12 +415,17 @@ async def employer_unbridged_item_count(
 async def subcontractor_unbridged_item_count(
     session: AsyncSession,
     contract_id: uuid.UUID,
-    site_id: uuid.UUID,
+    site_id: uuid.UUID | None,
+    project_id: uuid.UUID,
     *,
     year: int | None,
     month: int | None,
 ) -> int:
-    """Şantiyede miktarı olan ama BU sözleşmede karşılığı olmayan poz sayısı.
+    """Kapsamda miktarı olan ama BU sözleşmede karşılığı olmayan poz sayısı.
+
+    Kapsam satırların sorgusuyla AYNI gövdeden gelir
+    (`_subcontractor_scope_conditions`): şantiyeye bağlı sözleşmede şantiye,
+    proje-geneli sözleşmede projenin TÜM şantiyeleri.
 
     İki hâli birlikte sayar: pozun işveren kalemine köprüsü hiç yok, ya da köprü
     var ama sözleşmenin hiçbir kalemi o kaleme bağlı değil (`source_contract_item_id`).
@@ -406,7 +440,7 @@ async def subcontractor_unbridged_item_count(
         _submitted_line_stmt(year=year, month=month)
         .with_only_columns(SiteDiaryLine.boq_item_id)
         .where(
-            SiteDiaryEntry.site_id == site_id,
+            *_subcontractor_scope_conditions(site_id, project_id),
             or_(
                 BoqItem.contract_item_id.is_(None),
                 BoqItem.contract_item_id.not_in(eslesenler),

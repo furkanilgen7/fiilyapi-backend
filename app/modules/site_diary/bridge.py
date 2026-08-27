@@ -54,20 +54,28 @@ async def subcontractor_period_totals(
     session: AsyncSession,
     contract_id: uuid.UUID,
     site_id: uuid.UUID | None,
+    project_id: uuid.UUID,
     *,
     year: int | None,
     month: int | None,
 ) -> dict[uuid.UUID, Decimal]:
     """Taşeron sözleşme kalemi → dönemin gönderilmiş günlük toplamı.
 
-    `site_id is None` (proje-geneli sözleşme) = köprü YOK — öneri ucunun spec §7
-    S5 kuralının yazma-yolu karşılığı: hangi şantiyenin günlüğüne bakılacağı
-    belirsizken damga basmak uydurma olurdu.
+    `site_id is None` (proje-geneli sözleşme) köprüyü DÜŞÜRMEZ, GENİŞLETİR:
+    toplam sözleşmenin PROJESİNDEKİ TÜM şantiyeler üzerinden alınır (kullanıcı
+    kararı 2026-08-27 — eski spec §7 S5 "kapsam dışıdır" kuralı TERSİNE
+    ÇEVRİLDİ). Kapsam kararı burada değil, `repository`nin TEK kopya kapsam
+    gövdesindedir; bu modül yalnız öneri ucunun okuduğu AYNI sorguyu çağırır ki
+    ekran ile damga ayrışmasın.
+
+    `year is None` = hakedişin DÖNEMİ YOK → sözlük BOŞ (yukarıdaki işveren
+    ikizinin aynı gerekçesi): dönemsiz evrağı tüm zamanların toplamıyla
+    kıyaslamak "bu miktar günlükten geldi" iddiasını uydurmak olurdu.
     """
-    if year is None or site_id is None:
+    if year is None:
         return {}
     rows = await repository.subcontractor_suggestion_rows(
-        session, contract_id, site_id, year=year, month=month
+        session, contract_id, site_id, project_id, year=year, month=month
     )
     return {item_id: total for item_id, total in rows}
 

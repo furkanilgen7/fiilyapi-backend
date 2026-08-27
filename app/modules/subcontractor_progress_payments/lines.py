@@ -145,6 +145,7 @@ async def restamp_for_period(
         session,
         contract.id,
         contract.site_id,
+        contract.project_id,
         year=payment.period_year,
         month=payment.period_month,
     )
@@ -163,10 +164,13 @@ async def restamp_draft_payments(
     """Sözleşmenin ŞANTİYESİ değiştiğinde (`null`a düşme DAHİL) TASLAK
     hakedişlerin satır damgalarını yeniden türetir — T6 bulgusu, karar S9/2.
 
-    Damganın ikinci bayatlama kapısı: köprü `contract.site_id`'ye bağlıdır, ama
-    sözleşme başka şantiyeye taşınabilir. A'nın günlüğüyle `diary` damgalanmış
-    satır, sözleşme B'ye taşındıktan sonra B'nin günlüğüyle hiç ilgisi olmadan
-    rozetli kalırdı (`null`da köprü tümden düşer, damga yine kalırdı).
+    Damganın ikinci bayatlama kapısı: köprünün KAPSAMI `contract.site_id`'ye
+    bağlıdır, ama sözleşme başka şantiyeye taşınabilir. A'nın günlüğüyle `diary`
+    damgalanmış satır, sözleşme B'ye taşındıktan sonra B'nin günlüğüyle hiç
+    ilgisi olmadan rozetli kalırdı. `null`a düşmek köprüyü DÜŞÜRMEZ, kapsamı
+    projenin TÜM şantiyelerine GENİŞLETİR (kullanıcı kararı 2026-08-27) — yani
+    damga yine bayatlar, çünkü toplam DEĞİŞİR: tazeleme iki yönde de gereklidir
+    (rozet düşebilir de, yeni toplamla eşleşip BASILABİLİR de).
 
     **Kapsam yalnız `draft`** — donmuş evrak prensibi: onaya sunulmuş, onaylanmış
     ya da ödenmiş hakedişin satırı sonradan değiştirilmez.
@@ -212,7 +216,12 @@ async def _resolve(
     item_groups = await group_names(session, list(items.values()))
     period_year, period_month = period
     diary_totals = await bridge.subcontractor_period_totals(
-        session, contract.id, contract.site_id, year=period_year, month=period_month
+        session,
+        contract.id,
+        contract.site_id,
+        contract.project_id,
+        year=period_year,
+        month=period_month,
     )
 
     seen: set[uuid.UUID] = set()
