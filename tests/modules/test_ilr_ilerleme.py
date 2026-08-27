@@ -612,3 +612,61 @@ async def test_TASLAK_ve_BEKLEYEN_isveren_hakedisi_MALI_yuzdeye_GIRMEZ__ONAYLI_g
         f"isveren hakedisi durum suzgeci bozuldu: draft={taslakken} "
         f"pending={beklerken} approved={onaylanmisken}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# G. BESINCI YUZEY — SANTIYE KARTI (`physical_for_sites`)
+#
+# 🔴 Bu bekci MUTASYON DENETIMINDEN DOGDU: `physical_for_sites` (toplu santiye
+# yuzdesi) hicbir testin dokunmadigi TEK yoldu, yani yalnizca ONUN icindeki
+# agirligi kaldiran bir mutant SAG KALIRDI. Esdegersiz mutant = eksik bekci.
+# --------------------------------------------------------------------------- #
+
+
+async def test_SANTIYE_KARTI_yuzdesi_para_agirliklidir_ve_KAPSAM_sizdirmaz(
+    client, seeded_db, project_factory, user_factory
+):
+    """Toplu hâl (`physical_for_sites`) tekil hâlle AYNI sayiyi vermelidir ve
+    her santiye YALNIZ kendi uretimini gormelidir.
+
+    Ayrica BOQ'u olmayan santiyenin yuzdesi YOKTUR (`None`) — 0 DEGIL.
+    """
+    project, site, _, _, yazan = await _canli_sekil(
+        seeded_db, project_factory, user_factory, "ILR-G1"
+    )
+    komsu = await _ilr.santiye(seeded_db, project, code="ILR-G1-B")
+    komsu_grup = await _ilr.grup(seeded_db, komsu)
+    komsu_demir = await _ilr.poz(seeded_db, komsu, komsu_grup, "15.185.1002", **_DEMIR)
+    await _ilr.gunluk(seeded_db, komsu, yazan, [(komsu_demir, "49")])
+    bos = await _ilr.santiye(seeded_db, project, code="ILR-G1-C")
+
+    toplu = await progress.physical_for_sites(seeded_db, [site.id, komsu.id, bos.id])
+    tekil = {
+        sid: await progress.physical_for_site(seeded_db, sid) for sid in (site.id, komsu.id, bos.id)
+    }
+
+    assert toplu == {
+        site.id: Decimal("12.21"),
+        komsu.id: Decimal("50.00"),
+        bos.id: None,
+    }, f"toplu santiye yuzdesi bozuldu: {toplu}"
+    assert toplu == tekil, (
+        f"TOPLU ve TEKIL hâl ayrisiyor: {toplu} != {tekil} — iki carpim iki farkli "
+        "'%' uretiyor demektir (K3)"
+    )
+
+    izinli = await _ilr.login(client, seeded_db, user_factory, "patron", "g1a@ilr.co")
+    izinsiz = await _ilr.login(client, seeded_db, user_factory, "accounting", "g1b@ilr.co")
+    dolu = (await client.get(f"/projects/{project.id}/sites", headers=izinli)).json()
+    kisitli = (await client.get(f"/projects/{project.id}/sites", headers=izinsiz)).json()
+
+    assert {k["code"]: k["progress_pct"]["value"] for k in dolu["items"]} == {
+        "ILR-G1-A": "12.21",
+        "ILR-G1-B": "50.00",
+        "ILR-G1-C": None,
+    }, "santiye KARTI yuzdesi ucta dolmadi"
+    assert {k["code"]: _ilr.zarf(k["progress_pct"]) for k in kisitli["items"]} == {
+        "ILR-G1-A": (False, None),
+        "ILR-G1-B": (False, None),
+        "ILR-G1-C": (False, None),
+    }, "gunlugu okuyamayan role santiye karti yuzdesi sizdi ya da sahte gerekce basildi"
