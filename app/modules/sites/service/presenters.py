@@ -202,15 +202,25 @@ def to_section(
 ) -> SectionResponse:
     """Bolum satiri. DORT yer tutucusundan IKISI BLM-SAY'de BAGLANDI.
 
-    ⛔ `progress_pct` — **(B) GECERLI, YER TUTUCU KALIR.** Bekleyen sey
-    `progress_payments` modulu degil, o modulden turemesi gereken FIZIKSEL
-    ILERLEME yuzdesidir — ve o turev BESLEYENIN KENDISINDE de hâlâ yer
-    tutucudur: `boq/schemas.py` `BoqItemResponse.progress_pct` ve
-    `BoqTotals.grand_progress_pct`. Burada bir yuzde uretmek, BOQ'nun bilerek
-    acik biraktigi formulu ikinci ve daha dar bir baglamda ICAT etmek olurdu;
-    iki ekran ayni bolum icin farkli "%" basardi. Mockup (`Bölüm Detay.dc.html:
-    71-73`, %62) bu yuzdeyi BoQ tablosunun "Gerç. %" toplamiyla AYNI sayi olarak
-    cizer — yani tek kaynak BOQ'dur. BLM-SAY bu alana DOKUNMADI.
+    ✅ `progress_pct` — **ILR-1'DE BAGLANDI (2026-08-27).**
+
+    Eski not *"(B) GECERLI, YER TUTUCU KALIR"* diyordu ve gerekcesi DOGRUYDU:
+    burada bir yuzde uretmek, BOQ'nun bilerek acik biraktigi formulu ikinci ve
+    daha dar bir baglamda ICAT etmek olurdu; iki ekran ayni bolum icin farkli
+    "%" basardi. Mockup (`Bölüm Detay.dc.html:71-73`, %62) bu yuzdeyi BoQ
+    tablosunun "Gerç. %" toplamiyla AYNI sayi olarak cizer.
+
+    🔑 **O SART KARSILANDI: formul ICAT EDILMEDI, TEK KAYNAKTAN CAGRILIYOR.**
+    Yuzde `boq/progress.py`de BIR kez yazildi; bu presenter da BOQ ekrani da
+    proje karti da AYNI fonksiyonu cagirir — ikinci bir carpim YOKTUR (K3).
+    Kaynak `progress_payments` DEGIL **gonderilmis santiye gunlugudur** ve
+    formul PARA AGIRLIKLIDIR; PAYDA bu baglamda BOLUM TAHSISIDIR
+    (`BoqItemSectionAllocation`), pozun santiye kotasi degil.
+
+    🔴 Zarf **IZNE DUYARLIDIR**: `sites`i okuyup `site_diary`yi okuyamayan
+    roller VAR (olculdu: `accounting`, `hr_manager`, `procurement`); onlarda
+    `restricted()` doner. Varsayilan da `restricted()`tir (fail-closed) —
+    izin olcmeyi unutan yeni bir cagri yeri sessizce yuzde BASAMAZ.
 
     ✅ `boq_item_count` — **BLM-SAY'de BAGLANDI.** P-YT2'nin (C) gerekcesi
     ("mockup TEK sayi basmiyor: 16 / 26") OLCULDU ve YARISI hâlâ gecerli:
