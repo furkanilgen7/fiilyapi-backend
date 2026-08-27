@@ -246,37 +246,73 @@ async def test_taseron_yaniti_PUT_lines_govdesine_BIREBIR_uyar(
     assert Decimal(yazilan[0]["quantity"]) == Decimal("9")
 
 
-async def test_taseron_sitesiz_sozlesme_BOS_ve_ACIK_GEREKCE(
+async def test_taseron_sitesiz_sozlesme_PROJE_TOPLAMINI_verir(
     client: AsyncClient,
+    seeded_db: AsyncSession,
     admin_headers,
+    proje,
     santiye,
+    santiye_fabrikasi,
     sozlesme_kalemi_fabrikasi,
     taseron_sozlesmesi_fabrikasi,
 ) -> None:
-    """Spec §7 S5: proje-geneli (site'sız) sözleşme kapsam DIŞI. Sessiz boş liste
-    DEĞİL — kullanıcı NEDEN boş olduğunu görmelidir."""
-    site, project, items = santiye
-    kalem = sorted(items, key=lambda i: i.code)[0]
-    sozlesme = await sozlesme_kalemi_fabrikasi(kalem, project)
+    """Spec §7 S5 tersine çevrildi, kullanıcı kararı 2026-08-27.
+
+    ESKİ İDDİA (yerine geçtiği test
+    `test_taseron_sitesiz_sozlesme_BOS_ve_ACIK_GEREKCE`): proje-geneli (site'sız)
+    sözleşme kapsam DIŞIdır → `lines == []` ve
+    `reason == guards.SUGGESTION_CONTRACT_WITHOUT_SITE`.
+
+    YENİ İDDİA: proje-geneli sözleşmenin doğru cevabı PROJENİN TÜM
+    ŞANTİYELERİNİN toplamıdır (9 + 4 = 13). Gruplama yalnız KALEMDİR (taşeron
+    satırında şantiye kırılımı yoktur), `site_id` yanıtta NULL kalır ve gerekçe
+    ÜRETİLMEZ — liste artık boş değildir.
+    """
+    site_a, project, pozlar_a = santiye
+    poz_a = sorted(pozlar_a, key=lambda i: i.code)[0]
+    sozlesme = await sozlesme_kalemi_fabrikasi(poz_a, project)
+
+    site_b, _, pozlar_b = await santiye_fabrikasi("SD-GEN-B", project=proje)
+    poz_b = sorted(pozlar_b, key=lambda i: i.code)[0]
+    poz_b.contract_item_id = sozlesme.id
+    await seeded_db.flush()
+
     tas_sozlesme = await taseron_sozlesmesi_fabrikasi(
         project, site=None, kalemler=[("TK-1", sozlesme)], code="TS-GENEL"
     )
     await _gun(
         client,
         admin_headers,
-        site.id,
+        site_a.id,
         date(2026, 7, 10),
-        [{"boq_item_id": str(kalem.id), "quantity": "9"}],
+        [{"boq_item_id": str(poz_a.id), "quantity": "9"}],
     )
+    await _gun(
+        client,
+        admin_headers,
+        site_b.id,
+        date(2026, 7, 11),
+        [{"boq_item_id": str(poz_b.id), "quantity": "4"}],
+    )
+    tk1 = (
+        await seeded_db.execute(
+            select(SubcontractorContractItem.id).where(
+                SubcontractorContractItem.contract_id == tas_sozlesme.id
+            )
+        )
+    ).scalar_one()
 
     govde = (await _taseron_onerisi(client, admin_headers, tas_sozlesme.id, **DONEM)).json()
-    assert govde["lines"] == []
+    assert {s["contract_item_id"]: Decimal(s["quantity"]) for s in govde["lines"]} == {
+        str(tk1): Decimal("13")
+    }
     assert govde["site_id"] is None
-    assert govde["reason"] == guards.SUGGESTION_CONTRACT_WITHOUT_SITE
+    assert govde["reason"] is None
 
 
 async def test_taseron_baska_santiyenin_gunlugu_KARISMAZ(
     client: AsyncClient,
+    seeded_db: AsyncSession,
     admin_headers,
     santiye,
     santiye_fabrikasi,
@@ -284,11 +320,23 @@ async def test_taseron_baska_santiyenin_gunlugu_KARISMAZ(
     taseron_sozlesmesi_fabrikasi,
     proje,
 ) -> None:
-    """Sözleşme B şantiyesine bağlıysa A şantiyesinin günlüğü öneriye GİREMEZ."""
+    """Sözleşme B şantiyesine bağlıysa A şantiyesinin günlüğü öneriye GİREMEZ.
+
+    🔴 GÜÇLENDİRİLDİ (TH-PRJGENEL): proje-geneli sözleşmenin süzgeci PROJE
+    olunca, ŞANTİYEYE BAĞLI sözleşmeninkinin de sessizce projeye genişlemesi
+    (yani süzgecin tümden kalkması) EN OLASI bozulmadır. Bu yüzden A şantiyesi
+    artık B ile AYNI PROJEDEDİR ve pozu B'nin pozuyla AYNI işveren kalemine
+    köprülüdür: yalnız ŞANTİYE süzgeci onu dışarıda tutabilir. `reason` da
+    ölçülür — süzgeç kalkarsa liste dolar ve gerekçe NULL olur.
+    """
     site_a, project, items_a = santiye
-    site_b, _, _ = await santiye_fabrikasi("SD-B", project=proje)
+    site_b, _, items_b = await santiye_fabrikasi("SD-B", project=proje)
     kalem_a = sorted(items_a, key=lambda i: i.code)[0]
+    kalem_b = sorted(items_b, key=lambda i: i.code)[0]
     sozlesme = await sozlesme_kalemi_fabrikasi(kalem_a, project)
+    kalem_b.contract_item_id = sozlesme.id
+    await seeded_db.flush()
+
     tas_sozlesme = await taseron_sozlesmesi_fabrikasi(
         project, site=site_b, kalemler=[("TK-1", sozlesme)], code="TS-B"
     )
@@ -304,6 +352,7 @@ async def test_taseron_baska_santiyenin_gunlugu_KARISMAZ(
     assert govde["lines"] == []
     assert govde["site_id"] == str(site_b.id)
     assert govde["reason"] == guards.SUGGESTION_NO_QUANTITY
+    assert govde["skipped_unbridged_count"] == 0
 
 
 async def test_taseron_sifir_miktarli_kalem_oneriye_GIRMEZ(

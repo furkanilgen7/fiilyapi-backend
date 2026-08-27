@@ -8,11 +8,13 @@ Hiçbir testin iddiası bu bölmeyle değişmedi.
 """
 
 from datetime import date
+from decimal import Decimal
 
 from httpx import AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.contracts.models import SubcontractorContractItem
 from app.modules.progress_payments.models import ProgressPayment, ProgressPaymentLine
 from app.modules.site_diary.models import SiteDiaryEntry, SiteDiaryLine
 from app.modules.subcontractor_progress_payments.models import (
@@ -104,3 +106,49 @@ def _satir(govde: dict, contract_item_id, site_id=None) -> dict | None:
         ),
         None,
     )
+
+
+# --- TAŞERON hakediş yazma yolu (damga) yardımcıları ---
+#
+# `test_subcontractor_diary_stamp.py`den BURAYA taşındı (KOPYALANMADI): proje-geneli
+# sözleşme dilimi (TH-PRJGENEL) öneri ucu ile yazma yolunun AYNI sayıyı söylediğini
+# ölçer, yani iki dosya da aynı gövdeye ihtiyaç duyar. İki kopya olsaydı biri
+# güncellenir, öteki sessizce eski kuralı ölçmeye devam ederdi.
+
+HAKEDIS_DONEM = {"period_year": 2026, "period_month": 7}
+
+
+async def _hakedis(client: AsyncClient, headers: dict[str, str], contract_id, **govde) -> dict:
+    yanit = await client.post(
+        f"/subcontractor-contracts/{contract_id}/progress-payments", json=govde, headers=headers
+    )
+    assert yanit.status_code == 201, yanit.text
+    return yanit.json()
+
+
+async def _kaydet(client: AsyncClient, headers: dict[str, str], payment_id, satirlar: list[dict]):
+    return await client.put(
+        f"/subcontractor-progress-payments/{payment_id}/lines",
+        json={"lines": satirlar},
+        headers=headers,
+    )
+
+
+async def _kalem_id(session: AsyncSession, contract_id, code: str):
+    return (
+        await session.execute(
+            select(SubcontractorContractItem.id).where(
+                SubcontractorContractItem.contract_id == contract_id,
+                SubcontractorContractItem.code == code,
+            )
+        )
+    ).scalar_one()
+
+
+def _damgalar(govde: dict) -> dict[str, str]:
+    """Yalnız miktarı olan satırlar: hakediş açılışı TÜM kalemleri 0 ile kurar."""
+    return {
+        satir["contract_item_id"]: satir["quantity_source"]
+        for satir in govde["lines"]
+        if Decimal(satir["quantity"]) != 0
+    }
