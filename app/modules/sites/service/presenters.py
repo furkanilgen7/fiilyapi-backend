@@ -296,7 +296,9 @@ def to_section_detail(
     )
 
 
-def _card_fields(site: Site, project: Project, worker_count: int) -> dict:
+def _card_fields(
+    site: Site, project: Project, worker_count: int, progress: MetricPlaceholder | None = None
+) -> dict:
     """Santiye kartinin ortak alanlari (`to_card` + `to_detail`).
 
     🔴 `progress_pct` — **(B) GECERLI**, `to_section`taki AYNI gerekce: bekleyen
@@ -320,7 +322,9 @@ def _card_fields(site: Site, project: Project, worker_count: int) -> dict:
         "remaining_days": _remaining_days(site),
         "section_count": len(site.sections),
         "worker_count": _worker_count(worker_count),
-        "progress_pct": _metric(_PROGRESS_PAYMENTS),
+        # ✅ ILR-1'DE BAGLANDI — kaynak GUNLUK (`boq.progress`), PAYDA santiye
+        # BOQ'u. Fail-closed: cagiran izni olcmediyse `restricted()`.
+        "progress_pct": progress if progress is not None else restricted(),
         # --- Santiye formu genislemesi (§6.2): YALNIZ EKLEME ---
         "is_draft": site.is_draft,
         "site_manager_user_id": site.site_manager_user_id,
@@ -341,8 +345,10 @@ def _card_fields(site: Site, project: Project, worker_count: int) -> dict:
     }
 
 
-def to_card(site: Site, project: Project, worker_count: int) -> SiteCard:
-    return SiteCard(**_card_fields(site, project, worker_count))
+def to_card(
+    site: Site, project: Project, worker_count: int, progress: MetricPlaceholder | None = None
+) -> SiteCard:
+    return SiteCard(**_card_fields(site, project, worker_count, progress))
 
 
 def to_detail(
@@ -352,6 +358,7 @@ def to_detail(
     section_worker_counts: Mapping[uuid.UUID, int],
     section_boq_totals: Mapping[uuid.UUID, SectionBoqTotals],
     section_progress: Mapping[uuid.UUID, MetricPlaceholder] | None = None,
+    site_progress: MetricPlaceholder | None = None,
 ) -> SiteDetailResponse:
     """Santiye detayi. IKI yer tutucusu P-YT2'de denetlendi, IKISI de **(C)**.
 
@@ -382,7 +389,7 @@ def to_detail(
     """
     sections = list(site.sections)
     return SiteDetailResponse(
-        **_card_fields(site, project, worker_count),
+        **_card_fields(site, project, worker_count, site_progress),
         project=SiteProjectSummary.model_validate(project),
         section_status_counts=_section_counts(sections),
         sections=[

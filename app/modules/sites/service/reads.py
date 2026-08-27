@@ -47,11 +47,16 @@ async def list_sites_overview(
     """
     project = await _visible_project(session, actor, project_id)
     sites = await repository.list_sites_for_project(session, project_id)
-    worker_counts = await timesheet_counts.by_site(session, [site.id for site in sites])
+    site_ids = [site.id for site in sites]
+    worker_counts = await timesheet_counts.by_site(session, site_ids)
     project_counts = await timesheet_counts.by_project(session, [project.id])
+    card_progress = await site_progress_map(session, actor, site_ids)
     return SiteListResponse(
         counts=_site_counts(sites),
-        items=[to_card(site, project, worker_counts.get(site.id, 0)) for site in sites],
+        items=[
+            to_card(site, project, worker_counts.get(site.id, 0), card_progress.get(site.id))
+            for site in sites
+        ],
         totals=_totals(project_counts.get(project.id, 0)),
     )
 
@@ -79,6 +84,17 @@ async def section_progress_map(
     return {sid: metric(pct, _SITE_DIARY) for sid, pct in yuzdeler.items()}
 
 
+async def site_progress_map(
+    session: AsyncSession, actor: User, site_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, MetricPlaceholder]:
+    """Santiye -> fiziksel ilerleme zarfi. `section_progress_map`in kardesi;
+    ayni izin kapisina (K4) bakar, yalniz kapsami SANTIYE'dir."""
+    if not site_ids or not await can_read(session, actor, _SITE_DIARY):
+        return {}
+    yuzdeler = await boq_progress.physical_for_sites(session, site_ids)
+    return {sid: metric(pct, _SITE_DIARY) for sid, pct in yuzdeler.items()}
+
+
 async def build_site_detail(
     session: AsyncSession, site: Site, actor: User, project: Project
 ) -> SiteDetailResponse:
@@ -93,6 +109,7 @@ async def build_site_detail(
     # (gerekcesi `repository.ensure_milestones_loaded` docstring'inde).
     await repository.ensure_milestones_loaded(session, site.sections)
     section_progress = await section_progress_map(session, actor, section_ids)
+    site_progress = await site_progress_map(session, actor, [site.id])
     return to_detail(
         site,
         project,
@@ -100,6 +117,7 @@ async def build_site_detail(
         section_counts,
         section_boq,
         section_progress,
+        site_progress.get(site.id),
     )
 
 
