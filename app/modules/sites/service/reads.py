@@ -6,8 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # BOLUM BOQ SAYACLARININ (`boq_item_count` · `budget`) TEK kaynagi (BLM-SAY):
 # `timesheet` ile ayni gerekce — `sites` kendi tahsis sorgusunu yazmaz.
+from app.core.permissions import can_read
 from app.modules.boq import counts as boq_counts
+from app.modules.boq import progress as boq_progress
 from app.modules.projects.models import Project
+from app.modules.projects.schemas import MetricPlaceholder, metric
 from app.modules.sites import repository
 from app.modules.sites.models import Section, Site
 from app.modules.sites.schemas import (
@@ -53,8 +56,31 @@ async def list_sites_overview(
     )
 
 
+# --------------------------------------------------------------------------- #
+# ILR-1 — bolum FIZIKSEL ilerlemesi (izne duyarli)
+# --------------------------------------------------------------------------- #
+
+_SITE_DIARY = "site_diary"
+
+
+async def section_progress_map(
+    session: AsyncSession, actor: User, section_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, MetricPlaceholder]:
+    """Bolum -> fiziksel ilerleme zarfi. **TEK sorgu** (N+1 yok).
+
+    🔴 K4: `sites`i okuyup `site_diary`yi okuyamayan roller VAR (olculdu:
+    `accounting`, `hr_manager`, `procurement`). Izin yoksa BOS sozluk doner ve
+    `to_section` varsayilani `restricted()`e duser — yani gunlukten turemis
+    hicbir sayi o role ULASMAZ ve zarf sahte bir gerekce de SOYLEMEZ.
+    """
+    if not section_ids or not await can_read(session, actor, _SITE_DIARY):
+        return {}
+    yuzdeler = await boq_progress.physical_for_sections(session, section_ids)
+    return {sid: metric(pct, _SITE_DIARY) for sid, pct in yuzdeler.items()}
+
+
 async def build_site_detail(
-    session: AsyncSession, site: Site, project: Project
+    session: AsyncSession, site: Site, actor: User, project: Project
 ) -> SiteDetailResponse:
     """Santiye detay zarfi + isci sayaclari. YAZMA uclarinin yaniti da buradan
     gecer: okuma ve yazma ayni zarfi tasimazsa ekran kaydettikten sonra sayaci
@@ -66,17 +92,29 @@ async def build_site_detail(
     # Milestone koleksiyonu SENKRON donusturucuye girmeden ONCE yuklenir
     # (gerekcesi `repository.ensure_milestones_loaded` docstring'inde).
     await repository.ensure_milestones_loaded(session, site.sections)
-    return to_detail(site, project, site_counts.get(site.id, 0), section_counts, section_boq)
+    section_progress = await section_progress_map(session, actor, section_ids)
+    return to_detail(
+        site,
+        project,
+        site_counts.get(site.id, 0),
+        section_counts,
+        section_boq,
+        section_progress,
+    )
 
 
-async def build_section_detail(session: AsyncSession, section: Section) -> SectionDetailResponse:
+async def build_section_detail(
+    session: AsyncSession, section: Section, actor: User
+) -> SectionDetailResponse:
     section_counts = await timesheet_counts.by_section(session, [section.id])
     section_boq = await boq_counts.by_section(session, [section.id])
     await repository.ensure_milestones_loaded(session, [section])
+    section_progress = await section_progress_map(session, actor, [section.id])
     return to_section_detail(
         section,
         section_counts.get(section.id, 0),
         section_boq.get(section.id, boq_counts.EMPTY),
+        section_progress.get(section.id),
     )
 
 
@@ -84,7 +122,7 @@ async def get_site_detail(
     session: AsyncSession, actor: User, site_id: uuid.UUID
 ) -> SiteDetailResponse:
     site, project = await _visible_site(session, actor, site_id)
-    return await build_site_detail(session, site, project)
+    return await build_site_detail(session, site, actor, project)
 
 
 async def list_sections_for_site(
@@ -96,6 +134,7 @@ async def list_sections_for_site(
     section_counts = await timesheet_counts.by_section(session, section_ids)
     section_boq = await boq_counts.by_section(session, section_ids)
     await repository.ensure_milestones_loaded(session, sections)
+    section_progress = await section_progress_map(session, actor, section_ids)
     return SectionListResponse(
         counts=_section_counts(sections),
         items=[
@@ -103,6 +142,7 @@ async def list_sections_for_site(
                 s,
                 section_counts.get(s.id, 0),
                 section_boq.get(s.id, boq_counts.EMPTY),
+                section_progress.get(s.id),
             )
             for s in sections
         ],
@@ -123,4 +163,4 @@ async def get_section_detail(
     UUID'ninkiyle BIREBIR AYNIDIR.
     """
     section, _ = await _visible_section(session, actor, section_id)
-    return await build_section_detail(session, section)
+    return await build_section_detail(session, section, actor)

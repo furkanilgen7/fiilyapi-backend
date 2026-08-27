@@ -65,10 +65,14 @@ async def _audit(
     )
 
 
-async def _detail_of(session: AsyncSession, site: Site) -> SiteDetailResponse:
-    """Yazma uclarinin yaniti da okuma ucuyla ayni zarfi tasir."""
+async def _detail_of(session: AsyncSession, site: Site, actor: User) -> SiteDetailResponse:
+    """Yazma uclarinin yaniti da okuma ucuyla ayni zarfi tasir.
+
+    🔴 `actor` ILR-1'de EKLENDI ve varsayilani YOKTUR: bolum yuzdesi izne
+    duyarlidir, izni olcmeden yanit uretmek fail-open bir yol acardi.
+    """
     await session.refresh(site, attribute_names=["sections", "project"])
-    return await service.build_site_detail(session, site, site.project)
+    return await service.build_site_detail(session, site, actor, site.project)
 
 
 @router.get("/projects/{project_id}/sites", response_model=SiteListResponse, dependencies=[_VIEW])
@@ -112,7 +116,7 @@ async def create_site_endpoint(
             AuditAction.create,
             messages.site_sections_created(site.name, len(data.sections)),
         )
-    return await _detail_of(session, site)
+    return await _detail_of(session, site, current_user)
 
 
 @router.get("/sites/{site_id}", response_model=SiteDetailResponse, dependencies=[_VIEW])
@@ -137,7 +141,7 @@ async def update_site_endpoint(
     # orada gorunur.
     site, detail = await service.update_site(session, current_user, site_id, data)
     await _audit(request, session, current_user, AuditAction.update, detail)
-    return await _detail_of(session, site)
+    return await _detail_of(session, site, current_user)
 
 
 @router.delete("/sites/{site_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[_ADMIN])
@@ -198,7 +202,7 @@ async def create_section_endpoint(
         AuditAction.create,
         messages.section_created(await _owning_site_name(session, section), section.name),
     )
-    return await service.build_section_detail(session, section)
+    return await service.build_section_detail(session, section, current_user)
 
 
 @router.get("/sections/{section_id}", response_model=SectionDetailResponse, dependencies=[_VIEW])
@@ -251,4 +255,4 @@ async def update_section_endpoint(
     # `is_draft` degeri yalniz orada gorunur.
     section, detail = await service.update_section(session, current_user, section_id, data)
     await _audit(request, session, current_user, AuditAction.update, detail)
-    return await service.build_section_detail(session, section)
+    return await service.build_section_detail(session, section, current_user)

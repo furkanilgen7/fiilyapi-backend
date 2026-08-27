@@ -16,6 +16,7 @@ from app.core.timezone import today
 from app.modules.boq.counts import EMPTY as _BOQ_EMPTY
 from app.modules.boq.counts import SectionBoqTotals
 from app.modules.projects.models import Project
+from app.modules.projects.schemas import restricted
 from app.modules.sites.models import Section, SectionMilestone, SectionStatus, Site, SiteStatus
 from app.modules.sites.schemas import (
     CountPlaceholder,
@@ -197,6 +198,7 @@ def to_section(
     section: Section,
     worker_count: int,
     boq_totals: SectionBoqTotals = _BOQ_EMPTY,
+    progress: MetricPlaceholder | None = None,
 ) -> SectionResponse:
     """Bolum satiri. DORT yer tutucusundan IKISI BLM-SAY'de BAGLANDI.
 
@@ -243,7 +245,11 @@ def to_section(
         start_date=section.start_date,
         end_date=section.end_date,
         sort_order=section.sort_order,
-        progress_pct=_metric(_PROGRESS_PAYMENTS),
+        # ✅ ILR-1'DE BAGLANDI — kaynak `boq.progress` (TEK kaynak, K3).
+        # 🔴 Varsayilan `restricted()`: cagiran izni OLCMEDIYSE alan KAPALI
+        # dogar. Fail-closed bilinclidir — varsayilan "bagli degil" olsaydi,
+        # izin olcmeyi unutan yeni bir cagri yeri sessizce yuzde basardi.
+        progress_pct=progress if progress is not None else restricted(),
         boq_item_count=_boq_item_count(boq_totals.item_count),
         budget=_boq_budget(boq_totals.amount),
         worker_count=_worker_count(worker_count),
@@ -264,6 +270,7 @@ def to_section_detail(
     section: Section,
     worker_count: int,
     boq_totals: SectionBoqTotals = _BOQ_EMPTY,
+    progress: MetricPlaceholder | None = None,
 ) -> SectionDetailResponse:
     """P6 §5 — bolum detay govdesi: `to_section`in TUM alanlari + T1 kolonlari.
 
@@ -277,7 +284,7 @@ def to_section_detail(
     hata — istenen budur.
     """
     return SectionDetailResponse(
-        **to_section(section, worker_count, boq_totals).model_dump(),
+        **to_section(section, worker_count, boq_totals, progress).model_dump(),
         site_id=section.site_id,
         section_type=section.section_type,
         description=section.description,
@@ -344,6 +351,7 @@ def to_detail(
     worker_count: int,
     section_worker_counts: Mapping[uuid.UUID, int],
     section_boq_totals: Mapping[uuid.UUID, SectionBoqTotals],
+    section_progress: Mapping[uuid.UUID, MetricPlaceholder] | None = None,
 ) -> SiteDetailResponse:
     """Santiye detayi. IKI yer tutucusu P-YT2'de denetlendi, IKISI de **(C)**.
 
@@ -382,6 +390,7 @@ def to_detail(
                 s,
                 section_worker_counts.get(s.id, 0),
                 section_boq_totals.get(s.id, _BOQ_EMPTY),
+                (section_progress or {}).get(s.id),
             )
             for s in sections
         ],

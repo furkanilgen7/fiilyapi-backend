@@ -92,12 +92,23 @@ def _realized_line_sums(
 
 
 async def realized_by_item(
-    session: AsyncSession, item_ids: list[uuid.UUID]
+    session: AsyncSession,
+    item_ids: list[uuid.UUID],
+    section_id: uuid.UUID | None = None,
 ) -> dict[uuid.UUID, Decimal]:
-    """Poz basina GERCEKLESEN miktar. Bos istekte sorgu ACILMAZ (N+1 kurali)."""
+    """Poz basina GERCEKLESEN miktar. Bos istekte sorgu ACILMAZ (N+1 kurali).
+
+    `section_id` verilirse yalniz o bolumun gunlukleri sayilir — BOQ ekrani
+    bolume suzuldugunde `quantity` de o bolumun tahsisi oldugu icin PAY ve
+    PAYDA ayni kapsamda kalir.
+    """
     if not item_ids:
         return {}
-    alt = _realized_line_sums().where(SiteDiaryLine.boq_item_id.in_(item_ids)).subquery()
+    alt = (
+        _realized_line_sums(section_id)
+        .where(SiteDiaryLine.boq_item_id.in_(item_ids))
+        .subquery()
+    )
     rows = await session.execute(select(alt.c.boq_item_id, alt.c.realized))
     return {row[0]: Decimal(row[1]) for row in rows}
 

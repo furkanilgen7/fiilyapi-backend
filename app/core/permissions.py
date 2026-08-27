@@ -32,3 +32,17 @@ def require_permission(module_key: str, min_level: AccessLevel):
             )
 
     return Depends(_check)
+
+
+async def can_read(session: AsyncSession, user: User, module_key: str) -> bool:
+    """ILR-1/2 — bir ROLUN o modulu OKUYUP okuyamadigi (uc kapisi DEGIL, ALAN kapisi).
+
+    🔴 `require_permission` bir UCU kapatir; bu ise TUREV BIR ALANI kapatir.
+    Ikisi ayri sorunlardir: `boq` ucunu okuyabilen `procurement`, gunlukten
+    turemis bir yuzdeyi gormemelidir — yoksa `site_diary`nin kapisi hic
+    calismadan o veri BOQ ekranindan sizar (K4).
+
+    Varsayilan KAPALI: izin satiri yoksa `False`.
+    """
+    permission = await get_permission(session, user.role_id, module_key)
+    return permission is not None and satisfies(permission.access_level, AccessLevel.view)
