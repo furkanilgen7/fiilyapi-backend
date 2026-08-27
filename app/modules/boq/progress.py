@@ -295,3 +295,40 @@ async def physical_for_projects(
     rows = await session.execute(stmt)
     olculen = {row[0]: weighted_pct(Decimal(row[1]), Decimal(row[2])) for row in rows}
     return {pid: olculen.get(pid) for pid in project_ids}
+
+
+async def physical_for_sites(
+    session: AsyncSession, site_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, Decimal | None]:
+    """TOPLU santiye yuzdesi — santiye KARTI listesi icin TEK sorgu.
+
+    PAYDA = santiyenin BOQ'u (pozun kendi `quantity`si). `physical_for_site` ile
+    AYNI tanimdir; bu yalnizca `IN (…)` kapsamli hâlidir.
+    """
+    if not site_ids:
+        return {}
+    taban = (
+        select(
+            BoqItem.site_id.label("site_id"),
+            BoqItem.id.label("boq_item_id"),
+            BoqItem.quantity.label("taban"),
+            BoqItem.unit_price.label("unit_price"),
+        )
+        .where(BoqItem.site_id.in_(site_ids))
+        .subquery()
+    )
+    realized = _realized_line_sums().subquery()
+    stmt = (
+        select(
+            taban.c.site_id,
+            func.coalesce(func.sum(func.coalesce(realized.c.realized, 0) * taban.c.unit_price), 0),
+            func.coalesce(func.sum(taban.c.taban * taban.c.unit_price), 0),
+        )
+        .select_from(
+            taban.join(realized, realized.c.boq_item_id == taban.c.boq_item_id, isouter=True)
+        )
+        .group_by(taban.c.site_id)
+    )
+    rows = await session.execute(stmt)
+    olculen = {row[0]: weighted_pct(Decimal(row[1]), Decimal(row[2])) for row in rows}
+    return {sid: olculen.get(sid) for sid in site_ids}
