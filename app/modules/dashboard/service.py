@@ -7,8 +7,8 @@ kart icin bile dogru degildir. Denetim bu yuzden UC SINIF uretti:
 | Kart | anahtar | sinif | ozet gerekce |
 |---|---|---|---|
 | `pending_approvals` | `approvals` | **(A) BAYAT** | motor canli, kapsam ayni — **BAGLANDI** |
-| `portfolio` | `progress_payments` | **(C) TUZAK** | "Toplam Hakedis" iki canli |
-| | | | yuzeyde FARKLI kume sayiyor |
+| `portfolio` | `progress_payments` | **(A) BAYAT** | urun karari verildi — |
+| | | | **BAGLANDI** (isveren, approved+paid) |
 | `receivables` | `invoicing` | **(C) TUZAK** | veri hazir ama IZIN MATRISI |
 | | | | bu kapidan gecirmiyor |
 | `average_margin` | `progress_payments` | **(C) TUZAK** | ortalama TANIMSIZ + anahtar |
@@ -22,6 +22,7 @@ kaldirilinca gerekcesi de onunla birlikte tasinsin.
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.permissions import can_read
 from app.modules.approvals import service as approvals_service
 from app.modules.dashboard.schemas import (
     DashboardProjectCard,
@@ -30,8 +31,12 @@ from app.modules.dashboard.schemas import (
     MetricPlaceholder,
     PendingApprovalsPlaceholder,
 )
+from app.modules.progress_payments.summary import cumulative_gross_by_projects
+from app.modules.projects import service as projects_service
+from app.modules.projects.costs import money_total
 from app.modules.projects.models import ProjectStatus
 from app.modules.projects.repository import list_projects_for_user
+from app.modules.projects.schemas import metric, restricted
 from app.modules.roles.models import Role
 from app.modules.users.models import User
 
@@ -108,25 +113,60 @@ async def _pending_approvals(session: AsyncSession, user: User) -> PendingApprov
     )
 
 
-def _portfolio() -> MetricPlaceholder:
-    """(C) TUZAK — "Portfoy · Toplam Hakedis" (mockup `:196`).
+async def _portfolio(session: AsyncSession, user: User) -> MetricPlaceholder:
+    """(A) — "Portfoy · Toplam Hakedis" (mockup `:196`). **BAGLANDI.**
 
-    Modul CANLI ve toplu okuyucu VAR (`progress_payments/summary.py:98`
-    `cumulative_gross_by_projects`, 2 sorgu). Baglanmadi, cunku "Toplam Hakedis"
-    ADI REPODA ZATEN IKI FARKLI KUMEYI ANLATIYOR:
+    HANGI AILE: **ISVEREN** hakedisi (taseron DEGIL). OLCULDU — kart HASILATTIR:
+    mockup `Ekran 1 - Gosterge Paneli.dc.html:199` `24.870.500` basar; AYNI sayi
+    AYNI `↑ %8,3` degisimiyle `Ekran 11 - Mali Tablo.dc.html:99-100`ta
+    **"Is Hasilati"** olarak, `Muhasebe - Hesap Plani.dc.html:193`te ise
+    **`600 · Yurt Ici Satislar · Gelir`** hesabinin altinda gecer. Taseron
+    hakedisi BORCTUR (`projects/costs.py:220` onu MALIYET sayar) ve buraya
+    TOPLANMAZ — toplanmasi kartin isaretini ters cevirirdi.
 
-    * `cumulative_gross_by_projects` TASLAKLARI ELER (`COMPLETED_STATUSES =
-      (approved, paid)`);
-    * ayni Turkce basligi tasiyan canli ekran
-      (`subcontractor_progress_payments/summary.py:129` `total_gross`) taslak
-      DAHIL sayar — o dosya bu farki kendi icinde uyari olarak yaziyor.
+    HANGI KUME: yalnizca `approved` + `paid`. Taslak ve onay bekleyen HARICTIR.
 
-    Ustelik hangi hakedis oldugu da secilmemistir: isveren hakedisi ALACAK,
-    taseron hakedisi BORCTUR (`projects/costs.py:220` onu MALIYET sayar).
-    Burada bir sayi uretmek, ayni ada sahip UCUNCU bir kume yaratirdi.
-    ⛔ Once URUN KARARI: hangi aile, taslak dahil mi, brut mu?
+    🔴 KAYNAK KOPYALANMADI, SERVIS CAGRILDI (K3).
+    `progress_payments.summary.cumulative_gross_by_projects` tam bu suzgeci
+    (`repository.COMPLETED_STATUSES`) zaten uygular ve TEK toplu okumadir (proje
+    basina sorgu YOK). Ikinci bir suzgec kopyasi bugun ayni sayiyi verse bile
+    ilk kural degisikliginde sessizce ayrisirdi. Toplama da elle yapilmaz:
+    `projects.costs.money_total` "para nasil toplanir"in TEK kuralidir
+    (`money_total([]) == Decimal("0.00")`).
+
+    🔴 KAPSAM `projects.service.visible_projects` — gorunurlugun TEK kaynagi
+    ("Tek kaynak burasidir"), `projects: admin` atlamasi DAHIL. Panelin kendi
+    `list_projects_for_user(...)` listesi BILEREK KULLANILMADI: onda admin
+    atlamasi YOKTUR, yani `projects:admin` tasiyan bir aktorun portfoyu sessizce
+    EKSIK sayilirdi (ayni gerekce `_pending_approvals` notunda da var).
+
+    🔴 IZIN KAPISI (K4 sizintisi): `can_read(..., "progress_payments")`.
+    `require_permission` UCU kapatir, bu ise TUREV ALANI kapatir. OLCULDU
+    (`roles/seed_data.py` MATRIX): paneli acabilen ama `progress_payments`i
+    okuyamayan rol tam olarak **`hr_manager`**dir (`dashboard = _LIM`,
+    `progress_payments = _N`). Kapi olmasa o rol sirketin TUM hasilat toplamini
+    reddedildigi bir modulden okurdu.
+
+    UC HAL, tam olarak:
+      1. izin YOK -> `restricted()`: `available=False`, `pending_module=None`.
+         "Bu modul daha yazilmadi" ile "bunu gormeye yetkin yok" FARKLI iki
+         durumdur (kullanici karari 2026-08-27, ILR-1/2); buraya
+         `progress_payments` yazmak ekrani YALANCI yapardi.
+      2. izin VAR ama gorunur proje SIFIR -> `metric(None, ...)`: bos zarf,
+         kaynagini bildirir. Soru HIC SORULMADI; uydurma bir `0.00` basilmaz.
+      3. izin VAR ve >=1 gorunur proje -> `metric(money_total(...), ...)`:
+         `available=True`. Buradaki `0.00` OTORITERDIR, "bilinmiyor" DEGIL —
+         `progress_payments/project_progress.py:41` emsali ("Hakedis hic yoksa
+         sonuc 0.00'dir — 'bilinmiyor' DEGIL") ve zaten bagli olan
+         `pending_approvals` sayacinin sifiri aynidir.
     """
-    return MetricPlaceholder(pending_module=_PORTFOLIO_MODULE)
+    if not await can_read(session, user, _PORTFOLIO_MODULE):
+        return restricted()
+    projects = await projects_service.visible_projects(session, user)
+    if not projects:
+        return metric(None, _PORTFOLIO_MODULE)
+    totals = await cumulative_gross_by_projects(session, [p.id for p in projects])
+    return metric(money_total(totals.values()), _PORTFOLIO_MODULE)
 
 
 def _receivables() -> MetricPlaceholder:
@@ -177,6 +217,24 @@ def _average_margin() -> MetricPlaceholder:
     projenin marji yok" hâli ile "ortalama %0" hâlini AYNI sayiya cevirir.
     ⛔ Once URUN KARARI: agirliksiz ortalama mi, `Σkâr / Σgelir` mi; `None`
     projeler paydada mi?
+
+    🔴 DASH-1'de UC ENGEL DAHA OLCULDU — `portfolio` baglanirken bu kart
+    BILEREK yer tutucu birakildi, cunku ucu de bagimsiz olarak tikayicidir:
+
+    (a) HEDEF SAYI KENDI MOCKUP'INDAN URETILEMIYOR. Kart `%14,2` basar; ayni
+        ekranda basilan DORT proje marjinin agirliksiz ortalamasi **14,7**,
+        para-agirlikli `Σkâr / Σgelir` de **14,7** verir. Ustelik ayni kavram
+        baska iki mockup'ta **14,1** ve **14,2** olarak gecer. Tutarli bir
+        hedef YOK — hangi tanimi kodlasak mockup'lardan en az birini yalanlar.
+
+    (b) KARTIN OZETLEDIGI POPULASYONDA MARJ YAPISAL OLARAK `None`. O ekrandaki
+        DORT projenin DORDU de `taahhut`tur ve `projects/costs.py:427`
+        `card_projection` TASARIM GEREGI taahhut dali TASIMAZ. Yani ortalama,
+        tam da ozetledigi kume uzerinde tanimsizdir.
+
+    (c) BAGLANSA BILE EKRAN YANLIS BASAR. Frontend bu karti `KpiCard` icinde
+        `formatCompactCurrency` ile cizer: bagli bir YUZDE ekranda **"₺14,2"**
+        gorunurdu, "%14,2" degil. Duzeltmesi frontend tarafindadir.
     """
     return MetricPlaceholder(pending_module=_MARGIN_MODULE)
 
@@ -205,7 +263,7 @@ def _risks() -> ListPlaceholder:
 
 
 async def build_summary(session: AsyncSession, user: User) -> DashboardSummaryResponse:
-    """Gosterge paneli ozeti. Projeler + ONAY ROZETI gercek, dort kart bos durum."""
+    """Gosterge paneli ozeti. Projeler + ONAY ROZETI + PORTFOY gercek, uc kart bos."""
     projects = await list_projects_for_user(session, user.id)
     role = await session.get(Role, user.role_id)
 
@@ -216,7 +274,7 @@ async def build_summary(session: AsyncSession, user: User) -> DashboardSummaryRe
             1 for p in projects if p.status is ProjectStatus.active and not p.is_draft
         ),
         projects=[DashboardProjectCard.model_validate(p) for p in projects],
-        portfolio=_portfolio(),
+        portfolio=await _portfolio(session, user),
         receivables=_receivables(),
         average_margin=_average_margin(),
         pending_approvals=await _pending_approvals(session, user),

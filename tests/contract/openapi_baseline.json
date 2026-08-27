@@ -2253,7 +2253,7 @@
             "type": "string"
           },
           "progress_pct": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "quantity": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -2421,10 +2421,10 @@
         "description": "Spec §5.1 ust KPI seridi. `grand_total` GERCEK deger (gruplarin toplami).\n\n⚠️ **ILR-1 (2026-08-27): `grand_progress_pct` BAGLANDI** — kaynagi hakedis\nDEGIL **gunluktur** ve `boq/progress.py`den TEK kaynaktan gelir (grup\nsatirlarindan yeniden toplanmaz). Kalan DORT zarfin gerekcesi AYNEN\ngecerlidir. Asagidaki tablo o dort satir icin okunur.\n\n🔴 **P-YT3 DENETIMI (2026-08-23) — BES ZARFIN DE SINIFI VE SEBEBI.** Eski\nyorum *\"sozlesme/hakediş bu dilimde yazilmiyor\"* diyordu ve BAYATTI: iki\nmodul de aylardir canli. Bugunku olgu:\n\n| alan | sinif | bagli olmama SEBEBI |\n|---|---|---|\n| `contract_total` | (C) TUZAK | **K4** — `site_chief`+`procurement`: boq=view, contracts=none |\n| `realized_total` | (C) TUZAK | **K4** — `procurement` `progress_payments`ta `none` |\n| `remaining_total` | (C) TUZAK | `contract_total − realized_total`; iki ucu da K4 kapali |\n| `revision_total` | (B) GECERLI | 🔑 **repoda REVIZYON KAVRAMI YOK** — kaynak yok |\n| `grand_progress_pct` | ✅ **BAGLANDI** | ILR-1: kaynak GUNLUK, izne duyarli |\n\n🔑 `contract_total`in formulu ZATEN YAZILI ve TEK KOPYA:\n`contracts/distribution.py::_site_summaries` santiye basina\n`Σ (BOQ satiri miktari × SOZLESME kaleminin birim fiyati)` hesaplar (spec\n§3.3: otorite sozlesmedir). Baglanacagi gun o cagrilir, KOPYALANMAZ (K3) —\nburada ikinci bir carpim yazmak kurus farkli bir \"Sozlesme Bedeli\" uretirdi.\n\n🔴 `revision_total` icin arama YAPILDI: `revision`/`revizyon` gecen tek yer\n`subcontractor_progress_payments`taki `is_revision_required` BAYRAGIDIR\n(hakedisin \"duzeltilmeli\" durumu) — sozlesme revizyonu ile ilgisi yoktur.\nSozlesme revizyonu ne modelde ne migration'da vardir; anahtar `contracts`\ndogru kalir ama bekleyen sey MODUL degil **KAVRAMDIR**.",
         "properties": {
           "contract_total": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "grand_progress_pct": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "grand_total": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -2432,13 +2432,13 @@
             "type": "string"
           },
           "realized_total": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "remaining_total": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "revision_total": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           }
         },
         "required": [
@@ -3739,12 +3739,12 @@
         "description": "Taahhut karti — sozlesme bedeli/isveren ustte gercek, gerisi bos durum.",
         "properties": {
           "final_progress_payment": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "financial_progress": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+                "$ref": "#/components/schemas/MetricPlaceholder"
               },
               {
                 "type": "null"
@@ -3752,10 +3752,10 @@
             ]
           },
           "physical_progress": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "spent": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "subcontractor_count": {
             "$ref": "#/components/schemas/CountPlaceholder"
@@ -4125,13 +4125,13 @@
             "type": "integer"
           },
           "average_margin": {
-            "$ref": "#/components/schemas/app__modules__dashboard__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "pending_approvals": {
             "$ref": "#/components/schemas/PendingApprovalsPlaceholder"
           },
           "portfolio": {
-            "$ref": "#/components/schemas/app__modules__dashboard__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "projects": {
             "items": {
@@ -4141,7 +4141,7 @@
             "type": "array"
           },
           "receivables": {
-            "$ref": "#/components/schemas/app__modules__dashboard__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "risks": {
             "$ref": "#/components/schemas/ListPlaceholder"
@@ -8734,7 +8734,7 @@
         "description": "Kendi yatirim karti.\n\n`total_cost` (E4 122) KULLANICI KARARI 2026-08-09 ile **HARCANAN**dir\n(`costs.total_spent` = arsa + taşeron `approved`+`paid` BRÜT), butce DEGIL;\n`estimated_profit`/`margin` ise BUTCE tabanlidir. Ayrinti: `_investment_card`.",
         "properties": {
           "estimated_profit": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "land_cost": {
             "anyOf": [
@@ -8749,10 +8749,10 @@
             "title": "Land Cost"
           },
           "margin": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "sales_ratio": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "sales_target": {
             "anyOf": [
@@ -8767,10 +8767,10 @@
             "title": "Sales Target"
           },
           "sold_amount": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "total_cost": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "unit_summary": {
             "$ref": "#/components/schemas/CountPlaceholder"
@@ -10885,10 +10885,10 @@
             "title": "Construction Area M2"
           },
           "construction_cost": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "construction_progress": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "contract_no": {
             "anyOf": [
@@ -10926,7 +10926,7 @@
             "title": "Delivery Date"
           },
           "estimated_profit": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "guarantee_amount": {
             "anyOf": [
@@ -10962,7 +10962,7 @@
             "type": "string"
           },
           "margin": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "notary_date": {
             "anyOf": [
@@ -10982,7 +10982,7 @@
             "type": "string"
           },
           "our_share_value": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "our_unit_count": {
             "$ref": "#/components/schemas/CountPlaceholder"
@@ -12387,6 +12387,41 @@
           "permissions"
         ],
         "title": "MeResponse",
+        "type": "object"
+      },
+      "MetricPlaceholder": {
+        "description": "Tek degerli alanin zarfi: ya GERCEK deger ya durust bos durum tasir.\n\nP10 T3: zarf sozlesmesi artik pydantic duzeyinde BAGLIDIR ve iki yonlu\ncalisir (ROADMAP §3 \"celiskili sozlesme\" borcu):\n\n* `available=True` ⇒ `pending_module is None` — dolu bir alanin \"hangi modul\n  gelince dolacak\" bilgisi TASIMASI anlamsizdir; eski hâlinde `pending_module`\n  zorunlu oldugu icin dolu zarf bile bir modul adi tasimak zorundaydi ve\n  ekran o alani \"hâlâ eksik\" sanabiliyordu.\n* `available=False` + `pending_module` DOLU — alan henuz BAGLANMADI; bos zarf\n  kaynagini bildirir, aksi hâlde ekran \"—\" basip nedenini soyleyemez.\n* `available=False` + `pending_module is None` — 🔴 **ILR-1/2 UCUNCU HAL:\n  ROLUN IZNI YOK** (kullanici karari 2026-08-27). `pending_module` IZIN\n  anlamiyla YUKLENMEZ: *\"bu modul daha yazilmadi\"* ile *\"bunu gormeye yetkin\n  yok\"* farkli iki durumdur ve ilkini ikincisi icin kullanmak ekrani YALANCI\n  yapar. Bu hâl YALNIZ `restricted()` fabrikasindan kurulur.\n\nAlan TIPI DEGISMEDI (`MetricPlaceholder` kalir): bu zarflari tuketen UI\nCANLIDA (E4 proje kartlari) ve kirici bir sema degisikligi yapilmaz.\n\n`CountPlaceholder`a bu kural UYGULANMAZ — orada dolu zarfin `pending_module`\ntasimasi BILINCLI bir emsaldir (bkz. o sinifin notu).",
+        "properties": {
+          "available": {
+            "default": false,
+            "title": "Available",
+            "type": "boolean"
+          },
+          "pending_module": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Module"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "title": "MetricPlaceholder",
         "type": "object"
       },
       "ModuleGroup": {
@@ -16870,7 +16905,7 @@
             "type": "string"
           },
           "financing": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "land_cost": {
             "anyOf": [
@@ -16885,10 +16920,10 @@
             "title": "Land Cost"
           },
           "marketing": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "permits": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "total_spent": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -21314,7 +21349,7 @@
             "$ref": "#/components/schemas/CountPlaceholder"
           },
           "budget": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "budget_amount": {
             "anyOf": [
@@ -21457,7 +21492,7 @@
             "title": "Planned Worker Count"
           },
           "progress_pct": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "section_type": {
             "anyOf": [
@@ -21623,7 +21658,7 @@
             "$ref": "#/components/schemas/CountPlaceholder"
           },
           "budget": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "budget_amount": {
             "anyOf": [
@@ -21723,7 +21758,7 @@
             "title": "Planned Worker Count"
           },
           "progress_pct": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "sort_order": {
             "title": "Sort Order",
@@ -22327,7 +22362,7 @@
             "title": "Planned Worker Count"
           },
           "progress_pct": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "remaining_days": {
             "anyOf": [
@@ -22831,7 +22866,7 @@
             "title": "Construction Area M2"
           },
           "contract_amount": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "delivery_date": {
             "anyOf": [
@@ -22952,7 +22987,7 @@
             "title": "Planned Worker Count"
           },
           "progress_pct": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "project": {
             "$ref": "#/components/schemas/SiteProjectSummary"
@@ -23048,7 +23083,7 @@
             "$ref": "#/components/schemas/SiteStatus"
           },
           "total_progress_payment": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "water_subscription_no": {
             "anyOf": [
@@ -24128,13 +24163,13 @@
             "$ref": "#/components/schemas/CountPlaceholder"
           },
           "average_margin": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "subcontractor_count": {
             "$ref": "#/components/schemas/CountPlaceholder"
           },
           "total_progress_payment": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           }
         },
         "required": [
@@ -25135,7 +25170,7 @@
             "title": "Min Stock"
           },
           "monthly_need": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "name": {
             "title": "Name",
@@ -26138,7 +26173,7 @@
             "type": "integer"
           },
           "pending_orders": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "total_items": {
             "title": "Total Items",
@@ -30886,7 +30921,7 @@
             "title": "Buyer Name"
           },
           "expected_profit": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "facing": {
             "anyOf": [
@@ -31053,7 +31088,7 @@
             "type": "integer"
           },
           "unit_cost": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "unit_kind": {
             "$ref": "#/components/schemas/UnitKind"
@@ -31634,7 +31669,7 @@
             "type": "string"
           },
           "sale_profit": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "sale_type": {
             "$ref": "#/components/schemas/SaleType"
@@ -31655,7 +31690,7 @@
             "title": "Term Interest Pct"
           },
           "unit_cost": {
-            "$ref": "#/components/schemas/app__modules__projects__schemas__MetricPlaceholder"
+            "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "unit_id": {
             "format": "uuid",
@@ -33702,72 +33737,6 @@
         ],
         "title": "WorkerSource",
         "type": "string"
-      },
-      "app__modules__dashboard__schemas__MetricPlaceholder": {
-        "description": "Tek degerli KPI karti. v1'de veri kaynagi olmayan kartlar icin.\n\navailable alani bilincli olarak vardir: frontend sabite degil veriye dallanir,\nilgili alt-proje geldiginde backend true dondurmeye baslar (spec §2.3).",
-        "properties": {
-          "available": {
-            "default": false,
-            "title": "Available",
-            "type": "boolean"
-          },
-          "pending_module": {
-            "title": "Pending Module",
-            "type": "string"
-          },
-          "value": {
-            "anyOf": [
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Value"
-          }
-        },
-        "required": [
-          "pending_module"
-        ],
-        "title": "MetricPlaceholder",
-        "type": "object"
-      },
-      "app__modules__projects__schemas__MetricPlaceholder": {
-        "description": "Tek degerli alanin zarfi: ya GERCEK deger ya durust bos durum tasir.\n\nP10 T3: zarf sozlesmesi artik pydantic duzeyinde BAGLIDIR ve iki yonlu\ncalisir (ROADMAP §3 \"celiskili sozlesme\" borcu):\n\n* `available=True` ⇒ `pending_module is None` — dolu bir alanin \"hangi modul\n  gelince dolacak\" bilgisi TASIMASI anlamsizdir; eski hâlinde `pending_module`\n  zorunlu oldugu icin dolu zarf bile bir modul adi tasimak zorundaydi ve\n  ekran o alani \"hâlâ eksik\" sanabiliyordu.\n* `available=False` + `pending_module` DOLU — alan henuz BAGLANMADI; bos zarf\n  kaynagini bildirir, aksi hâlde ekran \"—\" basip nedenini soyleyemez.\n* `available=False` + `pending_module is None` — 🔴 **ILR-1/2 UCUNCU HAL:\n  ROLUN IZNI YOK** (kullanici karari 2026-08-27). `pending_module` IZIN\n  anlamiyla YUKLENMEZ: *\"bu modul daha yazilmadi\"* ile *\"bunu gormeye yetkin\n  yok\"* farkli iki durumdur ve ilkini ikincisi icin kullanmak ekrani YALANCI\n  yapar. Bu hâl YALNIZ `restricted()` fabrikasindan kurulur.\n\nAlan TIPI DEGISMEDI (`MetricPlaceholder` kalir): bu zarflari tuketen UI\nCANLIDA (E4 proje kartlari) ve kirici bir sema degisikligi yapilmaz.\n\n`CountPlaceholder`a bu kural UYGULANMAZ — orada dolu zarfin `pending_module`\ntasimasi BILINCLI bir emsaldir (bkz. o sinifin notu).",
-        "properties": {
-          "available": {
-            "default": false,
-            "title": "Available",
-            "type": "boolean"
-          },
-          "pending_module": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Pending Module"
-          },
-          "value": {
-            "anyOf": [
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Value"
-          }
-        },
-        "title": "MetricPlaceholder",
-        "type": "object"
       }
     },
     "securitySchemes": {
