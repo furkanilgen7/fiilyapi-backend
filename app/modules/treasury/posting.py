@@ -53,6 +53,15 @@ yoktur (bkz. madde 1). Raporun `KAPSAM DIŞI` başlığındadır.
 
 ## 🔴 ÇEK/SENET DURUM GEÇİŞLERİ FİŞ ATMAZ — ölçülmüş karar
 
+⚠️ **BU BÖLÜM ODM-1'DE (2026-08-27) GEÇERSİZ KILINDI ve TARİHSEL olarak
+durur.** Aşağıdaki üç ölçüm o günün kodu için DOĞRUYDU; ODM-1 üçünün de
+dayanağını kaldırdı: nakdin tanımı `balance.py`de değişti (bağlı ödeme
+`collected`/`paid` değilse nakde GİRMEZ, yani çift sayım yapısal olarak
+imkânsız), `101`/`103` `posting_rules`ta AÇILDI ve
+`JournalSourceType.financial_instrument` üyesi eklendi. Bölümün son
+paragrafı zaten bunun *"bir ÜRÜN KARARI"* olduğunu ve verilmeyi beklediğini
+söylüyordu. Fişleme kodu `treasury/instruments/posting.py`dedir.
+
 `instruments/transitions.py` altı geçiş tanımlar
 (`portfolio → collected|returned|cancelled` ve `portfolio → paid|returned|
 cancelled`). Hiçbiri BURADAN fişlenmez ve gerekçe ÜÇ ÖLÇÜMDÜR:
@@ -126,6 +135,8 @@ __all__ = [
     "PAYMENT_POSTING_RULES",
     "ROLE_BANK",
     "ROLE_CASH",
+    "ROLE_INSTRUMENT_PAYABLE",
+    "ROLE_INSTRUMENT_RECEIVABLE",
     "ROLE_PAYABLE",
     "ROLE_RECEIVABLE",
     "SOURCE_TYPE",
@@ -161,16 +172,39 @@ ROLE_CASH = "cash"
 ROLE_RECEIVABLE = "receivable"
 ROLE_PAYABLE = "payable"
 
+# 🔴 ODM-1 — ÇEK/SENET ARA HESAPLARI. Nakit bacağının YERİNE geçerler, YANINA
+# DEĞİL: bir ödeme `financial_instrument_id` taşıyorsa parası henüz banka/kasada
+# DEĞİLDİR, bir evrakın içindedir. Roller `bank`/`cash` ile AYNI bacakta yarışır
+# ve seçimi ödemenin enstrüman bağı yapar (D1: bağ, `method` etiketi DEĞİL).
+#
+# İki ayrı rol (tek bir `instrument` değil) çünkü `101` AKTİF, `103` ise
+# `is_contra=True` PASİFTİR: tek kural satırında birleştirilselerdi verilen bir
+# çek `101 Alınan Çekler`e borç yazar, mizanın "Hazır Değerler" toplamı yine
+# tutar ve kusur GÖRÜNMEZDİ (`bank`/`cash` ayrımının aynı gerekçesi).
+ROLE_INSTRUMENT_RECEIVABLE = "instrument_receivable"
+ROLE_INSTRUMENT_PAYABLE = "instrument_payable"
+
 #: 🔴 TOHUMUN KAYNAĞI — `(role_key, hesap kodu)`. ÇALIŞMA ZAMANI EŞLEMESİ
 #: DEĞİLDİR: `post_document` hesabı DAİMA `posting_rules` tablosundan okur.
 #: Buradaki kodlar yalnızca migration'ın tohumladığı satırların kaynağıdır ve
 #: iki katmanın birebir aynı olduğunu bir test AST ile iddia eder (MU-3B deseni).
 #:
-#: 🔴 `101 Alınan Çekler` / `103 Verilen Çekler` BİLEREK YOKTUR: bu ürünün nakit
-#: tanımı `treasury/balance.py`dir ve çek portföyünü SAYMAZ (modül docstring'i).
+#: 🔴 **ODM-1 — `101`/`103` ARTIK VARDIR.** Eski yorum *"BİLEREK YOKTUR: bu
+#: ürünün nakit tanımı `treasury/balance.py`dir ve çek portföyünü SAYMAZ"*
+#: diyordu. O cümle, kendi devamında bunun *"bir ÜRÜN KARARI"* olduğunu da
+#: söylüyordu; ODM-1'de karar VERİLDİ ve nakit tanımı DEĞİŞTİ: bağlı bir ödeme
+#: nakde ancak enstrüman `collected`/`paid` iken girer (`balance.signed_legs`).
+#: Yani `101`/`103`e kayan bacak, yevmiyeyi Hazine bakiyesinden AYIRMAZ —
+#: tersine, ikisini AYNI anda doğru tutan tek eşlemedir. Kural satırlarının
+#: kendisi ise DEĞİŞMEDİ, yalnız İKİ satır EKLENDİ; eski dördü aynı yerde durur.
+#:
+#: 🔴 Sıra rol adına göre alfabetiktir ve öyle KALMALIDIR: iki katman eşitliği
+#: testi sırayı da kilitler ve satırlar iki ayrı migration'dan tohumlanır.
 PAYMENT_POSTING_RULES: tuple[tuple[str, str], ...] = (
     (ROLE_BANK, "102"),
     (ROLE_CASH, "100"),
+    (ROLE_INSTRUMENT_PAYABLE, "103"),
+    (ROLE_INSTRUMENT_RECEIVABLE, "101"),
     (ROLE_PAYABLE, "320"),
     (ROLE_RECEIVABLE, "120"),
 )

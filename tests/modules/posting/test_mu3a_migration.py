@@ -222,6 +222,7 @@ async def test_tur_donusu_IKINCI_upgrade_de_gecer():
 #: kırılır ve üyenin bir migration'ı olduğu SORULUR.
 LATER_LABELS = [
     "equipment_rental_invoice",  # MU-3D · b7c8d9e0f1a2
+    "financial_instrument",  # ODM-1 · f5a6b7c8d9e0
 ]
 
 

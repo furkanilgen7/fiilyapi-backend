@@ -13,4 +13,5 @@ durumdaydi ve ikisi de "sonra boleriz" diye baslamisti.
 | `summary.py` | K8'in dort KPI karti |
 | `service.py` | is kurallari: CRUD + gecis + kapsam |
 | `router.py` | yedi uc + izin kapilari |
+| `posting.py` | ODM-1 — `source_type` uyesi + `posting_rules` tohumunun kaynagi |
 """
