@@ -16,7 +16,12 @@ import pytest
 from pydantic import ValidationError
 
 from app.modules.projects.models import ProjectInvestment, ProjectLandShare
-from app.modules.projects.schemas import CountPlaceholder, MetricPlaceholder, metric
+from app.modules.projects.schemas import (
+    CountPlaceholder,
+    MetricPlaceholder,
+    metric,
+    restricted,
+)
 from app.modules.subcontractor_progress_payments.models import (
     SubcontractorPaymentStatus,
 )
@@ -37,17 +42,47 @@ from ._projects_cost_bindings import (
 )
 
 
+def _uclu(zarf: MetricPlaceholder) -> tuple[bool, Decimal | None, str | None]:
+    return (zarf.available, zarf.value, zarf.pending_module)
+
+
 def test_dolu_metric_zarfi_pending_module_tasiyamaz() -> None:
     """`available=True` ⇒ `pending_module is None` (ROADMAP §3 borcu)."""
     with pytest.raises(ValidationError):
         MetricPlaceholder(available=True, value=Decimal("1.00"), pending_module="project_costs")
 
 
-def test_bos_metric_zarfi_pending_module_vermeden_kurulamaz() -> None:
-    """Boş zarf HÂLÂ kaynağını bildirmek zorundadır: ekran "hangi modül gelince
-    dolacak" bilgisini oradan basar."""
+def test_zarfin_UC_HALI_ve_ARALARINDAKI_FARK() -> None:
+    """⚠️ **ILR-1/2'DE DEGISTI — SILINMEDI, UCUNCU HAL EKLENDI.**
+
+    Eski adi `test_bos_metric_zarfi_pending_module_vermeden_kurulamaz`di ve
+    `MetricPlaceholder()`in `ValidationError` atmasini cakiyordu. O kural,
+    "rolun izni yok" hâli DOGARKEN gevsetilmek ZORUNDA kaldi: pydantic bu hâli
+    varsayilanlardan ayirt edemez (ucu de `False`/`None`/`None`).
+
+    🔴 Yerine gecen iddia DAHA GUCLUDUR: uc hâlin UCU DE tek kumede cakilir ve
+    aralarindaki FARK gorunur olur. `pending_module` IZIN anlamiyla YUKLENMEZ —
+    "modul yazilmadi" ile "yetkin yok" ayri iki durumdur (kullanici karari
+    2026-08-27) ve ilkini ikincisi icin kullanmak ekrani YALANCI yapardi.
+    """
+    olculen = {
+        "dolu": _uclu(metric(Decimal("62.00"), "site_diary")),
+        "baglanmadi": _uclu(metric(None, "site_diary")),
+        "izin_yok": _uclu(restricted()),
+    }
+
+    assert olculen == {
+        "dolu": (True, Decimal("62.00"), None),
+        "baglanmadi": (False, None, "site_diary"),
+        # 🔑 `pending_module is None` — sahte bir gerekce SOYLEMEZ.
+        "izin_yok": (False, None, None),
+    }, "zarfin uc hâli ayrismiyor — ekran 'yetkin yok'u 'modul bekleniyor' diye basar"
+
+
+def test_dolu_zarf_HALA_pending_module_TASIYAMAZ() -> None:
+    """Gevseyen kural YALNIZ bos taraftir; dolu taraf AYNEN cakili kalir."""
     with pytest.raises(ValidationError):
-        MetricPlaceholder()
+        MetricPlaceholder(available=True, value=Decimal("1.00"), pending_module="site_diary")
 
 
 def test_count_zarfinin_dolu_iken_pending_module_tasimasi_KIRILMAZ() -> None:
