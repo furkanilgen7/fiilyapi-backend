@@ -104,11 +104,7 @@ async def realized_by_item(
     """
     if not item_ids:
         return {}
-    alt = (
-        _realized_line_sums(section_id)
-        .where(SiteDiaryLine.boq_item_id.in_(item_ids))
-        .subquery()
-    )
+    alt = _realized_line_sums(section_id).where(SiteDiaryLine.boq_item_id.in_(item_ids)).subquery()
     rows = await session.execute(select(alt.c.boq_item_id, alt.c.realized))
     return {row[0]: Decimal(row[1]) for row in rows}
 
@@ -261,3 +257,41 @@ async def physical_for_sections(
     olculen = {row[0]: weighted_pct(Decimal(row[1]), Decimal(row[2])) for row in rows}
     # Tahsisi HIC olmayan bolum sorgudan DONMEZ; yuzdesi "yok"tur (0 DEGIL).
     return {sid: olculen.get(sid) for sid in section_ids}
+
+
+async def physical_for_projects(
+    session: AsyncSession, project_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, Decimal | None]:
+    """TOPLU proje yuzdesi — proje KARTLARI icin TEK sorgu.
+
+    🔴 `cost_cards.py` modul kuralı: kart turevleri PROJE BASINA sorgu ACMAZ.
+    `physical_for_project`i dongu icinde cagirmak liste ucunda N+1 acardi.
+    """
+    if not project_ids:
+        return {}
+    taban = (
+        select(
+            Site.project_id.label("project_id"),
+            BoqItem.id.label("boq_item_id"),
+            BoqItem.quantity.label("taban"),
+            BoqItem.unit_price.label("unit_price"),
+        )
+        .join(Site, Site.id == BoqItem.site_id)
+        .where(Site.project_id.in_(project_ids))
+        .subquery()
+    )
+    realized = _realized_line_sums().subquery()
+    stmt = (
+        select(
+            taban.c.project_id,
+            func.coalesce(func.sum(func.coalesce(realized.c.realized, 0) * taban.c.unit_price), 0),
+            func.coalesce(func.sum(taban.c.taban * taban.c.unit_price), 0),
+        )
+        .select_from(
+            taban.join(realized, realized.c.boq_item_id == taban.c.boq_item_id, isouter=True)
+        )
+        .group_by(taban.c.project_id)
+    )
+    rows = await session.execute(stmt)
+    olculen = {row[0]: weighted_pct(Decimal(row[1]), Decimal(row[2])) for row in rows}
+    return {pid: olculen.get(pid) for pid in project_ids}

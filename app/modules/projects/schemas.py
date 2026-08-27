@@ -175,6 +175,15 @@ class ContractingCard(BaseModel):
 
     spent: MetricPlaceholder
     physical_progress: MetricPlaceholder
+    # 🔴 ILR-2'DE EKLENDI — **OPSIYONEL** (`| None`, varsayilan `None`).
+    # `required` yapmak frontend `typecheck`ini KIRARDI (K-DEVIR2): yol ve
+    # operasyon sayisinin sabit kalmasi "kirici degil"in KANITI DEGILDIR.
+    #
+    # `physical_progress` ile KASTEN AYRI: biri gunlukten (saha), oteki
+    # onaylanmis isveren hakedisinden (onay) turer. Mockup'in tek "Fiziksel
+    # İlerleme" karosu ASLINDA mali bir sayi basiyordu (`Harcanan / Sözleşme
+    # Bedeli`) — ONAYLI SAPMA, geri alinmaz.
+    financial_progress: MetricPlaceholder | None = None
     final_progress_payment: MetricPlaceholder
     worker_count: CountPlaceholder
     subcontractor_count: CountPlaceholder

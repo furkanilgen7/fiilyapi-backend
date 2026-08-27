@@ -40,20 +40,45 @@ async def financial_for_project(session: AsyncSession, project_id: uuid.UUID) ->
 
     Hakedis hic yoksa sonuc `0.00`'dir — "bilinmiyor" DEGIL, GERCEKTEN sifir:
     sozlesme kalemleri vardir, onaylanmis hakedis yoktur.
+
+    🔴 Govdesi YOKTUR: toplu hâle DELEGE eder (K3). Iki ayri gövde, zamanla
+    tek proje ile liste ekraninin farkli "%" basmasi demekti.
     """
-    totals = await lines.completed_totals(session, project_id)
-    item_ids = list({contract_item_id for contract_item_id, _ in totals})
-    items = await repository.get_employer_items_by_ids(session, item_ids)
+    return (await financial_for_projects(session, [project_id]))[project_id]
 
-    numerator = _ZERO
-    for (contract_item_id, _site_id), (quantity, _amount) in totals.items():
-        item = items.get(contract_item_id)
-        if item is None:
-            # Kalemi silinmis satir: `totals_from_payments` zaten `None` kalem
-            # kimligini atlar; burada olusabilecek tek hâl kalemin ARADA
-            # silinmesidir — ONAYLI SAPMA, ayni gerekce (spec §6.5 notu).
-            continue
-        numerator += quantity * item.unit_price
 
-    denominator = await repository.get_contract_items_total_value(session, project_id)
-    return weighted_pct(numerator, denominator)
+async def financial_for_projects(
+    session: AsyncSession, project_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, Decimal | None]:
+    """TOPLU mali ilerleme — proje KARTLARI icin (N+1 yasagi, `cost_cards.py`).
+
+    Hakedisler `repository.list_completed_payments_by_projects` ile TEK sorguda
+    gelir (H4 denetimi O1'in cozumu); toplama `lines.totals_from_payments` ile
+    yapilir — toplama kuralinin ikinci kopyasi ACILMAZ (K3).
+    """
+    if not project_ids:
+        return {}
+    grouped = await repository.list_completed_payments_by_projects(session, project_ids)
+
+    item_ids: set[uuid.UUID] = set()
+    per_project: dict[uuid.UUID, dict[tuple[uuid.UUID, uuid.UUID | None], tuple[Decimal, Decimal]]]
+    per_project = {}
+    for project_id, payments in grouped.items():
+        totals = lines.totals_from_payments(payments)
+        per_project[project_id] = totals
+        item_ids.update(contract_item_id for contract_item_id, _ in totals)
+
+    items = await repository.get_employer_items_by_ids(session, list(item_ids))
+    denominators = await repository.get_contract_items_total_by_projects(session, project_ids)
+
+    sonuc: dict[uuid.UUID, Decimal | None] = {}
+    for project_id in project_ids:
+        numerator = _ZERO
+        for (contract_item_id, _site_id), (quantity, _amount) in per_project.get(
+            project_id, {}
+        ).items():
+            item = items.get(contract_item_id)
+            if item is not None:
+                numerator += quantity * item.unit_price
+        sonuc[project_id] = weighted_pct(numerator, denominators.get(project_id, _ZERO))
+    return sonuc

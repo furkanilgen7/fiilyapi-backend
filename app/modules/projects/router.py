@@ -225,7 +225,7 @@ async def create_project_endpoint(
         actor_user_id=current_user.id,
         ip_address=client_ip(request),
     )
-    return await service.build_project_detail(session, project)
+    return await service.build_project_detail(session, project, current_user)
 
 
 @router.patch(
@@ -248,4 +248,4 @@ async def update_project_endpoint(
         actor_user_id=current_user.id,
         ip_address=client_ip(request),
     )
-    return await service.build_project_detail(session, project)
+    return await service.build_project_detail(session, project, current_user)
