@@ -130,9 +130,24 @@ def to_item(
     )
 
 
-async def item_response(session: AsyncSession, item: BoqItem) -> BoqItemResponse:
-    """Tekil kalem yaniti — tahsis toplamini DB'den okur (yazma uclari icin)."""
-    return to_item(item, allocated=await repository.allocated_total_for_item(session, item.id))
+async def item_response(session: AsyncSession, item: BoqItem, actor: User) -> BoqItemResponse:
+    """Tekil kalem yaniti — tahsis toplamini DB'den okur (yazma uclari icin).
+
+    🔴 `actor` ILR-1'de EKLENDI ve varsayilani YOKTUR: yazma ucunun yaniti da
+    OKUMA ucuyle AYNI zarfi tasimalidir, aksi hâlde ekran kaydettikten sonra
+    yuzdeyi KAYBEDER (`build_site_detail` docstring'indeki ayni kanon). Izin de
+    burada olculur — yazma ucu okuma kapisini atlayamaz.
+    """
+    izinli = await can_read(session, actor, _SITE_DIARY)
+    realized = (
+        (await progress.realized_by_item(session, [item.id])).get(item.id) if izinli else None
+    )
+    return to_item(
+        item,
+        allocated=await repository.allocated_total_for_item(session, item.id),
+        realized=realized,
+        izinli=izinli,
+    )
 
 
 def to_group(

@@ -267,8 +267,17 @@ async def test_budget__ELLE_GIRILEN_budget_amount_ILE_AYNI_SEY_DEGILDIR(
     assert satirlar[bos.id].budget_amount is None
 
 
-async def test_progress_pct_BU_DILIMDE_YER_TUTUCU_KALIR(seeded_db, user_factory, project_factory):
-    """⛔ Hakediş türevi — bu dilimde BAĞLANMAZ. Bekçi kapsamı çakar."""
+async def test_progress_pct_ILR1DE_BAGLANDI__gunluk_YOKKEN_SIFIR(
+    seeded_db, user_factory, project_factory
+):
+    """⚠️ **ILR-1'DE DEGISTI.** Eski adi `..._BU_DILIMDE_YER_TUTUCU_KALIR`di ve
+    alanin BAGLANMAMIS kalmasini cakiyordu; kullanici karari (2026-08-27) o
+    beklentiyi gecersiz kildi.
+
+    Yeni iddia: TAHSISI OLAN bolumde payda VARDIR, dolayisiyla yuzde de vardir.
+    Hic gonderilmis gunluk olmadigi icin deger GERCEKTEN `0.00`'dir —
+    "bilinmiyor" degil. Zarf DOLUDUR, yani `pending_module` TASIMAZ.
+    """
     _p, site, user, dolu, _bos = await _kurulum(
         seeded_db, user_factory, project_factory, "BS-7", "bs7@t.co"
     )
@@ -277,9 +286,9 @@ async def test_progress_pct_BU_DILIMDE_YER_TUTUCU_KALIR(seeded_db, user_factory,
         dolu.id
     ]
 
-    assert (satir.progress_pct.available, satir.progress_pct.pending_module) == (
-        False,
-        "progress_payments",
+    assert (satir.progress_pct.available, satir.progress_pct.pending_module) == (True, None)
+    assert satir.progress_pct.value == Decimal("0.00"), (
+        "tahsisi olan ama gunlugu olmayan bolum: OLCULMUS sifir (yer tutucu DEGIL)"
     )
 
 

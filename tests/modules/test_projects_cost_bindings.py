@@ -308,9 +308,12 @@ async def test_taahhut_kartinda_kar_marj_alani_YOKTUR(
     body = (await client.get("/projects", headers=_auth(token))).json()
 
     card = _card(body, project.id, "contracting")
+    # ⚠️ ILR-2: `financial_progress` EKLENDI (opsiyonel alan). Kâr/marj alani
+    # HALA YOKTUR — testin asil iddiasi budur ve bozulmadi.
     assert set(card) == {
         "spent",
         "physical_progress",
+        "financial_progress",
         "final_progress_payment",
         "worker_count",
         "subcontractor_count",
