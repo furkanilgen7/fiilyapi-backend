@@ -6,7 +6,7 @@
 
 ## Hiçbir toplam BURADA hesaplanmaz
 
-Kişi adam-günü, günlük sayılar, `+`/`G` işaretleri ve FM saat toplamı `matrix.py`
+Kişi saat toplamı, adam-günü ve günlük toplamlar `matrix.py`
 tarafından hesaplanmış olarak GELİR. Excel kendi toplamını kurarsa ekran ile
 dosya zamanla ayrışır ve hangisinin doğru olduğu tartışılır hâle gelir; bu yüzden
 burada yalnız BİÇİMLENDİRME vardır.
@@ -29,7 +29,12 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from app.modules.site_diary.models import WorkerSource
 from app.modules.timesheet.models import TimesheetCode
-from app.modules.timesheet.schemas import TimesheetDayTotal, TimesheetMatrix, TimesheetMatrixRow
+from app.modules.timesheet.schemas import (
+    TimesheetCell,
+    TimesheetDayTotal,
+    TimesheetMatrix,
+    TimesheetMatrixRow,
+)
 
 XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -42,24 +47,28 @@ INFO_LABELS: tuple[str, ...] = (
     "Dönem",
     "Bölüm",
     "İşçi Sayısı",
+    "Toplam Saat",
     "Toplam Adam-Gün",
-    "Fazla Mesai (saat)",
 )
 
 #: Kişi sütunları (ŞP 148-150 / 168-170). Meslek ile taşeron firma AYRI
 #: sütunlardır: mockup'taki "Demir Ustası — Akın İnşaat" bir SUNUM kararıdır.
 COLUMN_HEADERS: tuple[str, ...] = ("Ad Soyad", "Meslek", "Tür", "Taşeron Firma")
 
-TOTAL_HEADER = "Toplam"
+HOURS_TOTAL_HEADER = "Toplam Saat"
+
+TOTAL_HEADER = "Adam-Gün"
 
 DAY_TOTAL_LABEL = "Günlük Toplam"
 
-#: Mockup'ın hücre harfleri (ŞP 107-111 renk açıklaması); ham enum değeri yazılmaz.
+#: Kodlu (saatsiz) hücrenin harfleri; ham enum değeri yazılmaz.
+#:
+#: 🔴 PUAN-SAAT: `Ç` ve `FM` KALKTI — çalışılan gün artık hücreye SAAT olarak
+#: yazılır (E5 236), harf değil. Geriye yalnız "çalışılmadı ama sebebi var"
+#: kodları kaldı.
 CODE_LABELS: dict[TimesheetCode, str] = {
-    TimesheetCode.worked: "Ç",
     TimesheetCode.leave: "İ",
     TimesheetCode.holiday: "T",
-    TimesheetCode.overtime: "FM",
     TimesheetCode.temporary_duty: "G",
 }
 
@@ -118,22 +127,32 @@ def _info_values(matrix: TimesheetMatrix) -> tuple[str, ...]:
         # Bölüm seçilmemişse şerit bir bölüm adı İDDİA ETMEZ (matris ile aynı kural).
         matrix.section_name or EMPTY_VALUE,
         str(matrix.worker_count),
+        str(matrix.total_hours),
         str(matrix.total_man_days),
-        str(matrix.total_overtime_hours),
     )
 
 
 def _day_total_label(total: TimesheetDayTotal) -> str:
-    """ŞP 237 "4+" · ŞP 245 "3G".
+    """Gün sütununun ayak hücresi — o günün SAAT toplamı + `G` işareti.
 
-    Sayı `matrix.py`den GELİR (FM'li gün çalışılmış sayılır, geçici görev
-    sayılmaz); `+` ve `G` yalnızca birer İŞARETTİR, sayıyı değiştirmezler.
+    Sayı `matrix.py`den GELİR (girilmiş saatlerin toplamı); `G` yalnızca bir
+    İŞARETTİR, sayıyı değiştirmez — geçici görev saate 0 katar ama sütunda
+    kimsenin bulunmadığı izlenimini vermemelidir.
     """
-    return (
-        f"{total.worked_count}"
-        + ("+" if total.has_overtime else "")
-        + ("G" if total.temporary_duty_count else "")
-    )
+    return f"{total.total_hours}" + ("G" if total.temporary_duty_count else "")
+
+
+def _cell_label(cell: TimesheetCell) -> str:
+    """Hücrenin metni: SAAT ya da kod harfi — hücrenin sözleşmesi gereği tam biri.
+
+    `CODE_LABELS` doğrudan indekslenmez: paylaşılan enum genişlerse export
+    sessizce 500 olurdu (`source_label` ile aynı ders).
+    """
+    if cell.hours is not None:
+        return str(cell.hours)
+    if cell.code is None:  # pragma: no cover - DB CHECK'i bunu imkansiz kilar
+        return EMPTY_VALUE
+    return CODE_LABELS.get(cell.code, f"{UNKNOWN_LABEL_PREFIX}{cell.code.value}")
 
 
 def _person_cells(row: TimesheetMatrixRow) -> tuple[str, ...]:
@@ -165,20 +184,22 @@ def _write_header(sheet: Worksheet, days: list[TimesheetDayTotal]) -> None:
     _write_row(
         sheet,
         HEADER_ROW,
-        COLUMN_HEADERS + tuple(str(total.work_date.day) for total in days) + (TOTAL_HEADER,),
+        COLUMN_HEADERS
+        + tuple(str(total.work_date.day) for total in days)
+        + (HOURS_TOTAL_HEADER, TOTAL_HEADER),
     )
 
 
 def _write_person(
     sheet: Worksheet, row_number: int, row: TimesheetMatrixRow, days: list[TimesheetDayTotal]
 ) -> None:
-    codes = {cell.work_date: CODE_LABELS[cell.code] for cell in row.cells}
+    values = {cell.work_date: _cell_label(cell) for cell in row.cells}
     _write_row(
         sheet,
         row_number,
         _person_cells(row)
-        + tuple(codes.get(total.work_date) for total in days)
-        + (str(row.man_days),),
+        + tuple(values.get(total.work_date) for total in days)
+        + (str(row.total_hours), str(row.man_days)),
     )
 
 
@@ -191,12 +212,16 @@ def _write_day_totals(
         (DAY_TOTAL_LABEL,)
         + (None,) * (_PERSON_COLUMN_COUNT - 1)
         + tuple(_day_total_label(total) for total in days)
-        + (str(matrix.total_man_days),),
+        + (str(matrix.total_hours), str(matrix.total_man_days)),
     )
 
 
 def _apply_layout(sheet: Worksheet, day_count: int) -> None:
-    widths = _PERSON_COLUMN_WIDTHS + (_DAY_COLUMN_WIDTH,) * day_count + (_TOTAL_COLUMN_WIDTH,)
+    widths = (
+        _PERSON_COLUMN_WIDTHS
+        + (_DAY_COLUMN_WIDTH,) * day_count
+        + (_TOTAL_COLUMN_WIDTH, _TOTAL_COLUMN_WIDTH)
+    )
     for index, width in enumerate(widths, start=1):
         sheet.column_dimensions[
             sheet.cell(row=HEADER_ROW, column=index).column_letter

@@ -10,9 +10,10 @@ yalnız SQL kurar, yetki/kapsam kararı vermez.
 
 import calendar
 import uuid
-from datetime import date
+from datetime import date, timedelta
+from decimal import Decimal
 
-from sqlalchemy import Select, delete, select, tuple_
+from sqlalchemy import Select, delete, func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.contracts.models import Subcontractor
@@ -33,6 +34,60 @@ def period_days(year: int, month: int) -> list[date]:
     """
     _, last = period_bounds(year, month)
     return [date(year, month, day) for day in range(1, last.day + 1)]
+
+
+#: Haftanin gun sayisi — ISO hafta Pazartesi baslar, Pazar biter (mockup E5
+#: 216-223 "Pzt … Paz" ve E5 96 "13 – 19 Temmuz 2026").
+DAYS_IN_WEEK = 7
+
+
+def week_bounds(iso_year: int, iso_week: int) -> tuple[date, date]:
+    """ISO haftasinin ilk (Pazartesi) ve SON (Pazar) gunu — ikisi de dahil.
+
+    `date.fromisocalendar` ISO-8601'i uygular: hafta numarasi TAKVIM yilinin
+    degil ISO yilinin parcasidir (`iso_year`), bu yuzden ikisi AYRI parametredir.
+    Yil sinirindaki hafta (orn. 2026-W01, 29 Aralik'ta baslar) aksi hâlde iki
+    farkli aralik uretirdi.
+    """
+    start = date.fromisocalendar(iso_year, iso_week, 1)
+    return start, start + timedelta(days=DAYS_IN_WEEK - 1)
+
+
+def week_days(iso_year: int, iso_week: int) -> list[date]:
+    """Haftanin YEDI gunu — sutun iskeleti (E5 216-223).
+
+    Iskelet hucrelerden DEGIL takvimden uretilir: kaydi olmayan gun de bir
+    sutundur (mockup'ta "—" ile bos gorunur).
+    """
+    start, _ = week_bounds(iso_year, iso_week)
+    return [start + timedelta(days=offset) for offset in range(DAYS_IN_WEEK)]
+
+
+def weeks_of_month(year: int, month: int) -> list[tuple[int, int]]:
+    """Ayla KESISEN ISO haftalari, sirali (E5 141-176 "27. … 31. Hafta").
+
+    Ayin ilk ve son gununun haftalari dahildir; bu yuzden serit ayin disina
+    tasan gunleri de kapsar (E5 145: 27. hafta "29 Haz – 5 Tem"). Serit ile
+    haftalik ekran AYNI kapsami gostermelidir, aksi hâlde "Ay Toplami" hicbir
+    haftanin toplamlarindan cikmaz.
+    """
+    first, last = period_bounds(year, month)
+    weeks: list[tuple[int, int]] = []
+    cursor = first - timedelta(days=first.weekday())
+    while cursor <= last:
+        iso = cursor.isocalendar()
+        weeks.append((iso.year, iso.week))
+        cursor += timedelta(days=DAYS_IN_WEEK)
+    return weeks
+
+
+def _week_conditions(site_id: uuid.UUID, iso_year: int, iso_week: int) -> list:
+    start, end = week_bounds(iso_year, iso_week)
+    return [
+        TimesheetEntry.site_id == site_id,
+        TimesheetEntry.work_date >= start,
+        TimesheetEntry.work_date <= end,
+    ]
 
 
 def _period_conditions(site_id: uuid.UUID, year: int, month: int) -> list:
@@ -140,3 +195,75 @@ async def delete_entries(session: AsyncSession, entry_ids: list[uuid.UUID]) -> N
     await session.execute(
         delete(TimesheetEntry).where(TimesheetEntry.id.in_(entry_ids)),
     )
+
+
+# --- Haftalik yuzey (PUAN-SAAT) ---
+
+
+async def week_rows(
+    session: AsyncSession,
+    site_id: uuid.UUID,
+    *,
+    iso_year: int,
+    iso_week: int,
+    section_id: uuid.UUID | None,
+) -> list[tuple[TimesheetEntry, Personnel, str | None]]:
+    """Haftalik ekranin TEK hucre sorgusu — `matrix_rows`in hafta kapsamli esi.
+
+    Ayni JOIN ve ayni siralama (`full_name`, `id`, `work_date`) kullanilir:
+    haftalik ekran ile aylik matris satirlari farkli sirada gosterirse ayni
+    veriye bakan iki ekran birbirini yalanlar.
+    """
+    stmt = (
+        select(TimesheetEntry)
+        .where(*_week_conditions(site_id, iso_year, iso_week))
+        .join(Personnel, Personnel.id == TimesheetEntry.personnel_id)
+        .outerjoin(Subcontractor, Subcontractor.id == Personnel.subcontractor_id)
+        .add_columns(Personnel, Subcontractor.name)
+        .order_by(Personnel.full_name, Personnel.id, TimesheetEntry.work_date)
+    )
+    if section_id is not None:
+        stmt = stmt.where(TimesheetEntry.section_id == section_id)
+    return [tuple(row) for row in (await session.execute(stmt)).all()]
+
+
+async def locked_week_entries(
+    session: AsyncSession, site_id: uuid.UUID, *, iso_year: int, iso_week: int
+) -> list[TimesheetEntry]:
+    """`SELECT … FOR UPDATE` — **HAFTA**+santiye kapsaminin TAMAMI kilitlenir.
+
+    🔴 Kapsam `locked_period_entries`ten (ay) DARDIR ve oyle olmak ZORUNDADIR:
+    kaydetme artik haftalik "degistirme"dir, ay kapsamini kilitleyip hafta
+    kapsamini silmek ya da tersi, ayin geri kalanini supururdu.
+
+    Siralama (`personnel_id`, `work_date`) SABITTIR — iki istek satirlari farkli
+    sirada kilitlerse kilitlenme (deadlock) dogar.
+    """
+    stmt = (
+        select(TimesheetEntry)
+        .where(*_week_conditions(site_id, iso_year, iso_week))
+        .order_by(TimesheetEntry.personnel_id, TimesheetEntry.work_date)
+        .with_for_update()
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def daily_hours_between(
+    session: AsyncSession, site_id: uuid.UUID, first: date, last: date
+) -> dict[date, Decimal]:
+    """Gun -> girilmis saat toplami (santiye kapsaminda), TEK gruplu sorgu.
+
+    Ay seridinin bes haftasi icin bes ayri sorgu KOSULMAZ: aralik bir kez
+    okunur, haftalara Python'da bolunur.
+    """
+    rows = await session.execute(
+        select(TimesheetEntry.work_date, func.coalesce(func.sum(TimesheetEntry.hours), 0))
+        .where(
+            TimesheetEntry.site_id == site_id,
+            TimesheetEntry.work_date >= first,
+            TimesheetEntry.work_date <= last,
+            TimesheetEntry.hours.is_not(None),
+        )
+        .group_by(TimesheetEntry.work_date)
+    )
+    return {work_date: Decimal(total) for work_date, total in rows.all()}

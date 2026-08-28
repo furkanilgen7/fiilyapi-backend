@@ -1,83 +1,97 @@
-"""Puantaj matris şemaları — puantaj spec §2, §3 · mockup ŞP + E5.
+"""Puantaj şemaları — **saat bazlı** (PUAN-SAAT) · mockup `Ekran 5 - Puantaj.dc.html`.
 
 Alanların TAMAMI mockup'tan gelir ve satır numarasıyla gerekçelidir (WORKFLOW §3):
 
 | Alan | Kaynak |
 |---|---|
-| `full_name` / `trade` | ŞP 149 (ad + meslek alt satırı) · E5 92-93 (ayrı sütun) |
-| `source` | ŞP 150/170 "Şirket" / "Taşeron" rozeti |
-| `subcontractor_name` | ŞP 169 "Demir Ustası — **Akın İnşaat**" |
-| `cells[].code` | ŞP 107-111 renk açıklaması (Ç/İ/T/FM/G) |
-| `cells[].overtime_hours` | ŞP 119 "128 saat" — onaylı sapma (spec §7 S2) |
-| `man_days` | ŞP 166/186/206/226 "Toplam" sütunu |
-| `day_totals[].worked_count` | ŞP 232-246 · E5 198-211 "Günlük Toplam" |
-| `day_totals[].has_overtime` | ŞP 237 "4+" |
-| `day_totals[].temporary_duty_count` | ŞP 245 "3G" |
-| `worker_count` | ŞP 118 "48 işçi" |
-| `total_man_days` | ŞP 119 "864 adam/gün" + ŞP 248 "86" |
-| `total_overtime_hours` | ŞP 119 "128 saat fazla mesai" |
-| `section_name` | ŞP 117 "Kat 6–10 Kaba İnşaat" |
+| `cells[].hours` | E5 236 `<input type="number" value="9">` |
+| `cells[].code` | E5 262 "İzin" · E5 283 "Görev" rozetleri |
+| `normal_hours` / `overtime_hours` / `total_hours` | E5 225-227 satır kolonları |
+| `day_totals[].total_hours` | E5 320-326 "Günlük Toplam" |
+| `week.*_hours` | E5 328-330 tfoot + E5 179-198 KPI kartları |
+| `month_weeks[]` | E5 141-176 ay içi hafta şeridi |
+| `month_total_hours` / `month_man_days` | E5 171-174 · E5 347-350 "588 saat · 65,3 adam/gün" |
+| `full_name` / `trade` / `source` / `subcontractor_name` | E5 233-234 kişi hücresi |
 
 **Toplam kolonu AÇILMAZ** (spec §2): buradaki her toplam TÜREVDİR, her istekte
-hücrelerden hesaplanır.
+hücrelerden hesaplanır. FM ÖZELLİKLE saklanmaz — `hours.week_totals` üretir.
 
-**Onay/durum alanı YOKTUR** (spec §7 S3): mockup'ta yalnız "Kaydet" vardır
-(ŞP 101); `status`/`submitted_at` benzeri bir alan bu şemalara EKLENMEZ.
+**Onay/durum alanı YOKTUR** (spec §7 S3): mockup'ta yalnız "Haftayı Kaydet"
+vardır (E5 76); `status`/`submitted_at` benzeri bir alan bu şemalara EKLENMEZ.
 """
 
 import uuid
 from datetime import date
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.modules.site_diary.models import WorkerSource
 from app.modules.timesheet.models import TimesheetCode
 
 
 class TimesheetCell(BaseModel):
-    """Tek gün hücresi. Girilmemiş gün hücre ÜRETMEZ — matris SEYREKTİR.
+    """Tek gün hücresi — **saat VEYA kod**. Girilmemiş gün hücre ÜRETMEZ.
 
-    Ayın her günü için boş hücre üretmek 31×48 = 1488 nesnelik bir gövdeyi
-    çoğunlukla `null` ile doldururdu; ekran gün iskeletini `day_totals`ten alır.
+    Ayın/haftanın her günü için boş hücre üretmek gövdeyi çoğunlukla `null` ile
+    doldururdu; ekran gün iskeletini `day_totals`ten alır.
     """
 
     work_date: date
-    code: TimesheetCode
-    overtime_hours: Decimal | None
+    hours: Decimal | None
+    code: TimesheetCode | None
     section_id: uuid.UUID | None
 
 
+class TimesheetRowTotals(BaseModel):
+    """Bir satırın haftalık türevleri (E5 225-227 · kural `hours.week_totals`)."""
+
+    normal_hours: Decimal
+    overtime_hours: Decimal
+    total_hours: Decimal
+
+
+# --- Aylık matris (arşiv/Excel yüzeyi) ---
+
+
 class TimesheetMatrixRow(BaseModel):
-    """Bir personelin ay satırı (ŞP 148-167)."""
+    """Bir personelin AY satırı.
+
+    `man_days` artık **TÜREVDİR ve ondalıklıdır**: `toplam saat ÷ 9`
+    (E5 349-350 "588 saat · 65,3 adam/gün"). Gün SAYMAZ — yarım günün
+    temsil edilebildiği bir dünyada gün saymak 4 saatlik günü tam gün gösterirdi.
+    """
 
     personnel_id: uuid.UUID
     full_name: str
     trade: str | None
     source: WorkerSource
-    # Meslek ile firma AYRI alanlardır: ŞP 169'daki "Demir Ustası — Akın İnşaat"
+    # Meslek ile firma AYRI alanlardır: E5 234'teki "Demir Ustası · Akın İnş."
     # birleştirmesi bir SUNUM kararıdır, backend iki bilgiyi yapıştırmaz.
     subcontractor_name: str | None
-    man_days: int
+    total_hours: Decimal
+    man_days: Decimal
     cells: list[TimesheetCell]
 
 
 class TimesheetDayTotal(BaseModel):
-    """Bir gün sütununun ayak satırı (ŞP 230-247).
+    """Bir gün sütununun ayak satırı (E5 320-326).
 
-    `worked_count` FM'li günü SAYAR (E5 203: FM'li 6. sütun "4"tür), geçici
-    görevi SAYMAZ (ŞP 245: dört kişinin kayıtlı olduğu sütun "3G"dir). `G` bu
-    yüzden ayrı bir sayaçtır, `+` ise yalnız bir işarettir — sayıyı değiştirmez.
+    `total_hours` o günün girilmiş saat toplamıdır. `worked_day_count` SAATLİ
+    hücreleri sayar (kodlu hücre çalışılmış değildir); `leave_count` ve
+    `temporary_duty_count` ayrı sayaçlardır — bir gün hem izinli hem çalışılmış
+    sayılmaz.
     """
 
     work_date: date
-    worked_count: int
-    has_overtime: bool
+    total_hours: Decimal
+    worked_day_count: int
+    leave_count: int
     temporary_duty_count: int
 
 
 class TimesheetMatrix(BaseModel):
-    """ŞP/E5 puantaj ekranının tamamı: başlık şeridi + satırlar + ayak satırı."""
+    """Aylık matris — Excel çıktısının ve arşiv okumasının zarfı."""
 
     site_id: uuid.UUID
     site_name: str
@@ -85,20 +99,87 @@ class TimesheetMatrix(BaseModel):
     project_name: str
     year: int
     month: int
-    # Bölüm süzgeci (ŞP 99). Seçilmemişse şerit bir bölüm adı İDDİA ETMEZ.
+    # Bölüm süzgeci. Seçilmemişse şerit bir bölüm adı İDDİA ETMEZ.
     section_id: uuid.UUID | None
     section_name: str | None
-    # ŞP 116-119 başlık şeridi. Ayrı bir `header` nesnesi AÇILMAZ: aynı sayılar
-    # ekranın iki yerinde iki kaynaktan gelirse zamanla ayrışır.
     worker_count: int
-    total_man_days: int
-    total_overtime_hours: Decimal
+    total_hours: Decimal
+    #: `total_hours ÷ 9` — satır adam-günlerinin toplamı DEĞİL saatten türer
+    #: (satır bazında yuvarlanıp toplansaydı ekranın iki yeri farklı sayı gösterirdi).
+    total_man_days: Decimal
     rows: list[TimesheetMatrixRow]
     day_totals: list[TimesheetDayTotal]
 
 
+# --- Haftalık ekran (E5'in kendisi) ---
+
+
+class TimesheetWeekRow(BaseModel):
+    """Bir personelin HAFTA satırı: 7 gün + Normal/FM/Toplam (E5 230-249)."""
+
+    personnel_id: uuid.UUID
+    full_name: str
+    trade: str | None
+    source: WorkerSource
+    subcontractor_name: str | None
+    cells: list[TimesheetCell]
+    totals: TimesheetRowTotals
+
+
+class TimesheetWeekSummary(BaseModel):
+    """Ay içi hafta şeridinin bir kutusu (E5 143-176).
+
+    `has_entries` "girilmedi" rozetini (E5 163) belirler ve `total_hours == 0`
+    ile AYNI ŞEY DEĞİLDİR: hepsi izinli geçmiş bir hafta girilmiştir ve 0 saattir.
+    """
+
+    iso_year: int
+    iso_week: int
+    start_date: date
+    end_date: date
+    total_hours: Decimal
+    has_entries: bool
+
+
+class TimesheetWeek(BaseModel):
+    """E5 ekranının tamamı: hafta şeridi + KPI + 7 günlük ızgara + tfoot."""
+
+    site_id: uuid.UUID
+    site_name: str
+    project_id: uuid.UUID
+    project_name: str
+    iso_year: int
+    iso_week: int
+    start_date: date
+    end_date: date
+    section_id: uuid.UUID | None
+    section_name: str | None
+    #: E5 71 başlığı ekranda YAZILIDIR; istemci sabiti kendi yazmasın diye yayınlanır.
+    normal_day_hours: Decimal
+    weekly_normal_hours: Decimal
+    worker_count: int
+    #: E5 179-198 KPI kartları + E5 328-330 tfoot — TEK kaynak.
+    totals: TimesheetRowTotals
+    #: E5 191-194 "İzin 27 saat · 3 gün". ⚠️ Mockup o kartta geçici görevi de
+    #: izne katıyor (2 izin + 1 görev = "3 gün"); backend İKİSİNİ AYIRIR ve
+    #: uydurma toplama YAPMAZ (kusur raporlandı).
+    leave_day_count: int
+    temporary_duty_day_count: int
+    rows: list[TimesheetWeekRow]
+    day_totals: list[TimesheetDayTotal]
+    #: Ay şeridi (E5 137-176). Haftanın İÇİNDE bulunduğu takvim ayıdır.
+    month_year: int
+    month_month: int
+    month_total_hours: Decimal
+    month_man_days: Decimal
+    month_weeks: list[TimesheetWeekSummary]
+
+
+# --- Yazma ---
+
+
 class TimesheetCellInput(BaseModel):
-    """`PUT` gövdesinin tek hücresi.
+    """`PUT` gövdesinin tek hücresi — **saat XOR kod**.
 
     `project_id` gövdede YOKTUR: kapsam alanı şantiyeden KOPYALANIR, istemciden
     alınsaydı görünür bir şantiyeye görünmez bir projenin hücresi yazılabilirdi.
@@ -108,19 +189,34 @@ class TimesheetCellInput(BaseModel):
 
     personnel_id: uuid.UUID
     work_date: date
-    code: TimesheetCode
-    # Aralık DB CHECK'i (`0 < saat <= 24`) ile BİREBİR aynı; kodla ilişkisi
-    # `guards.OVERTIME_HOURS_ONLY_FOR_OVERTIME` korkuluğundadır (Pydantic tek
-    # alana bakar, kural iki alanı birlikte ilgilendirir).
-    overtime_hours: Decimal | None = Field(default=None, gt=0, le=24, decimal_places=1)
+    # Aralık DB CHECK'i (`0 < saat <= 24`) ile BİREBİR aynı.
+    hours: Decimal | None = Field(default=None, gt=0, le=24, decimal_places=1)
+    code: TimesheetCode | None = None
     section_id: uuid.UUID | None = None
 
+    @model_validator(mode="after")
+    def _hours_xor_code(self) -> "TimesheetCellInput":
+        """Şema kapısı DB CHECK'inin (`ck_timesheet_entries_hours_xor_code`)
+        İKİZİDİR, YERİNE GEÇMEZ: burası kullanıcıya 422 ile hangi hücrenin bozuk
+        olduğunu söyler, DB ise kuralı her yazma yolunda (migration, elle SQL,
+        gelecekteki ikinci bir uç) zorlar. Biri düşerse öteki ayakta kalır."""
+        if (self.hours is None) == (self.code is None):
+            raise ValueError(
+                "Puantaj hücresi ya çalışılan saati ya da bir kodu (izin/tatil/görev) "
+                "taşımalıdır; ikisi birden ya da hiçbiri gönderilemez."
+            )
+        return self
 
-class TimesheetSave(BaseModel):
-    """⚠️ **DEĞİŞTİRME semantiği** (spec §7 S4): gövde dönem+şantiye kapsamının
 
-    TAM kümesidir; gönderilmeyen hücre SİLİNİR. Mockup'ta tek "Kaydet" düğmesi
-    vardır (ŞP 101) — ekran matrisi bütün olarak kaydeder.
+class TimesheetWeekSave(BaseModel):
+    """⚠️ **DEĞİŞTİRME semantiği**: gövde **HAFTA**+şantiye kapsamının TAM kümesidir;
+
+    gövdede geçmeyen hücre SİLİNİR. Mockup'ta tek "Haftayı Kaydet" düğmesi
+    vardır (E5 76) — ekran haftayı bütün olarak kaydeder.
+
+    🔴 Kapsam **AY DEĞİL HAFTADIR.** Ay kapsamlı bir silme, bir haftayı
+    kaydetmeyi ayın geri kalanını süpüren bir işleme çevirirdi (bekçi:
+    `tests/timesheet/test_week_save.py::test_hafta_kaydetmek_ayin_diger_haftasina_DOKUNMAZ`).
     """
 
     model_config = ConfigDict(extra="forbid")

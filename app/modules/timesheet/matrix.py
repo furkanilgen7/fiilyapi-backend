@@ -1,31 +1,27 @@
-"""Puantaj matrisinin kurulumu ve TÜREV toplamları (spec §3) — mockup ŞP + E5.
+"""Aylık matrisin kurulumu ve TÜREV toplamları — **saat bazlı** (PUAN-SAAT).
 
 Bu dosya `site_diary/summary.py`nin kardeşidir: hiçbir şey YAZMAZ, kapsam kararı
-VERMEZ (onu `service.visible_site` verir), yalnız hücreleri ekranın gördüğü
-şekle getirir.
+VERMEZ (onu `service.visible_site` verir), yalnız hücreleri ekranın/Excel'in
+gördüğü şekle getirir.
 
-## Toplam kuralları ve mockup gerekçeleri
+## Toplam kuralları
 
-* **Adam-gün = `worked` + `overtime`** — E5 122'de Mehmet'in 6. günü FM'dir,
-  diğer üçü Ç'dir ve E5 203'te o sütunun toplamı **4**'tür: FM'li gün çalışılmış
-  sayılır. Aynısı E5 149 (Ali'nin FM'i) → E5 210 "4".
-* **`temporary_duty` adam-güne GİRMEZ** — ŞP 245'te 13. sütun **"3G"**dir: o gün
-  dört kişinin dördü de kayıtlıdır (Hasan `G`, ŞP 203) ama sayı 3'tür. `G` sayıya
-  katılmaz, ayrı işaretlenir.
-* **`+` yalnız bir işarettir** — ŞP 237 "4+": sayı (4) değişmez, sütunda en az bir
-  FM olduğu bildirilir.
-* **`İ` ve `T` sayılmaz** — ŞP 235-236'da tatil sütunlarının toplamı 0'dır.
-* **Toplam adam-gün = kişi toplamlarının toplamı** — ŞP 248 "86" = 22+20+23+21
-  (ŞP 166/186/206/226). Ayrı bir sorgudan gelmez, satırlardan toplanır.
-* **FM saat toplamı YALNIZ girilmiş saatlerden** (spec §7 S2) — saat opsiyoneldir;
-  girilmemiş bir FM hücresi ŞP 119'un "128 saat" toplamına 0 katar.
+* **Toplam saat = girilmiş `hours` alanlarının toplamı.** Kodlu hücre (izin /
+  tatil / geçici görev) saate 0 katar — E5 191'deki "İzin 27 saat" bir SUNUM
+  çarpımıdır (3 gün × 9), gerçek bir çalışma saati değildir ve toplamların
+  içine KARIŞTIRILMAZ.
+* **Adam-gün = `toplam saat ÷ 9`** (E5 349-350: `588 ÷ 9 = 65,3`). 🔴 Bu artık
+  bir GÜN SAYISI değil bir TÜREVDİR; tam sayı değildir.
+* **Genel adam-gün, satır adam-günlerinin TOPLAMI DEĞİLDİR:** aylık toplam
+  saatten bir kez türer. Satır bazında yuvarlanıp toplansaydı ekranın iki yeri
+  farklı sayı gösterirdi (yuvarlama hatası birikirdi).
+* **`worked_day_count` SAATLİ hücreleri sayar.** Kaç kişinin o gün sahada
+  olduğudur; 4 saatlik gün de 1 kişidir — ama adam-güne 4/9 katar.
 
 ## Boş dönemde ne dönülür?
 
-Satır listesi BOŞTUR ama gün iskeleti ve sıfır toplamlar DURUR. Mockup'ta boş
-durum ekranı yoktur ve matris kişi ÖNERMEZ: ŞP 118 "48 işçi" rozeti tablodaki
-satırları sayar, kartoteksin tamamını değil. Satır ekleme kartoteksten seçmedir
-(`GET /personnel`, T2) — bu uç o kararı vermez.
+Satır listesi BOŞTUR ama gün iskeleti ve sıfır toplamlar DURUR. Matris kişi
+ÖNERMEZ: rozet tablodaki satırları sayar, kartoteksin tamamını değil.
 """
 
 import uuid
@@ -36,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.personnel.models import Personnel
 from app.modules.projects.models import Project
 from app.modules.sites.models import Section, Site
+from app.modules.timesheet import hours as hours_rules
 from app.modules.timesheet import repository
 from app.modules.timesheet.models import TimesheetCode, TimesheetEntry
 from app.modules.timesheet.schemas import (
@@ -45,45 +42,70 @@ from app.modules.timesheet.schemas import (
     TimesheetMatrixRow,
 )
 
-_ZERO_HOURS = Decimal("0.0")
+_ZERO_HOURS = hours_rules.ZERO_HOURS
 
-MAN_DAY_CODES = frozenset({TimesheetCode.worked, TimesheetCode.overtime})
-"""Adam-güne sayılan kodlar — TEK tanım.
 
-Kişi toplamı, günlük sayı ve genel toplam bu kümeyi kullanmazsa ekranın üç
-yerinde üç farklı sayı görünür.
-"""
+def worked_day_clause():
+    """"Sahada geçmiş gün" ölçütünün TEK tanımı: hücrede SAAT vardır.
+
+    🔴 Eski `MAN_DAY_CODES` kümesinin yerini alır. Bordro (`payroll`) ve puantaj
+    aynı ölçütü kullanmazsa bir kişinin "kaç gün çalıştığı" iki ekranda iki
+    farklı sayı olur. Kod taşıyan hücre (izin/tatil/görev) çalışılmış DEĞİLDİR.
+    """
+    return TimesheetEntry.hours.is_not(None)
 
 
 class _Row:
     """Bir personelin biriktiricisi. Sözlük EKLEME SIRASINI korur ve sorgu
     `Personnel.full_name` ile sıralı gelir — çıktı da ada göre sıralıdır."""
 
-    __slots__ = ("personnel", "subcontractor_name", "cells")
+    __slots__ = ("personnel", "subcontractor_name", "cells", "total_hours")
 
     def __init__(self, personnel: Personnel, subcontractor_name: str | None) -> None:
         self.personnel = personnel
         self.subcontractor_name = subcontractor_name
         self.cells: list[TimesheetCell] = []
+        self.total_hours = _ZERO_HOURS
 
 
-class _DayTotal:
-    """Bir gün sütununun biriktiricisi (ŞP 230-247)."""
+class DayAccumulator:
+    """Bir gün sütununun biriktiricisi (E5 320-326). Haftalık ekran da kullanır."""
 
-    __slots__ = ("worked_count", "has_overtime", "temporary_duty_count")
+    __slots__ = ("total_hours", "worked_day_count", "leave_count", "temporary_duty_count")
 
     def __init__(self) -> None:
-        self.worked_count = 0
-        self.has_overtime = False
+        self.total_hours = _ZERO_HOURS
+        self.worked_day_count = 0
+        self.leave_count = 0
         self.temporary_duty_count = 0
 
     def add(self, entry: TimesheetEntry) -> None:
-        if entry.code in MAN_DAY_CODES:
-            self.worked_count += 1
-        if entry.code is TimesheetCode.overtime:
-            self.has_overtime = True
-        if entry.code is TimesheetCode.temporary_duty:
+        if entry.hours is not None:
+            self.total_hours += entry.hours
+            self.worked_day_count += 1
+            return
+        if entry.code is TimesheetCode.leave:
+            self.leave_count += 1
+        elif entry.code is TimesheetCode.temporary_duty:
             self.temporary_duty_count += 1
+
+    def to_schema(self, work_date) -> TimesheetDayTotal:
+        return TimesheetDayTotal(
+            work_date=work_date,
+            total_hours=self.total_hours,
+            worked_day_count=self.worked_day_count,
+            leave_count=self.leave_count,
+            temporary_duty_count=self.temporary_duty_count,
+        )
+
+
+def to_cell(entry: TimesheetEntry) -> TimesheetCell:
+    return TimesheetCell(
+        work_date=entry.work_date,
+        hours=entry.hours,
+        code=entry.code,
+        section_id=entry.section_id,
+    )
 
 
 def _to_row(row: _Row) -> TimesheetMatrixRow:
@@ -94,7 +116,8 @@ def _to_row(row: _Row) -> TimesheetMatrixRow:
         trade=personnel.trade,
         source=personnel.source,
         subcontractor_name=row.subcontractor_name,
-        man_days=sum(1 for cell in row.cells if cell.code in MAN_DAY_CODES),
+        total_hours=row.total_hours,
+        man_days=hours_rules.man_days(row.total_hours),
         cells=row.cells,
     )
 
@@ -110,8 +133,8 @@ async def build(
 ) -> TimesheetMatrix:
     """Matrisi TEK hücre sorgusundan kurar; satır ya da gün başına sorgu koşmaz."""
     rows: dict[uuid.UUID, _Row] = {}
-    day_totals = {day: _DayTotal() for day in repository.period_days(year, month)}
-    total_overtime_hours = _ZERO_HOURS
+    day_totals = {day: DayAccumulator() for day in repository.period_days(year, month)}
+    total_hours: Decimal = _ZERO_HOURS
 
     section_id = section.id if section is not None else None
     for entry, personnel, subcontractor_name in await repository.matrix_rows(
@@ -120,17 +143,11 @@ async def build(
         row = rows.get(personnel.id)
         if row is None:
             row = rows[personnel.id] = _Row(personnel, subcontractor_name)
-        row.cells.append(
-            TimesheetCell(
-                work_date=entry.work_date,
-                code=entry.code,
-                overtime_hours=entry.overtime_hours,
-                section_id=entry.section_id,
-            )
-        )
+        row.cells.append(to_cell(entry))
+        if entry.hours is not None:
+            row.total_hours += entry.hours
+            total_hours += entry.hours
         day_totals[entry.work_date].add(entry)
-        if entry.overtime_hours is not None:
-            total_overtime_hours += entry.overtime_hours
 
     matrix_rows_out = [_to_row(row) for row in rows.values()]
     return TimesheetMatrix(
@@ -143,16 +160,8 @@ async def build(
         section_id=section_id,
         section_name=section.name if section is not None else None,
         worker_count=len(matrix_rows_out),
-        total_man_days=sum(row.man_days for row in matrix_rows_out),
-        total_overtime_hours=total_overtime_hours,
+        total_hours=total_hours,
+        total_man_days=hours_rules.man_days(total_hours),
         rows=matrix_rows_out,
-        day_totals=[
-            TimesheetDayTotal(
-                work_date=day,
-                worked_count=total.worked_count,
-                has_overtime=total.has_overtime,
-                temporary_duty_count=total.temporary_duty_count,
-            )
-            for day, total in day_totals.items()
-        ],
+        day_totals=[total.to_schema(day) for day, total in day_totals.items()],
     )

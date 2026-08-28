@@ -28,10 +28,13 @@ Uydurma 0, eksik veriyi "ödenecek bir şey yok" gibi gösterirdi — para sın�
   `unemployment_employer_pct` · `short_work_pct`) işçinin kesintisi DEĞİL,
   işverenin maliyetidir (spec §7: `toplam_maliyet = brüt + üç işveren kalemi`).
   İkisini karıştırmak neti yanlış hesaplardı.
-* **🔴 ŞEF KARARI 1 — `hourly` FAIL-CLOSED.** Puantajda normal çalışma SAATİ
-  kolonu yoktur (`timesheet_entries` yalnız `overtime_hours` taşır, o da sadece
-  `overtime` kodunda dolu). "Günde 8 saat" gibi bir sabit İCAT ETMEK yasaktır
-  (WORKFLOW §3) ve para sınıfı bir uydurma olurdu → satır `uncomputed`.
+* **🔴 ŞEF KARARI 1 — `hourly` FAIL-CLOSED (⚠️ ARTIK GEÇİCİ).** Kararın
+  dayanağı "puantajda çalışma SAATİ yoktur" idi; **PUAN-SAAT bu dayanağı
+  kaldırdı** — `timesheet_entries.hours` artık günlük çalışma saatidir. Yol
+  yine de bu dilimde AÇILMADI: saatlik ücret yolu FM'in %50 zammını
+  (mockup E5 358 "× saatlik ücret × 1,5") ve haftalık 45 tavanını bordroya
+  taşımayı gerektirir, bu ise PUAN-SAAT-2'nin işidir. O gelene kadar sabit
+  İCAT ETMEK yasaktır (WORKFLOW §3) → satır `uncomputed`.
 * **🔴 YÖNETİM KARARI (T4b) — puantaj KAYDI olmayan personel FAIL-CLOSED,
   ÜÇ ÜCRET TİPİNDE DE.** Dönemde personele ait HİÇ `timesheet_entries` kaydı
   yoksa "bu ay hiç çalışmadı" ile "puantajı henüz girilmedi" veritabanında
@@ -39,8 +42,8 @@ Uydurma 0, eksik veriyi "ödenecek bir şey yok" gibi gösterirdi — para sın�
   yok" gibi görünürdü. `monthly` DE dâhildir: "aylık ücretlide gün brütü
   etkilemez" varsayımı, işe hiç başlamamış ya da çıkmış personele sessizce tam
   maaş hesaplamayı meşrulaştırırdı. ⚠️ Bu kural KAYDIN VARLIĞINA bakar, gün
-  SAYISINA değil: kaydı olan ama tüm günleri izin/tatil kodlu (`MAN_DAY_CODES`
-  dışı) personelde gün 0 GERÇEKTİR — veri girilmiştir, hesap yapılır. Kuralın
+  SAYISINA değil: kaydı olan ama tüm günleri izin/tatil KODLU (saatsiz)
+  personelde gün 0 GERÇEKTİR — veri girilmiştir, hesap yapılır. Kuralın
   çıkışı K3 override'ıdır (`uncomputed → pending`), yoksa bordro kilitlenirdi.
 * **🔴 ŞEF KARARI 2 — oran seti yoksa FAIL-CLOSED.** `(yıl, tip)` için satır
   yoksa (`general` tipi personel; ya da seti henüz girilmemiş bir yıl) kesintiyi
@@ -51,9 +54,10 @@ Uydurma 0, eksik veriyi "ödenecek bir şey yok" gibi gösterirdi — para sın�
   varsayılanı üretmek DENETLENMEMİŞ nakit çıkışı önerirdi.
 * **🔴 ŞEF KARARI 4 — mesai brüte OTOMATİK EKLENMEZ.** BY 110-118 tablo
   başlığında mesai sütunu YOKTUR ve K3 mesaiyi açıkça override yoluna bağlar
-  ("mesai/ikramiye/avans"). `overtime` kodlu gün `MAN_DAY_CODES` gereği GÜN
+  ("mesai/ikramiye/avans"). Fazla mesaili gün `worked_day_clause` gereği GÜN
   olarak sayılır (`matrix.py`), saati ayrıca paraya çevrilmez — çevrilseydi aynı
-  mesai hem gün hem saat olarak iki kez ödenirdi.
+  mesai hem gün hem saat olarak iki kez ödenirdi. PUAN-SAAT sonrası FM bir kolon
+  değil TÜREVDİR; bordroya taşınması PUAN-SAAT-2'nin işidir.
 * **K2 — taşeron satırı YAPISAL olarak ödemeye giremez.** Durum HER ZAMAN
   `excluded`tır (hesap yapılabilse de yapılamasa da); tutarlar yine hesaplanır
   çünkü satır görünür ve MALİYETE girer (BY 186-189). Ödemesi hakediş üzerinden
@@ -481,7 +485,8 @@ def compute_line(
     modül docstring'i) ve **gün de `null`dur** — kaydı olmayan kişinin gün
     sayısı 0 değil BİLİNMEYENDİR; 0 yazmak eksik verinin yerini gizlerdi.
 
-    `man_days` puantajdan gelen `MAN_DAY_CODES` sayısıdır (`matrix.py` kanonu);
+    `man_days` puantajdan gelen "saati olan gün" sayısıdır
+    (`matrix.worked_day_clause` kanonu);
     `rate` `(dönemin yılı, personel tipi)` ile seçilmiş oran satırıdır — **yıl
     dönemin yılıdır, bugünün değil** (S2), seçim `service.py`dedir.
 
