@@ -29342,12 +29342,19 @@
         "type": "object"
       },
       "TimesheetCell": {
-        "description": "Tek gün hücresi. Girilmemiş gün hücre ÜRETMEZ — matris SEYREKTİR.\n\nAyın her günü için boş hücre üretmek 31×48 = 1488 nesnelik bir gövdeyi\nçoğunlukla `null` ile doldururdu; ekran gün iskeletini `day_totals`ten alır.",
+        "description": "Tek gün hücresi — **saat VEYA kod**. Girilmemiş gün hücre ÜRETMEZ.\n\nAyın/haftanın her günü için boş hücre üretmek gövdeyi çoğunlukla `null` ile\ndoldururdu; ekran gün iskeletini `day_totals`ten alır.",
         "properties": {
           "code": {
-            "$ref": "#/components/schemas/TimesheetCode"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TimesheetCode"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
-          "overtime_hours": {
+          "hours": {
             "anyOf": [
               {
                 "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -29357,7 +29364,7 @@
                 "type": "null"
               }
             ],
-            "title": "Overtime Hours"
+            "title": "Hours"
           },
           "section_id": {
             "anyOf": [
@@ -29379,8 +29386,8 @@
         },
         "required": [
           "work_date",
+          "hours",
           "code",
-          "overtime_hours",
           "section_id"
         ],
         "title": "TimesheetCell",
@@ -29388,12 +29395,19 @@
       },
       "TimesheetCellInput": {
         "additionalProperties": false,
-        "description": "`PUT` gövdesinin tek hücresi.\n\n`project_id` gövdede YOKTUR: kapsam alanı şantiyeden KOPYALANIR, istemciden\nalınsaydı görünür bir şantiyeye görünmez bir projenin hücresi yazılabilirdi.",
+        "description": "`PUT` gövdesinin tek hücresi — **saat XOR kod**.\n\n`project_id` gövdede YOKTUR: kapsam alanı şantiyeden KOPYALANIR, istemciden\nalınsaydı görünür bir şantiyeye görünmez bir projenin hücresi yazılabilirdi.",
         "properties": {
           "code": {
-            "$ref": "#/components/schemas/TimesheetCode"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TimesheetCode"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
-          "overtime_hours": {
+          "hours": {
             "anyOf": [
               {
                 "exclusiveMinimum": 0.0,
@@ -29408,7 +29422,7 @@
                 "type": "null"
               }
             ],
-            "title": "Overtime Hours"
+            "title": "Hours"
           },
           "personnel_id": {
             "format": "uuid",
@@ -29435,56 +29449,59 @@
         },
         "required": [
           "personnel_id",
-          "work_date",
-          "code"
+          "work_date"
         ],
         "title": "TimesheetCellInput",
         "type": "object"
       },
       "TimesheetCode": {
-        "description": "Gun hucresinin kodu (puantaj spec §2).\n\nE5'in dortlusu (calisti / izinli / tatil / fazla mesai) + SP'nin `G`'si\n(gecici gorev) TEK sette birlestirildi — iki ekran ayni enum'u kullanir.\n\nYarim gun / rapor kodu YOKTUR (mockup'ta yok, spec §5) — ileride enum\ngenisletmesiyle eklenir.",
+        "description": "Gun hucresinin KOD hali — hucrenin \"saat DEGIL\" olan halleri (PUAN-SAAT).\n\n🔴 **Kod artik calisilan gunu ANLATMAZ.** Puantaj gun kodundan adam-saate\ngecti (mockup `Ekran 5 - Puantaj.dc.html`, `5f3a944`): calisilan gun artik\n`hours` kolonudur, kod yalnizca \"o gun calisilmadi ama SEBEBI var\" halini\ntasir. Mockup'ta `Izin` ve `Gorev` ROZET olarak durur (E5 262/283), calisma\nise `<input type=\"number\">`tir (E5 236).\n\n**`worked` ve `overtime` uyeleri KALKTI:**\n* `worked` = \"9 saat calisti\" → artik `hours = 9`;\n* `overtime` = \"9 saat + FM\" → artik `hours = 9 + FM`. **FM SAKLANMAZ,\n  TUREVDIR** (`hours.week_totals`): haftalik 45 saat tavani ile gunluk 9\n  saat tavaninin birlesiminden hesaplanir, bir kolonda duramaz.\n\nPG enum TIPI (`timesheet_code`) hala bes etiket tasir — PostgreSQL enum\netiketi SILEMEZ. Olu etiketlerin geri sizmasini `ck_timesheet_entries_code_allowed`\nCHECK'i engeller (DB duzeyinde; uygulama katmani yetmez).\n\n`holiday` KORUNDU: yeni mockup'ta rozeti yok ama canlida kodu tasiyan satir\nolabilir ve enum uyesini dusurmek o satirlari OKUNAMAZ yapardi.",
         "enum": [
-          "worked",
           "leave",
           "holiday",
-          "overtime",
           "temporary_duty"
         ],
         "title": "TimesheetCode",
         "type": "string"
       },
       "TimesheetDayTotal": {
-        "description": "Bir gün sütununun ayak satırı (ŞP 230-247).\n\n`worked_count` FM'li günü SAYAR (E5 203: FM'li 6. sütun \"4\"tür), geçici\ngörevi SAYMAZ (ŞP 245: dört kişinin kayıtlı olduğu sütun \"3G\"dir). `G` bu\nyüzden ayrı bir sayaçtır, `+` ise yalnız bir işarettir — sayıyı değiştirmez.",
+        "description": "Bir gün sütununun ayak satırı (E5 320-326).\n\n`total_hours` o günün girilmiş saat toplamıdır. `worked_day_count` SAATLİ\nhücreleri sayar (kodlu hücre çalışılmış değildir); `leave_count` ve\n`temporary_duty_count` ayrı sayaçlardır — bir gün hem izinli hem çalışılmış\nsayılmaz.",
         "properties": {
-          "has_overtime": {
-            "title": "Has Overtime",
-            "type": "boolean"
+          "leave_count": {
+            "title": "Leave Count",
+            "type": "integer"
           },
           "temporary_duty_count": {
             "title": "Temporary Duty Count",
             "type": "integer"
+          },
+          "total_hours": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Hours",
+            "type": "string"
           },
           "work_date": {
             "format": "date",
             "title": "Work Date",
             "type": "string"
           },
-          "worked_count": {
-            "title": "Worked Count",
+          "worked_day_count": {
+            "title": "Worked Day Count",
             "type": "integer"
           }
         },
         "required": [
           "work_date",
-          "worked_count",
-          "has_overtime",
+          "total_hours",
+          "worked_day_count",
+          "leave_count",
           "temporary_duty_count"
         ],
         "title": "TimesheetDayTotal",
         "type": "object"
       },
       "TimesheetMatrix": {
-        "description": "ŞP/E5 puantaj ekranının tamamı: başlık şeridi + satırlar + ayak satırı.",
+        "description": "Aylık matris — Excel çıktısının ve arşiv okumasının zarfı.",
         "properties": {
           "day_totals": {
             "items": {
@@ -29545,13 +29562,14 @@
             "title": "Site Name",
             "type": "string"
           },
-          "total_man_days": {
-            "title": "Total Man Days",
-            "type": "integer"
-          },
-          "total_overtime_hours": {
+          "total_hours": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Total Overtime Hours",
+            "title": "Total Hours",
+            "type": "string"
+          },
+          "total_man_days": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Man Days",
             "type": "string"
           },
           "worker_count": {
@@ -29573,8 +29591,8 @@
           "section_id",
           "section_name",
           "worker_count",
+          "total_hours",
           "total_man_days",
-          "total_overtime_hours",
           "rows",
           "day_totals"
         ],
@@ -29582,7 +29600,7 @@
         "type": "object"
       },
       "TimesheetMatrixRow": {
-        "description": "Bir personelin ay satırı (ŞP 148-167).",
+        "description": "Bir personelin AY satırı.\n\n`man_days` artık **TÜREVDİR ve ondalıklıdır**: `toplam saat ÷ 9`\n(E5 349-350 \"588 saat · 65,3 adam/gün\"). Gün SAYMAZ — yarım günün\ntemsil edilebildiği bir dünyada gün saymak 4 saatlik günü tam gün gösterirdi.",
         "properties": {
           "cells": {
             "items": {
@@ -29596,8 +29614,9 @@
             "type": "string"
           },
           "man_days": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Man Days",
-            "type": "integer"
+            "type": "string"
           },
           "personnel_id": {
             "format": "uuid",
@@ -29618,6 +29637,11 @@
             ],
             "title": "Subcontractor Name"
           },
+          "total_hours": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Hours",
+            "type": "string"
+          },
           "trade": {
             "anyOf": [
               {
@@ -29636,15 +29660,258 @@
           "trade",
           "source",
           "subcontractor_name",
+          "total_hours",
           "man_days",
           "cells"
         ],
         "title": "TimesheetMatrixRow",
         "type": "object"
       },
-      "TimesheetSave": {
+      "TimesheetRowTotals": {
+        "description": "Bir satırın haftalık türevleri (E5 225-227 · kural `hours.week_totals`).",
+        "properties": {
+          "normal_hours": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Normal Hours",
+            "type": "string"
+          },
+          "overtime_hours": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Overtime Hours",
+            "type": "string"
+          },
+          "total_hours": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Hours",
+            "type": "string"
+          }
+        },
+        "required": [
+          "normal_hours",
+          "overtime_hours",
+          "total_hours"
+        ],
+        "title": "TimesheetRowTotals",
+        "type": "object"
+      },
+      "TimesheetWeek": {
+        "description": "E5 ekranının tamamı: hafta şeridi + KPI + 7 günlük ızgara + tfoot.",
+        "properties": {
+          "day_totals": {
+            "items": {
+              "$ref": "#/components/schemas/TimesheetDayTotal"
+            },
+            "title": "Day Totals",
+            "type": "array"
+          },
+          "end_date": {
+            "format": "date",
+            "title": "End Date",
+            "type": "string"
+          },
+          "iso_week": {
+            "title": "Iso Week",
+            "type": "integer"
+          },
+          "iso_year": {
+            "title": "Iso Year",
+            "type": "integer"
+          },
+          "leave_day_count": {
+            "title": "Leave Day Count",
+            "type": "integer"
+          },
+          "month_man_days": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Month Man Days",
+            "type": "string"
+          },
+          "month_month": {
+            "title": "Month Month",
+            "type": "integer"
+          },
+          "month_total_hours": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Month Total Hours",
+            "type": "string"
+          },
+          "month_weeks": {
+            "items": {
+              "$ref": "#/components/schemas/TimesheetWeekSummary"
+            },
+            "title": "Month Weeks",
+            "type": "array"
+          },
+          "month_year": {
+            "title": "Month Year",
+            "type": "integer"
+          },
+          "normal_day_hours": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Normal Day Hours",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "project_name": {
+            "title": "Project Name",
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/TimesheetWeekRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "section_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Id"
+          },
+          "section_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Name"
+          },
+          "site_id": {
+            "format": "uuid",
+            "title": "Site Id",
+            "type": "string"
+          },
+          "site_name": {
+            "title": "Site Name",
+            "type": "string"
+          },
+          "start_date": {
+            "format": "date",
+            "title": "Start Date",
+            "type": "string"
+          },
+          "temporary_duty_day_count": {
+            "title": "Temporary Duty Day Count",
+            "type": "integer"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/TimesheetRowTotals"
+          },
+          "weekly_normal_hours": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Weekly Normal Hours",
+            "type": "string"
+          },
+          "worker_count": {
+            "title": "Worker Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "site_id",
+          "site_name",
+          "project_id",
+          "project_name",
+          "iso_year",
+          "iso_week",
+          "start_date",
+          "end_date",
+          "section_id",
+          "section_name",
+          "normal_day_hours",
+          "weekly_normal_hours",
+          "worker_count",
+          "totals",
+          "leave_day_count",
+          "temporary_duty_day_count",
+          "rows",
+          "day_totals",
+          "month_year",
+          "month_month",
+          "month_total_hours",
+          "month_man_days",
+          "month_weeks"
+        ],
+        "title": "TimesheetWeek",
+        "type": "object"
+      },
+      "TimesheetWeekRow": {
+        "description": "Bir personelin HAFTA satırı: 7 gün + Normal/FM/Toplam (E5 230-249).",
+        "properties": {
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/TimesheetCell"
+            },
+            "title": "Cells",
+            "type": "array"
+          },
+          "full_name": {
+            "title": "Full Name",
+            "type": "string"
+          },
+          "personnel_id": {
+            "format": "uuid",
+            "title": "Personnel Id",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/WorkerSource"
+          },
+          "subcontractor_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subcontractor Name"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/TimesheetRowTotals"
+          },
+          "trade": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trade"
+          }
+        },
+        "required": [
+          "personnel_id",
+          "full_name",
+          "trade",
+          "source",
+          "subcontractor_name",
+          "cells",
+          "totals"
+        ],
+        "title": "TimesheetWeekRow",
+        "type": "object"
+      },
+      "TimesheetWeekSave": {
         "additionalProperties": false,
-        "description": "⚠️ **DEĞİŞTİRME semantiği** (spec §7 S4): gövde dönem+şantiye kapsamının\n\nTAM kümesidir; gönderilmeyen hücre SİLİNİR. Mockup'ta tek \"Kaydet\" düğmesi\nvardır (ŞP 101) — ekran matrisi bütün olarak kaydeder.",
+        "description": "⚠️ **DEĞİŞTİRME semantiği**: gövde **HAFTA**+şantiye kapsamının TAM kümesidir;\n\ngövdede geçmeyen hücre SİLİNİR. Mockup'ta tek \"Haftayı Kaydet\" düğmesi\nvardır (E5 76) — ekran haftayı bütün olarak kaydeder.\n\n🔴 Kapsam **AY DEĞİL HAFTADIR.** Ay kapsamlı bir silme, bir haftayı\nkaydetmeyi ayın geri kalanını süpüren bir işleme çevirirdi (bekçi:\n`tests/timesheet/test_week_save.py::test_hafta_kaydetmek_ayin_diger_haftasina_DOKUNMAZ`).",
         "properties": {
           "cells": {
             "items": {
@@ -29654,7 +29921,49 @@
             "type": "array"
           }
         },
-        "title": "TimesheetSave",
+        "title": "TimesheetWeekSave",
+        "type": "object"
+      },
+      "TimesheetWeekSummary": {
+        "description": "Ay içi hafta şeridinin bir kutusu (E5 143-176).\n\n`has_entries` \"girilmedi\" rozetini (E5 163) belirler ve `total_hours == 0`\nile AYNI ŞEY DEĞİLDİR: hepsi izinli geçmiş bir hafta girilmiştir ve 0 saattir.",
+        "properties": {
+          "end_date": {
+            "format": "date",
+            "title": "End Date",
+            "type": "string"
+          },
+          "has_entries": {
+            "title": "Has Entries",
+            "type": "boolean"
+          },
+          "iso_week": {
+            "title": "Iso Week",
+            "type": "integer"
+          },
+          "iso_year": {
+            "title": "Iso Year",
+            "type": "integer"
+          },
+          "start_date": {
+            "format": "date",
+            "title": "Start Date",
+            "type": "string"
+          },
+          "total_hours": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Hours",
+            "type": "string"
+          }
+        },
+        "required": [
+          "iso_year",
+          "iso_week",
+          "start_date",
+          "end_date",
+          "total_hours",
+          "has_entries"
+        ],
+        "title": "TimesheetWeekSummary",
         "type": "object"
       },
       "TokenPair": {
@@ -51671,91 +51980,6 @@
         "tags": [
           "timesheet"
         ]
-      },
-      "put": {
-        "description": "ŞP 101 \"Kaydet\" — **DEĞİŞTİRME** semantiği (spec §7 S4).\n\n⚠️ Gövde dönem+şantiye kapsamının TAM kümesidir: gövdede geçmeyen hücre\nSİLİNİR. Başka ayın ya da başka şantiyenin hücrelerine DOKUNULMAZ (kesin\nkarar `service.save`).\n\nDenetim TEK dönem-özeti olayıdır; hücre başına olay yazmak 31×48'lik bir\nkaydetmede denetim günlüğünü kullanılamaz hâle getirirdi (spec §3).\n\nYanıt GÜNCEL matristir (bölüm süzgeci UYGULANMAZ — kaydedilen kapsam\nşantiyenin tamamıdır, ekran kaydettiğinin tamamını geri görmelidir).",
-        "operationId": "save_site_timesheet_endpoint_sites__site_id__timesheet_put",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "site_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Site Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "year",
-            "required": true,
-            "schema": {
-              "maximum": 2100,
-              "minimum": 2000,
-              "title": "Year",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "month",
-            "required": true,
-            "schema": {
-              "maximum": 12,
-              "minimum": 1,
-              "title": "Month",
-              "type": "integer"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TimesheetSave"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TimesheetMatrix"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "403": {
-            "description": "Yetkisiz işlem"
-          },
-          "404": {
-            "description": "Kayıt bulunamadı"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Save Site Timesheet Endpoint",
-        "tags": [
-          "timesheet"
-        ]
       }
     },
     "/sites/{site_id}/timesheet/export.xlsx": {
@@ -51843,6 +52067,185 @@
           }
         ],
         "summary": "Export Site Timesheet Endpoint",
+        "tags": [
+          "timesheet"
+        ]
+      }
+    },
+    "/sites/{site_id}/timesheet/week": {
+      "get": {
+        "description": "E5 haftalık ekranı: 7 günlük ızgara + Normal/FM türevleri + ay şeridi.\n\n\"Önceki Haftayı Kopyala\" (E5 75) İSTEMCİ tarafındadır: aynı uç bir önceki\nISO haftası için çağrılır (gerekçe modül docstring'inde).",
+        "operationId": "get_site_timesheet_week_endpoint_sites__site_id__timesheet_week_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "iso_year",
+            "required": true,
+            "schema": {
+              "maximum": 2100,
+              "minimum": 2000,
+              "title": "Iso Year",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "iso_week",
+            "required": true,
+            "schema": {
+              "maximum": 53,
+              "minimum": 1,
+              "title": "Iso Week",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "section_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Section Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimesheetWeek"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Site Timesheet Week Endpoint",
+        "tags": [
+          "timesheet"
+        ]
+      },
+      "put": {
+        "description": "E5 76 \"Haftayı Kaydet\" — **DEĞİŞTİRME** semantiği.\n\n⚠️ Gövde **hafta**+şantiye kapsamının TAM kümesidir: gövdede geçmeyen hücre\nSİLİNİR. Aynı ayın BAŞKA haftalarına ve başka şantiyeye DOKUNULMAZ (kesin\nkarar `service.save_week`).\n\nDenetim TEK hafta-özeti olayıdır; hücre başına olay yazmak 7×48'lik bir\nkaydetmede denetim günlüğünü kullanılamaz hâle getirirdi (spec §3).\n\nYanıt GÜNCEL haftadır (bölüm süzgeci UYGULANMAZ — kaydedilen kapsam\nşantiyenin tamamıdır, ekran kaydettiğinin tamamını geri görmelidir).",
+        "operationId": "save_site_timesheet_week_endpoint_sites__site_id__timesheet_week_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "iso_year",
+            "required": true,
+            "schema": {
+              "maximum": 2100,
+              "minimum": 2000,
+              "title": "Iso Year",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "iso_week",
+            "required": true,
+            "schema": {
+              "maximum": 53,
+              "minimum": 1,
+              "title": "Iso Week",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TimesheetWeekSave"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimesheetWeek"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Save Site Timesheet Week Endpoint",
         "tags": [
           "timesheet"
         ]
