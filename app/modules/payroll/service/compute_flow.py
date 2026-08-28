@@ -4,29 +4,36 @@ Hesabin kendisi `compute.py`dedir (saf, DB'siz); burasi AKISTIR. Iki koruma
 AYRI AYRI sayilir ve karistirilmaz: `is_overridden` kullanicinin duzeltmesidir
 (K3/S6), `approved`/`paid` ise odeme izidir (S5).
 
-`_man_day_counts` ile `_personnel_with_timesheet_records` bilincli olarak IKI
+`_work_hours` ile `_personnel_with_timesheet_records` bilincli olarak IKI
 AYRI sorgudur: biri "sahada gecmis gun"u suzer, oteki hic suzmez. Tek sorguya
 indirgenseydi izin/tatil kodlu bir ay ile hic girilmemis bir ay ayni sonucu (0)
 verir, ikisi ayirt edilemezdi — birinde gun 0 GERCEKTIR, otekinde BILINMEZ.
 
-🔴 **PUAN-SAAT (2026-08-28) — BORDRONUN GUNU SAAT'E DONMEDI, BILINCLI KARAR.**
-Puantaj hucresi artik "kod" degil "saat" tasiyor; bu dosyanin tek uyarlamasi
-sudur: adam-gun olcutunun ADI degisti (`MAN_DAY_CODES` -> `matrix.worked_day_clause`,
-"kodu Ç/FM olan hucre" -> "SAATI olan hucre"), SAYDIGI SEY degismedi. Ayni
-satirlar, ayni sayi: goc `worked`/`overtime` hucrelerinin hepsine saat yazar,
-kodlu hucreler kodlu kalir.
+✅ **PUAN-SAAT-3 (2026-08-28) — BORDRONUN GUNU DE BRUTU DE SAATE DONDU.**
+PUAN-SAAT-1 bilincli olarak yalnizca olcutun ADINI degistirmisti
+(`MAN_DAY_CODES` -> `matrix.worked_day_clause`) ve SAYDIGI SEYI degistirmemisti;
+gerekcesi "o bir PARA degisikligidir, semasal degil" idi ve o dilimde para
+hareketi ISTENMIYORDU.
 
-**Neden `SUM(saat)/9` DEGIL?** Cunku o bir PARA degisikligidir, semasal degil:
-canlida 269 adam-gunluk bir ay `SUM(saat)/9` ile 272,3'e cikardi (goc FM saatini
-de `hours`a katiyor) ve **hesaplanmamis her donemin brutu sessizce artardi.**
-Bordronun saate gecisi (saatlik ucret + FM x1,5) AYRI bir dilimdir ve orada
-`PayrollLine.days` tipiyle birlikte ele alinir.
+Bu dilim o PARA degisikligini BILEREK yapar, cunku PUAN-SAAT-1'in birakti
+**ACIK BORC** bir canli kusura donusmek uzereydi: yeni haftalik ekran YARIM GUN
+girmeye izin veriyor (E5 305 `value="4"`) ve hucre SAYAN bir bordro 4 saatlik
+gunu TAM GUN sayip yevmiyeliye FAZLA ODERDI.
 
-⚠️ **ACIK BORC (rapor: KAPSAM DISI):** yeni ekran YARIM GUN girilmesine izin
-veriyor (E5 305 `value="4"`). Bu dosya 4 saatlik gunu de TAM GUN sayar —
-yevmiyeli personel icin FAZLA ODEME. Bugun boyle bir veri YOKTUR (eski semada
-yarim gun temsil edilemiyordu); PUAN-SAAT-2 gelmeden once ekran yayina girerse
-bu bir canli para kusuruna DONUSUR.
+Yerine gecen ikili:
+
+* `_work_hours` — kisi basina normal / FM / toplam saat (`timesheet.hours`ten
+  OKUNUR, burada HESAPLANMAZ: tek kaynak kanonu);
+* `_overtime_multiplier` — yilin FM carpani (`payroll_overtime_rates`, K1:
+  oranlar VERIDIR).
+
+Brut artik `normal x saatlik + FM x saatlik x carpan`dir
+(`compute.compute_gross`, mockup E5 356-359) ve `PayrollLine.days` bir SAYIM
+degil bir TUREVDIR (`toplam saat / 9`).
+
+🔴 **GECMIS BORDRO ETKILENMEZ:** `approved`/`paid` ve `is_overridden` satirlar
+bu akista zaten ATLANIR (S5/S6). Degisen yalnizca YENIDEN HESAPLANAN taslak
+donemlerdir.
 """
 
 import uuid
