@@ -59,7 +59,7 @@ def _to_row(row: _Row) -> TimesheetWeekRow:
         source=personnel.source,
         subcontractor_name=row.subcontractor_name,
         cells=row.cells,
-        totals=TimesheetRowTotals(*hours_rules.week_totals(row.daily_hours)),
+        totals=TimesheetRowTotals(**hours_rules.week_totals(row.daily_hours)._asdict()),
     )
 
 

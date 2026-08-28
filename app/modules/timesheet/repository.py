@@ -255,6 +255,11 @@ async def daily_hours_between(
 
     Ay seridinin bes haftasi icin bes ayri sorgu KOSULMAZ: aralik bir kez
     okunur, haftalara Python'da bolunur.
+
+    🔴 Sonuc sozlugu VARLIK bilgisini de tasir: `hours IS NOT NULL` SUZULMEZ,
+    yalnizca toplama girmez (`sum` NULL'lari atlar, `coalesce` 0 yapar). Suzulseydi
+    tamami izinli gecmis bir hafta sozlukte HIC gorunmez ve serit onu "girilmedi"
+    (E5 163) diye gosterirdi — girilmis bir hafta unutulmus gibi okunurdu.
     """
     rows = await session.execute(
         select(TimesheetEntry.work_date, func.coalesce(func.sum(TimesheetEntry.hours), 0))
@@ -262,7 +267,6 @@ async def daily_hours_between(
             TimesheetEntry.site_id == site_id,
             TimesheetEntry.work_date >= first,
             TimesheetEntry.work_date <= last,
-            TimesheetEntry.hours.is_not(None),
         )
         .group_by(TimesheetEntry.work_date)
     )
