@@ -130,9 +130,7 @@ async def test_kod_hucresi_saatsiz_kabul_edilir(db_session, project_factory, use
     assert entry.code is TimesheetCode.leave
 
 
-async def test_hem_saat_hem_kod_DB_DUZEYINDE_reddedilir(
-    db_session, project_factory, user_factory
-):
+async def test_hem_saat_hem_kod_DB_DUZEYINDE_reddedilir(db_session, project_factory, user_factory):
     """🔴 `ck_timesheet_entries_hours_xor_code` — sozlesme kisiti TIPTE YASAMAZ.
 
     Pydantic kapisi (`TimesheetCellInput`) ayni kurali soyler ama yalniz UC
@@ -145,17 +143,13 @@ async def test_hem_saat_hem_kod_DB_DUZEYINDE_reddedilir(
     person = await _personnel(db_session)
 
     db_session.add(
-        _entry(
-            person, site, user, date(2026, 8, 3), hours=Decimal("9.0"), code=TimesheetCode.leave
-        )
+        _entry(person, site, user, date(2026, 8, 3), hours=Decimal("9.0"), code=TimesheetCode.leave)
     )
     with pytest.raises(IntegrityError):
         await db_session.flush()
 
 
-async def test_ne_saat_ne_kod_DB_DUZEYINDE_reddedilir(
-    db_session, project_factory, user_factory
-):
+async def test_ne_saat_ne_kod_DB_DUZEYINDE_reddedilir(db_session, project_factory, user_factory):
     """Bos hucre "gun girildi ama hicbir sey demiyor" olurdu."""
     project = await project_factory("P-PT-6")
     site = await _site(db_session, project)

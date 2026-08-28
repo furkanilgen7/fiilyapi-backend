@@ -99,8 +99,7 @@ VIOLATION_SQL: dict[str, str] = {
         "WHERE hours IS NOT NULL AND NOT (hours > 0 AND hours <= 24)"
     ),
     "ck_timesheet_entries_hours_xor_code": (
-        "SELECT count(*) FROM timesheet_entries "
-        "WHERE NOT ((hours IS NULL) <> (code IS NULL))"
+        "SELECT count(*) FROM timesheet_entries WHERE NOT ((hours IS NULL) <> (code IS NULL))"
     ),
     "ck_timesheet_entries_code_allowed": (
         "SELECT count(*) FROM timesheet_entries "
@@ -236,8 +235,9 @@ def downgrade() -> None:
     op.add_column(TABLE, sa.Column("overtime_hours", sa.Numeric(4, 1), nullable=True))
 
     kayip = bind.execute(
-        sa.text("SELECT count(*) FROM timesheet_entries WHERE hours IS NOT NULL AND hours < :n")
-        .bindparams(n=NORMAL_DAY_HOURS)
+        sa.text(
+            "SELECT count(*) FROM timesheet_entries WHERE hours IS NOT NULL AND hours < :n"
+        ).bindparams(n=NORMAL_DAY_HOURS)
     ).scalar_one()
     logger.warning(
         "PUAN-SAAT DOWNGRADE: %d hucrede 9 saatin ALTINDA calisma var; eski sema "

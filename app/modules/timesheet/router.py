@@ -38,9 +38,9 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel
-from app.core.errors import SiteValidationError
 from app.core.db import get_db
 from app.core.deps import get_current_user
+from app.core.errors import SiteValidationError
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
@@ -144,9 +144,7 @@ def _assert_week_exists(iso_year: int, iso_week: int) -> None:
         raise SiteValidationError(guards.format_week_missing(iso_year, iso_week)) from exc
 
 
-@router.get(
-    "/sites/{site_id}/timesheet/week", response_model=TimesheetWeek, dependencies=[_VIEW]
-)
+@router.get("/sites/{site_id}/timesheet/week", response_model=TimesheetWeek, dependencies=[_VIEW])
 async def get_site_timesheet_week_endpoint(
     site_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
@@ -166,9 +164,7 @@ async def get_site_timesheet_week_endpoint(
     return await week.build(session, site, project, section, iso_year=iso_year, iso_week=iso_week)
 
 
-@router.put(
-    "/sites/{site_id}/timesheet/week", response_model=TimesheetWeek, dependencies=[_FULL]
-)
+@router.put("/sites/{site_id}/timesheet/week", response_model=TimesheetWeek, dependencies=[_FULL])
 async def save_site_timesheet_week_endpoint(
     request: Request,
     site_id: uuid.UUID,

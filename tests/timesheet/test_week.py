@@ -219,7 +219,12 @@ async def test_ay_seridi_ayla_kesisen_BES_haftayi_verir(
 
 
 async def test_girilmemis_hafta_ROZETI_sifir_saatten_AYRIDIR(
-    client: AsyncClient, admin_headers, santiye, e5_haftasi, mehmet, admin_kullanicisi,
+    client: AsyncClient,
+    admin_headers,
+    santiye,
+    e5_haftasi,
+    mehmet,
+    admin_kullanicisi,
     hucre_fabrikasi,
 ) -> None:
     """E5 163 "girilmedi" rozeti `total_hours == 0` DEĞİLDİR.
@@ -251,7 +256,12 @@ async def test_ay_toplami_ve_ADAM_GUN_turevi(
 
 
 async def test_ay_seridi_KOMSU_ayin_gununu_de_sayar(
-    client: AsyncClient, admin_headers, santiye, e5_haftasi, mehmet, admin_kullanicisi,
+    client: AsyncClient,
+    admin_headers,
+    santiye,
+    e5_haftasi,
+    mehmet,
+    admin_kullanicisi,
     hucre_fabrikasi,
 ) -> None:
     """27. hafta 29 HAZİRAN'da başlar ve mockup onu "186 sa" ile Temmuz şeridinde
@@ -302,7 +312,12 @@ async def test_baska_santiyenin_bolumu_404(
 
 
 async def test_baska_haftanin_hucresi_gorunmez(
-    client: AsyncClient, admin_headers, santiye, e5_haftasi, mehmet, admin_kullanicisi,
+    client: AsyncClient,
+    admin_headers,
+    santiye,
+    e5_haftasi,
+    mehmet,
+    admin_kullanicisi,
     hucre_fabrikasi,
 ) -> None:
     """30. haftanın hücresi 29. haftanın ızgarasına SIZMAZ."""
@@ -311,8 +326,6 @@ async def test_baska_haftanin_hucresi_gorunmez(
     assert Decimal(hafta["totals"]["total_hours"]) == Decimal("198")
 
 
-async def test_hafta_parametresi_zorunludur(
-    client: AsyncClient, admin_headers, santiye
-) -> None:
+async def test_hafta_parametresi_zorunludur(client: AsyncClient, admin_headers, santiye) -> None:
     yanit = await client.get(f"/sites/{santiye.id}/timesheet/week", headers=admin_headers)
     assert yanit.status_code == 422, yanit.text

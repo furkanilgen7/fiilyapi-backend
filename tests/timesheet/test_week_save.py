@@ -400,9 +400,7 @@ async def test_baska_santiyenin_bolumu_422(
     assert yanit.json()["detail"] == guards.SECTION_MISMATCH
 
 
-async def test_var_olmayan_iso_hafta_422(
-    client: AsyncClient, sef_headers, santiye, mehmet
-) -> None:
+async def test_var_olmayan_iso_hafta_422(client: AsyncClient, sef_headers, santiye, mehmet) -> None:
     """2027 ISO yılının 53. haftası YOKTUR; `fromisocalendar` ValueError atar.
 
     Yakalanmasaydı 500 olurdu — kullanıcının düzeltebileceği bir girdi hatası.

@@ -304,9 +304,7 @@ async def test_bolum_filtresi_yalniz_o_bolumun_hucrelerini_dondurur(
 ) -> None:
     """İkinci bölümün işçisi, birinci bölüm süzgecinde GÖRÜNMEZ."""
     diger = await personel_fabrikasi("Veli Ak", trade="Sıvacı")
-    await hucre_fabrikasi(
-        santiye, diger, gun(1), admin_kullanicisi, hours=9, section=ikinci_bolum
-    )
+    await hucre_fabrikasi(santiye, diger, gun(1), admin_kullanicisi, hours=9, section=ikinci_bolum)
 
     hepsi = await _matris(client, admin_headers, santiye.id)
     assert len(hepsi["rows"]) == 5

@@ -46,7 +46,7 @@ _ZERO_HOURS = hours_rules.ZERO_HOURS
 
 
 def worked_day_clause():
-    """"Sahada geçmiş gün" ölçütünün TEK tanımı: hücrede SAAT vardır.
+    """ "Sahada geçmiş gün" ölçütünün TEK tanımı: hücrede SAAT vardır.
 
     🔴 Eski `MAN_DAY_CODES` kümesinin yerini alır. Bordro (`payroll`) ve puantaj
     aynı ölçütü kullanmazsa bir kişinin "kaç gün çalıştığı" iki ekranda iki

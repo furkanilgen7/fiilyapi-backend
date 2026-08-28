@@ -20,10 +20,10 @@ from httpx import AsyncClient
 from app.modules.site_diary.models import WorkerSource
 from app.modules.timesheet.export import (
     COLUMN_HEADERS,
-    HOURS_TOTAL_HEADER,
     DAY_TOTAL_LABEL,
     EMPTY_VALUE,
     HEADER_ROW,
+    HOURS_TOTAL_HEADER,
     INFO_LABELS,
     SHEET_TITLE,
     SOURCE_LABELS,
@@ -190,9 +190,7 @@ async def test_bolum_filtresi_ciktiyi_daraltir(
     ornek_ay,
 ):
     diger = await personel_fabrikasi("Veli Ak", trade="Sıvacı")
-    await hucre_fabrikasi(
-        santiye, diger, gun(1), admin_kullanicisi, hours=9, section=ikinci_bolum
-    )
+    await hucre_fabrikasi(santiye, diger, gun(1), admin_kullanicisi, hours=9, section=ikinci_bolum)
 
     sheet = _sayfa(await _indir(client, admin_headers, santiye.id, section_id=str(ikinci_bolum.id)))
     adlar = [
