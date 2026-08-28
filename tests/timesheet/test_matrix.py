@@ -4,18 +4,17 @@ Her toplamın kaynağı mockup'tır ve testte SATIR NUMARASIYLA gerekçelenir
 (WORKFLOW §3). Örnek veri, ŞP `Şantiye - Puantaj.dc.html` gövdesinin (148-227)
 dört satırı ve 14 günüdür; beklenen sayılar oradan TÜRETİLİR.
 
-Sabitlenen kurallar:
-* **Adam-gün = `worked` + `overtime`.** E5 197-211 ayak satırı kanıtıdır:
-  6. sütunda Mehmet FM (E5 122), diğer üçü Ç'dir ve toplam **4**'tür (E5 203) —
-  FM'li gün çalışılmış SAYILIR. Aynısı 13. sütunda Ali'nin FM'i içindir (E5 149
-  → E5 210 "4").
-* **`temporary_duty` adam-güne GİRMEZ.** ŞP 245'te 13. sütun **"3G"**tir: o gün
-  dört kişinin dördü de kayıtlıdır (Hasan `G` — ŞP 203) ama sayı 4 DEĞİL 3'tür.
-  Sayı `G`'yi dışarıda bırakır, `G` ayrı bir işaret olarak gösterilir.
-* **`+` işareti** ŞP 237 ("4+") — sütunda EN AZ BİR fazla mesai olduğunu söyler;
-  sayının kendisi (4) değişmez.
-* **FM saat toplamı YALNIZ girilmiş saatlerden** (spec §7 S2): saat opsiyoneldir,
-  girilmemiş FM hücresi ŞP 119'un "128 saat" toplamına 0 katar.
+Sabitlenen kurallar (PUAN-SAAT):
+* **Aylık toplam = girilmiş SAATLERİN toplamı.** Kodlu hücre (izin/tatil/görev)
+  0 katar.
+* **Adam-gün = `toplam saat ÷ 9`** (E5 349-350: `588 ÷ 9 = 65,3`) — artık bir
+  GÜN SAYISI değil bir TÜREVDİR ve ondalıklıdır.
+* **Genel adam-gün satır adam-günlerinin TOPLAMI DEĞİLDİR:** aylık saatten bir
+  kez türer, yoksa satır yuvarlamaları birikirdi.
+* **`worked_day_count` saatli hücreleri sayar**, `temporary_duty_count` ayrıdır.
+
+🔴 **Aylık uç artık YALNIZ OKUMADIR** (Excel/arşiv). Yazma haftalıktır ve
+`test_week_save.py`dedir.
 """
 
 from decimal import Decimal
@@ -29,18 +28,17 @@ from tests.timesheet.conftest import AY, YIL, gun
 
 pytestmark = pytest.mark.asyncio
 
-_C = TimesheetCode.worked
 _I = TimesheetCode.leave
 _T = TimesheetCode.holiday
-_FM = TimesheetCode.overtime
 _G = TimesheetCode.temporary_duty
 
-# ŞP 151-164 / 171-184 / 191-204 / 211-224 — dört satırın ilk 14 günü.
-_SP_SATIRLARI = {
-    "Mehmet Yılmaz": [_C, _C, _C, _T, _T, _FM, _C, _C, _I, _C, _T, _T, _C, _C],
-    "Ali Kaya": [_C, _I, _I, _T, _T, _C, _C, _C, _C, _FM, _T, _T, _C, _C],
-    "Hasan Çelik": [_C, _C, _C, _T, _T, _C, _C, _C, _C, _C, _T, _T, _G, _C],
-    "Ayşe Demir": [_C, _C, _C, _T, _T, _C, _I, _C, _C, _C, _T, _T, _C, _C],
+#: Dört satırın ilk 14 günü — sayı = SAAT, enum = kod.
+#: 6. gün Mehmet'te 12,5 saat (eski FM'in saat karşılığı), 10. gün Ali'de 11.
+_SP_SATIRLARI: dict[str, list] = {
+    "Mehmet Yılmaz": [9, 9, 9, _T, _T, 12.5, 9, 9, _I, 9, _T, _T, 9, 9],
+    "Ali Kaya": [9, _I, _I, _T, _T, 9, 9, 9, 9, 11, _T, _T, 9, 9],
+    "Hasan Çelik": [9, 9, 9, _T, _T, 9, 9, 9, 9, 9, _T, _T, _G, 9],
+    "Ayşe Demir": [9, 9, 9, _T, _T, 9, _I, 9, 9, 9, _T, _T, 9, 9],
 }
 
 
@@ -48,25 +46,21 @@ _SP_SATIRLARI = {
 async def sp_matrisi(
     hucre_fabrikasi, personel_fabrikasi, santiye, admin_kullanicisi, mehmet, ali, bolum
 ):
-    """ŞP gövdesinin dört satırı; Mehmet'in 6. gün FM'ine 3.5 saat GİRİLİR,
-
-    Ali'nin 10. gün FM'ine GİRİLMEZ — "yalnız girilenlerden toplanır" kuralının
-    kanıtı (spec §7 S2).
-    """
+    """Dört satır × 14 gün. Saatler ve kodlar `_SP_SATIRLARI`den okunur."""
     hasan = await personel_fabrikasi("Hasan Çelik", trade="Elektrikçi")
     ayse = await personel_fabrikasi("Ayşe Demir", trade="Büro Şefi")
     kisiler = {"Mehmet Yılmaz": mehmet, "Ali Kaya": ali, "Hasan Çelik": hasan, "Ayşe Demir": ayse}
 
-    for ad, kodlar in _SP_SATIRLARI.items():
-        for index, kod in enumerate(kodlar, start=1):
-            saat = Decimal("3.5") if (ad == "Mehmet Yılmaz" and index == 6) else None
+    for ad, gunler in _SP_SATIRLARI.items():
+        for index, deger in enumerate(gunler, start=1):
+            kodlu = isinstance(deger, TimesheetCode)
             await hucre_fabrikasi(
                 santiye,
                 kisiler[ad],
                 gun(index),
-                kod,
                 admin_kullanicisi,
-                overtime_hours=saat,
+                hours=None if kodlu else Decimal(str(deger)),
+                code=deger if kodlu else None,
                 section=bolum,
             )
     return kisiler
@@ -134,57 +128,65 @@ async def test_bos_donem_bos_matris_dondurur(
     matris = await _matris(client, admin_headers, santiye.id, month=8)
     assert matris["rows"] == []
     assert matris["worker_count"] == 0
-    assert matris["total_man_days"] == 0
+    assert Decimal(matris["total_hours"]) == Decimal(0)
+    assert Decimal(matris["total_man_days"]) == Decimal(0)
     assert len(matris["day_totals"]) == 31  # Ağustos
-    assert all(gunluk["worked_count"] == 0 for gunluk in matris["day_totals"])
+    assert all(gunluk["worked_day_count"] == 0 for gunluk in matris["day_totals"])
 
 
 # --- Gün hücreleri ---
 
 
-async def test_gun_hucreleri_kod_ve_fm_saati_tasir(
+async def test_gun_hucreleri_saat_VEYA_kod_tasir(
     client: AsyncClient, admin_headers, santiye, sp_matrisi, bolum
 ) -> None:
-    """Hücre = kod + (varsa) saat + bölüm. ŞP 156 Mehmet'in 6. günü FM'dir."""
+    """Hücre = saat XOR kod (+ bölüm)."""
     matris = await _matris(client, admin_headers, santiye.id)
     hucreler = {c["work_date"]: c for c in _satir(matris, "Mehmet Yılmaz")["cells"]}
 
-    assert hucreler[gun(1).isoformat()]["code"] == "worked"
+    assert Decimal(hucreler[gun(1).isoformat()]["hours"]) == Decimal("9")
+    assert hucreler[gun(1).isoformat()]["code"] is None
     assert hucreler[gun(4).isoformat()]["code"] == "holiday"
-    assert hucreler[gun(6).isoformat()]["code"] == "overtime"
-    assert Decimal(hucreler[gun(6).isoformat()]["overtime_hours"]) == Decimal("3.5")
-    assert hucreler[gun(1).isoformat()]["overtime_hours"] is None
+    assert hucreler[gun(4).isoformat()]["hours"] is None
+    assert Decimal(hucreler[gun(6).isoformat()]["hours"]) == Decimal("12.5")
     assert hucreler[gun(6).isoformat()]["section_id"] == str(bolum.id)
-    # Girilmemiş gün hücre ÜRETMEZ (ŞP 165 "…" boş süz).
+    # Girilmemiş gün hücre ÜRETMEZ.
     assert gun(20).isoformat() not in hucreler
 
 
 # --- Kişi bazında adam-gün (ŞP 166/186/206/226) ---
 
 
-async def test_kisi_adam_gunu_calisti_ve_fm_sayar(
+async def test_kisi_toplam_saati_ve_TUREV_adam_gunu(
     client: AsyncClient, admin_headers, santiye, sp_matrisi
 ) -> None:
-    """ŞP 166 "Toplam" sütunu. 14 günlük örnekte: Mehmet 9 (3 Ç + FM + 2 Ç + Ç + 2 Ç).
+    """Mehmet: 8×9 + 12,5 = 84,5 saat -> 84,5/9 = 9,4 adam-gün.
 
-    İzin (İ) ve tatil (T) SAYILMAZ — ŞP 235-236'da tatil sütunlarının günlük
-    toplamı 0'dır, yani T bir adam-gün değildir.
+    İzin (İ) ve tatil (T) saate 0 katar. 🔴 Adam-gün artık gün SAYMAZ: 9 saatlik
+    dokuz gün ile 12,5 saatlik bir gün aynı sayıyı üretmez.
     """
     matris = await _matris(client, admin_headers, santiye.id)
-    assert _satir(matris, "Mehmet Yılmaz")["man_days"] == 9
-    assert _satir(matris, "Ali Kaya")["man_days"] == 8
+    mehmet_satir = _satir(matris, "Mehmet Yılmaz")
+    assert Decimal(mehmet_satir["total_hours"]) == Decimal("84.5")
+    assert Decimal(mehmet_satir["man_days"]) == Decimal("9.4")
+
+    ali_satir = _satir(matris, "Ali Kaya")
+    # 7×9 + 11 = 74 saat -> 8,2 adam-gün.
+    assert Decimal(ali_satir["total_hours"]) == Decimal("74")
+    assert Decimal(ali_satir["man_days"]) == Decimal("8.2")
 
 
-async def test_gecici_gorev_kisi_adam_gunune_girmez(
+async def test_gecici_gorev_saate_ve_adam_gune_GIRMEZ(
     client: AsyncClient, admin_headers, santiye, sp_matrisi
 ) -> None:
-    """Hasan 14 günde 9 Ç + 1 `G` yazar; adam-günü **9**'dur.
+    """Hasan 14 günde 9 çalışma günü + 1 `G` yazar; 81 saat, 9,0 adam-gün.
 
-    ŞP 245: `G`'nin bulunduğu sütunun toplamı 4 değil "3G"dir — `G` sayıya
-    KATILMAZ, ayrı işaretlenir.
+    `G` bir çalışma DEĞİLDİR: saate 0 katar ve ayrı sayaçta gösterilir.
     """
     matris = await _matris(client, admin_headers, santiye.id)
-    assert _satir(matris, "Hasan Çelik")["man_days"] == 9
+    hasan = _satir(matris, "Hasan Çelik")
+    assert Decimal(hasan["total_hours"]) == Decimal("81")
+    assert Decimal(hasan["man_days"]) == Decimal("9.0")
 
 
 # --- Günlük (sütun) toplamlar (ŞP 230-248) ---
@@ -193,41 +195,41 @@ async def test_gecici_gorev_kisi_adam_gunune_girmez(
 async def test_gunluk_sayilar_calisan_kisi_sayisidir(
     client: AsyncClient, admin_headers, santiye, sp_matrisi
 ) -> None:
-    """ŞP 232-234: 1. gün 4, 2. gün 3, 3. gün 3 (İ sayılmaz); 235-236: tatil 0."""
+    """1. gün 4 kişi, 2-3. gün 3 (İ sayılmaz); tatil günlerinde 0 ve 0 saat."""
     matris = await _matris(client, admin_headers, santiye.id)
     gunluk = {g["work_date"]: g for g in matris["day_totals"]}
-    assert gunluk[gun(1).isoformat()]["worked_count"] == 4
-    assert gunluk[gun(2).isoformat()]["worked_count"] == 3
-    assert gunluk[gun(3).isoformat()]["worked_count"] == 3
-    assert gunluk[gun(4).isoformat()]["worked_count"] == 0
-    assert gunluk[gun(5).isoformat()]["worked_count"] == 0
+    assert gunluk[gun(1).isoformat()]["worked_day_count"] == 4
+    assert Decimal(gunluk[gun(1).isoformat()]["total_hours"]) == Decimal("36")
+    assert gunluk[gun(2).isoformat()]["worked_day_count"] == 3
+    assert gunluk[gun(3).isoformat()]["worked_day_count"] == 3
+    assert gunluk[gun(4).isoformat()]["worked_day_count"] == 0
+    assert Decimal(gunluk[gun(4).isoformat()]["total_hours"]) == Decimal("0")
+    assert gunluk[gun(5).isoformat()]["worked_day_count"] == 0
 
 
-async def test_fm_gunu_sayiya_katilir_ve_arti_ile_isaretlenir(
+async def test_uzun_gun_sutun_SAATINE_yansir(
     client: AsyncClient, admin_headers, santiye, sp_matrisi
 ) -> None:
-    """ŞP 237 "4+" · E5 203 "4": FM'li gün SAYILIR, üstüne `+` işareti konur."""
+    """🔴 `has_overtime` bayrağı KALKTI: FM haftalık bir türevdir, bir GÜN
+    sütununda hesaplanamaz (haftalık 45 tavanı o sütunda bilinmez).
+
+    Gün sütununda görünen tek şey SAATTİR: 6. gün 3×9 + 12,5 = 39,5.
+    """
     matris = await _matris(client, admin_headers, santiye.id)
     gunluk = {g["work_date"]: g for g in matris["day_totals"]}
 
-    altinci = gunluk[gun(6).isoformat()]
-    assert altinci["worked_count"] == 4
-    assert altinci["has_overtime"] is True
-
-    onuncu = gunluk[gun(10).isoformat()]
-    assert onuncu["worked_count"] == 4
-    assert onuncu["has_overtime"] is True
-
-    assert gunluk[gun(1).isoformat()]["has_overtime"] is False
+    assert Decimal(gunluk[gun(6).isoformat()]["total_hours"]) == Decimal("39.5")
+    assert gunluk[gun(6).isoformat()]["worked_day_count"] == 4
+    assert "has_overtime" not in gunluk[gun(6).isoformat()]
 
 
 async def test_gecici_gorev_sutunda_ayri_sayilir(
     client: AsyncClient, admin_headers, santiye, sp_matrisi
 ) -> None:
-    """ŞP 245 "3G": 13. günde 3 çalışan + 1 geçici görev."""
+    """13. günde 3 çalışan + 1 geçici görev."""
     matris = await _matris(client, admin_headers, santiye.id)
     onucuncu = next(g for g in matris["day_totals"] if g["work_date"] == gun(13).isoformat())
-    assert onucuncu["worked_count"] == 3
+    assert onucuncu["worked_day_count"] == 3
     assert onucuncu["temporary_duty_count"] == 1
     assert (
         next(g for g in matris["day_totals"] if g["work_date"] == gun(1).isoformat())[
@@ -250,27 +252,29 @@ async def test_gun_iskeleti_ayin_tamamini_kapsar(
 # --- Başlık şeridi (ŞP 116-119) ---
 
 
-async def test_baslik_seridi_isci_sayisi_adam_gun_ve_fm_saati(
+async def test_baslik_seridi_isci_sayisi_saat_ve_adam_gun(
     client: AsyncClient, admin_headers, santiye, sp_matrisi, bolum
 ) -> None:
-    """ŞP 117 bölüm adı · 118 "48 işçi" · 119 "864 adam/gün · 128 saat fazla mesai".
-
-    Toplam adam-gün ŞP 248'in ("86") kaynağıyla AYNIDIR: kişi toplamlarının
-    toplamı (22+20+23+21=86). Örnekte 9+8+9+9=35.
-    """
+    """Toplam saat = 84,5 + 74 + 81 + 81 = 320,5 -> 320,5/9 = 35,6 adam-gün."""
     matris = await _matris(client, admin_headers, santiye.id, section_id=str(bolum.id))
     assert matris["section_name"] == "Kat 6–10 Kaba İnşaat"
     assert matris["worker_count"] == 4
-    assert matris["total_man_days"] == 35
-    assert sum(row["man_days"] for row in matris["rows"]) == matris["total_man_days"]
+    assert Decimal(matris["total_hours"]) == Decimal("320.5")
+    assert Decimal(matris["total_man_days"]) == Decimal("35.6")
 
 
-async def test_fm_saat_toplami_yalniz_girilenlerden(
+async def test_genel_adam_gun_SATIRLARDAN_TOPLANMAZ(
     client: AsyncClient, admin_headers, santiye, sp_matrisi
 ) -> None:
-    """İki FM hücresi var, saati girilmiş olan TEK (3.5) — toplam 3.5 (spec §7 S2)."""
+    """🔴 Yuvarlama biriktirme bekçisi.
+
+    Satır adam-günleri 9,4 + 8,2 + 9,0 + 9,0 = 35,6… bu örnekte tesadüfen
+    eşit çıkabilir; asıl iddia toplamın SAATTEN türediğidir: `total_man_days`
+    her zaman `total_hours / 9`a eşittir.
+    """
     matris = await _matris(client, admin_headers, santiye.id)
-    assert Decimal(matris["total_overtime_hours"]) == Decimal("3.5")
+    beklenen = (Decimal(matris["total_hours"]) / Decimal(9)).quantize(Decimal("0.1"))
+    assert Decimal(matris["total_man_days"]) == beklenen
 
 
 async def test_bolum_secilmemisse_serit_bolumsuzdur(
@@ -300,7 +304,9 @@ async def test_bolum_filtresi_yalniz_o_bolumun_hucrelerini_dondurur(
 ) -> None:
     """İkinci bölümün işçisi, birinci bölüm süzgecinde GÖRÜNMEZ."""
     diger = await personel_fabrikasi("Veli Ak", trade="Sıvacı")
-    await hucre_fabrikasi(santiye, diger, gun(1), _C, admin_kullanicisi, section=ikinci_bolum)
+    await hucre_fabrikasi(
+        santiye, diger, gun(1), admin_kullanicisi, hours=9, section=ikinci_bolum
+    )
 
     hepsi = await _matris(client, admin_headers, santiye.id)
     assert len(hepsi["rows"]) == 5
@@ -308,7 +314,8 @@ async def test_bolum_filtresi_yalniz_o_bolumun_hucrelerini_dondurur(
 
     suzulmus = await _matris(client, admin_headers, santiye.id, section_id=str(ikinci_bolum.id))
     assert [row["full_name"] for row in suzulmus["rows"]] == ["Veli Ak"]
-    assert suzulmus["total_man_days"] == 1
+    assert Decimal(suzulmus["total_hours"]) == Decimal("9")
+    assert Decimal(suzulmus["total_man_days"]) == Decimal("1.0")
     assert suzulmus["section_name"] == "Kat 1–5 Kaba İnşaat"
 
 
@@ -339,7 +346,7 @@ async def test_baska_santiyenin_hucresi_matriste_gorunmez(
     sp_matrisi,
 ) -> None:
     diger = await personel_fabrikasi("Osman Tan", trade="Kaynakçı")
-    await hucre_fabrikasi(ikinci_santiye, diger, gun(1), _C, admin_kullanicisi)
+    await hucre_fabrikasi(ikinci_santiye, diger, gun(1), admin_kullanicisi, hours=9)
     matris = await _matris(client, admin_headers, santiye.id)
     assert "Osman Tan" not in [row["full_name"] for row in matris["rows"]]
 
@@ -350,9 +357,9 @@ async def test_baska_ayin_hucresi_matriste_gorunmez(
     from datetime import date as _date
 
     mehmet = sp_matrisi["Mehmet Yılmaz"]
-    await hucre_fabrikasi(santiye, mehmet, _date(YIL, 8, 3), _C, admin_kullanicisi)
+    await hucre_fabrikasi(santiye, mehmet, _date(YIL, 8, 3), admin_kullanicisi, hours=9)
     matris = await _matris(client, admin_headers, santiye.id)
-    assert _satir(matris, "Mehmet Yılmaz")["man_days"] == 9
+    assert Decimal(_satir(matris, "Mehmet Yılmaz")["total_hours"]) == Decimal("84.5")
 
 
 # --- Dönem parametresi ---

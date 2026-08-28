@@ -1,7 +1,7 @@
 """T4 — `GET /sites/{site_id}/timesheet/export.xlsx` (spec §3).
 
 Çıktı, T3 matrisinin AYNI türevlerini taşır: kişi satırları + gün sütunları +
-kişi adam-günü + günlük alt toplam satırı + FM saat toplamı. Hesap `matrix.py`de
+kişi toplam saati + adam-günü + günlük alt toplam satırı. Hesap `matrix.py`de
 kalır, bu uç yalnız onu çalışma kitabına çevirir — iki farklı toplam mantığı
 ekranla Excel'i ayrıştırırdı.
 
@@ -20,6 +20,7 @@ from httpx import AsyncClient
 from app.modules.site_diary.models import WorkerSource
 from app.modules.timesheet.export import (
     COLUMN_HEADERS,
+    HOURS_TOTAL_HEADER,
     DAY_TOTAL_LABEL,
     EMPTY_VALUE,
     HEADER_ROW,
@@ -34,10 +35,8 @@ from tests.timesheet.conftest import AY, YIL, gun
 
 pytestmark = pytest.mark.asyncio
 
-_C = TimesheetCode.worked
 _I = TimesheetCode.leave
 _T = TimesheetCode.holiday
-_FM = TimesheetCode.overtime
 _G = TimesheetCode.temporary_duty
 
 
@@ -68,24 +67,18 @@ def _kisi_satiri(sheet, ad: str) -> list:
 
 @pytest.fixture
 async def ornek_ay(hucre_fabrikasi, santiye, admin_kullanicisi, mehmet, ali, bolum):
-    """İki kişi, ilk üç gün. Mehmet'in 2. günü FM'dir ve saati (3.5) GİRİLMİŞTİR;
+    """İki kişi, ilk üç gün. Mehmet 9 + 12,5 saat + tatil; Ali 9 saat + izin + görev.
 
-    Ali'nin 3. günü `G`dir — alt toplam satırının "+" ve "G" işaretlerinin kaynağı.
+    Ali'nin 3. günü `G`dir — alt toplam satırındaki "G" işaretinin kaynağı.
     """
-    await hucre_fabrikasi(santiye, mehmet, gun(1), _C, admin_kullanicisi, section=bolum)
+    await hucre_fabrikasi(santiye, mehmet, gun(1), admin_kullanicisi, hours=9, section=bolum)
     await hucre_fabrikasi(
-        santiye,
-        mehmet,
-        gun(2),
-        _FM,
-        admin_kullanicisi,
-        overtime_hours=Decimal("3.5"),
-        section=bolum,
+        santiye, mehmet, gun(2), admin_kullanicisi, hours=Decimal("12.5"), section=bolum
     )
-    await hucre_fabrikasi(santiye, mehmet, gun(3), _T, admin_kullanicisi, section=bolum)
-    await hucre_fabrikasi(santiye, ali, gun(1), _C, admin_kullanicisi, section=bolum)
-    await hucre_fabrikasi(santiye, ali, gun(2), _I, admin_kullanicisi, section=bolum)
-    await hucre_fabrikasi(santiye, ali, gun(3), _G, admin_kullanicisi, section=bolum)
+    await hucre_fabrikasi(santiye, mehmet, gun(3), admin_kullanicisi, code=_T, section=bolum)
+    await hucre_fabrikasi(santiye, ali, gun(1), admin_kullanicisi, hours=9, section=bolum)
+    await hucre_fabrikasi(santiye, ali, gun(2), admin_kullanicisi, code=_I, section=bolum)
+    await hucre_fabrikasi(santiye, ali, gun(3), admin_kullanicisi, code=_G, section=bolum)
 
 
 # --- HTTP zarfı (boq/audit export deseni) ---
@@ -107,9 +100,10 @@ async def test_xlsx_content_type_ve_dosya_adi(client, admin_headers, santiye, or
 async def test_baslik_seridi_matrisin_turevleriyle_ayni(
     client, admin_headers, santiye, proje, bolum, ornek_ay
 ):
-    """ŞP 117 bölüm · 118 işçi sayısı · 119 adam-gün + FM saat toplamı.
+    """Bölüm · işçi sayısı · toplam saat · TÜREV adam-gün.
 
-    Adam-gün 3'tür: Mehmet Ç+FM (2) + Ali Ç (1). `İ`, `T` ve `G` SAYILMAZ.
+    Toplam saat 30,5 (9 + 12,5 + 9) -> 30,5/9 = 3,4 adam-gün. `İ`, `T` ve `G`
+    saate 0 katar.
     """
     sheet = _sayfa(await _indir(client, admin_headers, santiye.id, section_id=str(bolum.id)))
 
@@ -122,8 +116,8 @@ async def test_baslik_seridi_matrisin_turevleriyle_ayni(
     assert bilgi[INFO_LABELS[2]] == f"{AY:02d}.{YIL}"
     assert bilgi[INFO_LABELS[3]] == bolum.name
     assert bilgi[INFO_LABELS[4]] == "2"
-    assert bilgi[INFO_LABELS[5]] == "3"
-    assert bilgi[INFO_LABELS[6]] == "3.5"
+    assert bilgi[INFO_LABELS[5]] == "30.5"
+    assert bilgi[INFO_LABELS[6]] == "3.4"
 
 
 async def test_bolum_secilmemisse_serit_bolum_iddia_etmez(client, admin_headers, santiye, ornek_ay):
@@ -138,7 +132,7 @@ async def test_bolum_secilmemisse_serit_bolum_iddia_etmez(client, admin_headers,
 async def test_sutun_basliklari_kisi_alanlari_gunler_ve_toplam(
     client, admin_headers, santiye, ornek_ay
 ):
-    """Sabit kişi sütunları + ayın TÜM günleri (Temmuz = 31) + "Toplam"."""
+    """Sabit kişi sütunları + ayın TÜM günleri (Temmuz = 31) + iki toplam sütunu."""
     sheet = _sayfa(await _indir(client, admin_headers, santiye.id))
     basliklar = _satir(sheet, HEADER_ROW)
 
@@ -146,7 +140,7 @@ async def test_sutun_basliklari_kisi_alanlari_gunler_ve_toplam(
     assert basliklar[len(COLUMN_HEADERS) : len(COLUMN_HEADERS) + 31] == [
         str(day) for day in range(1, 32)
     ]
-    assert basliklar[-1] == "Toplam"
+    assert basliklar[-2:] == [HOURS_TOTAL_HEADER, "Adam-Gün"]
 
 
 async def test_kisi_satiri_ad_meslek_tur_firma_kod_harfleri_ve_adam_gun(
@@ -157,27 +151,32 @@ async def test_kisi_satiri_ad_meslek_tur_firma_kod_harfleri_ve_adam_gun(
 
     mehmet_satir = _kisi_satiri(sheet, "Mehmet Yılmaz")
     assert mehmet_satir[:4] == ["Mehmet Yılmaz", "Kalıpçı Usta", "Şirket", EMPTY_VALUE]
-    assert mehmet_satir[4:7] == ["Ç", "FM", "T"]
+    # 🔴 Çalışılan gün artık HARF değil SAAT basar; kodlu gün harf kalır.
+    assert mehmet_satir[4:7] == ["9.0", "12.5", "T"]
     assert mehmet_satir[7] is None  # kaydı olmayan gün BOŞ kalır
-    assert mehmet_satir[-1] == "2"
+    assert mehmet_satir[-2:] == ["21.5", "2.4"]
 
     ali_satir = _kisi_satiri(sheet, "Ali Kaya")
     assert ali_satir[:4] == ["Ali Kaya", "Demir Ustası", "Taşeron", "Akın İnşaat"]
-    assert ali_satir[4:7] == ["Ç", "İ", "G"]
-    assert ali_satir[-1] == "1"
+    assert ali_satir[4:7] == ["9.0", "İ", "G"]
+    assert ali_satir[-2:] == ["9.0", "1.0"]
 
 
 async def test_alt_toplam_satiri_gunluk_sayilar_arti_ve_g_isareti(
     client, admin_headers, santiye, ornek_ay
 ):
-    """ŞP 237 "4+" (sütunda en az bir FM) · ŞP 245 "3G" (geçici görev sayıya girmez)."""
+    """Gün sütunu artık SAAT toplar; `G` yalnızca bir işarettir, sayıyı değiştirmez.
+
+    🔴 `+` işareti KALKTI: FM haftalık bir türevdir, bir gün sütununda
+    hesaplanamaz.
+    """
     sheet = _sayfa(await _indir(client, admin_headers, santiye.id))
     toplam = _kisi_satiri(sheet, DAY_TOTAL_LABEL)
 
-    assert toplam[4] == "2"  # 1. gün: iki Ç
-    assert toplam[5] == "1+"  # 2. gün: Mehmet FM (sayılır) + Ali İ; sütunda FM var
-    assert toplam[6] == "0G"  # 3. gün: Mehmet T, Ali G — sayı 0, `G` ayrı işaret
-    assert toplam[-1] == "3"
+    assert toplam[4] == "18.0"  # 1. gün: 9 + 9
+    assert toplam[5] == "12.5"  # 2. gün: Mehmet 12,5 + Ali İzin (0)
+    assert toplam[6] == "0.0G"  # 3. gün: Mehmet T, Ali G — 0 saat, `G` işaretli
+    assert toplam[-2:] == ["30.5", "3.4"]
 
 
 async def test_bolum_filtresi_ciktiyi_daraltir(
@@ -191,7 +190,9 @@ async def test_bolum_filtresi_ciktiyi_daraltir(
     ornek_ay,
 ):
     diger = await personel_fabrikasi("Veli Ak", trade="Sıvacı")
-    await hucre_fabrikasi(santiye, diger, gun(1), _C, admin_kullanicisi, section=ikinci_bolum)
+    await hucre_fabrikasi(
+        santiye, diger, gun(1), admin_kullanicisi, hours=9, section=ikinci_bolum
+    )
 
     sheet = _sayfa(await _indir(client, admin_headers, santiye.id, section_id=str(ikinci_bolum.id)))
     adlar = [
@@ -206,8 +207,8 @@ async def test_bos_donemde_gecerli_dosya_doner(client, admin_headers, santiye):
 
     assert _satir(sheet, HEADER_ROW)[: len(COLUMN_HEADERS)] == list(COLUMN_HEADERS)
     toplam = _kisi_satiri(sheet, DAY_TOTAL_LABEL)
-    assert toplam[-1] == "0"
-    assert len([c for c in _satir(sheet, HEADER_ROW) if c is not None]) == len(COLUMN_HEADERS) + 29
+    assert toplam[-2:] == ["0.0", "0.0"]
+    assert len([c for c in _satir(sheet, HEADER_ROW) if c is not None]) == len(COLUMN_HEADERS) + 30
 
 
 # --- İzin ve IDOR ---
@@ -269,7 +270,7 @@ async def test_yeni_kaynak_tipleri_export_kirmaz(
         "Burak Aydın", trade="İnşaat Müh. Staj", source=WorkerSource.intern
     )
     for kisi in (serbest, stajyer):
-        await hucre_fabrikasi(santiye, kisi, gun(1), _C, admin_kullanicisi)
+        await hucre_fabrikasi(santiye, kisi, gun(1), admin_kullanicisi, hours=9)
 
     sheet = _sayfa(await _indir(client, admin_headers, santiye.id))
 
