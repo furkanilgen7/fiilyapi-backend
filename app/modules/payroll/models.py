@@ -64,6 +64,18 @@ RATE_SCALE = 3
 MONEY_PRECISION = 12
 MONEY_SCALE = 2
 
+#: 🔴 PUAN-SAAT-3 — adam-gün artık SAYIM değil TÜREVDİR (`toplam saat ÷ 9`).
+#: Ondalık adım `timesheet_entries.hours`ün (`Numeric(4,1)`) adımıyla AYNIDIR:
+#: türev, kaynağının gösteremediği bir hassasiyeti iddia edemez.
+DAYS_PRECISION = 6
+DAYS_SCALE = 1
+
+#: 🔴 FM çarpanının ölçeği. Üç ondalık, oran sütunlarıyla aynı disiplin: `1.500`
+#: (İş K. m.41 %50 zam) ve `1.250` (fazla SÜRELERLE çalışma %25) ikisi de tam
+#: temsil edilir.
+OVERTIME_MULTIPLIER_PRECISION = 4
+OVERTIME_MULTIPLIER_SCALE = 3
+
 #: Tarife EŞİĞİNİN hassasiyeti — para kolonundan İKİ HANE BÜYÜK (IK3-GV K2):
 #: 5.300.000 eşiği kuruşuyla 12 haneye sığar ama tarife yıllar içinde büyür.
 #: Şema tarafı (`schemas.BracketBound`) BU sabitten okur — ayrı yazılsaydı bir
@@ -245,8 +257,24 @@ class PayrollLine(Base):
     personnel_source: Mapped[WorkerSource] = mapped_column(
         Enum(WorkerSource, name="worker_source"), nullable=False
     )
-    # S7: gün PUANTAJDAN okunur; serbest mesleklide gün YOKTUR (BY 254 "—").
-    days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: S7: gün PUANTAJDAN okunur; serbest mesleklide gün YOKTUR (BY 254 "—").
+    #:
+    #: 🔴 **PUAN-SAAT-3: `Integer` DEĞİL `Numeric(6,1)`.** Puantaj hücresi artık
+    #: saat taşır ve yarım gün TEMSİL EDİLEBİLİR; gün SAYMAK 4 saatlik günü tam
+    #: gün gösterir ve yevmiyeliye FAZLA ÖDERDİ. Alan artık bir SAYIM değil bir
+    #: TÜREVDİR: `toplam saat ÷ 9` (`timesheet.hours.man_days`, E5 349-350
+    #: "588 saat · 65,3 adam/gün"). 🔑 Ölçek `Numeric(6,1)`dir ve
+    #: `timesheet_entries.hours` (`Numeric(4,1)`) ile AYNI ondalık adımdadır —
+    #: farklı olsaydı türev, kaynağının gösteremediği bir hassasiyeti iddia
+    #: ederdi.
+    #:
+    #: 🔴 **Tip genişlemesi GEÇMİŞİ DEĞİŞTİRMEZ:** `22` → `22.0` aynı sayıdır.
+    #: Onaylanmış/ödenmiş ve elle düzeltilmiş satırlar `compute` tarafından
+    #: zaten EZİLMEZ (S5/S6), yani geçmiş bordronun günü de brütü de yerinde
+    #: kalır (`personnel_source` SNAPSHOT kanonuyla aynı aile).
+    days: Mapped[Decimal | None] = mapped_column(
+        Numeric(DAYS_PRECISION, DAYS_SCALE), nullable=True
+    )
     gross_amount: Mapped[Decimal | None] = mapped_column(
         Numeric(MONEY_PRECISION, MONEY_SCALE), nullable=True
     )
@@ -520,6 +548,62 @@ class PayrollMinimumWage(Base):
     year: Mapped[int] = mapped_column(Integer, nullable=False)
     gross_amount: Mapped[Decimal] = mapped_column(
         Numeric(MONEY_PRECISION, MONEY_SCALE), nullable=False
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class PayrollOvertimeRate(Base):
+    """Yıllık FAZLA MESAİ ÇARPANI — saatlik brütün ikinci çarpanı (PUAN-SAAT-3).
+
+    Mockup E5 358 birebir: *"× saatlik ücret **× 1,5**"* (ve E5 359 metni:
+    *"Haftalık 45 saati aşan kısım **%50 zamlı**"*).
+
+    🔴 **Niçin KOD SABİTİ DEĞİL:** K1 kanonu — *"oranlar VERİDİR, koda gömülmez;
+    mevzuat değişince kod değişmez."* 1,5 bir mevzuat sayısıdır (İş K. m.41) ve
+    aynı maddede fazla SÜRELERLE çalışma için 1,25 vardır; haftalık normal
+    süresi 45'ten az kararlaştırılmış bir sözleşmede uygulanan odur. Sabit
+    gömülseydi o gün kod değişirdi.
+
+    🔴 **Niçin `payroll_rates`e KOLON DEĞİL, AYRI TABLO:** `PayrollMinimumWage`
+    ile birebir aynı gerekçe. `payroll_rates` `(yıl, personel tipi)`
+    anahtarlıdır; çarpan oraya konsaydı **DÖRT KOPYA** doğar ve dördü
+    birbiriyle çelişebilirdi — oysa fazla mesai zammı personel tipine göre
+    değişmez. Ayrıca `PayrollRateUpdate` **TAM SET** PUT'udur (`extra="forbid"`,
+    tüm alanlar zorunlu): kolon eklemek `Ayarlar - Bordro Oranları` formunda
+    KARŞILIĞI OLMAYAN zorunlu bir alan doğurur ve o form 422'ye düşerdi
+    (mockup'ta FM kutusu YOKTUR — icat yasağı, WORKFLOW §3).
+
+    🔴 **Satırı olmayan yıl fail-closed'dur — ama YALNIZ FM VARSA.** Çarpan
+    ancak fazla mesai saati > 0 iken hesaba girer; 0 FM'li bir dönemde bilinmesi
+    GEREKMEZ ve orada satırı `uncomputed`a düşürmek, koruduğu şeyden büyük hasar
+    üretirdi (IK3-RATE-FIX kanonu). FM varken çarpan bilinmiyorsa satır
+    `uncomputed` kalır — 1,5 VARSAYILMAZ (NULL-EŞİK kanonu).
+
+    `is_active`: eski yılın satırı SİLİNMEZ, pasifleştirilir (`payroll_rates` ve
+    `payroll_minimum_wages` kuralıyla aynı) — geçmiş bordronun hesabı okunabilir
+    kalmalıdır.
+    """
+
+    __tablename__ = "payroll_overtime_rates"
+    __table_args__ = (
+        # 🔴 Taban 1: çarpan zam DEMEKTİR. 1'in altı, fazla mesai saatini normal
+        # saatten UCUZA ödemek olurdu — mevzuatta karşılığı olmayan bir sayı.
+        CheckConstraint("multiplier >= 1", name="ck_payroll_overtime_rates_multiplier_min"),
+        UniqueConstraint("year", name="uq_payroll_overtime_rates_year"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    year: Mapped[int] = mapped_column(Integer, nullable=False)
+    multiplier: Mapped[Decimal] = mapped_column(
+        Numeric(OVERTIME_MULTIPLIER_PRECISION, OVERTIME_MULTIPLIER_SCALE), nullable=False
     )
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("true")

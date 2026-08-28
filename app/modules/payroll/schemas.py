@@ -220,7 +220,9 @@ class PayrollLineResponse(BaseModel):
     personnel_id: uuid.UUID
     personnel_name: str
     personnel_source: WorkerSource
-    days: int | None
+    #: 🔴 PUAN-SAAT-3: **`int` DEĞİL `Decimal`** — adam-gün artık bir SAYIM değil
+    #: bir TÜREVDİR (`toplam saat ÷ 9`, E5 349-350) ve yarım günü temsil eder.
+    days: Decimal | None
     gross_amount: Decimal | None
     deduction_amount: Decimal | None
     net_amount: Decimal | None

@@ -30,8 +30,10 @@ bu bir canli para kusuruna DONUSUR.
 """
 
 import uuid
+from datetime import date
+from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
@@ -39,6 +41,7 @@ from app.modules.payroll import compute, guards, transitions
 from app.modules.payroll.models import (
     PayrollLine,
     PayrollLineStatus,
+    PayrollOvertimeRate,
     PayrollPeriod,
     PayrollPeriodStatus,
 )
@@ -59,6 +62,7 @@ from app.modules.payroll.service.tax_context import (
 )
 from app.modules.personnel.models import Personnel
 from app.modules.site_diary.models import WorkerSource
+from app.modules.timesheet import hours as hours_rules
 from app.modules.timesheet.matrix import worked_day_clause
 from app.modules.timesheet.models import TimesheetEntry
 
@@ -84,25 +88,65 @@ async def _payroll_personnel(session: AsyncSession) -> list[Personnel]:
     )
 
 
-async def _man_day_counts(session: AsyncSession, year: int, month: int) -> dict[uuid.UUID, int]:
-    """Kişi başına adam-gün — `matrix.worked_day_clause` kanonu (S7).
+async def _work_hours(
+    session: AsyncSession, year: int, month: int
+) -> dict[uuid.UUID, hours_rules.WeekHours]:
+    """Kişi başına DÖNEM saat türevleri — normal / FM / toplam (PUAN-SAAT-3).
 
-    Kaydı olmayan kişi sözlükte BULUNMAZ ve çağıran 0 sayar; ama o 0'ın anlamı
-    `_personnel_with_timesheet_records` ile belirlenir: kaydı hiç yoksa sayı
-    BİLİNMİYOR demektir (fail-closed), kaydı varken 0 çıkmışsa (izin/tatil ayı)
-    sayı GERÇEKTİR. İki durum burada karıştırılmaz.
+    🔴 **Eski `_man_day_counts`in yerini alır ve AÇIK BORCU KAPATIR.** Orası
+    `COUNT(*)` ile "saati olan hücre" SAYIYORDU; yeni ekran 4 saatlik yarım gün
+    girmeye izin verdiği anda o sayım yarım günü TAM GÜN gösterir ve yevmiyeli
+    personele FAZLA ÖDERDİ. Artık hücrelerin SAATİ okunur ve türev
+    `timesheet.hours.period_totals`ten gelir.
+
+    🔑 **FM burada HESAPLANMAZ, `timesheet.hours`tan OKUNUR** (tek kaynak
+    kanonu): bordro kendi FM kuralını yazsaydı puantaj ekranı ile bordro aynı
+    hafta için iki farklı FM saati basardı.
+
+    Kaydı olmayan kişi sözlükte BULUNMAZ ve çağıran satırı `uncomputed` bırakır;
+    ama o yokluğun anlamı `_personnel_with_timesheet_records` ile belirlenir:
+    kaydı hiç yoksa saat BİLİNMİYOR demektir (fail-closed), kaydı varken hiç
+    saatli hücre yoksa (izin/tatil ayı) saat 0 GERÇEKTİR. İki durum burada
+    karıştırılmaz — bu yüzden sorgu `worked_day_clause()` ile SÜZER ve
+    kardeşi hiç süzmez.
+
+    Satır sayısı kişi × gün ile sınırlıdır (48 kişilik bir ayda ~1.400) ve TEK
+    sorguda okunur — kişi başına sorgu açılsaydı N+1 doğardı.
     """
     ilk, son = month_bounds(year, month)
     rows = await session.execute(
-        select(TimesheetEntry.personnel_id, func.count())
+        select(TimesheetEntry.personnel_id, TimesheetEntry.work_date, TimesheetEntry.hours)
         .where(
             TimesheetEntry.work_date >= ilk,
             TimesheetEntry.work_date <= son,
             worked_day_clause(),
         )
-        .group_by(TimesheetEntry.personnel_id)
+        .order_by(TimesheetEntry.personnel_id, TimesheetEntry.work_date)
     )
-    return {personnel_id: sayi for personnel_id, sayi in rows.all()}
+    kisi_gunleri: dict[uuid.UUID, list[tuple[date, Decimal]]] = {}
+    for personnel_id, work_date, saat in rows.all():
+        kisi_gunleri.setdefault(personnel_id, []).append((work_date, saat))
+    return {
+        personnel_id: hours_rules.period_totals(gunler)
+        for personnel_id, gunler in kisi_gunleri.items()
+    }
+
+
+async def _overtime_multiplier(session: AsyncSession, year: int) -> Decimal | None:
+    """Yılın FM çarpanı — satırı yoksa **`None`** (fail-closed, K1).
+
+    `_minimum_wage_gross`in birebir kardeşidir: mevzuat sayısı VERİDİR, koda
+    gömülmez. `None` sessizce 1,5 diye OKUNAMAZ (NULL-EŞİK kanonu); FM saati
+    olan satır `uncomputed`a düşer, FM'i olmayan satır etkilenmez
+    (`compute.compute_gross`).
+    """
+    return (
+        await session.execute(
+            select(PayrollOvertimeRate.multiplier).where(
+                PayrollOvertimeRate.year == year, PayrollOvertimeRate.is_active.is_(True)
+            )
+        )
+    ).scalar_one_or_none()
 
 
 async def _personnel_with_timesheet_records(
@@ -218,7 +262,8 @@ async def compute_period(session: AsyncSession, period_id: uuid.UUID) -> Payroll
         raise ConflictError(guards.PERIOD_LOCKED)
 
     rates = await rates_by_source(session, period.year)
-    man_days = await _man_day_counts(session, period.year, period.month)
+    work_hours = await _work_hours(session, period.year, period.month)
+    overtime_multiplier = await _overtime_multiplier(session, period.year)
     kayitli = await _personnel_with_timesheet_records(session, period.year, period.month)
     existing = await _existing_lines(session, period.id)
     # IK3-GV: tarife/asgari ücret DÖNEM BAŞINA BİR KEZ, kümülatif tabanlar TEK
@@ -253,9 +298,10 @@ async def compute_period(session: AsyncSession, period_id: uuid.UUID) -> Payroll
             wage_type=person.wage_type,
             wage_amount=person.wage_amount,
             payment_method=person.payment_method,
-            man_days=man_days.get(person.id, 0),
+            work_hours=work_hours.get(person.id, hours_rules.EMPTY_WEEK),
             has_timesheet_records=person.id in kayitli,
             rate=rates.get(person.source),
+            overtime_multiplier=overtime_multiplier,
             tax=compute.TaxContext(
                 month=period.month,
                 prior_cumulative_base=prior_bases.get(
