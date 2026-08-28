@@ -33,6 +33,19 @@ DEGILDIR, tasinmasi serbesttir. Yabanci modul yollari (`app.core.errors`,
 `app.modules.payroll.compute`, ...) normallestirilmez — onlarin degismesi
 gercek bir sozlesme kaymasidir.
 
+## 🔴 TABANDAN CIKARILAN IKINCI SATIR + DEGISEN ALAN (PUAN-SAAT-3, 2026-08-28)
+
+    async def _man_day_counts(...) -> dict[uuid.UUID, int]
+    'days': 22   ->   'days': Decimal('22')
+
+Bordro SAATE uyarlandi. `_man_day_counts` "saati olan hucre"yi SAYIYORDU ve
+4 saatlik gunu TAM GUN gosteriyordu (yevmiyelide fazla odeme); yerini
+`_work_hours` (normal/FM/toplam turevi) ve `_overtime_multiplier` aldi — ikisi
+de cepheye EKLENDI, ad kaybi bilinclidir. `PayrollLine.days` de `Integer`dan
+`Numeric(6,1)`e genisledi: adam-gun artik bir SAYIM degil bir TUREVDIR
+(`toplam saat / 9`). **Deger degismedi** (`22` = `Decimal('22')`), yalnizca
+TIPI genisledi. Taban BU IKI DEGISIKLIK icin duzenlendi, yeniden URETILMEDI.
+
 ## 🔴 TABANDAN CIKARILAN TEK SATIR (PUAN-SAAT, 2026-08-28)
 
     set MAN_DAY_CODES = {TimesheetCode.overtime, TimesheetCode.worked}

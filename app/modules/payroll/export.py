@@ -171,7 +171,11 @@ def _line_cells(line: PayrollLineResponse) -> tuple[str | None, ...]:
     return (
         line.personnel_name,
         source_label(line.personnel_source),
-        None if line.days is None else str(line.days),
+        # 🔴 PUAN-SAAT-3: adam-gün ONDALIKLIDIR (`22` değil `22.0`) — hücre
+        # `_money` ile aynı disiplinde, ölçeği KORUNARAK basılır. Tam sayıya
+        # yuvarlansaydı yarım gün dosyada kaybolur ve Excel ile ekran aynı
+        # dönem için farklı gün gösterirdi.
+        _money(line.days),
         _money(line.gross_amount),
         _money(line.deduction_amount),
         _money(line.net_amount),

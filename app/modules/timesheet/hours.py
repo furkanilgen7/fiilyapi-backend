@@ -35,12 +35,15 @@ pazarina basilmistir. Renk bir IPUCUDUR; FM **hesaptan** turer, siniftan degil.
 `588 saat ÷ 9 = 65,3 adam/gun` (E5 349-350). Tam sayi DEGILDIR — bir ondalik
 basamaga yuvarlanir (mockup "65,3").
 
-🔴 **Bordronun adam-gunu BU DEGILDIR** — `payroll` gun SAYAR (gerekce
-`payroll/service/compute_flow._man_day_counts`), bu turev ekranin/SGK serididir.
-Ikisi bilincli olarak AYRIDIR ve birlestirilmeleri PUAN-SAAT-2'nin isidir.
+🔴 **PUAN-SAAT-3 ILE BORDRO DA BURAYA BAGLANDI.** Once `payroll` "saati olan gun
+SAYISINI" sayiyordu ve 4 saatlik gunu TAM GUN gosteriyordu (yevmiyelide fazla
+odeme). Artik bordronun hem adam-gunu hem BRUTU bu dosyanin turevlerinden okunur
+(`payroll/compute.compute_gross`, `payroll/service/compute_flow`): **iki yuzey
+ayni hafta icin iki farkli sayi basamaz.**
 """
 
 from collections.abc import Iterable
+from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from typing import NamedTuple
 
@@ -64,6 +67,13 @@ class WeekHours(NamedTuple):
     normal_hours: Decimal
     overtime_hours: Decimal
     total_hours: Decimal
+
+
+#: Hic saatli hucresi olmayan (ama puantaj KAYDI olan) bir kisinin turevi:
+#: uc sifir. `None` DEGILDIR ve bu ayrim para sinifidir — kaydi olan ama tum
+#: gunleri izin/tatil KODLU birinde saat 0 GERCEKTIR; kaydi hic olmayanda
+#: BILINMEZ ve orada `None` gecer (`payroll.compute.compute_line`).
+EMPTY_WEEK = WeekHours(normal_hours=ZERO_HOURS, overtime_hours=ZERO_HOURS, total_hours=ZERO_HOURS)
 
 
 def _q(value: Decimal) -> Decimal:
@@ -94,3 +104,41 @@ def man_days(total_hours: Decimal) -> Decimal:
     tam sayiya zorlamak, girilen saati sessizce yukari/asagi cekerdi.
     """
     return _q(Decimal(total_hours) / NORMAL_DAY_HOURS)
+
+
+def period_totals(dated_hours: Iterable[tuple[date, Decimal]]) -> WeekHours:
+    """Bir kisinin BIR DONEMINI (ay) haftalara bolup `week_totals`i her haftaya
+    AYRI uygular ve turevleri toplar.
+
+    🔴 **45 tavani KISI BASINA ve HAFTALIKTIR** (modul basligi). Ay toplamina tek
+    seferde uygulansaydi 4 haftalik bir ay icin tavan 45 olur ve gercekte 180
+    saat normal calisan biri 135 saat FM yapmis gibi gorunurdu — bordroda
+    devasa bir fazla odeme. Bu yuzden gruplama ISO HAFTASINADIR
+    (`date.isocalendar()`), ay icindeki gun sirasina degil.
+
+    ## 🔴 Ay sinirinda BOLUNEN hafta: yalniz DONEMIN hucreleri sayilir
+
+    Bir ISO haftasi iki aya yayilabilir. Komsu ayin hucreleri buraya
+    KATILMAZ ve bu bilincli bir karardir:
+
+    * bordro AYLIK kapanir ve donem bagimsiz ONAYLANIR; komsu ay cekilseydi
+      **kapanmis bir donemin hucresi, acik donemin brutunu degistirirdi**;
+    * ayni FM saati iki donemde birden odenebilirdi (haftanin her iki
+      yarisi kendi ayinda tavani asarsa) — para sinifi cift odeme.
+
+    Bedeli olculmustur ve KUCUKTUR: bolunen hafta iki parcaya ayrildigi icin
+    45 tavanina daha gec vurur, yani FM'i **eksik** hesaplama yonundedir
+    (fail-closed yon: fazla odeme uretmez).
+    """
+    haftalar: dict[tuple[int, int], list[Decimal]] = {}
+    for work_date, value in dated_hours:
+        yil, hafta, _ = work_date.isocalendar()
+        haftalar.setdefault((yil, hafta), []).append(Decimal(value))
+
+    normal = overtime = total = ZERO_HOURS
+    for gun_saatleri in haftalar.values():
+        hafta = week_totals(gun_saatleri)
+        normal += hafta.normal_hours
+        overtime += hafta.overtime_hours
+        total += hafta.total_hours
+    return WeekHours(normal_hours=_q(normal), overtime_hours=_q(overtime), total_hours=_q(total))

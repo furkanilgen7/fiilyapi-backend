@@ -142,7 +142,9 @@ async def test_sirket_satiri_dokuz_sutun(client, ik_headers, hesaplanmis):
     assert _kisi_satiri(sheet, "Ayşe Demir")[: len(COLUMN_HEADERS)] == [
         "Ayşe Demir",
         "Şirket",
-        "5",
+        # 🔴 PUAN-SAAT-3: adam-gün ONDALIKLIDIR (`toplam saat ÷ 9`). "5" değil
+        # "5.0" — ölçek korunur ki yarım gün dosyada kaybolmasın.
+        "5.0",
         "9000.00",
         # 🔴 IK3-GV: kesinti artık DÖRT kalemdir ve 9.000 brüt asgari
         # ücretin ALTINDA olduğu için gelir vergisi + damga 0,00'dır (KK-7
@@ -174,7 +176,7 @@ async def test_S4_hesaplanamamis_satirda_PARA_HUCRELERI_BOS_sifir_DEGIL(
     """
     satir = _kisi_satiri(_sayfa(await _indir(client, ik_headers, hesaplanmis)), "Zeynep Ak")
 
-    assert satir[2] == "5"
+    assert satir[2] == "5.0"
     assert satir[3:8] == [None, None, None, None, None]  # brüt/kesinti/net/banka/elden
     assert satir[8] == STATUS_LABELS[PayrollLineStatus.uncomputed]
 

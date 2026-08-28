@@ -94,6 +94,7 @@ from app.modules.payroll.models import IncomeKind as IncomeKind
 from app.modules.payroll.models import PayrollLine as PayrollLine
 from app.modules.payroll.models import PayrollLineStatus as PayrollLineStatus
 from app.modules.payroll.models import PayrollMinimumWage as PayrollMinimumWage
+from app.modules.payroll.models import PayrollOvertimeRate as PayrollOvertimeRate
 from app.modules.payroll.models import PayrollPeriod as PayrollPeriod
 from app.modules.payroll.models import PayrollPeriodStatus as PayrollPeriodStatus
 from app.modules.payroll.models import PayrollRate as PayrollRate
@@ -121,7 +122,7 @@ from app.modules.payroll.service.compute_flow import (
     _existing_lines as _existing_lines,
 )
 from app.modules.payroll.service.compute_flow import (
-    _man_day_counts as _man_day_counts,
+    _overtime_multiplier as _overtime_multiplier,
 )
 from app.modules.payroll.service.compute_flow import (
     _payroll_personnel as _payroll_personnel,
@@ -131,6 +132,9 @@ from app.modules.payroll.service.compute_flow import (
 )
 from app.modules.payroll.service.compute_flow import (
     _promote_period_after_compute as _promote_period_after_compute,
+)
+from app.modules.payroll.service.compute_flow import (
+    _work_hours as _work_hours,
 )
 from app.modules.payroll.service.compute_flow import (
     compute_period as compute_period,

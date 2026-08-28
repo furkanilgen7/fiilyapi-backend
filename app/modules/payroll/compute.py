@@ -8,7 +8,7 @@ kişi için farklı sayı gösterir ve hangisinin doğru olduğu anlaşılamazd�
 
 ## Zincir
 
-    gün (puantaj) → brüt (ücret tipi) → kesinti (oran seti + TARİFE) → net → bölüşüm
+    SAAT (puantaj) → brüt (ücret tipi + FM çarpanı) → kesinti (oran seti + TARİFE) → net → bölüşüm
 
 🔴 **IK3-GV (2026-08-17) zinciri AYRIŞTIRDI.** Önceden dört işçi oranı tek
 yüzdede toplanıp (%25,759) tek çarpım yapılıyordu ve **gelir vergisi hesabın
@@ -28,13 +28,12 @@ Uydurma 0, eksik veriyi "ödenecek bir şey yok" gibi gösterirdi — para sın�
   `unemployment_employer_pct` · `short_work_pct`) işçinin kesintisi DEĞİL,
   işverenin maliyetidir (spec §7: `toplam_maliyet = brüt + üç işveren kalemi`).
   İkisini karıştırmak neti yanlış hesaplardı.
-* **🔴 ŞEF KARARI 1 — `hourly` FAIL-CLOSED (⚠️ ARTIK GEÇİCİ).** Kararın
-  dayanağı "puantajda çalışma SAATİ yoktur" idi; **PUAN-SAAT bu dayanağı
-  kaldırdı** — `timesheet_entries.hours` artık günlük çalışma saatidir. Yol
-  yine de bu dilimde AÇILMADI: saatlik ücret yolu FM'in %50 zammını
-  (mockup E5 358 "× saatlik ücret × 1,5") ve haftalık 45 tavanını bordroya
-  taşımayı gerektirir, bu ise PUAN-SAAT-2'nin işidir. O gelene kadar sabit
-  İCAT ETMEK yasaktır (WORKFLOW §3) → satır `uncomputed`.
+* **✅ ŞEF KARARI 1 (`hourly` FAIL-CLOSED) — PUAN-SAAT-3'te KAPANDI.** Kararın
+  dayanağı "puantajda çalışma SAATİ yoktur" idi; PUAN-SAAT o dayanağı kaldırdı.
+  `hourly` artık `daily` ile **TEK FORMÜLÜ** paylaşır (`compute_gross`) ve
+  yalnız saatlik ücretin nereden geldiğinde ayrışır (`hourly_rate`: `hourly`
+  tutarın kendisi, `daily` `yevmiye ÷ 9` — mockup E5 359 birebir). Sabit
+  İCAT EDİLMEDİ: FM çarpanı VERİDİR (`payroll_overtime_rates`, K1).
 * **🔴 YÖNETİM KARARI (T4b) — puantaj KAYDI olmayan personel FAIL-CLOSED,
   ÜÇ ÜCRET TİPİNDE DE.** Dönemde personele ait HİÇ `timesheet_entries` kaydı
   yoksa "bu ay hiç çalışmadı" ile "puantajı henüz girilmedi" veritabanında
@@ -52,12 +51,14 @@ Uydurma 0, eksik veriyi "ödenecek bir şey yok" gibi gösterirdi — para sın�
   BY 143/163/259/287'de banka input'u dolu, elden 0; nakit yalnız taşeron
   satırlarında (BY 194/214/234) ve onlar zaten `excluded`. Elden nakit
   varsayılanı üretmek DENETLENMEMİŞ nakit çıkışı önerirdi.
-* **🔴 ŞEF KARARI 4 — mesai brüte OTOMATİK EKLENMEZ.** BY 110-118 tablo
-  başlığında mesai sütunu YOKTUR ve K3 mesaiyi açıkça override yoluna bağlar
-  ("mesai/ikramiye/avans"). Fazla mesaili gün `worked_day_clause` gereği GÜN
-  olarak sayılır (`matrix.py`), saati ayrıca paraya çevrilmez — çevrilseydi aynı
-  mesai hem gün hem saat olarak iki kez ödenirdi. PUAN-SAAT sonrası FM bir kolon
-  değil TÜREVDİR; bordroya taşınması PUAN-SAAT-2'nin işidir.
+* **🔄 ŞEF KARARI 4 (mesai brüte OTOMATİK EKLENMEZ) — PUAN-SAAT-3'te DEĞİŞTİ.**
+  Dayanağı "BY 110-118 tablo başlığında mesai sütunu YOKTUR" idi. Mockup
+  `Ekran 5 - Puantaj` (`5f3a944`, **BY'den daha yeni**) 356-359'da mesaiyi
+  bordroya AÇIKÇA bağlar: *"Bu Hafta FM 27 saat × saatlik ücret × 1,5"* ve
+  *"Haftalık 45 saati aşan kısım %50 zamlı"*. Kararın karşı-riski (aynı mesainin
+  hem gün hem saat olarak İKİ KEZ ödenmesi) YAPISAL OLARAK ortadan kalktı:
+  brütün tek tabanı artık SAATTİR, gün sayısı hiçbir yerde çarpan değildir.
+  K3 override yolu duruyor — ikramiye/avans hâlâ oradan girer.
 * **K2 — taşeron satırı YAPISAL olarak ödemeye giremez.** Durum HER ZAMAN
   `excluded`tır (hesap yapılabilse de yapılamasa da); tutarlar yine hesaplanır
   çünkü satır görünür ve MALİYETE girer (BY 186-189). Ödemesi hakediş üzerinden
@@ -79,6 +80,7 @@ from app.modules.payroll import income_tax as income_tax_engine
 from app.modules.payroll.models import PayrollLineStatus, PayrollRate
 from app.modules.personnel.models import PaymentMethod, WageType
 from app.modules.site_diary.models import WorkerSource
+from app.modules.timesheet import hours as hours_rules
 
 #: Kuruş adımı — `Numeric(12,2)` ile aynı ölçek (models.py `MONEY_SCALE`).
 MONEY_QUANTUM = Decimal("0.01")
@@ -348,37 +350,94 @@ def deduction_and_net(
     return kesintiler, gross_amount - kesintiler.total
 
 
-def computed_days(personnel_source: WorkerSource, man_days: int) -> int | None:
-    """Satıra yazılacak gün — serbest meslekte **`None`** (S7, BY 254 "—").
+def computed_days(personnel_source: WorkerSource, man_days: Decimal) -> Decimal | None:
+    """Satıra yazılacak adam-gün — serbest meslekte **`None`** (S7, BY 254 "—").
 
     Serbest meslekli puantaja girmiş olsa bile ücreti güne bağlı değildir; gün
-    yazmak, olmayan bir çarpanı varmış gibi gösterirdi. Diğer tiplerde gün
-    puantajdan gelir ve AYLIKÇIDA DA yazılır (BY 138/158) — orada bir BİLGİDİR,
-    çarpan değildir.
+    yazmak, olmayan bir çarpanı varmış gibi gösterirdi.
+
+    🔴 **PUAN-SAAT-3: artık bir SAYIM değil bir TÜREVDİR** (`toplam saat ÷ 9`,
+    `timesheet.hours.man_days`) ve **ondalıklıdır**. Diğer tiplerde — aylıkçıda
+    DA — yazılır (BY 138/158); orada bir BİLGİDİR, çarpan değildir. Yevmiyelide
+    de artık ÇARPAN DEĞİLDİR: brüt `compute_gross`ta SAATTEN türer, çünkü gün
+    SAYISI fazla mesainin %50 zammını taşıyamaz.
     """
     if personnel_source is WorkerSource.freelance:
         return None
     return man_days
 
 
+def hourly_rate(wage_type: WageType | None, wage_amount: Decimal | None) -> Decimal | None:
+    """Saatlik ücret — mockup E5 359 birebir: *"Saatlik ücret = günlük ücret ÷ 9"*.
+
+    * `hourly` → tutarın KENDİSİ zaten saatliktir;
+    * `daily`  → `yevmiye ÷ 9` (E5 71 "Normal gün 9 saat");
+    * `monthly` → **`None`**: aylıkçının brütü saate bağlı DEĞİLDİR, gün de
+      çarpan değildir (BY 138/158). Burada bir saatlik ücret türetmek, aylık
+      ücretliyi sessizce saat başına ödemeye çevirirdi.
+
+    🔴 **Bölme YUVARLANMAZ.** `1200 ÷ 9 = 133,333…` kuruşa yuvarlansaydı
+    (133,33) 45 saatlik hafta `5.999,85` ederdi; oysa aynı hafta yevmiye
+    üzerinden `5 × 1200 = 6.000`dir. Yuvarlama TEK YERDEDİR (`quantize_money`)
+    ve zincirin SONUNDA uygulanır — modül başlığındaki "Kuruş" kuralıyla aynı.
+    """
+    if wage_type is None or wage_amount is None:
+        return None
+    if wage_type is WageType.hourly:
+        return wage_amount
+    if wage_type is WageType.daily:
+        return wage_amount / hours_rules.NORMAL_DAY_HOURS
+    return None
+
+
 def compute_gross(
-    wage_type: WageType | None, wage_amount: Decimal | None, days: int | None
+    wage_type: WageType | None,
+    wage_amount: Decimal | None,
+    work_hours: hours_rules.WeekHours | None,
+    overtime_multiplier: Decimal | None,
 ) -> Decimal | None:
     """Brüt ücret — hesaplanamıyorsa **`None`** (asla 0).
 
-    * `monthly` → tam ay tutarı (gün çarpanı YOK);
-    * `daily`   → `gün × yevmiye`, gün yoksa hesaplanamaz;
-    * `hourly`  → HER ZAMAN `None` (ŞEF KARARI 1: saat verisi yok, sabit uydurulmaz).
+    * `monthly` → tam ay tutarı (saat/gün çarpanı YOK);
+    * `daily` / `hourly` → **`normal × saatlik + FM × saatlik × çarpan`**
+      (mockup E5 356-359: *"Bu Hafta Normal 171 saat × saatlik ücret"* ·
+      *"Bu Hafta FM 27 saat × saatlik ücret × 1,5"*).
+
+    🔴 **`daily` ile `hourly` TEK FORMÜLDÜR** ve yalnız saatlik ücretin nereden
+    geldiğinde ayrışırlar (`hourly_rate`). İki ayrı yol yazılsaydı aynı hafta
+    iki ücret tipinde iki farklı FM kuralına tabi olurdu.
+
+    🔴 **ŞEF KARARI 1 (`hourly` fail-closed) BURADA KAPANDI.** Dayanağı
+    "puantajda çalışma SAATİ yoktur" idi; PUAN-SAAT o dayanağı kaldırdı.
+
+    🔴 **ŞEF KARARI 4 (mesai brüte otomatik eklenmez) BURADA DEĞİŞTİ.**
+    Dayanağı "BY tablo başlığında mesai sütunu YOKTUR" idi; E5 356-359 mesaiyi
+    bordroya AÇIKÇA bağlayan ve DAHA YENİ tarihli bir mockup'tır (`5f3a944`).
+    Çift ödeme riski YOKTUR çünkü FM saati artık gün olarak İKİNCİ KEZ
+    sayılmaz — brütün tek tabanı saattir.
+
+    Fail-closed iki kapı (ikisi de 0 ÜRETMEZ):
+
+    * saat bilgisi yoksa (`work_hours is None`) → `None`;
+    * **FM saati varken çarpan bilinmiyorsa** → `None`. 1,5 VARSAYILMAZ
+      (NULL-EŞİK kanonu); FM yokken çarpan HİÇ SORULMAZ, çünkü bilinmemesi o
+      satırın hesabını etkilemez ve satırı düşürmek koruduğu şeyden büyük hasar
+      üretirdi (IK3-RATE-FIX kanonu).
     """
     if wage_type is None or wage_amount is None:
         return None
     if wage_type is WageType.monthly:
         return quantize_money(wage_amount)
-    if wage_type is WageType.daily:
-        if days is None:
+    saatlik = hourly_rate(wage_type, wage_amount)
+    if saatlik is None or work_hours is None:
+        return None
+    if work_hours.overtime_hours > hours_rules.ZERO_HOURS:
+        if overtime_multiplier is None:
             return None
-        return quantize_money(wage_amount * days)
-    return None
+        fm = work_hours.overtime_hours * overtime_multiplier
+    else:
+        fm = hours_rules.ZERO_HOURS
+    return quantize_money(saatlik * (work_hours.normal_hours + fm))
 
 
 def split_payment(
@@ -407,7 +466,7 @@ class ComputedLine:
     hesap router'dan ve DB'den bağımsız sınanabilsin.
     """
 
-    days: int | None
+    days: Decimal | None
     gross_amount: Decimal | None
     deduction_amount: Decimal | None
     net_amount: Decimal | None
@@ -438,7 +497,7 @@ def _status(personnel_source: WorkerSource, *, computed: bool) -> PayrollLineSta
     return PayrollLineStatus.pending if computed else PayrollLineStatus.uncomputed
 
 
-def _uncomputed(personnel_source: WorkerSource, days: int | None) -> ComputedLine:
+def _uncomputed(personnel_source: WorkerSource, days: Decimal | None) -> ComputedLine:
     """Fail-closed satır: gün DIŞINDA her para alanı `null`.
 
     Gün yine yazılır — puantajdan OKUNAN bir olgudur ve ücret tanımsız diye
@@ -471,9 +530,10 @@ def compute_line(
     wage_type: WageType | None,
     wage_amount: Decimal | None,
     payment_method: PaymentMethod | None,
-    man_days: int,
+    work_hours: hours_rules.WeekHours | None,
     has_timesheet_records: bool,
     rate: PayrollRate | None,
+    overtime_multiplier: Decimal | None,
     tax: TaxContext,
 ) -> ComputedLine:
     """Bir satırın TAM hesabı. Saf: aynı girdiye her zaman aynı çıktı.
@@ -485,8 +545,14 @@ def compute_line(
     modül docstring'i) ve **gün de `null`dur** — kaydı olmayan kişinin gün
     sayısı 0 değil BİLİNMEYENDİR; 0 yazmak eksik verinin yerini gizlerdi.
 
-    `man_days` puantajdan gelen "saati olan gün" sayısıdır
-    (`matrix.worked_day_clause` kanonu);
+    🔴 **`work_hours` PUAN-SAAT-3 ile `man_days`in YERİNİ ALDI.** Eskiden "saati
+    olan gün SAYISI" geliyordu ve **4 saatlik bir gün TAM GÜN sayılıyordu** —
+    yevmiyeli personelde fazla ödeme. Artık üçlü türev gelir
+    (`timesheet.hours.period_totals`: normal / FM / toplam) ve gün de brüt de
+    ondan okunur. Sayının TEK KAYNAĞI `timesheet.hours`tur: bordro FM'i KENDİ
+    HESAPLAMAZ, yoksa puantaj ekranı ile bordro aynı hafta için iki farklı FM
+    basardı.
+
     `rate` `(dönemin yılı, personel tipi)` ile seçilmiş oran satırıdır — **yıl
     dönemin yılıdır, bugünün değil** (S2), seçim `service.py`dedir.
 
@@ -498,11 +564,18 @@ def compute_line(
     yıl-içi konumunu taşır; dilimli rejimde tarife ya da asgari ücret satırı
     yoksa (ör. 2027) satır yine `uncomputed` kalır ve **0 vergi YAZILMAZ**.
     """
-    if not has_timesheet_records:
+    if not has_timesheet_records or work_hours is None:
         return _uncomputed(personnel_source, days=None)
 
-    days = computed_days(personnel_source, man_days)
-    gross = compute_gross(wage_type, wage_amount, days)
+    days = computed_days(personnel_source, hours_rules.man_days(work_hours.total_hours))
+    # 🔴 S7'nin PARA tarafı: günü OLMAYAN personelde (serbest meslek) SAAT
+    # tabanı da yoktur. `days`ten bağımsız bir saat tabanı geçilseydi serbest
+    # meslekli bir kişinin "yevmiyesi" saat başına ödenir, olmayan bir çarpan
+    # varmış gibi kullanılırdı — PUAN-SAAT öncesinde bu bağ `compute_gross`un
+    # `days is None` kapısıydı ve kaybolmamalıdır. `monthly` etkilenmez:
+    # aylıkçının brütü zaten ne güne ne saate bağlıdır.
+    saat_tabani = None if days is None else work_hours
+    gross = compute_gross(wage_type, wage_amount, saat_tabani, overtime_multiplier)
     if gross is None or rate is None:
         return _uncomputed(personnel_source, days)
 

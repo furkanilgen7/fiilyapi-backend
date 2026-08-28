@@ -12,13 +12,14 @@ import uuid
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.core.errors import ConflictError, NotFoundError
 from app.modules.payroll import service
 from app.modules.payroll.models import (
     PayrollLine,
     PayrollLineStatus,
+    PayrollOvertimeRate,
     PayrollPeriod,
     PayrollPeriodStatus,
 )
@@ -170,13 +171,24 @@ async def test_gun_sayisi_yalniz_SAATLI_hucrelerden(
 ):
     """`matrix.worked_day_clause` = "hücrede SAAT var" — TEK kaynak (S7).
 
-    İzin/tatil/geçici görev günü adam-güne SAYILMAZ; sayılsaydı bordro ile
-    puantaj ekranının adam-günü ayrışırdı.
+    İzin/tatil/geçici görev günü saate 0 katar; katsaydı bordro ile puantaj
+    ekranının adam-günü ayrışırdı.
 
-    🔴 **PUAN-SAAT bekçisi:** 11 saatlik iki gün (eski `overtime`) hâlâ İKİ
-    GÜNDÜR, 22/9 = 2,4 değil. Bordronun günü SAAT'e dönseydi bu satırın brütü
-    9.000'den 9.800'e çıkardı — ölçüm bu dilimde para hareketi OLMADIĞINI
-    bekçiler.
+    🔴 **PUAN-SAAT-3: ölçüt SAYIM'dan TÜREV'e döndü ve bu bir PARA kararıdır.**
+    PUAN-SAAT-1'de aynı veri 5 gün / 9.000,00 üretiyordu (11 saatlik gün de bir
+    GÜNDÜ). Şimdi (Temmuz 2026, `oranlar` yevmiyesi 1.800 → saatlik 200):
+
+        27. ISO hafta (1-3 Tem)   : 3 × 9  = 27 saat → normal 27 · FM 0
+        28. ISO hafta (6-7 Tem)   : 2 × 11 = 22 saat → normal 18 · FM 4
+        ------------------------------------------------------------------
+        normal 45 · FM 4 · toplam 49 saat
+        adam-gün = 49 ÷ 9                                     = 5,4
+        brüt = 200 × (45 + 4 × 1,5)                           = 10.200,00
+
+    🔑 45 tavanı **HAFTALIKTIR**: ay toplamına tek seferde uygulansaydı 49
+    saatin 4'ü değil **4'ü + haftalar arası taşma** FM olurdu. Burada 28.
+    haftanın FM'i 11 saatlik günlerin GÜNLÜK 9 tavanından doğar, haftalık
+    tavandan değil (22 < 45) — iki tavanın BİLEŞİMİ sınanmış olur.
     """
     kisi = await personel_fabrikasi("Karışık Ay")
     await puantaj_fabrikasi(kisi, [1, 2, 3])
@@ -188,8 +200,8 @@ async def test_gun_sayisi_yalniz_SAATLI_hucrelerden(
     await service.compute_period(db_session, donem.id)
     (satir,) = await _satirlar(db_session, donem)
 
-    assert satir.days == 5
-    assert satir.gross_amount == Decimal("9000.00")
+    assert satir.days == Decimal("5.4")
+    assert satir.gross_amount == Decimal("10200.00")
 
 
 async def test_baska_ayin_gunleri_SAYILMAZ(
@@ -207,16 +219,23 @@ async def test_baska_ayin_gunleri_SAYILMAZ(
     assert satir.days == 2
 
 
-async def test_mesai_SAATI_brute_eklenmez(
+async def test_mesai_SAATI_brute_YUZDE_50_ZAMLI_girer(
     db_session, donem, oranlar, personel_fabrikasi, puantaj_fabrikasi
 ):
-    """🔴 ŞEF KARARI 4 — mesai saati otomatik paraya çevrilmez.
+    """🔴 PUAN-SAAT-3 — ŞEF KARARI 4 DEĞİŞTİ: fazla mesai artık brüte girer.
 
-    BY 110-118 tablo başlığında mesai sütunu YOKTUR ve K3 mesaiyi açıkça
-    override yoluna bağlar. `overtime` kodlu gün zaten GÜN olarak sayılır;
-    saatini ayrıca ödemek aynı mesaiyi iki kez ödemek olurdu.
+    Dayanağı "BY 110-118'de mesai sütunu YOKTUR" idi; mockup `Ekran 5 - Puantaj`
+    (`5f3a944`, BY'den daha yeni) 356-359'da mesaiyi bordroya AÇIKÇA bağlar.
 
-    🔴 PUAN-SAAT sonrası "mesaili gün" = 13 saatlik gün; brüt yine 3 gündür.
+    Aynı üç gün (1-3 Tem, tek ISO hafta), yevmiye 1.800 → saatlik 200:
+
+        sade    : 3 × 9  = 27 saat → normal 27 · FM  0 → 200 × 27       = 5.400,00
+        mesaili : 3 × 13 = 39 saat → normal 27 · FM 12 → 200 × (27+18)  = 9.000,00
+
+    🔑 **Çift ödeme YOKTUR** ve bu yapısaldır: FM saati artık GÜN olarak ikinci
+    kez sayılmaz — brütün tek tabanı SAATTİR. FM zamsız ödenseydi mesailinin
+    brütü 7.800 olurdu; aradaki 1.200 TL tam olarak %50 zammın kendisidir
+    (12 saat × 200 × 0,5).
     """
     sade = await personel_fabrikasi("Mesaisiz")
     mesaili = await personel_fabrikasi("Mesaili")
@@ -226,7 +245,67 @@ async def test_mesai_SAATI_brute_eklenmez(
     await service.compute_period(db_session, donem.id)
     satirlar = await _satirlar(db_session, donem)
 
-    assert satir_of(satirlar, sade.id).gross_amount == satir_of(satirlar, mesaili.id).gross_amount
+    assert satir_of(satirlar, sade.id).gross_amount == Decimal("5400.00")
+    assert satir_of(satirlar, mesaili.id).gross_amount == Decimal("9000.00")
+
+
+async def test_YARIM_GUN_TAM_GUN_SAYILMAZ_canli_para_kusuru_kapandi(
+    db_session, donem, oranlar, personel_fabrikasi, puantaj_fabrikasi
+):
+    """🔴🔴 PUAN-SAAT-3'ÜN ASIL BORCU — servis katmanında, uçtan uca.
+
+    Eski `_man_day_counts` "saati olan hücre" SAYIYORDU: 4 saatlik bir gün de
+    1 gündü. Mockup E5 305 tam olarak bu hücreyi çiziyor (Ayşe Demir, Perşembe
+    `value="4"`).
+
+    Dört tam gün + bir 4 saatlik yarım gün (tek ISO hafta, 1-3 ve 6-7 Tem
+    olmayacak şekilde AYNI haftada tutulur), yevmiye 1.800 → saatlik 200:
+
+        eski SAYIM : 5 gün × 1.800                        = 9.000,00
+        yeni TÜREV : 4×9 + 4 = 40 saat · normal 40 · FM 0 = 8.000,00
+        ------------------------------------------------------------
+        onlenen FAZLA ODEME (tek yarım gün, tek kişi)     = 1.000,00 TL
+
+    Adam-gün de artık 5 değil 40 ÷ 9 = 4,4'tür.
+    """
+    kisi = await personel_fabrikasi("Yarım Günlü")
+    await puantaj_fabrikasi(kisi, [1, 2, 3])
+    await puantaj_fabrikasi(kisi, [6], hours=Decimal("4.0"))
+    await puantaj_fabrikasi(kisi, [7])
+
+    await service.compute_period(db_session, donem.id)
+    (satir,) = await _satirlar(db_session, donem)
+
+    assert satir.days == Decimal("4.4")
+    assert satir.gross_amount == Decimal("8000.00")
+
+
+async def test_FM_CARPANI_OLMAYAN_YIL_satiri_FAIL_CLOSED(
+    db_session, donem, oranlar, personel_fabrikasi, puantaj_fabrikasi
+):
+    """🔴 K1 + NULL-EŞİK, servis katmanında: çarpan VERİDİR, 1,5 uydurulmaz.
+
+    `payroll_overtime_rates` satırı SİLİNİR (fixture'ı kullanmamak yetmez —
+    `oranlar` onu zaten çeker). FM saati olan kişi `uncomputed`a düşer ve brütü
+    `null` kalır; FM'i olmayan kişi ETKİLENMEZ (IK3-RATE-FIX kanonu: korkuluk
+    koruduğu şeyden büyük hasar üretemez).
+    """
+    await db_session.execute(delete(PayrollOvertimeRate))
+    fmli = await personel_fabrikasi("FM Var")
+    fmsiz = await personel_fabrikasi("FM Yok")
+    await puantaj_fabrikasi(fmli, [1, 2, 3], hours=Decimal("13.0"))
+    await puantaj_fabrikasi(fmsiz, [1, 2, 3])
+
+    await service.compute_period(db_session, donem.id)
+    satirlar = await _satirlar(db_session, donem)
+
+    fm_satiri = satir_of(satirlar, fmli.id)
+    assert fm_satiri.status is PayrollLineStatus.uncomputed
+    assert fm_satiri.gross_amount is None
+    # Gün YAZILIR: puantajdan okunan bir olgudur, ücret tanımsız diye kaybolmaz.
+    assert fm_satiri.days == Decimal("4.3")
+
+    assert satir_of(satirlar, fmsiz.id).gross_amount == Decimal("5400.00")
 
 
 @pytest.mark.parametrize(
