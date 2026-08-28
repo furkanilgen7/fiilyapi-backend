@@ -33,6 +33,16 @@ DEGILDIR, tasinmasi serbesttir. Yabanci modul yollari (`app.core.errors`,
 `app.modules.payroll.compute`, ...) normallestirilmez — onlarin degismesi
 gercek bir sozlesme kaymasidir.
 
+## 🔴 TABANDAN CIKARILAN TEK SATIR (PUAN-SAAT, 2026-08-28)
+
+    set MAN_DAY_CODES = {TimesheetCode.overtime, TimesheetCode.worked}
+
+Puantaj gun kodundan adam-saate gecti: `worked`/`overtime` kodlari KALKTI ve
+"sahada gecmis gun" olcutu bir KOD KUMESI olmaktan cikip bir SQL kosuluna
+dondu (`timesheet.matrix.worked_day_clause`). Ad cepheden bilerek dusuruldu ve
+yerine yenisi eklendi; SAYDIGI SATIRLAR degismedi (goc her `worked`/`overtime`
+hucresine saat yazar). Taban BU TEK SATIR icin duzenlendi, yeniden URETILMEDI.
+
 ## Yeniden uretim
 
     python -c "import importlib.util as u; \
