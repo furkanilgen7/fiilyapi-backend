@@ -28,7 +28,7 @@ from app.modules.timesheet.models import TimesheetCode
 
 pytestmark = pytest.mark.asyncio
 
-_C = TimesheetCode.worked
+_C = TimesheetCode.leave  # sayaclar KOD AYRIMI YAPMAZ: hucrenin VARLIGI sayilir
 
 
 def bu_ay(day: int) -> date:
@@ -97,9 +97,9 @@ async def test_santiye_karti_distinct_personeli_sayar(
     client, admin_headers, proje, santiye, mehmet, ali, admin_kullanicisi, hucre_fabrikasi
 ):
     """Mehmet'in İKİ günü tek işçidir; Ali ikinci işçidir → 2."""
-    await hucre_fabrikasi(santiye, mehmet, bu_ay(1), _C, admin_kullanicisi)
-    await hucre_fabrikasi(santiye, mehmet, bu_ay(2), _C, admin_kullanicisi)
-    await hucre_fabrikasi(santiye, ali, bu_ay(1), _C, admin_kullanicisi)
+    await hucre_fabrikasi(santiye, mehmet, bu_ay(1), admin_kullanicisi, hours=9)
+    await hucre_fabrikasi(santiye, mehmet, bu_ay(2), admin_kullanicisi, hours=9)
+    await hucre_fabrikasi(santiye, ali, bu_ay(1), admin_kullanicisi, hours=9)
 
     liste = await _santiye_listesi(client, admin_headers, proje)
     assert liste["items"][0]["worker_count"]["count"] == 2
@@ -112,8 +112,8 @@ async def test_gecen_ayin_kaydi_sayilmaz(
     client, admin_headers, proje, santiye, mehmet, ali, admin_kullanicisi, hucre_fabrikasi
 ):
     """Dönem İÇİNDE BULUNULAN AY'dır: önceki ayın hücresi rozeti şişirmez."""
-    await hucre_fabrikasi(santiye, mehmet, bu_ay(1), _C, admin_kullanicisi)
-    await hucre_fabrikasi(santiye, ali, gecen_ay(), _C, admin_kullanicisi)
+    await hucre_fabrikasi(santiye, mehmet, bu_ay(1), admin_kullanicisi, hours=9)
+    await hucre_fabrikasi(santiye, ali, gecen_ay(), admin_kullanicisi, hours=9)
 
     detay = await _santiye_detay(client, admin_headers, santiye)
     assert detay["worker_count"]["count"] == 1
@@ -131,8 +131,8 @@ async def test_baska_santiyenin_kaydi_karta_girmez_proje_toplamina_girer(
     hucre_fabrikasi,
 ):
     """Kart ŞANTİYE kapsamındadır; alt KPI şeridi PROJE kapsamında distinct sayar."""
-    await hucre_fabrikasi(santiye, mehmet, bu_ay(1), _C, admin_kullanicisi)
-    await hucre_fabrikasi(ikinci_santiye, ali, bu_ay(1), _C, admin_kullanicisi)
+    await hucre_fabrikasi(santiye, mehmet, bu_ay(1), admin_kullanicisi, hours=9)
+    await hucre_fabrikasi(ikinci_santiye, ali, bu_ay(1), admin_kullanicisi, hours=9)
 
     liste = await _santiye_listesi(client, admin_headers, proje)
     kartlar = {item["code"]: item["worker_count"]["count"] for item in liste["items"]}
@@ -151,8 +151,8 @@ async def test_ayni_kisi_iki_santiyede_proje_toplaminda_bir_kez_sayilir(
     hucre_fabrikasi,
 ):
     """DISTINCT proje düzeyinde de geçerlidir — kart toplamlarının TOPLAMI değildir."""
-    await hucre_fabrikasi(santiye, mehmet, bu_ay(1), _C, admin_kullanicisi)
-    await hucre_fabrikasi(ikinci_santiye, mehmet, bu_ay(2), _C, admin_kullanicisi)
+    await hucre_fabrikasi(santiye, mehmet, bu_ay(1), admin_kullanicisi, hours=9)
+    await hucre_fabrikasi(ikinci_santiye, mehmet, bu_ay(2), admin_kullanicisi, hours=9)
 
     liste = await _santiye_listesi(client, admin_headers, proje)
     assert liste["totals"]["active_worker_count"]["count"] == 1
@@ -170,8 +170,8 @@ async def test_bolum_sayaci_yalniz_o_bolumun_hucrelerinden(
     hucre_fabrikasi,
 ):
     """Bölümsüz (`section_id: null`) hücre HİÇBİR bölümün sayacına girmez."""
-    await hucre_fabrikasi(santiye, mehmet, bu_ay(1), _C, admin_kullanicisi, section=bolum)
-    await hucre_fabrikasi(santiye, ali, bu_ay(1), _C, admin_kullanicisi)
+    await hucre_fabrikasi(santiye, mehmet, bu_ay(1), admin_kullanicisi, hours=9, section=bolum)
+    await hucre_fabrikasi(santiye, ali, bu_ay(1), admin_kullanicisi, hours=9)
 
     detay = await _santiye_detay(client, admin_headers, santiye)
     bolumler = {b["code"]: b["worker_count"]["count"] for b in detay["sections"]}
@@ -193,8 +193,8 @@ async def test_taahhut_kartinin_isci_sayisi_projenin_tum_santiyelerinden(
     hucre_fabrikasi,
 ):
     """Taahhüt kartı PROJE kapsamındadır (şantiye kırılımı yok)."""
-    await hucre_fabrikasi(santiye, mehmet, bu_ay(1), _C, admin_kullanicisi)
-    await hucre_fabrikasi(ikinci_santiye, ali, bu_ay(1), _C, admin_kullanicisi)
+    await hucre_fabrikasi(santiye, mehmet, bu_ay(1), admin_kullanicisi, hours=9)
+    await hucre_fabrikasi(ikinci_santiye, ali, bu_ay(1), admin_kullanicisi, hours=9)
 
     liste = await _proje_listesi(client, admin_headers)
     kart = _proje_satiri(liste, proje.id)["contracting"]

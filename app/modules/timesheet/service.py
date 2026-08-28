@@ -7,10 +7,16 @@ GERÇEK şantiye ile var OLMAYAN kimlik AYIRT EDİLEMEZ 404 döner.
 
 ## ⚠️ Kapsam sınırı — bu dosyanın en kritik kuralı
 
-Silme koşulu `site_id = <şantiye> AND work_date ∈ [ayın ilk günü, ayın son günü]`
-üçlüsüdür ve tek yerden (`repository.period_bounds`) gelir. Koşulun herhangi bir
-parçası düşerse bir ayın kaydetmesi komşu ayın ya da komşu şantiyenin verisini
-sessizce süpürür — geri alınamaz veri kaybı.
+Silme koşulu `site_id = <şantiye> AND work_date ∈ [haftanın Pazartesisi,
+haftanın Pazarı]` üçlüsüdür ve tek yerden (`repository.week_bounds`) gelir.
+
+🔴 **PUAN-SAAT: kapsam AYDAN HAFTAYA DARALDI.** Ekran artık haftalık kaydeder
+(mockup E5 76 "Haftayı Kaydet"). Koşul ay kapsamında bırakılsaydı **bir haftayı
+kaydetmek ayın geri kalanını SİLERDİ** — geri alınamaz veri kaybı. Koşulun
+herhangi bir parçası düşerse aynı felaket komşu hafta ya da komşu şantiye için
+doğar. Bekçi: `tests/timesheet/test_week_save.py`, POZİTİF KONTROLÜYLE birlikte
+(aynı ayın başka bir haftasındaki hücre HAYATTA KALMALIDIR — yoksa "her şeyi
+silen" bozuk bir uç da testi yeşil geçerdi).
 
 ## Sıra — ÖNCE TÜM DOĞRULAMALAR, SONRA TEK YAZMA
 
@@ -19,7 +25,7 @@ session'a eklemiş OLMAMALIDIR (kısmi yazma yok).
 
 ## Onay akışı YOKTUR (spec §7 S3)
 
-Mockup'ta yalnız "Kaydet" vardır (ŞP 101). `submit`/`approve` geçişi, durum
+Mockup'ta yalnız "Haftayı Kaydet" vardır (E5 76). `submit`/`approve` geçişi, durum
 kolonu ya da kilitleme AÇILMAZ — denetim izi yeterlidir. Sonraki okuyucu buraya
 durum makinesi EKLEMESİN.
 """
@@ -37,8 +43,8 @@ from app.modules.projects.service import visible_projects
 from app.modules.sites import repository as sites_repository
 from app.modules.sites.models import Section, Site
 from app.modules.timesheet import guards, repository
-from app.modules.timesheet.models import TimesheetCode, TimesheetEntry
-from app.modules.timesheet.schemas import TimesheetCellInput, TimesheetSave
+from app.modules.timesheet.models import TimesheetEntry
+from app.modules.timesheet.schemas import TimesheetCellInput, TimesheetWeekSave
 from app.modules.users.models import User
 
 PERMISSION_MODULE = "timesheet"
@@ -94,16 +100,17 @@ class _Plan(NamedTuple):
     personnel: dict[uuid.UUID, Personnel]
 
 
-def _assert_period(cell: TimesheetCellInput, year: int, month: int) -> None:
-    start, end = repository.period_bounds(year, month)
+def _assert_week(cell: TimesheetCellInput, iso_year: int, iso_week: int) -> None:
+    """Hücre kaydedilen HAFTANIN içinde mi? Değilse 422 — sessizce yazılmaz.
+
+    Saat/kod ikilisinin doğrulaması burada YOKTUR: onu `TimesheetCellInput`
+    şeması alan yoluyla birlikte reddeder, asıl bekçi ise DB CHECK'idir.
+    """
+    start, end = repository.week_bounds(iso_year, iso_week)
     if not (start <= cell.work_date <= end):
-        raise SiteValidationError(guards.format_out_of_period(cell.work_date, year, month))
-
-
-def _assert_overtime_hours(cell: TimesheetCellInput) -> None:
-    """Saat yalnız FM hücresinde anlamlıdır (gerekçe `guards.py` docstring'inde)."""
-    if cell.overtime_hours is not None and cell.code is not TimesheetCode.overtime:
-        raise SiteValidationError(guards.OVERTIME_HOURS_ONLY_FOR_OVERTIME)
+        raise SiteValidationError(
+            guards.format_out_of_week(cell.work_date, iso_year, iso_week, start, end)
+        )
 
 
 async def _assert_sections(session: AsyncSession, site: Site, section_ids: set[uuid.UUID]) -> None:
@@ -121,12 +128,11 @@ async def _assert_sections(session: AsyncSession, site: Site, section_ids: set[u
 
 
 async def _plan(
-    session: AsyncSession, site: Site, data: TimesheetSave, *, year: int, month: int
+    session: AsyncSession, site: Site, data: TimesheetWeekSave, *, iso_year: int, iso_week: int
 ) -> _Plan:
     cells: dict[tuple[uuid.UUID, date], TimesheetCellInput] = {}
     for cell in data.cells:
-        _assert_period(cell, year, month)
-        _assert_overtime_hours(cell)
+        _assert_week(cell, iso_year, iso_week)
         key = guards.cell_key(cell.personnel_id, cell.work_date)
         if key in cells:
             # Kismi UQ ihlali GOVDE ICINDE yakalanir; `IntegrityError` emniyet agi kalir.
@@ -190,40 +196,43 @@ def _apply(
                     project_id=site.project_id,
                     section_id=cell.section_id,
                     work_date=cell.work_date,
+                    hours=cell.hours,
                     code=cell.code,
-                    overtime_hours=cell.overtime_hours,
                     created_by=actor.id,
                 )
             )
         else:
+            # Hucre govdedeki haline ESITLENIR: saatli hucre kodluya (ya da tersi)
+            # cevrildiginde eski alan NULL'a duser, "sessizce" kalmaz — kalsaydi
+            # DB'nin saat-XOR-kod CHECK'i satiri reddederdi.
+            row.hours = cell.hours
             row.code = cell.code
-            # Gonderilmeyen saat NULL'a duser: hucre govdedeki haline ESITLENIR,
-            # eski deger "sessizce" kalmaz.
-            row.overtime_hours = cell.overtime_hours
             row.section_id = cell.section_id
 
     silinecekler = [row.id for key, row in by_key.items() if key not in plan.cells]
     return yeniler, silinecekler
 
 
-async def save(
+async def save_week(
     session: AsyncSession,
     actor: User,
     context: SiteContext,
-    data: TimesheetSave,
+    data: TimesheetWeekSave,
     *,
-    year: int,
-    month: int,
+    iso_year: int,
+    iso_week: int,
 ) -> int:
-    """Dönem+şantiye kapsamını gövdeye eşitler; yazılan hücre sayısını döner.
+    """**Hafta**+şantiye kapsamını gövdeye eşitler; yazılan hücre sayısını döner.
 
     Kapsam kararı (404) kilitten ÖNCE verilmiştir (`visible_site`, router'da):
     görünmeyen şantiyenin satırları boşuna kilitlenmez.
     """
     site = context.site
-    plan = await _plan(session, site, data, year=year, month=month)
+    plan = await _plan(session, site, data, iso_year=iso_year, iso_week=iso_week)
 
-    existing = await repository.locked_period_entries(session, site.id, year=year, month=month)
+    existing = await repository.locked_week_entries(
+        session, site.id, iso_year=iso_year, iso_week=iso_week
+    )
     await _assert_person_days_free(session, site, plan)
 
     # --- Buradan itibaren yazma; dogrulama YOK (yukaridaki sira kisiti). ---

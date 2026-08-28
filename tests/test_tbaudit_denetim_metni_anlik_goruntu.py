@@ -25,6 +25,14 @@ bekçiyi hiçliğe çevirir; bir metni bilerek değiştiren dilim referansı
 `python -m tests.test_tbaudit_denetim_metni_anlik_goruntu` ile tazeler ve
 **farkı incelemede görünür kılar** — sessizce değil.
 
+## 🔴 REFERANSA EKLENEN TEK SEMBOL (PUAN-SAAT, 2026-08-28)
+
+`timesheet_week_saved` — puantaj aylıktan haftalığa geçti ve kaydetme olayı
+artık HAFTA özetidir. Referans `python -m tests.test_tbaudit_denetim_metni_anlik_goruntu`
+ile tazelendi; farkta **KAYIP 0**, yalnız bu fonksiyonun dört çağrısı EKLENDİ
+(`git diff` ile gözle doğrulandı). `timesheet_saved` KALDI: aylık okuma yüzeyi
+(Excel/arşiv) duruyor ve eski denetim satırları o metni taşıyor.
+
 ## Kapsam
 
 Modülün TÜM sembolleri (özel `_` adları DÂHİL) ve her fonksiyon için birden çok
@@ -194,9 +202,9 @@ def test_anlik_goruntu_bos_degil_ve_tum_sembolleri_kapsiyor() -> None:
     yine yeşil kalabilirdi ("hiçbir şeyi hiçbir şeyle karşılaştırmak").
     """
     tanimlar = _tanimlar()
-    assert len(tanimlar) == 205, f"sembol sayısı 205 olmalı, {len(tanimlar)} bulundu"
+    assert len(tanimlar) == 206, f"sembol sayısı 206 olmalı, {len(tanimlar)} bulundu"
     fonksiyonlar = [a for a in tanimlar if callable(getattr(messages, a))]
-    assert len(fonksiyonlar) == 193, f"fonksiyon sayısı 193 olmalı, {len(fonksiyonlar)} bulundu"
+    assert len(fonksiyonlar) == 194, f"fonksiyon sayısı 194 olmalı, {len(fonksiyonlar)} bulundu"
 
     satirlar = _ANLIK_GORUNTU.read_text(encoding="utf-8").splitlines()
     assert len(satirlar) >= 240, f"anlık görüntü çok kısa: {len(satirlar)} satır"

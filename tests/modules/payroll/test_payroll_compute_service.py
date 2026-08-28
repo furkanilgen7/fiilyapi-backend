@@ -162,20 +162,25 @@ async def test_donemin_YILI_kullanilir_bugunun_degil(
     assert satir.status is PayrollLineStatus.uncomputed
 
 
-# --- Gün: `MAN_DAY_CODES` kanonu -------------------------------------------
+# --- Gün: `worked_day_clause` kanonu ---------------------------------------
 
 
-async def test_gun_sayisi_yalniz_MAN_DAY_kodlarindan(
+async def test_gun_sayisi_yalniz_SAATLI_hucrelerden(
     db_session, donem, oranlar, personel_fabrikasi, puantaj_fabrikasi
 ):
-    """`matrix.MAN_DAY_CODES` = `{worked, overtime}` — TEK kaynak (S7).
+    """`matrix.worked_day_clause` = "hücrede SAAT var" — TEK kaynak (S7).
 
     İzin/tatil/geçici görev günü adam-güne SAYILMAZ; sayılsaydı bordro ile
-    puantaj ekranının adam-günü ayrışırdı (ŞP 235-236 · ŞP 245).
+    puantaj ekranının adam-günü ayrışırdı.
+
+    🔴 **PUAN-SAAT bekçisi:** 11 saatlik iki gün (eski `overtime`) hâlâ İKİ
+    GÜNDÜR, 22/9 = 2,4 değil. Bordronun günü SAAT'e dönseydi bu satırın brütü
+    9.000'den 9.800'e çıkardı — ölçüm bu dilimde para hareketi OLMADIĞINI
+    bekçiler.
     """
     kisi = await personel_fabrikasi("Karışık Ay")
     await puantaj_fabrikasi(kisi, [1, 2, 3])
-    await puantaj_fabrikasi(kisi, [6, 7], code=TimesheetCode.overtime)
+    await puantaj_fabrikasi(kisi, [6, 7], hours=Decimal("11.0"))
     await puantaj_fabrikasi(kisi, [8], code=TimesheetCode.leave)
     await puantaj_fabrikasi(kisi, [9], code=TimesheetCode.holiday)
     await puantaj_fabrikasi(kisi, [10], code=TimesheetCode.temporary_duty)
@@ -210,13 +215,13 @@ async def test_mesai_SAATI_brute_eklenmez(
     BY 110-118 tablo başlığında mesai sütunu YOKTUR ve K3 mesaiyi açıkça
     override yoluna bağlar. `overtime` kodlu gün zaten GÜN olarak sayılır;
     saatini ayrıca ödemek aynı mesaiyi iki kez ödemek olurdu.
+
+    🔴 PUAN-SAAT sonrası "mesaili gün" = 13 saatlik gün; brüt yine 3 gündür.
     """
     sade = await personel_fabrikasi("Mesaisiz")
     mesaili = await personel_fabrikasi("Mesaili")
     await puantaj_fabrikasi(sade, [1, 2, 3])
-    await puantaj_fabrikasi(
-        mesaili, [1, 2, 3], code=TimesheetCode.overtime, overtime_hours=Decimal("4.0")
-    )
+    await puantaj_fabrikasi(mesaili, [1, 2, 3], hours=Decimal("13.0"))
 
     await service.compute_period(db_session, donem.id)
     satirlar = await _satirlar(db_session, donem)
@@ -276,7 +281,7 @@ async def test_kaydi_VAR_ama_hepsi_IZIN_kodlu_ise_gun_0_GERCEKTIR(
     wage_amount,
     beklenen_brut,
 ):
-    """🔴 AYRIM — "hiç kayıt yok" ≠ "kayıt var ama `MAN_DAY_CODES` dışı".
+    """🔴 AYRIM — "hiç kayıt yok" ≠ "kayıt var ama SAATSİZ (kodlu)".
 
     İzin/tatil kodlu bir ay VERİ GİRİLMİŞ bir aydır: adam-gün 0'dır ve bu 0
     gerçektir, bilinmeyen değil. Satır hesaplanır ve onaya girebilir. İki durum

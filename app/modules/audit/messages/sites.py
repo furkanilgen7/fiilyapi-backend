@@ -145,6 +145,27 @@ def timesheet_saved(
     )
 
 
+def timesheet_week_saved(
+    project_name: str,
+    site_name: str,
+    iso_year: int,
+    iso_week: int,
+    start: date,
+    end: date,
+    cell_count: int,
+) -> str:
+    """Puantaj `PUT …/timesheet/week` (PUAN-SAAT). TEK hafta-ozeti olayidir.
+
+    Kaydin kimligi INSAN-OKUR: ISO hafta numarasi TEK BASINA yetmez (kimse
+    "2026-W29"u tarihe cevirmez), bu yuzden aralik da yazilir.
+    """
+    return (
+        f"Puantaj haftasi kaydedildi: {project_name} · {site_name} · "
+        f"{iso_year}-W{iso_week:02d} ({start.isoformat()} – {end.isoformat()}) "
+        f"· {cell_count} hücre"
+    )
+
+
 # --- Santiye planlama (site_planning T3) ---
 #
 # Dort ucun dordu de `AuditAction.update`tir: kaydetme planin ICERIGINI

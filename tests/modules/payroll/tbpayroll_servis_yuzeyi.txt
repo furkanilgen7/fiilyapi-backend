@@ -10,7 +10,6 @@ class DuplicateError <- app.core.errors.DuplicateError
 class IncomeKind <- app.modules.payroll.models.IncomeKind
 set LOCKED_LINE_STATUSES = {<PayrollLineStatus.approved: 'approved'>, <PayrollLineStatus.paid: 'paid'>}
 set LOCKED_PERIOD_STATUSES = {<PayrollPeriodStatus.approved: 'approved'>, <PayrollPeriodStatus.paid: 'paid'>}
-set MAN_DAY_CODES = {<TimesheetCode.overtime: 'overtime'>, <TimesheetCode.worked: 'worked'>}
 class NotFoundError <- app.core.errors.NotFoundError
 other PERMISSION_MODULE: builtins.str = 'payroll'
 class PayrollComputeResult <- app.modules.payroll.schemas.PayrollComputeResult

@@ -693,6 +693,18 @@ async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
     üçüncü ölçüsü: bir sorgu parametresi sözleşmeyi genişletir ama bu iki
     sayacın hiçbirini oynatmaz (sürüklenmeyi `tests/contract/` yakalar).
     Yani 231→**232** · 339→**340**.
+
+    🔴 **PUAN-SAAT (+1 yol / +1 operasyon):** puantaj gün kodundan adam-saate
+    geçti. `GET`+`PUT /sites/{site_id}/timesheet/week` **TEK YENİ YOLDUR** ve
+    üzerinde İKİ operasyon taşır; buna karşılık aylık `PUT
+    /sites/{site_id}/timesheet` **KALDIRILDI** (bir haftayı kaydetmenin ayın
+    geri kalanını silmesi mümkün olan tek yol oydu). Net: +1 yol, +2−1 = +1
+    operasyon. Yani 232→**233** · 340→**341**.
+
+    ⚠️ Bu satır Kanon 3'ün dördüncü ölçüsüdür: bir dilim aynı turda hem uç
+    EKLEYİP hem uç KALDIRDIĞINDA sayaçların ikisi de oynar ama farklı miktarda;
+    "yol sayısı sabit kaldı" ya da "operasyon +2" beklentisinin ikisi de yanlış
+    olurdu. Sayılar ölçülerek yazıldı.
     """
     from app.main import app
 
@@ -704,5 +716,5 @@ async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
         for metot in uc
         if metot in {"get", "post", "put", "patch", "delete"}
     )
-    assert len(yollar) == 232
-    assert operasyonlar == 340
+    assert len(yollar) == 233
+    assert operasyonlar == 341

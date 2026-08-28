@@ -31,13 +31,24 @@ from app.modules.sites.models import Section, Site
 from app.modules.timesheet.models import TimesheetCode, TimesheetEntry
 from app.modules.users.models import User, UserProjectAccess
 
-# Mockup dönemi: ŞP 91/96 "Temmuz 2026".
+# Mockup dönemi: E5 139 "Temmuz 2026".
 YIL = 2026
 AY = 7
+
+# Mockup haftası: E5 96-97 "13 – 19 Temmuz 2026 · 29. Hafta" (ISO 2026-W29).
+ISO_YIL = 2026
+ISO_HAFTA = 29
+#: Haftanın Pazartesi'sinin ayın kaçıncı günü olduğu — `gun(13)` = 13 Temmuz.
+HAFTA_ILK_GUN = 13
 
 
 def gun(day: int) -> date:
     return date(YIL, AY, day)
+
+
+def hafta_gunu(offset: int) -> date:
+    """29. haftanın `offset`. günü (0 = Pazartesi 13 Tem, 6 = Pazar 19 Tem)."""
+    return gun(HAFTA_ILK_GUN + offset)
 
 
 async def _login(client: AsyncClient, user_factory, role_key: str, email: str) -> str:
@@ -247,20 +258,26 @@ def hucre_fabrikasi(seeded_db: AsyncSession):
         site: Site,
         personnel: Personnel,
         work_date: date,
-        code: TimesheetCode,
         creator: User,
         *,
-        overtime_hours: Decimal | None = None,
+        hours: Decimal | int | None = None,
+        code: TimesheetCode | None = None,
         section: Section | None = None,
     ) -> TimesheetEntry:
+        """Hücre = saat VEYA kod — fabrika da bu sözleşmeyi ZORLAR.
+
+        Testin yanlışlıkla ikisini birden (ya da hiçbirini) vermesi, DB CHECK'i
+        yerine burada patlar ve hata mesajı testin kendisini gösterir.
+        """
+        assert (hours is None) != (code is None), "hücre ya saat ya kod taşır"
         entry = TimesheetEntry(
             personnel_id=personnel.id,
             site_id=site.id,
             project_id=site.project_id,
             section_id=section.id if section is not None else None,
             work_date=work_date,
+            hours=None if hours is None else Decimal(hours),
             code=code,
-            overtime_hours=overtime_hours,
             created_by=creator.id,
         )
         seeded_db.add(entry)

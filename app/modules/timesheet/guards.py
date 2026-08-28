@@ -7,16 +7,15 @@ cümleyi görmelidir (WORKFLOW §4).
 
 ## Kararlar ve gerekçeleri
 
-**`overtime_hours` yalnız `overtime` kodunda anlamlıdır.** DB CHECK'i
-(`ck_timesheet_entries_overtime_hours_range`) yalnız DEĞER aralığını zorlar,
-kodla İLİŞKİSİNİ zorlamaz. Servis korkuluğu bu boşluğu kapatır: ŞP 119'un
-"128 saat fazla mesai" toplamı yalnız FM hücrelerinden gelir (spec §7 S2), bu
-yüzden `worked` bir hücreye iliştirilen saat ya toplamı YALAN söyletirdi ya da
-sessizce yok sayılırdı. İkisi de kabul edilemez → 422.
+**Saat XOR kod kuralı BURADA DEĞİLDİR** (PUAN-SAAT): metni `schemas.
+TimesheetCellInput._hours_xor_code` üretir, çünkü kural TEK hücrenin ALAN
+doğrulamasıdır ve Pydantic onu alan yolu (`cells.3.hours`) ile birlikte bildirir.
+Asıl bekçi DB'dedir (`ck_timesheet_entries_hours_xor_code`) — şema kapısı onun
+İKİZİDİR, yerine geçmez.
 
-**Dönem dışı tarih 422'dir, sessizce yazılmaz.** `PUT` gövdesi dönem+şantiye
-kapsamının TAM kümesidir (spec §7 S4); kapsamın dışına düşen bir hücre bir
-sonraki ayın kaydetmesinde kimsenin fark etmeyeceği şekilde SİLİNİRDİ.
+**Hafta dışı tarih 422'dir, sessizce yazılmaz.** `PUT` gövdesi **hafta**+şantiye
+kapsamının TAM kümesidir; kapsamın dışına düşen bir hücre bir sonraki haftanın
+kaydetmesinde kimsenin fark etmeyeceği şekilde SİLİNİRDİ.
 """
 
 import uuid
@@ -25,9 +24,9 @@ from datetime import date
 from app.modules.sites.guards import SECTION_MISSING, SITE_MISSING
 
 __all__ = [
-    "DATE_OUT_OF_PERIOD",
+    "DATE_OUT_OF_WEEK",
+    "WEEK_MISSING",
     "DUPLICATE_CELL",
-    "OVERTIME_HOURS_ONLY_FOR_OVERTIME",
     "PERSONNEL_UNKNOWN",
     "SECTION_MISMATCH",
     "SECTION_MISSING",
@@ -43,17 +42,16 @@ SECTION_MISMATCH = "Seçilen bölüm bu şantiyeye ait değil"
 # AYNI cümleyi alır (kimlik varlığı sızdırılmaz).
 PERSONNEL_UNKNOWN = "Seçilen personel bulunamadı"
 
-# 422 — kod/saat uyuşmazlığı (yukarıdaki gerekçe).
-OVERTIME_HOURS_ONLY_FOR_OVERTIME = (
-    "Fazla mesai saati yalnız fazla mesai (FM) hücresine girilebilir; "
-    "hücrenin kodunu değiştirin ya da saat alanını boşaltın."
+# 422 — hafta dışı hücre. Şablonun İLK parçası sabit metindir (test bu önekle eşleşir).
+DATE_OUT_OF_WEEK = (
+    "Puantaj hücresi hafta dışında: {work_date}. Kaydedilen hafta "
+    "{iso_year}-W{iso_week:02d} ({start} – {end}); başka bir haftanın hücresi bu "
+    "istekle gönderilemez."
 )
 
-# 422 — dönem dışı hücre. Şablonun İLK parçası sabit metindir (test bu önekle eşleşir).
-DATE_OUT_OF_PERIOD = (
-    "Puantaj hücresi dönem dışında: {work_date}. Kaydedilen dönem {year}/{month:02d}; "
-    "başka bir ayın hücresi bu istekle gönderilemez."
-)
+# 422 — takvimde OLMAYAN ISO haftası (53 haftası bulunmayan bir yılın 53'ü).
+WEEK_MISSING = "{iso_year} ISO yılında {iso_week}. hafta yoktur; hafta numarasını düzeltin."
+
 
 # 409 — gövde içi çift. DB'ye hiç gitmeden yakalanır (`site_diary.lines` deseni).
 DUPLICATE_CELL = "Aynı personel ve gün için gövdede birden fazla hücre gönderildi"
@@ -73,8 +71,20 @@ def person_day_conflict(full_name: str, work_date: date) -> str:
     )
 
 
-def format_out_of_period(work_date: date, year: int, month: int) -> str:
-    return DATE_OUT_OF_PERIOD.format(work_date=work_date.isoformat(), year=year, month=month)
+def format_out_of_week(
+    work_date: date, iso_year: int, iso_week: int, start: date, end: date
+) -> str:
+    return DATE_OUT_OF_WEEK.format(
+        work_date=work_date.isoformat(),
+        iso_year=iso_year,
+        iso_week=iso_week,
+        start=start.isoformat(),
+        end=end.isoformat(),
+    )
+
+
+def format_week_missing(iso_year: int, iso_week: int) -> str:
+    return WEEK_MISSING.format(iso_year=iso_year, iso_week=iso_week)
 
 
 def cell_key(personnel_id: uuid.UUID, work_date: date) -> tuple[uuid.UUID, date]:

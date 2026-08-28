@@ -5,9 +5,28 @@ AYRI AYRI sayilir ve karistirilmaz: `is_overridden` kullanicinin duzeltmesidir
 (K3/S6), `approved`/`paid` ise odeme izidir (S5).
 
 `_man_day_counts` ile `_personnel_with_timesheet_records` bilincli olarak IKI
-AYRI sorgudur: biri `MAN_DAY_CODES` suzer, oteki kod ayrimi YAPMAZ. Tek sorguya
+AYRI sorgudur: biri "sahada gecmis gun"u suzer, oteki hic suzmez. Tek sorguya
 indirgenseydi izin/tatil kodlu bir ay ile hic girilmemis bir ay ayni sonucu (0)
 verir, ikisi ayirt edilemezdi — birinde gun 0 GERCEKTIR, otekinde BILINMEZ.
+
+🔴 **PUAN-SAAT (2026-08-28) — BORDRONUN GUNU SAAT'E DONMEDI, BILINCLI KARAR.**
+Puantaj hucresi artik "kod" degil "saat" tasiyor; bu dosyanin tek uyarlamasi
+sudur: adam-gun olcutunun ADI degisti (`MAN_DAY_CODES` -> `matrix.worked_day_clause`,
+"kodu Ç/FM olan hucre" -> "SAATI olan hucre"), SAYDIGI SEY degismedi. Ayni
+satirlar, ayni sayi: goc `worked`/`overtime` hucrelerinin hepsine saat yazar,
+kodlu hucreler kodlu kalir.
+
+**Neden `SUM(saat)/9` DEGIL?** Cunku o bir PARA degisikligidir, semasal degil:
+canlida 269 adam-gunluk bir ay `SUM(saat)/9` ile 272,3'e cikardi (goc FM saatini
+de `hours`a katiyor) ve **hesaplanmamis her donemin brutu sessizce artardi.**
+Bordronun saate gecisi (saatlik ucret + FM x1,5) AYRI bir dilimdir ve orada
+`PayrollLine.days` tipiyle birlikte ele alinir.
+
+⚠️ **ACIK BORC (rapor: KAPSAM DISI):** yeni ekran YARIM GUN girilmesine izin
+veriyor (E5 305 `value="4"`). Bu dosya 4 saatlik gunu de TAM GUN sayar —
+yevmiyeli personel icin FAZLA ODEME. Bugun boyle bir veri YOKTUR (eski semada
+yarim gun temsil edilemiyordu); PUAN-SAAT-2 gelmeden once ekran yayina girerse
+bu bir canli para kusuruna DONUSUR.
 """
 
 import uuid
@@ -40,7 +59,7 @@ from app.modules.payroll.service.tax_context import (
 )
 from app.modules.personnel.models import Personnel
 from app.modules.site_diary.models import WorkerSource
-from app.modules.timesheet.matrix import MAN_DAY_CODES
+from app.modules.timesheet.matrix import worked_day_clause
 from app.modules.timesheet.models import TimesheetEntry
 
 
@@ -66,7 +85,7 @@ async def _payroll_personnel(session: AsyncSession) -> list[Personnel]:
 
 
 async def _man_day_counts(session: AsyncSession, year: int, month: int) -> dict[uuid.UUID, int]:
-    """Kişi başına adam-gün — `MAN_DAY_CODES` kanonu (S7).
+    """Kişi başına adam-gün — `matrix.worked_day_clause` kanonu (S7).
 
     Kaydı olmayan kişi sözlükte BULUNMAZ ve çağıran 0 sayar; ama o 0'ın anlamı
     `_personnel_with_timesheet_records` ile belirlenir: kaydı hiç yoksa sayı
@@ -79,7 +98,7 @@ async def _man_day_counts(session: AsyncSession, year: int, month: int) -> dict[
         .where(
             TimesheetEntry.work_date >= ilk,
             TimesheetEntry.work_date <= son,
-            TimesheetEntry.code.in_(MAN_DAY_CODES),
+            worked_day_clause(),
         )
         .group_by(TimesheetEntry.personnel_id)
     )
@@ -92,7 +111,7 @@ async def _personnel_with_timesheet_records(
     """🔴 Dönemde HERHANGİ bir puantaj hücresi olan personel (YÖNETİM KARARI T4b).
 
     `_man_day_counts`ten AYRI bir sorgudur ve ayrı olması ZORUNLUDUR: orası
-    `MAN_DAY_CODES` süzer, burası **kod ayrımı YAPMAZ**. Tek sorguya
+    "saati olan hücre"yi süzer, burası **hiç süzmez**. Tek sorguya
     indirgenseydi izin/tatil kodlu bir ay ile hiç girilmemiş bir ay aynı sonucu
     (0) verir, ikisi ayırt edilemezdi — birinde gün 0 GERÇEKTİR, ötekinde
     BİLİNMEZ.

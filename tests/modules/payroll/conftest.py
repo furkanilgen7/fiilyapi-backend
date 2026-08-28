@@ -183,17 +183,25 @@ def personel_fabrikasi(db_session: AsyncSession):
 
 @pytest.fixture
 def puantaj_fabrikasi(db_session: AsyncSession, santiye: Site, kaydeden: User):
-    """Belirtilen günlere hücre yazar; kod varsayılanı `worked`."""
+    """Belirtilen günlere hücre yazar (PUAN-SAAT: **saat XOR kod**).
+
+    Varsayılan 9 saatlik çalışma günüdür (E5 71 "Normal gün 9 saat") — eski
+    `worked` kodunun birebir karşılığı. `code` verilirse hücre KODLUDUR ve saat
+    taşımaz; `hours` ile `code` birlikte verilemez.
+    """
 
     async def _create(
         person: Personnel,
         days: list[int],
         *,
-        code: TimesheetCode = TimesheetCode.worked,
+        code: TimesheetCode | None = None,
+        hours: Decimal | int | None = None,
         month: int = AY,
         year: int = YIL,
-        overtime_hours: Decimal | None = None,
     ) -> None:
+        if code is None and hours is None:
+            hours = Decimal("9.0")
+        assert (hours is None) != (code is None), "hücre ya saat ya kod taşır"
         for day in days:
             db_session.add(
                 TimesheetEntry(
@@ -201,8 +209,8 @@ def puantaj_fabrikasi(db_session: AsyncSession, santiye: Site, kaydeden: User):
                     site_id=santiye.id,
                     project_id=santiye.project_id,
                     work_date=date(year, month, day),
+                    hours=None if hours is None else Decimal(hours),
                     code=code,
-                    overtime_hours=overtime_hours,
                     created_by=kaydeden.id,
                 )
             )

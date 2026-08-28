@@ -6,11 +6,11 @@ okunur, hangi satır KORUNUR, kapı ne zaman kapalıdır. `DomainError` türevle
 `app/core/exception_handlers.py`te HTTP'ye çevrilir — router `try/except`
 YAZMAZ.
 
-## Neden gün sayısını burada saymıyoruz da `MAN_DAY_CODES`i import ediyoruz?
+## Neden gün sayısını burada saymıyoruz da `worked_day_clause`i import ediyoruz?
 
-Adam-güne hangi kodun sayıldığı PUANTAJIN kanonudur (`timesheet/matrix.py`) ve
-mockup'tan gelir (E5 203/210: FM'li gün çalışılmış sayılır · ŞP 245: geçici
-görev sayılmaz). Burada yeniden tanımlansaydı bordronun günü ile puantaj
+Adam-güne hangi hücrenin sayıldığı PUANTAJIN kanonudur (`timesheet/matrix.py`) ve
+mockup'tan gelir (E5 236: çalışılan gün SAATLİDİR · E5 262/283: izin ve geçici
+görev rozetleri saat taşımaz, sayılmaz). Burada yeniden tanımlansaydı bordronun günü ile puantaj
 ekranının adam-günü zamanla ayrışır ve kullanıcı iki ekranda iki sayı görürdü.
 
 ## EŞİK = KİLİT (WORKFLOW §4, İK-2 dersi)
@@ -236,5 +236,5 @@ from app.modules.payroll.service.tax_context import (
 )
 from app.modules.personnel.models import Personnel as Personnel
 from app.modules.site_diary.models import WorkerSource as WorkerSource
-from app.modules.timesheet.matrix import MAN_DAY_CODES as MAN_DAY_CODES
+from app.modules.timesheet.matrix import worked_day_clause as worked_day_clause
 from app.modules.timesheet.models import TimesheetEntry as TimesheetEntry
