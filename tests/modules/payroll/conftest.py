@@ -38,6 +38,7 @@ from app.modules.accounting.models import ChartAccount, JournalSourceType
 from app.modules.payroll.models import (
     IncomeKind,
     PayrollMinimumWage,
+    PayrollOvertimeRate,
     PayrollPeriod,
     PayrollRate,
     PayrollTaxBracket,
@@ -118,7 +119,22 @@ async def dilimler(db_session: AsyncSession) -> list[PayrollTaxBracket]:
 
 
 @pytest.fixture
-async def oranlar(db_session: AsyncSession, dilimler) -> list[PayrollRate]:
+async def fm_carpani(db_session: AsyncSession) -> PayrollOvertimeRate:
+    """PUAN-SAAT-3 — yılın fazla mesai çarpanı (mockup E5 358 "× 1,5").
+
+    🔴 `dilimler` ile aynı sınıfta bir TOHUMDUR ve `oranlar`ın ayrılmaz eşidir:
+    satır yoksa FM saati OLAN her satır `uncomputed`a düşer (K1 + NULL-EŞİK).
+    Fail-closed'u sınayan test bu satırı AÇIKÇA siler — fixture'ı kullanmamak
+    yeterli değildir, çünkü `oranlar` onu zaten çeker.
+    """
+    row = PayrollOvertimeRate(year=YIL, multiplier=Decimal("1.500"))
+    db_session.add(row)
+    await db_session.flush()
+    return row
+
+
+@pytest.fixture
+async def oranlar(db_session: AsyncSession, dilimler, fm_carpani) -> list[PayrollRate]:
     rows = [
         PayrollRate(year=YIL, personnel_source=source, **pct) for source, pct in SEED_2026.items()
     ]

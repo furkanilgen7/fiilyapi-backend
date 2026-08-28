@@ -568,7 +568,14 @@ def compute_line(
         return _uncomputed(personnel_source, days=None)
 
     days = computed_days(personnel_source, hours_rules.man_days(work_hours.total_hours))
-    gross = compute_gross(wage_type, wage_amount, work_hours, overtime_multiplier)
+    # 🔴 S7'nin PARA tarafı: günü OLMAYAN personelde (serbest meslek) SAAT
+    # tabanı da yoktur. `days`ten bağımsız bir saat tabanı geçilseydi serbest
+    # meslekli bir kişinin "yevmiyesi" saat başına ödenir, olmayan bir çarpan
+    # varmış gibi kullanılırdı — PUAN-SAAT öncesinde bu bağ `compute_gross`un
+    # `days is None` kapısıydı ve kaybolmamalıdır. `monthly` etkilenmez:
+    # aylıkçının brütü zaten ne güne ne saate bağlıdır.
+    saat_tabani = None if days is None else work_hours
+    gross = compute_gross(wage_type, wage_amount, saat_tabani, overtime_multiplier)
     if gross is None or rate is None:
         return _uncomputed(personnel_source, days)
 

@@ -21,6 +21,23 @@ from app.modules.payroll.tax_bracket_seed_data import (
 )
 from app.modules.personnel.models import PaymentMethod, WageType
 from app.modules.site_diary.models import WorkerSource
+from app.modules.timesheet import hours as hours_rules
+
+
+def gunler(tam_gun: int, fm: str = "0") -> hours_rules.WeekHours:
+    """`tam_gun` adet TAM (9 saatlik) gün + istenirse fazla mesai saati.
+
+    🔴 PUAN-SAAT-3: `compute_line` artık gün SAYISI değil SAAT TÜREVİ alır.
+    Yardımcı, eski `man_days=N` çağrılarının BİREBİR karşılığını üretir
+    (`N × 9` normal saat) — böylece bu dosyadaki mockup tutarları (BY 143
+    37.800 = 21 × 1.800) DEĞİŞMEDEN geçerli kalır ve tip değişimi eski
+    beklentileri sessizce gevşetmez.
+    """
+    normal = Decimal(tam_gun) * hours_rules.NORMAL_DAY_HOURS
+    fazla = Decimal(fm)
+    return hours_rules.WeekHours(
+        normal_hours=normal, overtime_hours=fazla, total_hours=normal + fazla
+    )
 
 #: 2026 ÜCRET tarifesi — `tax_bracket_seed_data`dan gelir, elle KOPYALANMAZ.
 BRACKETS = tuple(
@@ -88,9 +105,10 @@ def hesapla(**kwargs) -> compute.ComputedLine:
         "wage_type": WageType.daily,
         "wage_amount": Decimal("1800.00"),
         "payment_method": PaymentMethod.bank,
-        "man_days": 21,
+        "work_hours": gunler(21),
         "has_timesheet_records": True,
         "rate": rate(),
+        "overtime_multiplier": Decimal("1.500"),
         "tax": tax_context(),
     }
     return compute.compute_line(**{**varsayilan, **kwargs})
@@ -152,7 +170,7 @@ def test_yedi_oran_sutunu_iki_kumeye_TAM_bolunur():
 
 def test_gunlukcu_brut_gun_carpimi():
     """`daily` → gün × yevmiye. BY 138 (21 gün) · BY 139 (37.800 brüt)."""
-    satir = hesapla(wage_amount=Decimal("1800.00"), man_days=21)
+    satir = hesapla(wage_amount=Decimal("1800.00"), work_hours=gunler(21))
 
     assert satir.days == 21
     assert satir.gross_amount == Decimal("37800.00")
@@ -164,27 +182,149 @@ def test_aylikci_tam_tutar_alir_ama_gun_yine_yazilir():
     Gün yine de satıra yazılır: BY 138/158 aylıkçı satırlarında da "Gün" sütunu
     doludur (21 · 23) — gün bir BİLGİDİR, aylıkçıda çarpan değildir.
     """
-    satir = hesapla(wage_type=WageType.monthly, wage_amount=Decimal("50600.00"), man_days=23)
+    satir = hesapla(wage_type=WageType.monthly, wage_amount=Decimal("50600.00"), work_hours=gunler(23))
 
     assert satir.days == 23
     assert satir.gross_amount == Decimal("50600.00")
 
 
-def test_saatlik_ucret_FAIL_CLOSED():
-    """🔴 ŞEF KARARI 1 — `hourly` HESAPLANMAZ.
+def test_saatlik_ucret_ARTIK_HESAPLANIR_ve_FM_yuzde_50_zamlidir():
+    """🔴 PUAN-SAAT-3 — ŞEF KARARI 1 KAPANDI, `hourly` yolu AÇILDI.
 
-    Puantajda normal çalışma SAATİ kolonu yoktur (`timesheet_entries` yalnız
-    `overtime_hours` taşır ve o da sadece `overtime` kodunda doludur). "Günde 8
-    saat" gibi bir sabit UYDURMAK para sınıfı bir yalan olurdu (WORKFLOW §3) —
-    satır S4 yolunun aynısıyla `uncomputed` kalır, 0 BASILMAZ.
+    Mockup E5 356-358 birebir: *"Bu Hafta Normal … × saatlik ücret"* +
+    *"Bu Hafta FM … × saatlik ücret × 1,5"*.
+
+    Sayı mockup'ın KENDİ haftasından kurulur (E5 236-245, Mehmet Yılmaz):
+    normal **45**, FM **8**. Saatlik ücret 225 ile:
+
+        45 × 225           = 10.125,00
+         8 × 225 × 1,5     =  2.700,00
+        ------------------------------
+                             12.825,00
+
+    🔑 FM'in AYRI çarpanla girdiği bu testte kanıtlanır: FM saati normal saatle
+    aynı fiyattan ödenseydi brüt 11.925 olurdu (900 TL eksik).
     """
-    satir = hesapla(wage_type=WageType.hourly, wage_amount=Decimal("225.00"))
+    satir = hesapla(
+        wage_type=WageType.hourly,
+        wage_amount=Decimal("225.00"),
+        work_hours=hours_rules.WeekHours(
+            normal_hours=Decimal("45.0"),
+            overtime_hours=Decimal("8.0"),
+            total_hours=Decimal("53.0"),
+        ),
+    )
+
+    assert satir.status is PayrollLineStatus.pending
+    assert satir.gross_amount == Decimal("12825.00")
+    # Adam-gün TÜREVDİR ve FM saatini de içerir: 53 ÷ 9 = 5,9 (E5 349-350).
+    assert satir.days == Decimal("5.9")
+
+
+def test_YEVMIYELIDE_saatlik_ucret_YEVMIYENIN_DOKUZDA_BIRIDIR():
+    """🔴 Mockup E5 359 birebir: *"Saatlik ücret = günlük ücret ÷ 9"*.
+
+    Aynı hafta (normal 45 · FM 8), yevmiye 2.025 = 225 × 9 ile kurulunca
+    saatlik ücretli satırla **BİREBİR AYNI** brütü vermelidir. İki ücret tipi
+    için iki ayrı formül yazılsaydı bu eşitlik bozulurdu ve aynı çalışma iki
+    farklı para ederdi.
+
+    🔑 Bölme YUVARLANMAZ: `2025 ÷ 9 = 225` tamdır, ama `1200 ÷ 9 = 133,333…`
+    için kuruşa yuvarlama 45 saatlik haftada 15 kuruş kaybettirirdi
+    (`test_yevmiye_dokuza_TAM_bolunmediginde_kurus_kaybi_YOK`).
+    """
+    ortak = {
+        "work_hours": hours_rules.WeekHours(
+            normal_hours=Decimal("45.0"),
+            overtime_hours=Decimal("8.0"),
+            total_hours=Decimal("53.0"),
+        )
+    }
+    saatlik = hesapla(wage_type=WageType.hourly, wage_amount=Decimal("225.00"), **ortak)
+    yevmiyeli = hesapla(wage_type=WageType.daily, wage_amount=Decimal("2025.00"), **ortak)
+
+    assert yevmiyeli.gross_amount == saatlik.gross_amount == Decimal("12825.00")
+
+
+def test_yevmiye_dokuza_TAM_bolunmediginde_kurus_kaybi_YOK():
+    """🔴 Saatlik ücret ARA DEĞERDİR ve yuvarlanmaz (`hourly_rate`).
+
+    1.200 TL yevmiye → 133,333… TL/saat. Kuruşa yuvarlansaydı (133,33) 45
+    saatlik hafta 5.999,85 ederdi; oysa aynı hafta beş tam yevmiyedir: 6.000.
+    Fark haftada 15 kuruş, kişi başına yılda ~7,80 TL — para sınıfı sızıntı.
+    """
+    satir = hesapla(
+        wage_amount=Decimal("1200.00"),
+        work_hours=hours_rules.WeekHours(
+            normal_hours=Decimal("45.0"),
+            overtime_hours=Decimal("0.0"),
+            total_hours=Decimal("45.0"),
+        ),
+    )
+
+    assert satir.gross_amount == Decimal("6000.00")
+
+
+def test_FM_carpani_BILINMIYORSA_satir_FAIL_CLOSED():
+    """🔴 K1 + NULL-EŞİK — FM çarpanı VERİDİR, 1,5 VARSAYILMAZ.
+
+    `payroll_overtime_rates`te o yılın satırı yoksa çarpan `None` gelir. FM
+    saati OLAN satır `uncomputed` kalır ve **0 ya da 1,5 uydurulmaz**; brüt
+    `null` durur (S4).
+    """
+    satir = hesapla(
+        overtime_multiplier=None,
+        work_hours=hours_rules.WeekHours(
+            normal_hours=Decimal("45.0"),
+            overtime_hours=Decimal("8.0"),
+            total_hours=Decimal("53.0"),
+        ),
+    )
 
     assert satir.status is PayrollLineStatus.uncomputed
     assert satir.gross_amount is None
-    assert satir.net_amount is None
-    # `excluded_reason` DEĞİL: satır dışlanmış değil, HESAPLANAMAMIŞTIR.
-    assert satir.excluded_reason is None
+    # Gün yine YAZILIR: puantajdan OKUNAN bir olgudur (`_uncomputed`).
+    assert satir.days == Decimal("5.9")
+
+
+def test_FM_YOKSA_carpanin_bilinmemesi_satiri_DUSURMEZ():
+    """🔴 IK3-RATE-FIX kanonu — bir korkuluk, koruduğu şeyden büyük hasar
+    üretemez.
+
+    FM saati 0 olan bir dönemde çarpan hesaba HİÇ GİRMEZ; onun eksikliği
+    yüzünden satırı `uncomputed`a düşürmek, ilgisiz bir eksik yüzünden ödemeyi
+    durdurmak olurdu.
+    """
+    satir = hesapla(overtime_multiplier=None, work_hours=gunler(21))
+
+    assert satir.status is PayrollLineStatus.pending
+    assert satir.gross_amount == Decimal("37800.00")
+
+
+def test_YARIM_GUN_TAM_GUN_SAYILMAZ():
+    """🔴🔴 PUAN-SAAT-3'ün ASIL BORCU: 4 saatlik gün TAM GÜN değildir.
+
+    Eski `payroll` "saati olan hücre" SAYIYORDU: 4 saatlik bir gün de 1 gündü
+    ve yevmiyeli personele **tam yevmiye** ödenirdi. Mockup E5 305 tam olarak
+    bu hücreyi çiziyor (Ayşe Demir, Perşembe `value="4"`).
+
+    20 tam gün + 1 yarım gün (4 saat) = 184 saat:
+
+        eski sayım : 21 gün × 1.800 = 37.800,00
+        yeni türev : 184 ÷ 9 = 20,4 adam-gün · brüt = 200 × 184 = 36.800,00
+        ------------------------------------------------------------------
+        FAZLA ÖDEME (kişi başına, tek yarım günde)      = 1.000,00 TL
+    """
+    satir = hesapla(
+        work_hours=hours_rules.WeekHours(
+            normal_hours=Decimal("184.0"),
+            overtime_hours=Decimal("0.0"),
+            total_hours=Decimal("184.0"),
+        )
+    )
+
+    assert satir.days == Decimal("20.4")
+    assert satir.gross_amount == Decimal("36800.00")
 
 
 @pytest.mark.parametrize("eksik", ["wage_amount", "wage_type"])
@@ -245,11 +385,11 @@ def test_kaydi_VAR_ama_adam_gunu_0_ise_hesap_YAPILIR():
     Tetikleyici gün SAYISI değil KAYDIN VARLIĞIdır; bu test iki durumun tek
     koşula indirgenmesini (örneğin `man_days == 0` ile kapı kurmayı) engeller.
     """
-    gunlukcu = hesapla(man_days=0, has_timesheet_records=True)
+    gunlukcu = hesapla(work_hours=gunler(0), has_timesheet_records=True)
     aylikci = hesapla(
         wage_type=WageType.monthly,
         wage_amount=Decimal("50600.00"),
-        man_days=0,
+        work_hours=gunler(0),
         has_timesheet_records=True,
     )
 
@@ -293,7 +433,7 @@ def test_sirket_kadrosu_tam_hesap():
     düz %10 gelir vergisi mockup etiketinden (SGK 72) gelmişti ve GVK m.103'ün
     hiçbir dilimine karşılık gelmiyordu.
     """
-    satir = hesapla(wage_amount=Decimal("1800.00"), man_days=21)
+    satir = hesapla(wage_amount=Decimal("1800.00"), work_hours=gunler(21))
 
     assert satir.gross_amount == Decimal("37800.00")
     assert satir.tax_base_amount == Decimal("32130.00")
@@ -313,7 +453,7 @@ def test_taseron_satiri_EXCLUDED_ama_tutarlari_HESAPLANIR():
     sessiz atlama yok (WORKFLOW §3).
     """
     satir = hesapla(
-        personnel_source=WorkerSource.subcontractor, wage_amount=Decimal("1200.00"), man_days=22
+        personnel_source=WorkerSource.subcontractor, wage_amount=Decimal("1200.00"), work_hours=gunler(22)
     )
 
     assert satir.status is PayrollLineStatus.excluded
@@ -353,7 +493,7 @@ def test_serbest_meslek_GUNSUZ_ve_yuzde_yirmi_stopajli():
         personnel_source=WorkerSource.freelance,
         wage_type=WageType.monthly,
         wage_amount=Decimal("12500.00"),
-        man_days=20,
+        work_hours=gunler(20),
         rate=rate(**SERBEST),
     )
 
@@ -390,7 +530,7 @@ def test_stajyerde_kesinti_SIFIR_ve_net_brute_esit():
         personnel_source=WorkerSource.intern,
         wage_type=WageType.monthly,
         wage_amount=Decimal("7500.00"),
-        man_days=22,
+        work_hours=gunler(22),
         rate=rate(**ZERO),
     )
 

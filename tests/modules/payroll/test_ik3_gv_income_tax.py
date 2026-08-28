@@ -35,6 +35,7 @@ from app.modules.payroll.tax_bracket_seed_data import (
 )
 from app.modules.personnel.models import PaymentMethod, WageType
 from app.modules.site_diary.models import WorkerSource
+from app.modules.timesheet import hours as hours_rules
 
 from .test_payroll_compute import BRACKETS, SGK_4A, tax_context
 
@@ -394,9 +395,14 @@ def _satir(**baglam) -> compute.ComputedLine:
         wage_type=WageType.monthly,
         wage_amount=Decimal("50000.00"),
         payment_method=PaymentMethod.bank,
-        man_days=21,
+        work_hours=hours_rules.WeekHours(
+            normal_hours=Decimal("189.0"),
+            overtime_hours=Decimal("0.0"),
+            total_hours=Decimal("189.0"),
+        ),
         has_timesheet_records=True,
         rate=sirket_orani(),
+        overtime_multiplier=Decimal("1.500"),
         tax=tax_context(**baglam),
     )
 
