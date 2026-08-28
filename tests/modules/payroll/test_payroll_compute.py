@@ -39,6 +39,7 @@ def gunler(tam_gun: int, fm: str = "0") -> hours_rules.WeekHours:
         normal_hours=normal, overtime_hours=fazla, total_hours=normal + fazla
     )
 
+
 #: 2026 ÜCRET tarifesi — `tax_bracket_seed_data`dan gelir, elle KOPYALANMAZ.
 BRACKETS = tuple(
     income_tax.TaxBracket(ordinal=o, upper_bound=u, rate_pct=r)
@@ -182,7 +183,9 @@ def test_aylikci_tam_tutar_alir_ama_gun_yine_yazilir():
     Gün yine de satıra yazılır: BY 138/158 aylıkçı satırlarında da "Gün" sütunu
     doludur (21 · 23) — gün bir BİLGİDİR, aylıkçıda çarpan değildir.
     """
-    satir = hesapla(wage_type=WageType.monthly, wage_amount=Decimal("50600.00"), work_hours=gunler(23))
+    satir = hesapla(
+        wage_type=WageType.monthly, wage_amount=Decimal("50600.00"), work_hours=gunler(23)
+    )
 
     assert satir.days == 23
     assert satir.gross_amount == Decimal("50600.00")
@@ -453,7 +456,9 @@ def test_taseron_satiri_EXCLUDED_ama_tutarlari_HESAPLANIR():
     sessiz atlama yok (WORKFLOW §3).
     """
     satir = hesapla(
-        personnel_source=WorkerSource.subcontractor, wage_amount=Decimal("1200.00"), work_hours=gunler(22)
+        personnel_source=WorkerSource.subcontractor,
+        wage_amount=Decimal("1200.00"),
+        work_hours=gunler(22),
     )
 
     assert satir.status is PayrollLineStatus.excluded

@@ -272,9 +272,7 @@ class PayrollLine(Base):
     #: Onaylanmış/ödenmiş ve elle düzeltilmiş satırlar `compute` tarafından
     #: zaten EZİLMEZ (S5/S6), yani geçmiş bordronun günü de brütü de yerinde
     #: kalır (`personnel_source` SNAPSHOT kanonuyla aynı aile).
-    days: Mapped[Decimal | None] = mapped_column(
-        Numeric(DAYS_PRECISION, DAYS_SCALE), nullable=True
-    )
+    days: Mapped[Decimal | None] = mapped_column(Numeric(DAYS_PRECISION, DAYS_SCALE), nullable=True)
     gross_amount: Mapped[Decimal | None] = mapped_column(
         Numeric(MONEY_PRECISION, MONEY_SCALE), nullable=True
     )

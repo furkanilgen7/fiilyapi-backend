@@ -131,10 +131,10 @@ from app.modules.payroll.service.compute_flow import (
     _personnel_with_timesheet_records as _personnel_with_timesheet_records,
 )
 from app.modules.payroll.service.compute_flow import (
-    _work_hours as _work_hours,
+    _promote_period_after_compute as _promote_period_after_compute,
 )
 from app.modules.payroll.service.compute_flow import (
-    _promote_period_after_compute as _promote_period_after_compute,
+    _work_hours as _work_hours,
 )
 from app.modules.payroll.service.compute_flow import (
     compute_period as compute_period,

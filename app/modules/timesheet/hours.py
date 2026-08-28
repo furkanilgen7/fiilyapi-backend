@@ -73,9 +73,7 @@ class WeekHours(NamedTuple):
 #: uc sifir. `None` DEGILDIR ve bu ayrim para sinifidir — kaydi olan ama tum
 #: gunleri izin/tatil KODLU birinde saat 0 GERCEKTIR; kaydi hic olmayanda
 #: BILINMEZ ve orada `None` gecer (`payroll.compute.compute_line`).
-EMPTY_WEEK = WeekHours(
-    normal_hours=ZERO_HOURS, overtime_hours=ZERO_HOURS, total_hours=ZERO_HOURS
-)
+EMPTY_WEEK = WeekHours(normal_hours=ZERO_HOURS, overtime_hours=ZERO_HOURS, total_hours=ZERO_HOURS)
 
 
 def _q(value: Decimal) -> Decimal:
