@@ -8,6 +8,7 @@ from app.core.errors import (
     DuplicateError,
     SiteValidationError,
 )
+from app.core.slug import allocate_slug
 
 # Denetim METINLERI merkezidir (`audit/messages.py`): f-string ne servise ne
 # router'a gomulur. Silme ve yayin metinleri BURADA kurulur, cunku gereken
@@ -167,9 +168,14 @@ async def create_section(
     # P11 — oncul korkulugu YAZMADAN ONCE (`section_id=None`: yeni satirin
     # kimligi henuz yok, dolayisiyla self/dongu dallari POST'ta tanimsizdir).
     await _validate_dependency(session, site.id, data.depends_on_section_id, section_id=None)
+    # URL-2: slug OLUSTURULURKEN uretilir, AD DEGISINCE DEGISMEZ (kullanici
+    # karari 2026-08-29) — `update_section` slug'a HIC dokunmaz. Kapsam SANTIYE
+    # ICIDIR (`uq_sections_site_slug`), bu yuzden suzgec `site_id`dir.
+    slug = await allocate_slug(session, data.name, Section.slug, Section.site_id == site.id)
     section = Section(
         site_id=site.id,
         code=code,
+        slug=slug,
         name=data.name,
         status=data.status,
         manager_user_id=data.manager_user_id,

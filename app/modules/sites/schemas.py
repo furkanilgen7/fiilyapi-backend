@@ -87,6 +87,10 @@ class SectionResponse(BaseModel):
 
     id: uuid.UUID
     code: str | None
+    # URL-2 — okunabilir URL kimligi. Frontend URL-3'te `/projeler/<slug>`u
+    # buradan basacak. `None` olabilir (adi slug'lanamayan ya da servis
+    # disinda acilmis kayit) — o durumda URL UUID olarak kalir.
+    slug: str | None = None
     name: str
     status: SectionStatus
     # §6.2 TEK ekleme. `manager_name` anlik goruntusu KALIR: kullanici silinse
@@ -180,6 +184,10 @@ class SiteCard(BaseModel):
 
     id: uuid.UUID
     code: str
+    # URL-2 — okunabilir URL kimligi. Frontend URL-3'te `/projeler/<slug>`u
+    # buradan basacak. `None` olabilir (adi slug'lanamayan ya da servis
+    # disinda acilmis kayit) — o durumda URL UUID olarak kalir.
+    slug: str | None = None
     name: str
     status: SiteStatus
     address: str | None

@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel
@@ -10,6 +10,7 @@ from app.core.deps import get_current_user
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
+from app.core.slug import parse_ref
 from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
@@ -121,11 +122,26 @@ async def create_site_endpoint(
 
 @router.get("/sites/{site_id}", response_model=SiteDetailResponse, dependencies=[_VIEW])
 async def get_site_endpoint(
-    site_id: uuid.UUID,
+    site_id: str,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
+    project: Annotated[str | None, Query()] = None,
 ) -> SiteDetailResponse:
-    return await service.get_site_detail(session, user, site_id)
+    """URL-2 — yol parametresi UUID **ya da** slug (karar 2).
+
+    `project` KAPSAM suzgecidir ve yalniz slug yolunda anlamlidir: `sites.slug`
+    PROJE ICINDE tekildir, bu uc ise DUZDUR (yolda proje yok). Frontend URL'i
+    (`/projeler/<p>/santiyeler/<s>`) nested oldugu icin bunu her zaman
+    verebilir. Verilmezse cozumleme gorunur kume icinde TEK ADAY sartina
+    baglidir — belirsizlik 404'tur (fail-closed), rastgele secim YOKTUR.
+    Ayrinti: `_visible_site` docstring'i.
+    """
+    return await service.get_site_detail(
+        session,
+        user,
+        parse_ref(site_id),
+        project_ref=parse_ref(project) if project is not None else None,
+    )
 
 
 @router.patch("/sites/{site_id}", response_model=SiteDetailResponse, dependencies=[_FULL])
@@ -207,9 +223,11 @@ async def create_section_endpoint(
 
 @router.get("/sections/{section_id}", response_model=SectionDetailResponse, dependencies=[_VIEW])
 async def get_section_endpoint(
-    section_id: uuid.UUID,
+    section_id: str,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
+    site: Annotated[str | None, Query()] = None,
+    project: Annotated[str | None, Query()] = None,
 ) -> SectionDetailResponse:
     """P6 §5 — Bolum Detay ekraninin veri ucu.
 
@@ -218,7 +236,13 @@ async def get_section_endpoint(
     (`_visible_section`) — gorunmeyen bolum 404 doner ve govdesi var olmayan bir
     UUID'ninkiyle BIREBIR AYNIDIR.
     """
-    return await service.get_section_detail(session, user, section_id)
+    return await service.get_section_detail(
+        session,
+        user,
+        parse_ref(section_id),
+        site_ref=parse_ref(site) if site is not None else None,
+        project_ref=parse_ref(project) if project is not None else None,
+    )
 
 
 @router.delete(

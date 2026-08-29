@@ -247,6 +247,7 @@ def to_section(
     """
     return SectionResponse(
         id=section.id,
+        slug=section.slug,
         code=section.code,
         name=section.name,
         status=section.status,
@@ -320,6 +321,7 @@ def _card_fields(
     return {
         "id": site.id,
         "code": site.code,
+        "slug": site.slug,
         "name": site.name,
         "status": site.status,
         "address": site.address,

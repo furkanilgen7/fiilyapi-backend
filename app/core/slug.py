@@ -46,6 +46,11 @@ import unicodedata
 import uuid
 from collections.abc import Iterable
 
+from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import InstrumentedAttribute
+from sqlalchemy.sql.elements import ColumnElement
+
 # Türkçe harf -> ASCII. `lower()`dan ÖNCE uygulanır (bkz. modül docstring'i).
 # `I` (U+0049) tabloda BİLEREK vardır: Türkçe küçüğü `ı`dır ve `ı` -> `i`dir.
 _TURKISH_TO_ASCII = str.maketrans(
@@ -132,3 +137,39 @@ def parse_ref(ref: str) -> uuid.UUID | str:
         return uuid.UUID(ref)
     except (ValueError, AttributeError):
         return ref
+
+
+async def allocate_slug(
+    session: AsyncSession,
+    name: str | None,
+    column: InstrumentedAttribute[str | None],
+    *scope_filters: ColumnElement[bool],
+) -> str | None:
+    """Kapsamda benzersiz bir slug ayirir; ad slug'lanamiyorsa `None`.
+
+    `scope_filters` TEKILLIK KAPSAMINI tasir ve kolonun kisitiyla BIREBIR
+    ortusmek ZORUNDADIR — aksi hâlde ayirici bir cakismayi goremez ve DB
+    kisitina carpar:
+
+        Project.slug  -> kapsam YOK          (global, `uq_projects_slug`)
+        Site.slug     -> Site.project_id ==  (`uq_sites_project_slug`)
+        Section.slug  -> Section.site_id ==  (`uq_sections_site_slug`)
+
+    `LIKE` deseni GUVENLIDIR: `base` yalniz `[a-z0-9-]` icerir (`slugify`
+    ciktisi), yani `%`/`_` joker karakteri tasiyamaz — kacis gerekmez.
+
+    🔴 YARIS: iki es zamanli olusturma ayni sayi ekini secebilir; kismi
+    benzersiz indeks ihlali mevcut IntegrityError -> 409 isleyicisine duser ve
+    OTOMATIK YENIDEN DENEME YAPILMAZ. `_next_project_code` / `_next_site_code`
+    ile BIREBIR ayni kanon (spec §8.3) — slug icin ayri bir yaris cozumu icat
+    edilmez.
+    """
+    base = slugify(name)
+    if base is None:
+        return None
+    stmt = select(column).where(
+        or_(column == base, column.like(f"{base}-%")),
+        *scope_filters,
+    )
+    taken = (await session.execute(stmt)).scalars().all()
+    return unique_slug(base, taken)

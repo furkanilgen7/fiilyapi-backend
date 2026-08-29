@@ -5,6 +5,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import DuplicateError
+from app.core.slug import allocate_slug, slugify, unique_slug
 
 # Denetim METINLERI merkezidir (`audit/messages.py`): f-string ne servise ne
 # router'a gomulur. Silme ve yayin metinleri BURADA kurulur, cunku gereken
@@ -98,11 +99,19 @@ def _write_sections(
     birakirdi. Bu yuzden fonksiyon `async` bile DEGILDIR: icinde bekleyen tek bir
     G/C islemi kalmamistir.
     """
+    # URL-2: santiye YENI oldugu icin kapsamda (santiye ici) hicbir bolum
+    # YOKTUR — slug'lar DB'ye sorulmadan, biriken kume uzerinde ayrilir. Bu,
+    # fonksiyonun `async` OLMAMA gerekcesini de korur: eklenen tek bir G/C yok.
+    taken_slugs: set[str] = set()
     for index, (row, manager_name) in enumerate(zip(sections, manager_names, strict=True)):
+        slug = unique_slug(slugify(row.name), taken_slugs)
+        if slug is not None:
+            taken_slugs.add(slug)
         session.add(
             Section(
                 site_id=site.id,
                 code=row.code,
+                slug=slug,
                 name=row.name,
                 manager_user_id=row.manager_user_id,
                 manager_name=manager_name,
@@ -143,10 +152,15 @@ async def create_site(
     code = data.code or await _next_site_code(session)
     if await repository.get_site_by_code(session, project_id, code) is not None:
         raise DuplicateError(guards.DUPLICATE_SITE_CODE)
+    #    URL-2: slug OLUSTURULURKEN uretilir, AD DEGISINCE DEGISMEZ (kullanici
+    #    karari 2026-08-29) — `update_site` slug'a HIC dokunmaz. Kapsam PROJE
+    #    ICIDIR (`uq_sites_project_slug`), bu yuzden suzgec `project_id`dir.
+    slug = await allocate_slug(session, data.name, Site.slug, Site.project_id == project_id)
     # 5. Santiye satiri.
     site = Site(
         project_id=project_id,
         code=code,
+        slug=slug,
         name=data.name,
         status=data.status,
         site_manager_user_id=data.site_manager_user_id,
