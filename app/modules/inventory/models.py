@@ -276,6 +276,42 @@ class StockEntryLine(Base):
         nullable=False,
         index=True,
     )
+    # --- BOLUM / POZ ATFI (STOK-BOLUM T1, kullanici karari 2026-08-29) ---
+    #
+    # 🔴 ETIKET SATIR BAZINDADIR, baslikta DEGIL: tek bir sarf fisi ayni gun
+    # farkli malzemeleri farkli pozlara cikarabilir.
+    #
+    # 🔴 BUNLAR BAKIYENIN BOYUTU DEGILDIR. "STOK DEPODA DURUR, BOLUM TUKETIR":
+    # bolume ayri depo acilmaz, `balance.legs()` bir satir bile degismez ve
+    # bakiye DEPO duzeyinde kalir. Buraya bakan bir sonraki okuyucu bakiyeyi
+    # `section_id`ye gore gruplamaya KALKMASIN — o sayi bir bakiye degil, bir
+    # ATIF toplamidir ve ayri bir uctan (`GET /sections/{id}/stock`) doner.
+    #
+    # ⚠️ `purchase_requests.section_id` ILE KARISTIRILMAZ. O bag *"bu malzemeyi
+    # HANGI BOLUM TALEP ETTI"*dir (satinalma niyeti); bu kolon ise *"bu satirin
+    # malzemesi HANGI BOLUM icin depoya girdi / hangi bolumden cikti"*dir
+    # (stok gercegi). Ikisi ayri zamanlarda ve ayri kisilerce dolar, birbirinden
+    # turetilemez — bkz. `schemas.SiteStockRow` docstring'i.
+    #
+    # SET NULL (desen `site_diary_lines.boq_item_id`ten olculdu): poz ya da
+    # bolum dusurulse de stok hareketi KALIR. CASCADE secilseydi bir bolumun
+    # silinmesi hareket satirini ve dolayisiyla BAKIYEYI degistirirdi.
+    #
+    # IMPORT CEMBERI KURULMAZ (`purchase_order_id` deseni): hedef tablolar
+    # STRING adla yazilir, `app.modules.sites` / `app.modules.boq` BURADA
+    # import EDILMEZ ve karsi tarafta `relationship` de kurulmaz.
+    section_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sections.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    boq_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("boq_items.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False)
     unit_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
     quality: Mapped[StockQuality] = mapped_column(
