@@ -140,7 +140,7 @@ class RiskAlertsPlaceholder(BaseModel):
 
     🔴 BOS LISTE "RISK YOK" DEMEK DEGILDIR — ve bu zarfta oyle olmasi
     SAGLANMISTIR: esigi girilmemis (`min_stock IS NULL`) kalemler AYRI bir
-    `warning` satiriyla sayilir (`risks._threshold_unknown_alert`). Yani
+    `warning` satiriyla sayilir (`risks._stock_alerts`). Yani
     `items == []` yalnizca "bilinen uyari yok VE bilinmeyen esik yok" hâlinde
     dogar. Emsal `inventory`nin `items_without_price` sayacidir: fiyatsiz kalem
     sessizce 0 sayilmaz, AYRICA raporlanir.
