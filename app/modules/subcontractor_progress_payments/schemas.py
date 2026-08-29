@@ -184,6 +184,19 @@ class SubcontractorProgressPaymentListItem(BaseModel):
     description: str | None
     status: SubcontractorPaymentStatus
     section_id: uuid.UUID | None
+    contract_site_id: uuid.UUID | None
+    """HAK-NULL · satırın KAPSAMI — sözleşmenin şantiyesi (`subcontractor_
+    contracts.site_id`), `NULL` = **proje geneli** (projenin tüm şantiyeleri).
+
+    `section_id` ile KARIŞTIRILMAZ; ikisi FARKLI eksenlerdir ve ikisinin `NULL`ı
+    farklı şey söyler: `section_id IS NULL` "bölüm kırılımı yok",
+    `contract_site_id IS NULL` "şantiye kırılımı yok, sözleşme proje geneli".
+
+    Neden yayımlanıyor: `?site_id=` süzgeci artık KAPSAYAN kümeyi döndürür
+    (proje geneli satırlar dahil — `repository._list_stmt`). Satır kendi
+    kapsamını SÖYLEMESEYDİ çağıran, her şantiyede tekrar dönen proje geneli
+    parayı şantiyenin parası sanıp N kez toplardı. Görünürlüğü açan değişiklik
+    toplamları yalancı YAPMASIN diye ayrım satırdadır."""
     created_at: datetime
     gross_total: Decimal
     net_total: Decimal

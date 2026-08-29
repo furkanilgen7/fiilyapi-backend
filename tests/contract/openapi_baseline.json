@@ -28364,6 +28364,18 @@
             ],
             "title": "Contract No"
           },
+          "contract_site_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contract Site Id"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -28486,6 +28498,7 @@
           "description",
           "status",
           "section_id",
+          "contract_site_id",
           "created_at",
           "gross_total",
           "net_total",
@@ -53466,7 +53479,7 @@
     },
     "/subcontractor-progress-payments": {
       "get": {
-        "description": "L83-101 filtreleri + `audit`/`users` sayfalama deseni (`total`/`limit`/`offset`).\n\n`site_id` (TB2/U2) SÖZLEŞME üzerinden süzer — hakedişin şantiye kolonu yoktur.\nKapsamı GENİŞLETMEZ: `visible_projects` süzgeci her hâlükârda üstte kalır.",
+        "description": "L83-101 filtreleri + `audit`/`users` sayfalama deseni (`total`/`limit`/`offset`).\n\n`site_id` (TB2/U2) SÖZLEŞME üzerinden süzer — hakedişin şantiye kolonu yoktur.\nHAK-NULL: süzgeç EŞİTLİK değil KAPSAMA sorar, proje geneli (`site_id IS\nNULL`) sözleşmelerin hakedişleri DE döner ve `contract_site_id` ile\nişaretlenir (gerekçe: `repository._list_stmt`).\nKapsamı GENİŞLETMEZ: `visible_projects` süzgeci her hâlükârda üstte kalır.",
         "operationId": "list_subcontractor_progress_payments_endpoint_subcontractor_progress_payments_get",
         "parameters": [
           {
@@ -53487,7 +53500,7 @@
             }
           },
           {
-            "description": "Sözleşmesi bu şantiyeye bağlı hakedişler (proje geneli olanlar hariç)",
+            "description": "Bu şantiyeyi KAPSAYAN hakedişler: sözleşmesi bu şantiyeye bağlı olanlar **ve** proje geneli (`site_id IS NULL`) sözleşmelerin hakedişleri. Satırın hangisi olduğu `contract_site_id` alanından okunur — proje geneli satırlar her şantiyede tekrar döner, şantiye toplamına EKLENMEZ.",
             "in": "query",
             "name": "site_id",
             "required": false,
@@ -53501,7 +53514,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Sözleşmesi bu şantiyeye bağlı hakedişler (proje geneli olanlar hariç)",
+              "description": "Bu şantiyeyi KAPSAYAN hakedişler: sözleşmesi bu şantiyeye bağlı olanlar **ve** proje geneli (`site_id IS NULL`) sözleşmelerin hakedişleri. Satırın hangisi olduğu `contract_site_id` alanından okunur — proje geneli satırlar her şantiyede tekrar döner, şantiye toplamına EKLENMEZ.",
               "title": "Site Id"
             }
           },
@@ -53659,7 +53672,7 @@
             }
           },
           {
-            "description": "Sözleşmesi bu şantiyeye bağlı hakedişler (proje geneli olanlar hariç)",
+            "description": "Bu şantiyeyi KAPSAYAN hakedişler: sözleşmesi bu şantiyeye bağlı olanlar **ve** proje geneli (`site_id IS NULL`) sözleşmelerin hakedişleri. Satırın hangisi olduğu `contract_site_id` alanından okunur — proje geneli satırlar her şantiyede tekrar döner, şantiye toplamına EKLENMEZ.",
             "in": "query",
             "name": "site_id",
             "required": false,
@@ -53673,7 +53686,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Sözleşmesi bu şantiyeye bağlı hakedişler (proje geneli olanlar hariç)",
+              "description": "Bu şantiyeyi KAPSAYAN hakedişler: sözleşmesi bu şantiyeye bağlı olanlar **ve** proje geneli (`site_id IS NULL`) sözleşmelerin hakedişleri. Satırın hangisi olduğu `contract_site_id` alanından okunur — proje geneli satırlar her şantiyede tekrar döner, şantiye toplamına EKLENMEZ.",
               "title": "Site Id"
             }
           },

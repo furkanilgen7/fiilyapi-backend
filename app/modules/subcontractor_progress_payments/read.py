@@ -166,6 +166,9 @@ async def list_payments(
                 description=payment.description,
                 status=payment.status,
                 section_id=payment.section_id,
+                # HAK-NULL: satırın kapsamı. Sözleşme JOIN'i ZATEN kurulu
+                # (`_list_stmt`) — ek istek YOK.
+                contract_site_id=contract.site_id,
                 created_at=payment.created_at,
                 gross_total=blocks[payment.id].gross,
                 net_total=blocks[payment.id].net,
