@@ -705,6 +705,20 @@ async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
     EKLEYİP hem uç KALDIRDIĞINDA sayaçların ikisi de oynar ama farklı miktarda;
     "yol sayısı sabit kaldı" ya da "operasyon +2" beklentisinin ikisi de yanlış
     olurdu. Sayılar ölçülerek yazıldı.
+
+    🔴 **STOK-BOLUM (+1 yol / +1 operasyon):** `GET /sections/{section_id}/stock`
+    — bölümün malzeme kırılımı (`A1 › Malzeme` sekmesi). TEK yeni yol, TEK
+    operasyon. Buna karşılık `GET /sites/{site_id}/stock`a eklenen `section_id`
+    SÜZGECİ **ne yol ne operasyon** açar (MK-4'ün `equipment_id` süzgeciyle
+    aynı ölçü) ve `stock_entry_lines`a eklenen iki alan da sayaçların hiçbirini
+    oynatmaz — o sürüklenmeyi `tests/contract/openapi_baseline.json` yakalar ve
+    orada **KIRICI** olarak ölçülmüştür (`StockEntryLineResponse.required`
+    genişledi). Yani 233→**234** · 341→**342**.
+
+    🔴 **Bu iki sayaç sözleşmenin kırıcılığına KÖRDÜR** ve bu turda yeniden
+    ölçüldü: yol/operasyon sayısının beklendiği gibi +1/+1 oynaması, devrin
+    kırıcı OLMADIĞININ kanıtı DEĞİLDİR (K-DEVIR2). İki kapı birbirinin yerine
+    geçmez.
     """
     from app.main import app
 
@@ -716,5 +730,5 @@ async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
         for metot in uc
         if metot in {"get", "post", "put", "patch", "delete"}
     )
-    assert len(yollar) == 233
-    assert operasyonlar == 341
+    assert len(yollar) == 234
+    assert operasyonlar == 342

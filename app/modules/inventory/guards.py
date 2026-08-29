@@ -24,8 +24,14 @@ deseni): kullanıcının yetkisi VARDIR, engelleyen şey kaydın DURUMUDUR.
 
 __all__ = [
     "DUPLICATE_STOCK_ITEM_CODE",
+    "ENTRY_BOQ_ITEM_INVALID",
+    "ENTRY_BOQ_ITEM_SITE_MISMATCH",
     "ENTRY_ITEM_INVALID",
     "ENTRY_RECEIVER_INVALID",
+    "ENTRY_SECTION_BOQ_SITE_MISMATCH",
+    "ENTRY_SECTION_INVALID",
+    "ENTRY_SECTION_SITE_MISMATCH",
+    "SECTION_MISSING",
     "SITE_MISSING",
     "DUPLICATE_WAREHOUSE_NAME",
     "STOCK_ITEM_MISSING",
@@ -97,3 +103,43 @@ ENTRY_RECEIVER_INVALID = "Seçilen teslim alan kullanıcı bulunamadı"
 # 404 — `GET /sites/{id}/stock`: görünmeyen şantiye ile var olmayan şantiye AYNI
 # gövdeyi alır (`sites` modülünün tek cümlesiyle aynı metin).
 SITE_MISSING = "Şantiye bulunamadı"
+
+
+# --- Bolum / poz atfi (STOK-BOLUM) ---
+
+# 404 — satirdaki `section_id` yok ya da GORUNMUYOR. Ayni cumle: kimlik
+# varligi sizdirilmaz (T4-artci kurali: govde ici VARLIK referansi = 404).
+ENTRY_SECTION_INVALID = "Seçilen bölüm bulunamadı"
+
+# 404 — satirdaki `boq_item_id` yok ya da gorunmuyor (ayni kural).
+ENTRY_BOQ_ITEM_INVALID = "Seçilen iş kalemi bulunamadı"
+
+# 🔴 422 — TUTARLILIK KAPISI: bolum, hareketin deposunun SANTIYESINE ait degil.
+#
+# Neden 404 DEGIL: bolum VARDIR ve gorunurdur; ihlal edilen sey iki alan
+# ARASINDAKI ILISKIDIR, yani govdenin duzeltilebilir bir KURAL ihlalidir
+# (`WAREHOUSE_SITE_INVALID`in tersi durum: orada referans EDILEN varlik
+# bulunamiyordu, burada bulunuyor ama yanlis yere baglaniyor).
+#
+# Neden DB CHECK DEGIL: kural `warehouses.site_id` ile `sections.site_id`yi
+# karsilastirir — IKI AYRI TABLO. Postgres CHECK'i baska tabloyu okuyamaz;
+# kanon "sozlesme kisiti tipte yasamaz"in kardesi: cok tablolu kisit da
+# SEMADA yasamaz, SERVIS katmanindadir.
+#
+# FAIL-CLOSED: eslesmeyen bolum REDDEDILIR. Gecirmek, A1'e baska santiyenin
+# deposundan sarf yazilmasi demekti — veri bozuklugu.
+ENTRY_SECTION_SITE_MISMATCH = "Seçilen bölüm, hareketin deposunun şantiyesine ait değil"
+
+# 422 — poz, hareketin deposunun santiyesine ait degil (ayni gerekce).
+ENTRY_BOQ_ITEM_SITE_MISMATCH = "Seçilen iş kalemi, hareketin deposunun şantiyesine ait değil"
+
+# 🔴 422 — bolum ile poz AYNI santiyede degil.
+#
+# Bu kapi MERKEZ DEPO icin TEK savunmadir: merkez deponun `site_id`si NULL'dur,
+# yani yukaridaki iki kapinin karsilastiracagi bir capa yoktur. Ikisi birden
+# verildiginde birbirlerine capa olurlar.
+ENTRY_SECTION_BOQ_SITE_MISMATCH = "Seçilen bölüm ile iş kalemi aynı şantiyeye ait değil"
+
+# 404 — `GET /sections/{id}/stock`: gorunmeyen bolum ile var olmayan bolum AYNI
+# govdeyi alir.
+SECTION_MISSING = "Bölüm bulunamadı"

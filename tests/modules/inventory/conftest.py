@@ -23,15 +23,17 @@ Fixture seçimi bu üç seviyeyi temsil eder:
 """
 
 import uuid
+from decimal import Decimal
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.boq.models import BoqGroup, BoqItem
 from app.modules.inventory.models import StockCategory, StockItem, Warehouse
 from app.modules.projects.models import Project
-from app.modules.sites.models import Site
+from app.modules.sites.models import Section, Site
 from app.modules.users.models import User, UserProjectAccess
 
 
@@ -171,3 +173,40 @@ async def kullanici_kimligi(seeded_db: AsyncSession):
         return (await seeded_db.execute(select(User).where(User.email == email))).scalar_one().id
 
     return _resolve
+
+
+@pytest.fixture
+def bolum_fabrikasi(seeded_db: AsyncSession):
+    """STOK-BOLUM: bir şantiyenin bölümü."""
+
+    async def _create(site: Site, code: str, name: str) -> Section:
+        section = Section(site_id=site.id, code=code, name=name)
+        seeded_db.add(section)
+        await seeded_db.flush()
+        return section
+
+    return _create
+
+
+@pytest.fixture
+def poz_fabrikasi(seeded_db: AsyncSession):
+    """STOK-BOLUM: bir şantiyenin BOQ pozu (grup dahil, çünkü `group_id` NOT NULL)."""
+
+    async def _create(site: Site, code: str, description: str = "Nervürlü demir") -> BoqItem:
+        group = BoqGroup(site_id=site.id, name=f"Grup {code}")
+        seeded_db.add(group)
+        await seeded_db.flush()
+        item = BoqItem(
+            site_id=site.id,
+            group_id=group.id,
+            code=code,
+            description=description,
+            unit="Ton",
+            quantity=Decimal("1000.000"),
+            unit_price=Decimal("100.00"),
+        )
+        seeded_db.add(item)
+        await seeded_db.flush()
+        return item
+
+    return _create

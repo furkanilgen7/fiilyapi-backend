@@ -56,6 +56,7 @@ from app.modules.inventory import service
 from app.modules.inventory.balance import StockStatus
 from app.modules.inventory.models import StockCategory, StockEntryType
 from app.modules.inventory.schemas import (
+    SectionStockResponse,
     SiteStockResponse,
     StockEntryCreate,
     StockEntryListResponse,
@@ -372,6 +373,7 @@ async def site_stock_endpoint(
     site_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
+    section_id: uuid.UUID | None = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> SiteStockResponse:
@@ -381,7 +383,46 @@ async def site_stock_endpoint(
     bakiyesi "o şantiyenin depoları"dır. Görünmeyen şantiye 404 döner ve gövde
     var olmayan kimliğinkiyle aynıdır.
 
-    "Aylık İhtiyaç" ve "Bölüm" sütunları YER TUTUCUDUR: giriş yüzeyi yoktur,
-    değer uydurulmaz (spec §3, §5).
+    "Aylık İhtiyaç" HÂLÂ YER TUTUCUDUR (plan ızgarası malzeme satırı taşımaz).
+    🔴 **"Bölüm" ise STOK-BOLUM ile GERÇEĞE döndü:** kartın bu şantiyedeki
+    hareketlerinde atfedilmiş bölüm adlarını taşır; atıf yoksa boş kalır.
+
+    `section_id` SÜZGECİ SATIR KÜMESİNİ daraltır, `balance`ı DEĞİŞTİRMEZ:
+    bakiye depo düzeyindedir ("STOK DEPODA DURUR, BÖLÜM TÜKETİR"). Cümlesi
+    *"bu bölümde kullanılmış malzemelerin ŞANTİYE bakiyesi"*dir. Bölümün kendi
+    miktarları `GET /sections/{id}/stock`tan gelir. Başka şantiyenin bölümü
+    verilirse **404**.
     """
-    return await service.build_site_stock(session, user, site_id, limit=limit, offset=offset)
+    return await service.build_site_stock(
+        session, user, site_id, section_id=section_id, limit=limit, offset=offset
+    )
+
+
+@router.get(
+    "/sections/{section_id}/stock",
+    response_model=SectionStockResponse,
+    responses={404: {"description": "Bölüm bulunamadı"}},
+    dependencies=[_VIEW],
+)
+async def section_stock_endpoint(
+    section_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> SectionStockResponse:
+    """`A1 › Malzeme` sekmesinin ve `Bölüm Malzeme Durumu` kartının verisi.
+
+    🔴 **BAKİYE DÖNMEZ** (ürün kararı): bakiye depo düzeyindedir ve bölüme
+    ikinci bir bakiye kaynağı açmak iki-kaynak problemini doğururdu. Bunun
+    yerine (malzeme, poz) çifti başına `assigned` / `issued` / `net` döner —
+    tanımları `SectionStockRow` docstring'indedir. **Sarf toplamı
+    `issued_quantity`dir.**
+
+    Kapı `inventory:view`tir: bu bir STOK ekranıdır, veri stok hareketinden
+    türer. `sites`/`boq` kapıları BURADA KULLANILMAZ — kullanılsaydı stok
+    okuyabilen `procurement` rolü kendi verisini göremezdi.
+
+    Görünmeyen bölüm ile var olmayan bölüm AYNI 404 gövdesini alır.
+    """
+    return await service.build_section_stock(session, user, section_id, limit=limit, offset=offset)

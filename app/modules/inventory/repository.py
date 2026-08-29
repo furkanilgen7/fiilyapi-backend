@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import Subquery
 
+from app.modules.boq.models import BoqItem
 from app.modules.inventory import balance
 from app.modules.inventory.models import (
     StockCategory,
@@ -37,7 +38,7 @@ from app.modules.inventory.models import (
     StockItem,
     Warehouse,
 )
-from app.modules.sites.models import Site
+from app.modules.sites.models import Section, Site
 
 
 def _like_escape(deger: str) -> str:
@@ -439,6 +440,7 @@ def _summary_filtered(
     status: str | None,
     category: StockCategory | None,
     q: str | None,
+    item_ids: Select | None,
 ) -> Select:
     """E3 filtre çubuğu: durum sekmeleri · kategori select'i · arama kutusu.
 
@@ -451,6 +453,12 @@ def _summary_filtered(
     stmt = stmt.where(gorunur_kalem_kosulu(ctx))
     if status is not None:
         stmt = stmt.where(ctx.status == status)
+    if item_ids is not None:
+        # STOK-BOLUM `section_id` suzgeci. SATIR KUMESINI daraltir, `balance`i
+        # DEGISTIRMEZ (gerekce `item_ids_attributed_to_section`da). Suzgec
+        # BURADADIR ki liste, `total` ve KPI ayni kumeyi gorsun — ucu
+        # ayrissaydi ekranda "3 kalem" yazip 2 satir gorunurdu.
+        stmt = stmt.where(StockItem.id.in_(item_ids))
     return stmt
 
 
@@ -462,6 +470,7 @@ async def list_summary_rows(
     status: str | None,
     category: StockCategory | None,
     q: str | None,
+    item_ids: Select | None = None,
     limit: int,
     offset: int,
 ) -> list[Row]:
@@ -475,7 +484,7 @@ async def list_summary_rows(
         ctx,
         only_moved=only_moved,
     )
-    stmt = _summary_filtered(stmt, ctx, status=status, category=category, q=q)
+    stmt = _summary_filtered(stmt, ctx, status=status, category=category, q=q, item_ids=item_ids)
     stmt = stmt.order_by(StockItem.name, StockItem.id).limit(limit).offset(offset)
     return list((await session.execute(stmt)).all())
 
@@ -488,9 +497,10 @@ async def count_summary_rows(
     status: str | None,
     category: StockCategory | None,
     q: str | None,
+    item_ids: Select | None = None,
 ) -> int:
     stmt = _summary_joined(select(func.count()).select_from(StockItem), ctx, only_moved=only_moved)
-    stmt = _summary_filtered(stmt, ctx, status=status, category=category, q=q)
+    stmt = _summary_filtered(stmt, ctx, status=status, category=category, q=q, item_ids=item_ids)
     return (await session.execute(stmt)).scalar_one()
 
 
@@ -502,6 +512,7 @@ async def summary_kpis(
     status: str | None,
     category: StockCategory | None,
     q: str | None,
+    item_ids: Select | None = None,
 ) -> Row:
     """KPI şeridi SAYFAYI değil SÜZÜLEN KÜMEYİ özetler (E3 72-89 / ŞS 86-91).
 
@@ -536,7 +547,7 @@ async def summary_kpis(
         ctx,
         only_moved=only_moved,
     )
-    stmt = _summary_filtered(stmt, ctx, status=status, category=category, q=q)
+    stmt = _summary_filtered(stmt, ctx, status=status, category=category, q=q, item_ids=item_ids)
     return (await session.execute(stmt)).one()
 
 
@@ -568,3 +579,209 @@ async def warehouse_breakdown(
         .order_by(Warehouse.name, Warehouse.id)
     )
     return list((await session.execute(stmt)).all())
+
+
+# --- Bolum malzeme kirilimi (STOK-BOLUM) ---
+
+
+def _section_line_scope(section_id: uuid.UUID) -> Select:
+    """Bir bölüme atfedilmiş satırların ORTAK iskeleti.
+
+    🔴 **KAPSAM SÜZGECİ DEPO ÜZERİNDEN KURULMAZ ve buna gerek YOKTUR.** Yazma
+    kapısı (`service._resolve_line_attribution`) bölümün, hareketin deposunun
+    şantiyesine ait olmasını ZORLAR; şantiyesiz merkez depoda ise bölüm+poz
+    birbirine çapa olur. Yani `section_id` dolu bir satır zaten o bölümün
+    şantiyesine bağlıdır. Buraya ikinci bir depo süzgeci konsaydı, kapının
+    tuttuğu invariant SESSİZCE bir daha uygulanır ve kapı gevşerse fark
+    edilmezdi — kapının kendisi bekçilidir (`test_stok_bolum_tutarlilik`).
+
+    🔴 **`transfer` SATIRI BURAYA HİÇ GİREMEZ**: şema katmanı transfer
+    hareketinde atıf yazılmasını 422 ile reddeder. Bu yüzden ÇİFT BACAK
+    sorunu bu türetmede YOKTUR — her satır tek bacaklıdır ve `balance.legs()`
+    burada ÇAĞRILMAZ.
+    """
+    return (
+        select(StockEntryLine)
+        .join(StockEntry, StockEntry.id == StockEntryLine.entry_id)
+        .where(StockEntryLine.section_id == section_id)
+    )
+
+
+def _section_aggregates() -> tuple[ColumnElement, ColumnElement, ColumnElement, ColumnElement]:
+    """`assigned` / `issued` / `net` / `value` ifadeleri — TEK yerde.
+
+    `issued` NEGATİF miktarların MUTLAK toplamıdır: sarf, `adjustment`
+    satırının eksi miktarıdır (§7 S4 — sarf için ayrı tip AÇILMAZ). İşaretli
+    tek bir toplam basılsaydı `+5 alım` ile `−5 sarf` birbirini götürür ve
+    ekran "hiç kullanılmadı" derdi.
+    """
+    sifir = literal(Decimal("0"))
+    artilar = func.coalesce(
+        func.sum(case((StockEntryLine.quantity > 0, StockEntryLine.quantity), else_=sifir)),
+        sifir,
+    )
+    eksiler = func.coalesce(
+        func.sum(case((StockEntryLine.quantity < 0, -StockEntryLine.quantity), else_=sifir)),
+        sifir,
+    )
+    net = func.coalesce(func.sum(StockEntryLine.quantity), sifir)
+    # Fiyatsiz satir toplam degere GIRMEZ (§7 S6): `unit_price` NULL ise carpim
+    # da NULL olur ve `sum` onu atlar.
+    deger = func.coalesce(func.sum(StockEntryLine.quantity * StockEntryLine.unit_price), sifir)
+    return artilar, eksiler, net, deger
+
+
+def _section_rows_stmt(section_id: uuid.UUID) -> Select:
+    """(malzeme, poz) çifti başına tek satır. Poz NULL olabilir (fail-open)."""
+    artilar, eksiler, net, deger = _section_aggregates()
+    return (
+        _section_line_scope(section_id)
+        .join(StockItem, StockItem.id == StockEntryLine.item_id)
+        .outerjoin(BoqItem, BoqItem.id == StockEntryLine.boq_item_id)
+        .with_only_columns(
+            StockItem.id.label("item_id"),
+            StockItem.code.label("code"),
+            StockItem.name.label("name"),
+            StockItem.category.label("category"),
+            StockItem.unit.label("unit"),
+            BoqItem.id.label("boq_item_id"),
+            BoqItem.code.label("boq_code"),
+            BoqItem.description.label("boq_description"),
+            artilar.label("assigned_quantity"),
+            eksiler.label("issued_quantity"),
+            net.label("net_quantity"),
+            deger.label("total_value"),
+        )
+        .group_by(
+            StockItem.id,
+            StockItem.code,
+            StockItem.name,
+            StockItem.category,
+            StockItem.unit,
+            BoqItem.id,
+            BoqItem.code,
+            BoqItem.description,
+        )
+    )
+
+
+async def list_section_stock_rows(
+    session: AsyncSession, section_id: uuid.UUID, *, limit: int, offset: int
+) -> list[Row]:
+    """Sıralama DETERMİNİSTİKTİR: kart kodu → poz kodu (NULL'lar SONA) → kimlik.
+
+    Sayfalanan bir sorguda belirsiz sıralama, iki ardışık sayfada AYNI satırı
+    gösterip başkasını hiç göstermez — `nulls_last` olmasaydı poza bağlanmamış
+    satır motorun keyfine kalırdı.
+    """
+    stmt = (
+        _section_rows_stmt(section_id)
+        .order_by(
+            StockItem.code,
+            BoqItem.code.nulls_last(),
+            StockItem.id,
+        )
+        .limit(limit)
+        .offset(offset)
+    )
+    return list((await session.execute(stmt)).all())
+
+
+async def count_section_stock_rows(session: AsyncSession, section_id: uuid.UUID) -> int:
+    """`total` — sayfa değil KÜMEYİ sayar; liste ile AYNI ifadeden türer."""
+    alt = _section_rows_stmt(section_id).subquery()
+    return int(await session.scalar(select(func.count()).select_from(alt)) or 0)
+
+
+async def section_stock_kpis(session: AsyncSession, section_id: uuid.UUID) -> Row:
+    """Şerit SAYFAYI değil TÜM kümeyi özetler (`summary_kpis` deseni).
+
+    `item_count` DISTINCT KART sayısıdır, satır sayısı değil: aynı kart iki
+    ayrı poza çıkmışsa ekranda "2 malzeme" yazmak yanlış olurdu.
+    """
+    sifir = literal(Decimal("0"))
+    _, eksiler, _, deger = _section_aggregates()
+    stmt = _section_line_scope(section_id).with_only_columns(
+        func.coalesce(
+            func.sum(
+                case(
+                    (
+                        StockEntryLine.quantity < 0,
+                        -StockEntryLine.quantity * StockEntryLine.unit_price,
+                    ),
+                    else_=sifir,
+                )
+            ),
+            sifir,
+        ).label("issued_value"),
+        deger.label("total_value"),
+        func.count(func.distinct(StockEntryLine.item_id)).label("item_count"),
+        func.count().filter(StockEntryLine.unit_price.is_(None)).label("lines_without_price"),
+    )
+    return (await session.execute(stmt)).one()
+
+
+async def section_names_by_item(
+    session: AsyncSession, site_id: uuid.UUID, item_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[str]]:
+    """ŞS "Bölüm" sütunu: sayfadaki kartların ATFEDİLDİĞİ bölüm adları.
+
+    N+1 AÇILMAZ — sayfanın tüm kimlikleri tek `IN` ile sorulur.
+
+    Kapsam `sections.site_id`dir, deponun değil: bölüm zaten şantiyeye bağlıdır
+    (`sections.site_id` NOT NULL) ve yazma kapısı bölüm ile deponun şantiyesini
+    eşitler. `Section` üzerinden süzmek, hareketin deposu sonradan silinse
+    (`warehouses.site_id` SET NULL) bile sütunun doğru kalmasını sağlar.
+    """
+    if not item_ids:
+        return {}
+    stmt = (
+        select(StockEntryLine.item_id, Section.name)
+        .join(Section, Section.id == StockEntryLine.section_id)
+        .where(Section.site_id == site_id, StockEntryLine.item_id.in_(item_ids))
+        .distinct()
+        .order_by(StockEntryLine.item_id, Section.name)
+    )
+    sonuc: dict[uuid.UUID, list[str]] = {}
+    for item_id, ad in (await session.execute(stmt)).all():
+        sonuc.setdefault(item_id, []).append(ad)
+    return sonuc
+
+
+def item_ids_attributed_to_section(section_id: uuid.UUID) -> Select:
+    """ŞS `section_id` SÜZGECİ: o bölüme atfı olan kartların kimlikleri.
+
+    🔴 Süzgeç SATIR KÜMESİNİ daraltır, `balance`ı DEĞİŞTİRMEZ. Bakiye depo
+    düzeyindedir; bölüme göre süzülmüş bir "bakiye" bakiye DEĞİLDİR ve o adla
+    basılsaydı ekran iki farklı anlamı aynı sütunda gösterirdi. Süzgecin
+    cümlesi şudur: *"bu bölümde kullanılmış malzemelerin ŞANTİYE bakiyesi"*.
+    """
+    return select(StockEntryLine.item_id).where(StockEntryLine.section_id == section_id)
+
+
+async def section_sites(session: AsyncSession, section_ids: set[uuid.UUID]) -> dict[uuid.UUID, Row]:
+    """`section_id` → (`site_id`, `project_id`). TEK sorgu, N+1 yok."""
+    if not section_ids:
+        return {}
+    stmt = (
+        select(Section.id, Section.site_id, Site.project_id)
+        .join(Site, Site.id == Section.site_id)
+        .where(Section.id.in_(section_ids))
+    )
+    return {satir.id: satir for satir in (await session.execute(stmt)).all()}
+
+
+async def boq_item_sites(session: AsyncSession, item_ids: set[uuid.UUID]) -> dict[uuid.UUID, Row]:
+    """`boq_item_id` → (`site_id`, `project_id`). TEK sorgu, N+1 yok."""
+    if not item_ids:
+        return {}
+    stmt = (
+        select(BoqItem.id, BoqItem.site_id, Site.project_id)
+        .join(Site, Site.id == BoqItem.site_id)
+        .where(BoqItem.id.in_(item_ids))
+    )
+    return {satir.id: satir for satir in (await session.execute(stmt)).all()}
+
+
+async def get_section(session: AsyncSession, section_id: uuid.UUID) -> Section | None:
+    return await session.get(Section, section_id)

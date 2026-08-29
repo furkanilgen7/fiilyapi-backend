@@ -21840,6 +21840,167 @@
         "title": "SectionStatusCounts",
         "type": "object"
       },
+      "SectionStockKpis": {
+        "description": "Bölüm malzeme şeridi. **YER TUTUCU YOKTUR** — dördü de gerçek sayıdır.\n\n`lines_without_price`, `total_value`in EKSİKLİĞİNİ dürüstçe bildirir: fiyatsız\nsatır varken tutar \"eksik\" demektir ve ekran bunu söyleyebilmelidir\n(`SiteStockKpis.items_without_price` emsali).",
+        "properties": {
+          "issued_value": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Issued Value",
+            "type": "string"
+          },
+          "item_count": {
+            "title": "Item Count",
+            "type": "integer"
+          },
+          "lines_without_price": {
+            "title": "Lines Without Price",
+            "type": "integer"
+          },
+          "total_value": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "issued_value",
+          "total_value",
+          "item_count",
+          "lines_without_price"
+        ],
+        "title": "SectionStockKpis",
+        "type": "object"
+      },
+      "SectionStockResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SectionStockRow"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "kpis": {
+            "$ref": "#/components/schemas/SectionStockKpis"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset",
+          "kpis"
+        ],
+        "title": "SectionStockResponse",
+        "type": "object"
+      },
+      "SectionStockRow": {
+        "description": "Bir bölümün BİR (malzeme, poz) çiftindeki hareket toplamı.\n\n🔴 **BURADA \"BAKİYE\" YOKTUR ve bu bilinçlidir.** Ürün kararı *\"STOK DEPODA\nDURUR, BÖLÜM TÜKETİR\"*: bakiye depo düzeyinde kalır (`balance.legs()`\ndeğişmedi). Bölüme \"bakiye\" basmak, aynı malzemenin hem depo hem bölüm\nbakiyesi olduğu izlenimini verir ve klasik iki-kaynak problemini doğururdu.\n\nOnun yerine ÜÇ farklı sayı döner, üçü de tek bir toplamdan türetilir ve\ntanımları ÖRTÜŞMEZ:\n\n| alan | tanım |\n|---|---|\n| `assigned_quantity` | atfedilmiş POZİTİF miktarlar — \"bu bölüm için depoya girdi\" |\n| `issued_quantity` | NEGATİF miktarların MUTLAK toplamı — \"bu bölüme çıkıldı / sarf edildi\" |\n| `net_quantity` | `assigned − issued` (işaretli toplam) |\n\nİkisi ayrı tutulur çünkü tek bir \"toplam\" basılsaydı `+5 alım` ile\n`−5 sarf` birbirini götürür ve ekran *\"bu bölümde hiç malzeme kullanılmadı\"*\nderdi — oysa 5 birim gerçekten harcanmıştır. Sarf ekranının okuduğu alan\n`issued_quantity`dir.\n\n`boq_item_id` NULL olabilir: bölüme çıkılmış ama bir poza bağlanmamış\nmalzeme meşrudur (poz kırılımı ZORUNLU DEĞİLDİR — fail-open, bkz. servis).\nSatırlar (malzeme, poz) çifti başına açılır; poz kırılımı istemeyen ekran\nmalzemeye göre kendisi toplar.\n\n`total_value` YALNIZCA fiyatı olan satırlardan gelir (`unit_price` NULL olan\ntransfer/düzeltme satırı toplam değere GİRMEZ — §7 S6 ile aynı kural).",
+        "properties": {
+          "assigned_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Assigned Quantity",
+            "type": "string"
+          },
+          "boq_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boq Code"
+          },
+          "boq_description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boq Description"
+          },
+          "boq_item_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boq Item Id"
+          },
+          "category": {
+            "$ref": "#/components/schemas/StockCategory"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "issued_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Issued Quantity",
+            "type": "string"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "net_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Net Quantity",
+            "type": "string"
+          },
+          "total_value": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Value",
+            "type": "string"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "code",
+          "name",
+          "category",
+          "unit",
+          "boq_item_id",
+          "boq_code",
+          "boq_description",
+          "assigned_quantity",
+          "issued_quantity",
+          "net_quantity",
+          "total_value"
+        ],
+        "title": "SectionStockRow",
+        "type": "object"
+      },
       "SectionType": {
         "description": "Bolum turu (`Form - Bolum Ekle` satir 70, spec §3). Etiketler:\nTemel & Altyapi · Kaba Insaat · Ince Isler · Cephe & Cati · Mekanik-Elektrik ·\nPeyzaj · Teslimat & Kabul. Nullable — taslak destegi (kalici karar 4).",
         "enum": [
@@ -25139,7 +25300,7 @@
         "type": "object"
       },
       "SiteStockRow": {
-        "description": "ŞS tablosunun bir satırı (Şantiye - Stok, 96-104).\n\n`balance` YALNIZ o şantiyenin depolarını kapsar; merkez depo (`site_id IS\nNULL`) hiçbir şantiyenin bakiyesine girmez (spec §3).\n\n`monthly_need` (\"Aylık İhtiyaç\") ve `section` (\"Bölüm\") sütunlarının değeri\nÜRETİLMEZ; mevcut yer tutucu zarfları taşınır — `section` metin listesi\nolduğu için `ListPlaceholder`, `monthly_need` tek sayı olduğu için\n`MetricPlaceholder`.\n\n🔴 **P-YT3 DENETİMİ (2026-08-23) — GEREKÇE TAZELENDİ.** Eski cümle *\"ikisi\nde ileride planlama/BOQ türevi olacaktır\"* diyordu; `site_planning` modülü\no gün geldi ve iki sütun da dolmadı. Bugünkü ölçülmüş olgu:\n\n| alan | sınıf | engel |\n|---|---|---|\n| `monthly_need` | (B) GEÇERLİ | kaynak YOK ve gelmeyecek (aşağıda) |\n| `section` | (C) TUZAK | makul görünen kaynak VAR ama ANLAMI yanlış |\n\n**`monthly_need` — kaynak yok.** `PlanResourceKind` yalnız `crew` ve\n`equipment` taşır; `SitePlanRow`da ne `stock_item_id` ne bir malzeme\nmiktarı vardır (tek sayısal kolon `planned_worker_count`) ve modelin kendi\ndocstring'i *\"Plan-gerçekleşen kıyas kolonu YOKTUR (spec §5)\"* der. Yani\nbekleyen şey MODÜL değil, o modülün hiç taşımadığı bir KAVRAMdır.\n\n**`section` — TUZAK.** Görünüşte işleyen bir kaynak vardır:\n`purchase_requests.section_id` + `purchase_request_lines.stock_item_id`\nikilisi bir stok kartını bir bölüme bağlar. K4 bunu engellemez (`inventory`\nokuyup `procurement`ta `none` olan rol YOKTUR). Engel ANLAMdır: o bağ *\"bu\nmalzemeyi HANGİ BÖLÜM TALEP ETTİ\"*dir — stoğun bulunduğu bölüm değil.\nDepolar şantiyeye bağlıdır, bölüme DEĞİL (`warehouses.site_id`; `sections`a\nFK yok). Basılsaydı ekran makul görünen ama yanlış bir \"Bölüm\" gösterirdi.\n\n⚠️ **İkinci engel — K4:** `site_planning` bir izin modülü DEĞİLDİR; router'ı\n`site_diary` kapısını kullanır ve `procurement` `inventory=full` iken\n`site_diary=none`dur. Plan verisi buraya basılsaydı o kapı atlanırdı.\nBekçi: `tests/modules/inventory/test_pyt3_yer_tutucu_denetimi.py`.",
+        "description": "ŞS tablosunun bir satırı (Şantiye - Stok, 96-104).\n\n`balance` YALNIZ o şantiyenin depolarını kapsar; merkez depo (`site_id IS\nNULL`) hiçbir şantiyenin bakiyesine girmez (spec §3).\n\n`monthly_need` (\"Aylık İhtiyaç\") ve `section` (\"Bölüm\") sütunlarının değeri\nÜRETİLMEZ; mevcut yer tutucu zarfları taşınır — `section` metin listesi\nolduğu için `ListPlaceholder`, `monthly_need` tek sayı olduğu için\n`MetricPlaceholder`.\n\n🔴 **P-YT3 DENETİMİ (2026-08-23) — GEREKÇE TAZELENDİ.** Eski cümle *\"ikisi\nde ileride planlama/BOQ türevi olacaktır\"* diyordu; `site_planning` modülü\no gün geldi ve iki sütun da dolmadı. Bugünkü ölçülmüş olgu:\n\n| alan | sınıf | engel |\n|---|---|---|\n| `monthly_need` | (B) GEÇERLİ | kaynak YOK ve gelmeyecek (aşağıda) |\n| `section` | (C) TUZAK | makul görünen kaynak VAR ama ANLAMI yanlış |\n\n**`monthly_need` — kaynak yok.** `PlanResourceKind` yalnız `crew` ve\n`equipment` taşır; `SitePlanRow`da ne `stock_item_id` ne bir malzeme\nmiktarı vardır (tek sayısal kolon `planned_worker_count`) ve modelin kendi\ndocstring'i *\"Plan-gerçekleşen kıyas kolonu YOKTUR (spec §5)\"* der. Yani\nbekleyen şey MODÜL değil, o modülün hiç taşımadığı bir KAVRAMdır.\n\n🔴 **STOK-BOLUM (2026-08-29) — `section` ARTIK DOLAR.** Tablodaki sınıfı (C)\nTUZAK'tan çıktı: `stock_entry_lines.section_id` açıldı ve o alan *\"bu satırın\nmalzemesi hangi bölüm için hareket etti\"* demektir — yani ekranın sorduğu\nşeyin TA KENDİSİ. Zarf, o kalemin bu şantiyedeki hareketlerinde atfedilmiş\nbölümlerin ADLARINI taşır; hiç atıf yoksa BOŞ kalır (uydurma yok).\n\n⚠️ **ESKİ TUZAK KAYDI DURUYOR ve hâlâ geçerlidir.** Görünüşte işleyen İKİNCİ\nbir kaynak vardır: `purchase_requests.section_id` + `purchase_request_lines.\nstock_item_id`. K4 onu engellemez (`inventory` okuyup `procurement`ta `none`\nolan rol YOKTUR). Engel ANLAMdır: o bağ *\"bu malzemeyi HANGİ BÖLÜM TALEP\nETTİ\"*dir (satınalma niyeti) — stok gerçeği değil. Bu sütun ONDAN\nBESLENMEZ ve beslenmemelidir; bekçisi\n`test_pyt3_yer_tutucu_denetimi.py::test_PLAN_ve_TALEP_VARKEN_DE_zarflar_BOS_KALIR`\ntalep+plan varken ama stok atfı yokken zarfın BOŞ kaldığını çakar.\n\n⚠️ **Dolu zarf `pending_module` TAŞIR** (`ListPlaceholder`da alan zorunludur\nve `MetricPlaceholder`ın \"dolu zarf taşımaz\" kuralı oraya UYGULANMAZ —\n`CountPlaceholder` emsali). Anahtar `site_planning` olarak KORUNUR: frontend\n`SiteStockTable.tsx` etiketi YALNIZ `available=false` iken basar, dolu zarfta\nhiç okumaz. Anahtarı değiştirmek canlı bir gerekçe metnini bayatlatırdı.\n\n⚠️ **İkinci engel — K4:** `site_planning` bir izin modülü DEĞİLDİR; router'ı\n`site_diary` kapısını kullanır ve `procurement` `inventory=full` iken\n`site_diary=none`dur. Plan verisi buraya basılsaydı o kapı atlanırdı.\nBekçi: `tests/modules/inventory/test_pyt3_yer_tutucu_denetimi.py`.",
         "properties": {
           "balance": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -25659,6 +25820,18 @@
       "StockEntryLineCreate": {
         "description": "SG kalem tablosunun BİR satırı (SG 96-124).\n\n**\"Sipariş\" sütunu (SG 95/113) YOKTUR** ve \"Tutar\" sütunu (SG 101) TÜREVDİR\n(`quantity × unit_price`) — kolon da alan da açılmaz (spec §2, §5).\n\n`quantity` işaret kısıtı TAŞIMAZ: `adjustment` satırları NEGATİF olabilir\n(§7 S4 — sayım farkı/iade/SARF tek kapısı). Tipe bağlı kural başlıktadır\n(`StockEntryCreate._tip_kurallari`) çünkü satır kendi başına hangi tipte\nolduğunu bilmez.\n\n`unit_price` NULL olabilir: transfer ve düzeltme satırlarında fiyat yoktur\nve fiyatsız kalem toplam stok değerine GİRMEZ (§7 S6).",
         "properties": {
+          "boq_item_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boq Item Id"
+          },
           "item_id": {
             "format": "uuid",
             "title": "Item Id",
@@ -25679,6 +25852,18 @@
               }
             ],
             "title": "Quantity"
+          },
+          "section_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Id"
           },
           "unit_price": {
             "anyOf": [
@@ -25707,6 +25892,18 @@
       "StockEntryLineResponse": {
         "description": "Satır künyesi. **Tutar alanı YOKTUR** — `quantity × unit_price` türevdir.",
         "properties": {
+          "boq_item_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boq Item Id"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -25724,6 +25921,18 @@
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Quantity",
             "type": "string"
+          },
+          "section_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Id"
           },
           "unit_price": {
             "anyOf": [
@@ -25743,7 +25952,9 @@
           "item_id",
           "quantity",
           "unit_price",
-          "quality"
+          "quality",
+          "section_id",
+          "boq_item_id"
         ],
         "title": "StockEntryLineResponse",
         "type": "object"
@@ -50340,6 +50551,84 @@
         ]
       }
     },
+    "/sections/{section_id}/stock": {
+      "get": {
+        "description": "`A1 › Malzeme` sekmesinin ve `Bölüm Malzeme Durumu` kartının verisi.\n\n🔴 **BAKİYE DÖNMEZ** (ürün kararı): bakiye depo düzeyindedir ve bölüme\nikinci bir bakiye kaynağı açmak iki-kaynak problemini doğururdu. Bunun\nyerine (malzeme, poz) çifti başına `assigned` / `issued` / `net` döner —\ntanımları `SectionStockRow` docstring'indedir. **Sarf toplamı\n`issued_quantity`dir.**\n\nKapı `inventory:view`tir: bu bir STOK ekranıdır, veri stok hareketinden\ntürer. `sites`/`boq` kapıları BURADA KULLANILMAZ — kullanılsaydı stok\nokuyabilen `procurement` rolü kendi verisini göremezdi.\n\nGörünmeyen bölüm ile var olmayan bölüm AYNI 404 gövdesini alır.",
+        "operationId": "section_stock_endpoint_sections__section_id__stock_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "section_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Section Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SectionStockResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Bölüm bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Section Stock Endpoint",
+        "tags": [
+          "inventory"
+        ]
+      }
+    },
     "/settings/notifications": {
       "get": {
         "operationId": "get_notifications_endpoint_settings_notifications_get",
@@ -51826,7 +52115,7 @@
     },
     "/sites/{site_id}/stock": {
       "get": {
-        "description": "ŞS tablosu + KPI şeridi (86-91).\n\n**Merkez depo hiçbir şantiyenin bakiyesine GİRMEZ** (spec §3): şantiye\nbakiyesi \"o şantiyenin depoları\"dır. Görünmeyen şantiye 404 döner ve gövde\nvar olmayan kimliğinkiyle aynıdır.\n\n\"Aylık İhtiyaç\" ve \"Bölüm\" sütunları YER TUTUCUDUR: giriş yüzeyi yoktur,\ndeğer uydurulmaz (spec §3, §5).",
+        "description": "ŞS tablosu + KPI şeridi (86-91).\n\n**Merkez depo hiçbir şantiyenin bakiyesine GİRMEZ** (spec §3): şantiye\nbakiyesi \"o şantiyenin depoları\"dır. Görünmeyen şantiye 404 döner ve gövde\nvar olmayan kimliğinkiyle aynıdır.\n\n\"Aylık İhtiyaç\" HÂLÂ YER TUTUCUDUR (plan ızgarası malzeme satırı taşımaz).\n🔴 **\"Bölüm\" ise STOK-BOLUM ile GERÇEĞE döndü:** kartın bu şantiyedeki\nhareketlerinde atfedilmiş bölüm adlarını taşır; atıf yoksa boş kalır.\n\n`section_id` SÜZGECİ SATIR KÜMESİNİ daraltır, `balance`ı DEĞİŞTİRMEZ:\nbakiye depo düzeyindedir (\"STOK DEPODA DURUR, BÖLÜM TÜKETİR\"). Cümlesi\n*\"bu bölümde kullanılmış malzemelerin ŞANTİYE bakiyesi\"*dir. Bölümün kendi\nmiktarları `GET /sections/{id}/stock`tan gelir. Başka şantiyenin bölümü\nverilirse **404**.",
         "operationId": "site_stock_endpoint_sites__site_id__stock_get",
         "parameters": [
           {
@@ -51837,6 +52126,23 @@
               "format": "uuid",
               "title": "Site Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "section_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Section Id"
             }
           },
           {

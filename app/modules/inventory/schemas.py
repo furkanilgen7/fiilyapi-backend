@@ -172,6 +172,11 @@ class StockEntryLineCreate(BaseModel):
     quantity: Decimal = Field(max_digits=14, decimal_places=3)
     unit_price: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=2)
     quality: StockQuality = StockQuality.ok
+    # 🔴 STOK-BOLUM: atif SATIR bazindadir (kullanici karari 2026-08-29). Ikisi
+    # de opsiyoneldir; tutarlilik kapilari SERVIS katmanindadir (iki tabloya
+    # birden bakarlar, sema onlari cozemez).
+    section_id: uuid.UUID | None = None
+    boq_item_id: uuid.UUID | None = None
 
 
 class StockEntryCreate(BaseModel):
@@ -246,6 +251,13 @@ class StockEntryCreate(BaseModel):
                 raise ValueError("Satır miktarı sıfır olamaz.")
             if self.entry_type is not StockEntryType.adjustment and satir.quantity < 0:
                 raise ValueError("Negatif miktar yalnızca manuel düzeltmede kullanılır.")
+            if self.entry_type is StockEntryType.transfer and (
+                satir.section_id is not None or satir.boq_item_id is not None
+            ):
+                raise ValueError(
+                    "Bölüm/iş kalemi atfı transfer hareketinde verilmez "
+                    "(transfer tüketim değildir, iki bacaklıdır)."
+                )
         return self
 
 
@@ -259,6 +271,11 @@ class StockEntryLineResponse(BaseModel):
     quantity: Decimal
     unit_price: Decimal | None
     quality: StockQuality
+    # STOK-BOLUM: yazilan atif GERI OKUNUR. Bolumun/pozun ADI burada YOKTUR —
+    # kunye kimlik tasir; iki JOIN her hareket listesine `sections` ve
+    # `boq_items` tablolarini baglardi (`purchase_order_id` emsali).
+    section_id: uuid.UUID | None
+    boq_item_id: uuid.UUID | None
 
 
 class StockEntryResponse(BaseModel):
@@ -392,13 +409,26 @@ class SiteStockRow(BaseModel):
     docstring'i *"Plan-gerçekleşen kıyas kolonu YOKTUR (spec §5)"* der. Yani
     bekleyen şey MODÜL değil, o modülün hiç taşımadığı bir KAVRAMdır.
 
-    **`section` — TUZAK.** Görünüşte işleyen bir kaynak vardır:
-    `purchase_requests.section_id` + `purchase_request_lines.stock_item_id`
-    ikilisi bir stok kartını bir bölüme bağlar. K4 bunu engellemez (`inventory`
-    okuyup `procurement`ta `none` olan rol YOKTUR). Engel ANLAMdır: o bağ *"bu
-    malzemeyi HANGİ BÖLÜM TALEP ETTİ"*dir — stoğun bulunduğu bölüm değil.
-    Depolar şantiyeye bağlıdır, bölüme DEĞİL (`warehouses.site_id`; `sections`a
-    FK yok). Basılsaydı ekran makul görünen ama yanlış bir "Bölüm" gösterirdi.
+    🔴 **STOK-BOLUM (2026-08-29) — `section` ARTIK DOLAR.** Tablodaki sınıfı (C)
+    TUZAK'tan çıktı: `stock_entry_lines.section_id` açıldı ve o alan *"bu satırın
+    malzemesi hangi bölüm için hareket etti"* demektir — yani ekranın sorduğu
+    şeyin TA KENDİSİ. Zarf, o kalemin bu şantiyedeki hareketlerinde atfedilmiş
+    bölümlerin ADLARINI taşır; hiç atıf yoksa BOŞ kalır (uydurma yok).
+
+    ⚠️ **ESKİ TUZAK KAYDI DURUYOR ve hâlâ geçerlidir.** Görünüşte işleyen İKİNCİ
+    bir kaynak vardır: `purchase_requests.section_id` + `purchase_request_lines.
+    stock_item_id`. K4 onu engellemez (`inventory` okuyup `procurement`ta `none`
+    olan rol YOKTUR). Engel ANLAMdır: o bağ *"bu malzemeyi HANGİ BÖLÜM TALEP
+    ETTİ"*dir (satınalma niyeti) — stok gerçeği değil. Bu sütun ONDAN
+    BESLENMEZ ve beslenmemelidir; bekçisi
+    `test_pyt3_yer_tutucu_denetimi.py::test_PLAN_ve_TALEP_VARKEN_DE_zarflar_BOS_KALIR`
+    talep+plan varken ama stok atfı yokken zarfın BOŞ kaldığını çakar.
+
+    ⚠️ **Dolu zarf `pending_module` TAŞIR** (`ListPlaceholder`da alan zorunludur
+    ve `MetricPlaceholder`ın "dolu zarf taşımaz" kuralı oraya UYGULANMAZ —
+    `CountPlaceholder` emsali). Anahtar `site_planning` olarak KORUNUR: frontend
+    `SiteStockTable.tsx` etiketi YALNIZ `available=false` iken basar, dolu zarfta
+    hiç okumaz. Anahtarı değiştirmek canlı bir gerekçe metnini bayatlatırdı.
 
     ⚠️ **İkinci engel — K4:** `site_planning` bir izin modülü DEĞİLDİR; router'ı
     `site_diary` kapısını kullanır ve `procurement` `inventory=full` iken
@@ -438,3 +468,75 @@ class SiteStockResponse(BaseModel):
     limit: int
     offset: int
     kpis: SiteStockKpis
+
+
+# --- Bolum malzeme kirilimi (STOK-BOLUM) ---
+
+
+class SectionStockRow(BaseModel):
+    """Bir bölümün BİR (malzeme, poz) çiftindeki hareket toplamı.
+
+    🔴 **BURADA "BAKİYE" YOKTUR ve bu bilinçlidir.** Ürün kararı *"STOK DEPODA
+    DURUR, BÖLÜM TÜKETİR"*: bakiye depo düzeyinde kalır (`balance.legs()`
+    değişmedi). Bölüme "bakiye" basmak, aynı malzemenin hem depo hem bölüm
+    bakiyesi olduğu izlenimini verir ve klasik iki-kaynak problemini doğururdu.
+
+    Onun yerine ÜÇ farklı sayı döner, üçü de tek bir toplamdan türetilir ve
+    tanımları ÖRTÜŞMEZ:
+
+    | alan | tanım |
+    |---|---|
+    | `assigned_quantity` | atfedilmiş POZİTİF miktarlar — "bu bölüm için depoya girdi" |
+    | `issued_quantity` | NEGATİF miktarların MUTLAK toplamı — "bu bölüme çıkıldı / sarf edildi" |
+    | `net_quantity` | `assigned − issued` (işaretli toplam) |
+
+    İkisi ayrı tutulur çünkü tek bir "toplam" basılsaydı `+5 alım` ile
+    `−5 sarf` birbirini götürür ve ekran *"bu bölümde hiç malzeme kullanılmadı"*
+    derdi — oysa 5 birim gerçekten harcanmıştır. Sarf ekranının okuduğu alan
+    `issued_quantity`dir.
+
+    `boq_item_id` NULL olabilir: bölüme çıkılmış ama bir poza bağlanmamış
+    malzeme meşrudur (poz kırılımı ZORUNLU DEĞİLDİR — fail-open, bkz. servis).
+    Satırlar (malzeme, poz) çifti başına açılır; poz kırılımı istemeyen ekran
+    malzemeye göre kendisi toplar.
+
+    `total_value` YALNIZCA fiyatı olan satırlardan gelir (`unit_price` NULL olan
+    transfer/düzeltme satırı toplam değere GİRMEZ — §7 S6 ile aynı kural).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    item_id: uuid.UUID
+    code: str
+    name: str
+    category: StockCategory
+    unit: str
+    boq_item_id: uuid.UUID | None
+    boq_code: str | None
+    boq_description: str | None
+    assigned_quantity: Decimal
+    issued_quantity: Decimal
+    net_quantity: Decimal
+    total_value: Decimal
+
+
+class SectionStockKpis(BaseModel):
+    """Bölüm malzeme şeridi. **YER TUTUCU YOKTUR** — dördü de gerçek sayıdır.
+
+    `lines_without_price`, `total_value`in EKSİKLİĞİNİ dürüstçe bildirir: fiyatsız
+    satır varken tutar "eksik" demektir ve ekran bunu söyleyebilmelidir
+    (`SiteStockKpis.items_without_price` emsali).
+    """
+
+    issued_value: Decimal
+    total_value: Decimal
+    item_count: int
+    lines_without_price: int
+
+
+class SectionStockResponse(BaseModel):
+    items: list[SectionStockRow]
+    total: int
+    limit: int
+    offset: int
+    kpis: SectionStockKpis
