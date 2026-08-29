@@ -121,7 +121,7 @@ class RiskSource(BaseModel):
 
 
 class RiskAlertsPlaceholder(BaseModel):
-    """"Risk & Uyarilar" kartinin zarfi.
+    """ "Risk & Uyarilar" kartinin zarfi.
 
     🔴 ZARF SINIFI OLCULDU: bu kart NE `MetricPlaceholder` NE `CountPlaceholder`
     ailesine girer, cunku ikisi de TEK KAYNAKLI bir alani tarifler ve tri-state
