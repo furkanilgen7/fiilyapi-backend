@@ -252,9 +252,17 @@ async def list_projects_overview(
 def project_matches_ref(project: Project, ref: uuid.UUID | str) -> bool:
     """URL-2: proje YA kimligiyle YA slug'iyla eslesir (karar 2).
 
-    🔴 Slug NULL olan bir proje HICBIR slug'la eslesmez: `project.slug == ref`
-    NULL tarafta yanlistir. `ref` bir slug ise ve proje slug tasimiyorsa kayit
+    Slug NULL olan bir proje HICBIR slug'la eslesmez: slug tasimayan kayit
     yalnizca UUID'siyle erisilebilir — istenen davranis budur.
+
+    🔴 `is not None` MUTASYONLA OLCULDU ve **ESDEGER MUTANT** cikti (durustce
+    kaydediliyor): kaldirildiginda 20 API testinin hicbiri kirilmadi. Sebep
+    olculdu — Python'da `None == "slug"` zaten `False`, ve `ref` hicbir zaman
+    `None` olamaz (yol parametresi zorunlu, `parse_ref` `None` dondurmez). Yani
+    bu kosul bugun BIR OLCUTU SAVUNMUYOR, NIYETI BELGELIYOR. Bilincli olarak
+    KALIYOR: `ref`in bir gun opsiyonellesmesi hâlinde "bos referans her slugsuz
+    kaydi acar" kusurunu pesinen kapatir. "Test var" ile "olcutu savunan bekci
+    var" ayni sey degildir — burada IKINCISI YOK.
     """
     if isinstance(ref, uuid.UUID):
         return project.id == ref

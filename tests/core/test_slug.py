@@ -163,3 +163,42 @@ def test_hicbir_gecerli_slug_UUID_olarak_ayristirilamaz() -> None:
     kalır ve bu, kaydın UUID yolunun her zaman çalışmasından daha az önemlidir.
     """
     assert parse_ref(slugify("Köprü Güçlendirme")) == "kopru-guclendirme"
+
+
+# ---------------------------------------------------------------------------
+# 🔴 EŞDEĞER MUTANT ÖLÇÜMÜ — İKİ KATMAN BİRBİRİNİ MASKELİYOR
+#
+# `slugify` iki katmanlı: (1) açık Türkçe tablosu, (2) NFKD + birleşik işaret
+# düşürme. Mutasyonla ölçüldü: tabloyu TAMAMEN kaldırınca `Ç Ğ İ Ö Ş Ü ç ğ ö ş ü`
+# için sonuç DEĞİŞMİYOR — NFKD hepsini ayrıştırıp aynı ASCII'yi üretiyor.
+# Yani yukarıdaki harf harf testlerin 11'i tabloyu değil NFKD'yi ölçüyor
+# olabilir: onlar tek başına "tablo var" demez.
+#
+# Tablonun TEK TAŞIYICI harfi `ı`dır (U+0131): Unicode'da ayrışmaz, `lower()`da
+# değişmez, süzgeçten geçmez -> harf tamamen DÜŞER. Aşağıdaki test tam olarak
+# bu yükü ölçer ve bağımsızdır: NFKD katmanı onu kurtaramaz.
+# ---------------------------------------------------------------------------
+
+
+def test_i_HARFI_TABLONUN_TEK_TASIYICI_HARFIDIR() -> None:
+    """`ı` tablosuz kaybolurdu: `Işıklar` -> `is-klar`. Tablo bunu ÖNLER."""
+    import re
+    import unicodedata
+
+    def nfkd_only(value: str) -> str:
+        """Tablo OLMADAN, yalnız NFKD + lower() ile slug — mutant davranışı."""
+        decomposed = unicodedata.normalize("NFKD", value)
+        stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
+        return re.sub(r"[^a-z0-9]+", "-", stripped.lower()).strip("-")
+
+    # Mutant GERÇEKTEN bozuk — harf düşüyor (negatif ölçüm).
+    assert nfkd_only("Işıklar") == "is-klar"
+    # Kanonik uygulama ise doğru (pozitif kontrol).
+    assert slugify("Işıklar") == "isiklar"
+
+    # Ve maskelenmenin kapsamı: `ı` DIŞINDAKİ her harf için iki yol AYNI sonucu
+    # verir. Bu iddia, ileride biri "tabloyu sadeleştirelim" dediğinde neyin
+    # gerçekten yük taşıdığını gösterir.
+    for harf in "ÇĞİÖŞÜçğöşü":
+        assert nfkd_only(harf) == slugify(harf), harf
+    assert nfkd_only("ı") != slugify("ı")

@@ -24,6 +24,25 @@ Tablo (emirde birebir verilen): `ÇĞİÖŞÜçğıöşü` -> `cgiosucgiosu`.
 `I` (noktasız BÜYÜK I) tabloda AYRICA vardır ve `i`ye düşer: Türkçe'de küçüğü
 `ı`dır, `ı` da zaten `i`ye eşlenir — yani iki yol da aynı ASCII harfe varır.
 
+## 🔴 ÖLÇÜLDÜ: tablonun TEK TAŞIYICI harfi `ı`dır — geri kalanı NFKD MASKELER
+
+Mutasyon ölçümü (tabloyu tamamen kaldır, yalnız NFKD + `lower()` bırak):
+
+    "İstanbul"        -> "istanbul"   ✅ (NFKD `İ`yi `I`+U+0307'ye ayrıştırır)
+    "Köprü Güçlendirme" -> "kopru-guclendirme"  ✅
+    "IĞDIR"           -> "igdir"      ✅
+    "Işıklar"         -> "is-klar"    ❌ <-- TEK GERÇEK KUSUR
+
+`ı` (U+0131) Unicode'da AYRIŞMAZ ve `lower()`da `ı` KALIR; süzgeçten geçemez ve
+harf tamamen DÜŞER. Yani `Ç Ğ İ Ö Ş Ü ç ğ ö ş ü` için tablo ile NFKD **aynı**
+sonucu verir (iki katman birbirini maskeler); tabloyu ölçüte bağlayan harf
+yalnızca `ı`dır — ve `İ` için tablo, NFKD sırasının yanlışlıkla değiştirilmesine
+karşı ikinci savunmadır.
+
+Bu ölçüm dürüstçe kaydedilir çünkü aksi hâlde "12 harf için testim var"
+sanılırdı; gerçekte 11'i eşdeğer mutant üretir. `test_slug.py` içindeki
+`test_i_HARFI_TABLONUN_TEK_TASIYICI_HARFIDIR` bu tek gerçek yükü ölçer.
+
 ## Boş slug
 
 Adı tamamen noktalama/ASCII-dışı olan bir kayıt boş slug üretebilir (`"..."`,

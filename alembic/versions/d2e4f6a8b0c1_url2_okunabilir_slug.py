@@ -218,6 +218,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # 🔴 OLCULDU — bu uc `drop_index` cagrisi ESDEGER MUTANT uretir: PostgreSQL
+    # bir kolonu dusururken ONA BAGLI indeksleri de dusurur, dolayisiyla
+    # `drop_column` tek basina yeterlidir ve indeks iddialari yine yesil kalir.
+    # Yine de ACIKCA yazilir: niyeti gorunur kilar ve indeks ileride kolondan
+    # bagimsiz bir yapiya (ornegin ifade indeksi) tasinirsa sessizce kalmaz.
     op.drop_index("uq_sections_site_slug", table_name="sections")
     op.drop_index("uq_sites_project_slug", table_name="sites")
     op.drop_index("uq_projects_slug", table_name="projects")
