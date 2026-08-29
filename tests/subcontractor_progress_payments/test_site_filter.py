@@ -231,9 +231,9 @@ async def test_site_id_filtresi_proje_geneli_sozlesmenin_hakedisini_KAYBETMEZ(
         item for item in items if item["contract_id"] == str(santiye_verisi["santiyeli"].id)
     ]
     assert len(santiyeli) == 2
-    assert {item["contract_site_id"] for item in santiyeli} == {
-        str(santiye_verisi["site"].id)
-    }, "şantiye kapsamlı satır proje geneliymiş gibi işaretlenemez"
+    assert {item["contract_site_id"] for item in santiyeli} == {str(santiye_verisi["site"].id)}, (
+        "şantiye kapsamlı satır proje geneliymiş gibi işaretlenemez"
+    )
 
 
 async def test_site_id_filtresi_baska_santiyenin_hakedisini_HALA_eler_pozitif_kontrol(
