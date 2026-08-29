@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import (
     DuplicateError,
+    InventoryValidationError,
     NotFoundError,
     RelatedRecordsExistError,
 )
@@ -44,6 +45,9 @@ from app.modules.inventory.models import (
     Warehouse,
 )
 from app.modules.inventory.schemas import (
+    SectionStockKpis,
+    SectionStockResponse,
+    SectionStockRow,
     SiteStockKpis,
     SiteStockResponse,
     SiteStockRow,
@@ -61,7 +65,7 @@ from app.modules.inventory.schemas import (
 from app.modules.projects.schemas import MetricPlaceholder, metric
 from app.modules.projects.service import visible_projects
 from app.modules.sites import repository as sites_repository
-from app.modules.sites.models import Site
+from app.modules.sites.models import Section, Site
 from app.modules.users.models import User
 
 PERMISSION_MODULE = "inventory"
@@ -335,6 +339,86 @@ async def _assert_receiver_exists(session: AsyncSession, user_id: uuid.UUID | No
         raise NotFoundError(guards.ENTRY_RECEIVER_INVALID)
 
 
+async def _assert_line_attribution(
+    session: AsyncSession, actor: User, hedef: Warehouse, data: StockEntryCreate
+) -> None:
+    """🔴 TUTARLILIK KAPISI — bölüm/poz, hareketin deposuyla AYNI şantiyede mi?
+
+    ## Neden SERVİS katmanı (ve neden DB CHECK değil)
+
+    Kural `warehouses.site_id` ile `sections.site_id`yi karşılaştırır: **İKİ AYRI
+    TABLO.** Postgres'in `CHECK`i başka tabloyu okuyamaz, `FOREIGN KEY` de bir
+    EŞİTLİK değil bir VARLIK ifade eder. Kanon *"sözleşme kısıtı tipte
+    yaşamaz"*ın kardeşi burada geçerlidir: gövdenin kendi içinde çözülemeyen
+    (DB'ye bakan) kural şemada da yaşayamaz. Şema katmanında YALNIZ gövde içi
+    kural durur (transfer yasağı) — o da tam olarak orada durur.
+
+    ## Yön: FAIL-CLOSED (eşleşmeyen bölüm REDDEDİLİR)
+
+    Geçirilseydi "A1 Kenar Ayak"a Değirmendere deposundan sarf yazılabilirdi ve
+    bölüm kırılımı sessizce yanlış olurdu. Yanlış sayı, eksik sayıdan kötüdür.
+
+    ## ⚠️ MERKEZ DEPO (`warehouse.site_id IS NULL`) — ölçüldü ve FAIL-OPEN
+
+    Merkez depo hiçbir şantiyeye ait değildir (spec §7 S2b) ve TASARIM GEREĞİ
+    her şantiyeye mal çıkarır. Ona bir şantiye çapası dayatmak, merkezden
+    bölüme sarf yazmayı imkânsız kılardı — yani kuralın koruduğu şeyi değil,
+    meşru bir akışı öldürürdü. Bu yüzden karşılaştırılacak ÇAPA YOKTUR ve
+    şantiye kapısı UYGULANMAZ.
+
+    Merkez depo dalında savunma İKİ tanedir ve ikisi de gerçektir:
+      1. **IDOR** — bölümün/pozun projesi görünür kümede değilse **404**
+         (şantiyeli dalda bu zaten `visible_warehouse` ile örtülür, merkezde
+         örtülmez ve ayrıca uygulanmak ZORUNDADIR);
+      2. **bölüm ↔ poz çapası** — ikisi birden verilmişse aynı şantiyede
+         olmaları ZORUNLUDUR (aşağıdaki üçüncü kapı).
+
+    ## ⚠️ TAHSİS (`boq_item_section_allocations`) ARANMAZ — FAIL-OPEN, bilinçli
+
+    Bir pozun bölüme tahsis edilmiş olması PLANLAMA bilgisidir; bu uç
+    GERÇEKLEŞENİ kaydeder. Tahsis şartı konsaydı planlama yapılmamış bir şantiye
+    hiç malzeme çıkışı yazamazdı — kayıt, planın rehinesi olurdu. Emsal
+    ölçüldü: `site_diary_lines.boq_item_id` de tahsise BAKMAZ. (Aynı gerekçeyle
+    `boq_item_section_allocations` tablosu bu dosyada hiç okunmaz.)
+    """
+    bolum_ids = {satir.section_id for satir in data.lines if satir.section_id is not None}
+    poz_ids = {satir.boq_item_id for satir in data.lines if satir.boq_item_id is not None}
+    if not bolum_ids and not poz_ids:
+        return
+
+    bolumler = await repository.section_sites(session, bolum_ids)
+    pozlar = await repository.boq_item_sites(session, poz_ids)
+    gorunen = set(await _visible_project_ids(session, actor))
+
+    # 1) VARLIK + GORUNURLUK — 404 (T4-artci: govde ici varlik referansi 404'tur).
+    #    Var olmayan ile gorunmeyen AYNI cumleyi alir; kimlik sizdirilmaz.
+    for kimlik in bolum_ids:
+        satir = bolumler.get(kimlik)
+        if satir is None or satir.project_id not in gorunen:
+            raise NotFoundError(guards.ENTRY_SECTION_INVALID)
+    for kimlik in poz_ids:
+        satir = pozlar.get(kimlik)
+        if satir is None or satir.project_id not in gorunen:
+            raise NotFoundError(guards.ENTRY_BOQ_ITEM_INVALID)
+
+    # 2) SANTIYE CAPASI — yalniz SANTIYELI depoda (merkez depoda capa YOK).
+    if hedef.site_id is not None:
+        for kimlik in bolum_ids:
+            if bolumler[kimlik].site_id != hedef.site_id:
+                raise InventoryValidationError(guards.ENTRY_SECTION_SITE_MISMATCH)
+        for kimlik in poz_ids:
+            if pozlar[kimlik].site_id != hedef.site_id:
+                raise InventoryValidationError(guards.ENTRY_BOQ_ITEM_SITE_MISMATCH)
+
+    # 3) BOLUM ↔ POZ CAPASI — SATIR bazinda, cunku etiket satir bazindadir.
+    #    Merkez depoda TEK santiye kapisi budur.
+    for satir in data.lines:
+        if satir.section_id is None or satir.boq_item_id is None:
+            continue
+        if bolumler[satir.section_id].site_id != pozlar[satir.boq_item_id].site_id:
+            raise InventoryValidationError(guards.ENTRY_SECTION_BOQ_SITE_MISMATCH)
+
+
 async def create_stock_entry(
     session: AsyncSession, actor: User, data: StockEntryCreate
 ) -> tuple[StockEntry, list[StockEntryLine], str]:
@@ -383,6 +467,9 @@ async def create_stock_entry(
 
     await _assert_items_exist(session, [satir.item_id for satir in data.lines])
     await _assert_receiver_exists(session, data.received_by_user_id)
+    # STOK-BOLUM tutarlilik kapisi — YAZIMDAN ONCE (atomiklik: bozuk atif
+    # yuzunden ne baslik ne satir yazilir).
+    await _assert_line_attribution(session, actor, hedef, data)
     order = (
         None
         if data.purchase_order_id is None
@@ -410,6 +497,8 @@ async def create_stock_entry(
             quantity=satir.quantity,
             unit_price=satir.unit_price,
             quality=satir.quality,
+            section_id=satir.section_id,
+            boq_item_id=satir.boq_item_id,
         )
         for satir in data.lines
     ]
@@ -601,7 +690,13 @@ async def _visible_site(session: AsyncSession, actor: User, site_id: uuid.UUID) 
 
 
 async def build_site_stock(
-    session: AsyncSession, actor: User, site_id: uuid.UUID, *, limit: int, offset: int
+    session: AsyncSession,
+    actor: User,
+    site_id: uuid.UUID,
+    *,
+    section_id: uuid.UUID | None = None,
+    limit: int,
+    offset: int,
 ) -> SiteStockResponse:
     """ŞS'nin veri kaynağı. Kapsam: YALNIZ o şantiyenin depoları.
 
@@ -613,15 +708,28 @@ async def build_site_stock(
     `only_moved=True`: şantiyeye hiç girmemiş katalog kartı listelenmez.
     """
     site = await _visible_site(session, actor, site_id)
+    if section_id is not None:
+        await _visible_section(session, actor, section_id, site)
     warehouse_ids = repository.site_warehouse_ids(site.id)
     ctx = repository.summary_context(warehouse_ids)
-    suzgec = {"status": None, "category": None, "q": None}
+    # 🔴 BOLUM SUZGECI SATIR KUMESINI DARALTIR, `balance`I DEGISTIRMEZ. Bakiye
+    # depo duzeyindedir ("STOK DEPODA DURUR"); bolume gore suzulmus bir sayi
+    # BAKIYE DEGILDIR ve o adla basilsaydi ayni sutun iki farkli anlam tasirdi.
+    # Suzgecin cumlesi: "bu bolumde kullanilmis malzemelerin SANTIYE bakiyesi".
+    # Bolumun kendi miktarlari AYRI uctan doner (`GET /sections/{id}/stock`).
+    item_ids = None if section_id is None else repository.item_ids_attributed_to_section(section_id)
+    suzgec = {"status": None, "category": None, "q": None, "item_ids": item_ids}
 
     rows = await repository.list_summary_rows(
         session, ctx, only_moved=True, limit=limit, offset=offset, **suzgec
     )
     total = await repository.count_summary_rows(session, ctx, only_moved=True, **suzgec)
     kpi = await repository.summary_kpis(session, ctx, only_moved=True, **suzgec)
+    # ŞS "Bolum" sutunu ARTIK GERCEK (STOK-BOLUM): sayfadaki kartlarin
+    # atfedildigi bolum adlari TEK sorguda gelir (N+1 yok).
+    bolum_adlari = await repository.section_names_by_item(
+        session, site.id, [row[0].id for row in rows]
+    )
 
     return SiteStockResponse(
         items=[
@@ -638,8 +746,20 @@ async def build_site_stock(
                 # KALDI. `site_planning` CANLI; engel (a) plan izgarasının malzeme
                 # satırı taşımaması, (b) `section` için talep-bölüm bağının YANLIŞ
                 # ANLAM taşıması. Tam gerekçe: `schemas.SiteStockRow` docstring'i.
+                # "Aylik Ihtiyac" — P-YT3 (2026-08-23) denetlendi ve KALDI:
+                # `site_planning` CANLI ama plan izgarasi MALZEME satiri
+                # tasimaz. Kaynak yok, deger UYDURULMAZ.
                 monthly_need=MetricPlaceholder(pending_module=PENDING_SITE_PLANNING),
-                section=ListPlaceholder(pending_module=PENDING_SITE_PLANNING),
+                # 🔴 "Bolum" — STOK-BOLUM ile GERCEGE dondu. Kaynak
+                # `stock_entry_lines.section_id`dir; `purchase_requests.
+                # section_id` DEGILDIR (o bag "kim TALEP ETTI"dir ve yanlis
+                # anlam tasir — bekcisi `test_pyt3_yer_tutucu_denetimi.py`).
+                # Atif yoksa zarf BOS kalir: "hic atfedilmedi" ile
+                # "bilinmiyor" ayni sey degildir, ama ikisi de sayi
+                # UYDURTMAZ. Anahtar DEGISMEDI — dolu zarfta frontend onu hic
+                # okumaz (`SiteStockTable.tsx` once `available`a bakar) ve
+                # degistirmek canli bir gerekce metnini bayatlatirdi.
+                section=_section_placeholder(bolum_adlari.get(row[0].id)),
             )
             for row in rows
         ],
@@ -652,5 +772,98 @@ async def build_site_stock(
             low_count=kpi.low_count,
             total_items=kpi.total_items,
             items_without_price=kpi.items_without_price,
+        ),
+    )
+
+
+# --- Bolum malzeme kirilimi (STOK-BOLUM) ---
+
+
+def _section_placeholder(adlar: list[str] | None) -> ListPlaceholder:
+    """ŞS "Bölüm" zarfı — TEK yerden kurulur (`projects.cards._metric` kanonu).
+
+    ⚠️ **Dolu zarf `pending_module` TAŞIR** ve bu bilinçlidir: `ListPlaceholder`da
+    alan ZORUNLUDUR, `MetricPlaceholder`ın "dolu zarf taşımaz" kuralı oraya
+    UYGULANMAZ (`CountPlaceholder` emsali — `available=True` + dolu anahtar).
+    Frontend `SiteStockTable.tsx` etiketi yalnız `available=false` iken basar.
+    """
+    if not adlar:
+        return ListPlaceholder(pending_module=PENDING_SITE_PLANNING)
+    return ListPlaceholder(available=True, items=adlar, pending_module=PENDING_SITE_PLANNING)
+
+
+async def _visible_section(
+    session: AsyncSession, actor: User, section_id: uuid.UUID, site: Site | None = None
+) -> Section:
+    """Bölüm → şantiye → proje, ardından PAYLAŞILAN görünürlük süzgeci.
+
+    `site` verilirse bölümün O ŞANTİYEYE ait olması da ZORUNLUDUR: `GET
+    /sites/{a}/stock?section_id=<b'nin bölümü>` başka şantiyenin kırılımını
+    sızdırırdı. İki durum (yok · görünmüyor · başka şantiyenin) AYNI 404
+    gövdesini alır — kimlik varlığı sızdırılmaz.
+    """
+    section = await repository.get_section(session, section_id)
+    if section is None:
+        raise NotFoundError(guards.SECTION_MISSING)
+    if site is not None and section.site_id != site.id:
+        raise NotFoundError(guards.SECTION_MISSING)
+    bolum_santiyesi = await sites_repository.get_site(session, section.site_id)
+    if bolum_santiyesi is None or bolum_santiyesi.project_id not in await _visible_project_ids(
+        session, actor
+    ):
+        raise NotFoundError(guards.SECTION_MISSING)
+    return section
+
+
+async def build_section_stock(
+    session: AsyncSession, actor: User, section_id: uuid.UUID, *, limit: int, offset: int
+) -> SectionStockResponse:
+    """`A1 › Malzeme` sekmesinin verisi — bölümün malzeme KIRILIMI.
+
+    🔴 **BAKİYE DÖNMEZ ve bu ürün kararıdır** ("STOK DEPODA DURUR, BÖLÜM
+    TÜKETİR"). `balance.legs()` bu yolda hiç çağrılmaz: bölüme bakiye basmak
+    aynı malzeme için ikinci bir bakiye kaynağı yaratırdı ve iki sayı zamanla
+    birbirinden saparadı — `models.py`nin "bakiye kolonu yoktur" gerekçesinin
+    aynısı, bir boyut ötede.
+
+    Dönen üç miktar (`assigned` / `issued` / `net`) `SectionStockRow`da
+    tanımlıdır. Sarf ekranının okuduğu alan `issued_quantity`dir.
+
+    **YER TUTUCU YOKTUR** (K-ZARF): dört KPI de gerçek sayıdır. Fiyatsız satır
+    `lines_without_price` ile AYRICA raporlanır — `total_value`in eksikliği
+    sessizce 0 sayılmaz (`SiteStockKpis.items_without_price` emsali).
+    """
+    await _visible_section(session, actor, section_id)
+
+    rows = await repository.list_section_stock_rows(session, section_id, limit=limit, offset=offset)
+    total = await repository.count_section_stock_rows(session, section_id)
+    kpi = await repository.section_stock_kpis(session, section_id)
+
+    return SectionStockResponse(
+        items=[
+            SectionStockRow(
+                item_id=row.item_id,
+                code=row.code,
+                name=row.name,
+                category=row.category,
+                unit=row.unit,
+                boq_item_id=row.boq_item_id,
+                boq_code=row.boq_code,
+                boq_description=row.boq_description,
+                assigned_quantity=row.assigned_quantity,
+                issued_quantity=row.issued_quantity,
+                net_quantity=row.net_quantity,
+                total_value=_quantize_money(row.total_value),
+            )
+            for row in rows
+        ],
+        total=total,
+        limit=limit,
+        offset=offset,
+        kpis=SectionStockKpis(
+            issued_value=_quantize_money(kpi.issued_value),
+            total_value=_quantize_money(kpi.total_value),
+            item_count=kpi.item_count,
+            lines_without_price=kpi.lines_without_price,
         ),
     )

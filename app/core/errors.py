@@ -37,6 +37,18 @@ class SiteValidationError(DomainError):
     """
 
 
+class InventoryValidationError(DomainError):
+    """Stok hareketi alanlar-arasi is kurali ihlali (STOK-BOLUM) — 422.
+
+    🔴 Bu sinifin VAROLUS SEBEBI: kural IKI TABLOYA birden bakar
+    (`warehouses.site_id` ↔ `sections.site_id` / `boq_items.site_id`), yani ne
+    DB `CHECK`inde ne Pydantic semasinda yasayabilir. `NotFoundError`dan AYRI
+    durur cunku referans edilen varlik VARDIR ve GORUNURDUR — ihlal edilen sey
+    iki alan ARASINDAKI iliskidir, yani govdenin duzeltilebilir bir kuralidir.
+    Mesaj Turkce ve dogrudan kullaniciya gosterilir.
+    """
+
+
 class DuplicateError(DomainError):
     """Benzersiz olması gereken bir değer zaten kayıtlı (spec §3.2) — router 409'a çevirir.
 

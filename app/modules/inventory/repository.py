@@ -440,6 +440,7 @@ def _summary_filtered(
     status: str | None,
     category: StockCategory | None,
     q: str | None,
+    item_ids: Select | None,
 ) -> Select:
     """E3 filtre çubuğu: durum sekmeleri · kategori select'i · arama kutusu.
 
@@ -452,6 +453,12 @@ def _summary_filtered(
     stmt = stmt.where(gorunur_kalem_kosulu(ctx))
     if status is not None:
         stmt = stmt.where(ctx.status == status)
+    if item_ids is not None:
+        # STOK-BOLUM `section_id` suzgeci. SATIR KUMESINI daraltir, `balance`i
+        # DEGISTIRMEZ (gerekce `item_ids_attributed_to_section`da). Suzgec
+        # BURADADIR ki liste, `total` ve KPI ayni kumeyi gorsun — ucu
+        # ayrissaydi ekranda "3 kalem" yazip 2 satir gorunurdu.
+        stmt = stmt.where(StockItem.id.in_(item_ids))
     return stmt
 
 
@@ -463,6 +470,7 @@ async def list_summary_rows(
     status: str | None,
     category: StockCategory | None,
     q: str | None,
+    item_ids: Select | None = None,
     limit: int,
     offset: int,
 ) -> list[Row]:
@@ -476,7 +484,7 @@ async def list_summary_rows(
         ctx,
         only_moved=only_moved,
     )
-    stmt = _summary_filtered(stmt, ctx, status=status, category=category, q=q)
+    stmt = _summary_filtered(stmt, ctx, status=status, category=category, q=q, item_ids=item_ids)
     stmt = stmt.order_by(StockItem.name, StockItem.id).limit(limit).offset(offset)
     return list((await session.execute(stmt)).all())
 
@@ -489,9 +497,10 @@ async def count_summary_rows(
     status: str | None,
     category: StockCategory | None,
     q: str | None,
+    item_ids: Select | None = None,
 ) -> int:
     stmt = _summary_joined(select(func.count()).select_from(StockItem), ctx, only_moved=only_moved)
-    stmt = _summary_filtered(stmt, ctx, status=status, category=category, q=q)
+    stmt = _summary_filtered(stmt, ctx, status=status, category=category, q=q, item_ids=item_ids)
     return (await session.execute(stmt)).scalar_one()
 
 
@@ -503,6 +512,7 @@ async def summary_kpis(
     status: str | None,
     category: StockCategory | None,
     q: str | None,
+    item_ids: Select | None = None,
 ) -> Row:
     """KPI şeridi SAYFAYI değil SÜZÜLEN KÜMEYİ özetler (E3 72-89 / ŞS 86-91).
 
@@ -537,7 +547,7 @@ async def summary_kpis(
         ctx,
         only_moved=only_moved,
     )
-    stmt = _summary_filtered(stmt, ctx, status=status, category=category, q=q)
+    stmt = _summary_filtered(stmt, ctx, status=status, category=category, q=q, item_ids=item_ids)
     return (await session.execute(stmt)).one()
 
 
@@ -747,3 +757,31 @@ def item_ids_attributed_to_section(section_id: uuid.UUID) -> Select:
     cümlesi şudur: *"bu bölümde kullanılmış malzemelerin ŞANTİYE bakiyesi"*.
     """
     return select(StockEntryLine.item_id).where(StockEntryLine.section_id == section_id)
+
+
+async def section_sites(session: AsyncSession, section_ids: set[uuid.UUID]) -> dict[uuid.UUID, Row]:
+    """`section_id` → (`site_id`, `project_id`). TEK sorgu, N+1 yok."""
+    if not section_ids:
+        return {}
+    stmt = (
+        select(Section.id, Section.site_id, Site.project_id)
+        .join(Site, Site.id == Section.site_id)
+        .where(Section.id.in_(section_ids))
+    )
+    return {satir.id: satir for satir in (await session.execute(stmt)).all()}
+
+
+async def boq_item_sites(session: AsyncSession, item_ids: set[uuid.UUID]) -> dict[uuid.UUID, Row]:
+    """`boq_item_id` → (`site_id`, `project_id`). TEK sorgu, N+1 yok."""
+    if not item_ids:
+        return {}
+    stmt = (
+        select(BoqItem.id, BoqItem.site_id, Site.project_id)
+        .join(Site, Site.id == BoqItem.site_id)
+        .where(BoqItem.id.in_(item_ids))
+    )
+    return {satir.id: satir for satir in (await session.execute(stmt)).all()}
+
+
+async def get_section(session: AsyncSession, section_id: uuid.UUID) -> Section | None:
+    return await session.get(Section, section_id)
