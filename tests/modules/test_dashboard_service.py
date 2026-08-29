@@ -25,11 +25,12 @@ async def test_summary_uses_role_display_name(seeded_db, user_factory):
 
 
 async def test_summary_placeholders_are_unavailable(seeded_db, user_factory):
-    """P-YT2 denetimi: BEŞ karttan ÜÇÜ hâlâ yer tutucudur, İKİSİ BAĞLANDI.
+    """P-YT2 denetimi: BEŞ karttan İKİSİ hâlâ yer tutucudur, ÜÇÜ BAĞLANDI.
 
-    🔴 `pending_approvals` ve (DASH-1 ile) `portfolio` bu kümeden bilerek
-    ÇIKARILDI. Kalan üçün gerekçeleri `dashboard/service.py`de kartların
-    yanındadır; `average_margin`ınki DASH-1'de üç ölçülmüş engelle büyüdü.
+    🔴 `pending_approvals`, (DASH-1 ile) `portfolio` ve (RISK-1 ile) `risks` bu
+    kümeden bilerek ÇIKARILDI. Kalan ikisinin gerekçeleri
+    `dashboard/service.py`de kartların yanındadır; `average_margin`ınki
+    DASH-1'de üç ölçülmüş engelle büyüdü.
 
     Anahtar STRINGLERİ değişmedi: yanıt gövdesindedir ve frontend onlara
     dallanabilir.
@@ -41,15 +42,19 @@ async def test_summary_placeholders_are_unavailable(seeded_db, user_factory):
     assert summary.receivables.pending_module == "invoicing"
     assert summary.average_margin.pending_module == "progress_payments"
     assert summary.pending_approvals.pending_module == "approvals"
-    assert summary.risks.pending_module == "inventory"
     assert not any(
         card.available
         for card in (
             summary.receivables,
             summary.average_margin,
-            summary.risks,
         )
-    ), "üç kart hâlâ (C) TUZAK — bağlanmaları ürün/izin kararı bekliyor"
+    ), "iki kart hâlâ (C) TUZAK — bağlanmaları ürün/izin kararı bekliyor"
+    # 🔴 RISK-1 BAĞLANDI: `patron` üç kaynağın üçünü de okur, yani kart
+    # `available=true`dur ve kaynak listesi ÜÇ satırdır — görünür projesi
+    # olmayan bu aktörde uyarı satırı çıkmasa bile. Ayrıntılı bekçiler
+    # `test_risk1_uyari_akisi.py`dedir.
+    assert summary.risks.available is True
+    assert [source.state.value for source in summary.risks.sources] == ["ok", "ok", "ok"]
     assert summary.pending_approvals.available is True, (
         "onay rozeti BAĞLANDI: canlı motorun verdiği sıfır 'bilinmiyor' değildir (K2)"
     )
