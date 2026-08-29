@@ -24,6 +24,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import event
 
+from app.core.access import AccessLevel
 from app.core.timezone import today
 from app.modules.contracts.models import SubcontractorContract
 from app.modules.dashboard.risks import (
@@ -53,6 +54,8 @@ from app.modules.subcontractor_progress_payments.models import (
 )
 from app.modules.users.models import UserProjectAccess
 from tests.conftest import test_engine
+
+from ._boq import _set_permission
 
 
 @contextmanager
@@ -137,6 +140,7 @@ async def _hakedis(
     vade_gun: int = 30,
     taseron: str | None = "Çelik OSB",
     sequence_no: int = 1,
+    durum: SubcontractorPaymentStatus = SubcontractorPaymentStatus.approved,
 ) -> SubcontractorProgressPayment:
     """Onayli taseron hakedisi. Vade = `approved_at` (TR gunu) + `payment_term_days`."""
     sozlesme = SubcontractorContract(
@@ -151,7 +155,7 @@ async def _hakedis(
         contract_id=sozlesme.id,
         project_id=project.id,
         sequence_no=sequence_no,
-        status=SubcontractorPaymentStatus.approved,
+        status=durum,
         vat_pct=Decimal("20"),
         advance_pct=Decimal("0"),
         retainage_pct=Decimal("0"),
@@ -388,6 +392,32 @@ async def test_GORUNMEYEN_projenin_gecikmesi_SIZMAZ(seeded_db, user_factory, pro
     assert ayrintilar == ["Görünür Ltd. – 14 gün gecikme"], ayrintilar
 
 
+async def test_ODENMIS_hakedis_satir_URETMEZ(seeded_db, user_factory, project_factory):
+    """(8b) KARSIT KANIT — `paid` hakedis BORC DEGILDIR.
+
+    🔴 Bu bekci `status == approved` sartinin TEK gercek bekcisidir ve gerekcesi
+    olculmustur: `draft`/`pending_approval` hakedisin `approved_at`i zaten
+    NULL'dir, yani onlari eleyen sey durum suzgeci DEGIL vade ifadesidir
+    (`NULL < bugun` -> NULL -> WHERE eler). YALNIZ `paid` hâli hem onay damgasi
+    tasir hem borcu kapanmistir; durum suzgecini silen mutasyon ODENMIS bir
+    hakedisi "gecikmis" gosterirdi ve BASKA HICBIR TEST bunu gormezdi."""
+    yazan = await _aktor(seeded_db, user_factory, "risk-yz8@d.co", role_key="system_admin")
+    user = await _aktor(seeded_db, user_factory, "risk-hk5@d.co")
+    proje = await project_factory(code="RISK-HK5")
+    await _hakedis(
+        seeded_db,
+        proje,
+        yazan,
+        onay_gunu=today() - timedelta(days=44),
+        vade_gun=30,
+        durum=SubcontractorPaymentStatus.paid,
+    )
+
+    kart = await _kart(seeded_db, user)
+
+    assert _satirlar(kart["items"], _GECIKME_BASLIK) == []
+
+
 # --------------------------------------------------------------------------- #
 # 3) TAKVIM — "Hedef asildi" (mockup'in IYI HABERI)
 # --------------------------------------------------------------------------- #
@@ -509,8 +539,15 @@ async def test_IK_iki_kaynakta_KISITLI_takvimi_GORUR(
 
     Tek bir izin profili cakilsaydi "her seyi kapat" mutasyonu (ya da "hicbir
     seyi kapatma") biri tarafindan yakalanmayabilirdi."""
+    yazan = await _aktor(seeded_db, user_factory, "risk-yz9@d.co", role_key="system_admin")
     proje = await project_factory(code="RISK-IZ2", name="Belediye Yol")
     await _bolum(seeded_db, proje, durum=SectionStatus.completed, bitis=today() + timedelta(days=5))
+    # 🔴 SUSTURULACAK IKI KAYNAK GERCEKTEN VERI TASIR: kurulum bos olsaydi
+    # kapiyi silen mutasyon da yesil gecerdi (olculdu: gecti).
+    depo = await _merkez_depo(seeded_db)
+    demir = await _kalem(seeded_db, "RISK-IZ2-D", "Nervürlü Demir Ø12", min_stock="10")
+    await _giris(seeded_db, depo, demir, "2")
+    await _hakedis(seeded_db, proje, yazan, onay_gunu=today() - timedelta(days=44), vade_gun=30)
     await _aktor(seeded_db, user_factory, "risk-ik@d.co", role_key="hr_manager")
 
     kart = await _panel(client, "risk-ik@d.co")
@@ -524,6 +561,42 @@ async def test_IK_iki_kaynakta_KISITLI_takvimi_GORUR(
     assert len(_satirlar(kart["items"], _HEDEF_BASLIK)) == 1, (
         "izni OLAN kaynak da susmuş — kapı gereğinden geniş"
     )
+    assert _satirlar(kart["items"], _KRITIK_BASLIK) == [], "stok izni YOK"
+    assert _satirlar(kart["items"], _GECIKME_BASLIK) == [], "hakediş izni YOK"
+
+
+async def test_TAKVIM_kapisi_kapatilinca_YALNIZ_takvim_susar(
+    client, seeded_db, user_factory, project_factory
+):
+    """(12b) 🔴 UCUNCU KAPININ KENDI BEKCISI.
+
+    Kapi kapali kalsaydi eksik olurdu: tohumlanmis matriste paneli acabilen HER
+    rol `sites`i en az `view` seviyesinde okur (`dashboard` satirinda `_N` olan
+    tek rol `procurement`tir ve o paneli hic acamaz). Yani bu kapi CANLI
+    matriste hicbir rolle tetiklenmez — bekcisi olmasaydi kapiyi silen mutasyon
+    SAG KALIRDI (olculdu: sag kaldi).
+
+    Bu yuzden izin hucresi testte KAPATILIR (`_set_permission` emsali,
+    `test_ilr_ilerleme.py:489`). Iddia cift yonludur: takvim satiri DUSER, oteki
+    iki kaynak KONUSMAYA DEVAM EDER — "her seyi kapat" mutasyonu da yakalanir.
+    """
+    yazan = await _aktor(seeded_db, user_factory, "risk-yz10@d.co", role_key="system_admin")
+    proje = await project_factory(code="RISK-IZ3", name="Belediye Yol")
+    await _bolum(seeded_db, proje, durum=SectionStatus.completed, bitis=today() + timedelta(days=5))
+    depo = await _merkez_depo(seeded_db)
+    demir = await _kalem(seeded_db, "RISK-IZ3-D", "Nervürlü Demir Ø12", min_stock="10")
+    await _giris(seeded_db, depo, demir, "2")
+    await _hakedis(seeded_db, proje, yazan, onay_gunu=today() - timedelta(days=44), vade_gun=30)
+    await _aktor(seeded_db, user_factory, "risk-nosite@d.co", role_key="patron")
+    await _set_permission(seeded_db, "patron", SCHEDULE_MODULE, AccessLevel.none)
+
+    kart = await _panel(client, "risk-nosite@d.co")
+
+    durumlar = {kaynak["module"]: kaynak["state"] for kaynak in kart["sources"]}
+    assert durumlar[SCHEDULE_MODULE] == "restricted", durumlar
+    assert _satirlar(kart["items"], _HEDEF_BASLIK) == [], "takvim izni YOK — satır sızmamalı"
+    assert len(_satirlar(kart["items"], _KRITIK_BASLIK)) == 1, "stok kaynağı susturulmamalı"
+    assert len(_satirlar(kart["items"], _GECIKME_BASLIK)) == 1, "hakediş kaynağı susturulmamalı"
 
 
 # --------------------------------------------------------------------------- #
