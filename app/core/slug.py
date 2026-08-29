@@ -1,0 +1,134 @@
+"""URL slug üretimi ve çözümlemesi (URL-2).
+
+KÖK OLAY: `panel.fiilyapi.com/projeler/049e058b-42d9-...` kullanıcıya ham UUID
+gösteriyordu. Kullanıcı kararı (2026-08-29): **AD SLUG'I** — `/projeler/kopru-guclendirme`.
+
+## 🔴 `str.lower()` TÜRKÇE İÇİN YANLIŞTIR — bu modülün varlık sebebi
+
+Python'un varsayılan büyük/küçük harf dönüşümü Unicode'un *dilden bağımsız*
+kurallarını uygular ve Türkçe'nin noktalı/noktasız `i` ikilisini bozar:
+
+    "İ".lower()  ->  "i̇"   (i + BİRLEŞİK ÜST NOKTA — TEK harf değil, İKİ kod noktası)
+    "I".lower()  ->  "i"          (Türkçe'de "ı" olmalıydı)
+
+Birinci satır sinsidir: sonuç *ekranda* "i" gibi görünür ama içinde U+0307
+taşır; `[a-z0-9]` süzgecinden geçmez ve slug'da sessizce bir `-` bırakır
+(`İstanbul` -> `-stanbul`). Depoda ölçülmüş kardeş tuzak: `find -iname`
+Türkçe "İ"de yanıltır.
+
+ÇÖZÜM: `lower()`a HİÇ güvenilmez. Türkçe harfler `lower()`dan **ÖNCE** açık
+tabloyla ASCII karşılıklarına çevrilir; tablodan sonra dizede Türkçe'ye özgü
+hiçbir harf kalmadığı için `lower()` yalnız ASCII üzerinde çalışır ve zararsızdır.
+
+Tablo (emirde birebir verilen): `ÇĞİÖŞÜçğıöşü` -> `cgiosucgiosu`.
+`I` (noktasız BÜYÜK I) tabloda AYRICA vardır ve `i`ye düşer: Türkçe'de küçüğü
+`ı`dır, `ı` da zaten `i`ye eşlenir — yani iki yol da aynı ASCII harfe varır.
+
+## Boş slug
+
+Adı tamamen noktalama/ASCII-dışı olan bir kayıt boş slug üretebilir (`"..."`,
+`"???"`). Böyle bir kayda slug UYDURULMAZ: `slugify` `None` döner, kolon NULL
+kalır ve o kaydın URL'i UUID olarak yaşamaya devam eder (URL-2 kararı 2 zaten
+UUID'yi kalıcı olarak desteklenir kılar). Uydurulmuş bir taban (`kayit`) yazmak
+çakışma üretir ve kullanıcıya hiçbir okunabilirlik kazandırmaz.
+
+## Çakışan slug
+
+İki farklı ad aynı slug'a düşebilir (`Köprü A` / `Kopru A` -> `kopru-a`).
+`unique_slug` SAYI EKİ verir (`kopru-a-2`, `kopru-a-3`). Sessizce çakıştırma
+YOKTUR: ek verilemiyorsa (kapsamdaki tüm adaylar dolu) çağıran taraf DB'nin
+benzersizlik kısıtına çarpar ve 409 alır — `_next_project_code` / `_next_site_code`
+ile BİREBİR aynı yarış kanonu (otomatik yeniden deneme YAPILMAZ).
+"""
+
+import re
+import unicodedata
+import uuid
+from collections.abc import Iterable
+
+# Türkçe harf -> ASCII. `lower()`dan ÖNCE uygulanır (bkz. modül docstring'i).
+# `I` (U+0049) tabloda BİLEREK vardır: Türkçe küçüğü `ı`dır ve `ı` -> `i`dir.
+_TURKISH_TO_ASCII = str.maketrans(
+    {
+        "Ç": "c",
+        "Ğ": "g",
+        "İ": "i",
+        "I": "i",
+        "Ö": "o",
+        "Ş": "s",
+        "Ü": "u",
+        "ç": "c",
+        "ğ": "g",
+        "ı": "i",
+        "ö": "o",
+        "ş": "s",
+        "ü": "u",
+    }
+)
+
+_NON_SLUG = re.compile(r"[^a-z0-9]+")
+
+# Slug tabanı için tavan. Kolon `String(160)`tır: 100 taban + `-` + sayı eki
+# rahatça sığar ve `name` (`String(150)`) hiçbir uzunlukta taşıramaz.
+MAX_SLUG_LENGTH = 100
+
+# `unique_slug` sayı ekini buradan başlatır: ilk çakışan `-2` alır (`-1` DEĞİL —
+# kullanıcı "ikinci Köprü" okur, "birinci"yi zaten eksiz slug taşır).
+_FIRST_SUFFIX = 2
+
+
+def slugify(value: str | None) -> str | None:
+    """Serbest metni URL slug'ına çevirir; slug'lanamıyorsa `None`.
+
+    Sıra ÖNEMLİDİR ve değiştirilemez:
+      1. Türkçe harfler açık tabloyla ASCII'ye (`lower()`dan ÖNCE),
+      2. NFKD ayrıştırma + birleşik işaretleri düşürme (`é` -> `e`),
+      3. `lower()` (artık yalnız ASCII üzerinde),
+      4. `[a-z0-9]` dışı her dizi tek `-`,
+      5. baştaki/sondaki `-` kırpılır, tavan uygulanır.
+
+    2. adım 1.'den SONRA gelmek zorundadır: `İ` NFKD'de `I` + U+0307'ye ayrışır
+    ve birleşik işaret düşünce geriye `I` kalırdı — Türkçe kaybı 1. adımda
+    zaten önlenmiş olduğu için bu sıra güvenlidir.
+    """
+    if value is None:
+        return None
+    ascii_text = value.translate(_TURKISH_TO_ASCII)
+    decomposed = unicodedata.normalize("NFKD", ascii_text)
+    stripped = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    slug = _NON_SLUG.sub("-", stripped.lower()).strip("-")
+    if not slug:
+        return None
+    return slug[:MAX_SLUG_LENGTH].strip("-") or None
+
+
+def unique_slug(base: str | None, taken: Iterable[str]) -> str | None:
+    """Kapsamda kullanılmayan bir slug döndürür; taban `None` ise `None`.
+
+    `taken` KAPSAM İÇİ mevcut slug kümesidir — kapsam çağırana aittir
+    (proje: şirket geneli, şantiye: proje içi, bölüm: şantiye içi).
+    """
+    if base is None:
+        return None
+    used = {s for s in taken if s}
+    if base not in used:
+        return base
+    suffix = _FIRST_SUFFIX
+    while f"{base}-{suffix}" in used:
+        suffix += 1
+    return f"{base}-{suffix}"
+
+
+def parse_ref(ref: str) -> uuid.UUID | str:
+    """Yol parametresini UUID'ye VEYA slug metnine çözer (URL-2 kararı 2).
+
+    Eski UUID bağlantıları ÇALIŞMAYA DEVAM ETMELİDİR: kullanıcının yer imleri
+    proje yeniden adlandırıldı diye de, slug açıldı diye de bozulmaz.
+
+    UUID gibi görünmeyen her şey slug sayılır. Slug'lar `[a-z0-9-]` olduğundan
+    hiçbir geçerli slug UUID olarak ayrıştırılamaz — iki uzay kesişmez.
+    """
+    try:
+        return uuid.UUID(ref)
+    except (ValueError, AttributeError):
+        return ref

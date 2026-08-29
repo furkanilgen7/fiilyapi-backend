@@ -89,10 +89,39 @@ class Project(Base):
     """Proje çekirdeği (Alt-Proje 2 · P1). budget/progress_pct F6 mirasıdır, kalır."""
 
     __tablename__ = "projects"
+    __table_args__ = (
+        # URL-2: slug ŞİRKET GENELİ tekildir — proje URL'inin (`/projeler/<slug>`)
+        # üstünde bir kapsam yoktur, kapsam SORULACAK bir yer de yoktur.
+        #
+        # Kısmi indeks (`uq_employers_tax_number` deseni): slug NULLABLE'dır ve
+        # çoklu NULL serbest kalmalıdır. Nullable olmasının gerekçesi
+        # `Project.slug` alan yorumundadır.
+        Index(
+            "uq_projects_slug",
+            "slug",
+            unique=True,
+            postgresql_where=text("slug IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     code: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(150), nullable=False)
+    # URL-2 — okunabilir URL kimliği. OLUŞTURULURKEN üretilir, AD DEĞİŞİNCE
+    # DEĞİŞMEZ (kullanıcı kararı 2026-08-29): paylaşılmış bir bağlantı proje
+    # yeniden adlandırıldı diye ÖLMEZ, bu yüzden v1'de yönlendirme/geçmiş
+    # tablosuna gerek YOKTUR.
+    #
+    # 🔴 NULLABLE, ve bu bilinçlidir (emirdeki "olmayacaksa gerekçelendir"):
+    #   1. Adı tamamen noktalama/ASCII-dışı olan bir kayıt slug ÜRETEMEZ
+    #      (`slugify` -> None). NOT NULL olsaydı böyle bir ad ya 422 ile
+    #      REDDEDİLİRDİ (bugün geçerli olan bir adı kırmak) ya da uydurma bir
+    #      taban yazılırdı — ikisi de kullanıcıya zarar.
+    #   2. Slug'ın TEK meşru üreticisi servis katmanıdır. NOT NULL, ORM
+    #      nesnesini doğrudan kuran her yolu (iç yazma yolları + 86 test dosyası)
+    #      slug vermeye zorlardı; `sections.code` emsali aynı sebeple nullable.
+    # NULL slug ZARARSIZDIR: o kaydın URL'i UUID olarak yaşar (karar 2).
+    slug: Mapped[str | None] = mapped_column(String(160), nullable=True)
     status: Mapped[ProjectStatus] = mapped_column(
         Enum(ProjectStatus, name="project_status"), nullable=False, default=ProjectStatus.active
     )
