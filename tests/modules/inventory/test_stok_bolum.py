@@ -11,11 +11,6 @@ Bu dosyanin bekcileri UC AYRI iddiayi tasir ve karistirilmamalidir:
 import uuid
 from decimal import Decimal
 
-import pytest
-
-pytestmark = pytest.mark.anyio
-
-
 # --------------------------------------------------------------------------- #
 # 1. POZITIF KONTROL — gecerli atif GECER ve GERI OKUNUR
 # --------------------------------------------------------------------------- #
@@ -687,3 +682,54 @@ async def test_SS_suzgecinde_BASKA_SANTIYENIN_bolumu_404(
         f"/sites/{gorunen_santiye.id}/stock?section_id={yabanci.id}", headers=admin_headers
     )
     assert resp.status_code == 404, resp.text
+
+
+# --------------------------------------------------------------------------- #
+# 5. ON DELETE semantigi — `SET NULL` karari
+# --------------------------------------------------------------------------- #
+
+
+async def test_BOLUM_SILININCE_stok_satiri_KALIR_bag_kopar(
+    client,
+    admin_headers,
+    seeded_db,
+    gorunen_santiye,
+    depo_fabrikasi,
+    kart_fabrikasi,
+    bolum_fabrikasi,
+):
+    """🔴 `SET NULL` kararının bekçisi (desen `site_diary_lines.boq_item_id`).
+
+    CASCADE seçilseydi bir bölümün silinmesi stok hareketi SATIRINI silerdi —
+    yani BAKİYEYİ değiştirirdi. Bakiye, bir bölüm kaydına bağlı olarak yok
+    olamaz. Bekçi önce satırın gerçekten yazıldığını ölçer (pozitif kontrol).
+    """
+    from sqlalchemy import select
+
+    from app.modules.inventory.models import StockEntryLine
+
+    depo = await depo_fabrikasi("D-1 Ambar", site=gorunen_santiye)
+    kart = await kart_fabrikasi("SNK-0421")
+    bolum = await bolum_fabrikasi(gorunen_santiye, "A1", "A1 Kenar Ayak")
+
+    resp = await client.post(
+        "/stock/entries",
+        json={
+            "entry_type": "adjustment",
+            "entry_date": "2026-08-29",
+            "warehouse_id": str(depo.id),
+            "lines": [{"item_id": str(kart.id), "quantity": "-5.000", "section_id": str(bolum.id)}],
+        },
+        headers=admin_headers,
+    )
+    assert resp.status_code == 201, resp.text
+
+    satir = (await seeded_db.execute(select(StockEntryLine))).scalars().one()
+    assert satir.section_id == bolum.id, "POZITIF KONTROL: atif yazilmamis"
+
+    await seeded_db.delete(bolum)
+    await seeded_db.flush()
+    await seeded_db.refresh(satir)
+
+    assert satir.section_id is None, "bag kopmadi"
+    assert satir.quantity == Decimal("-5.000"), "🔴 SATIR SILINMIS — bakiye degisti (CASCADE?)"

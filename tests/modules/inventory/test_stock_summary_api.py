@@ -636,4 +636,12 @@ async def test_santiye_stok_ucunda_n_plus_1_yok(
     # sorgularini disarida birakiyor, yani altyapi calkantisi bu sayiyi
     # oynatmaz — bir bosluk birakmak yalnizca o kadarlik bir mutasyonu
     # gorunmez kilardi (fiilen olculdu: tavan 4 iken +1 mutasyon YESIL kaldi).
-    assert buyuk <= 3, f"ŞS sicak yolu {buyuk} stok sorgusuna cikti (tavan 3)"
+    #
+    # 🔴 TAVAN 3 → 4 (STOK-BOLUM, 2026-08-29) — GEREKCELI YUKSELTME.
+    # Dorduncu sorgu `repository.section_names_by_item`tir: ŞS "Bolum" sutunu
+    # yer tutucudan CIKTI ve sayfadaki kartlarin atfedildigi bolum adlarini
+    # basiyor. Sorgu HACIMDEN BAGIMSIZDIR — sayfanin TUM kimlikleri tek `IN`
+    # ile sorulur, kalem basina acilmaz; yukaridaki `kucuk == buyuk` esitligi
+    # bunu ZATEN kanitlar (2 kalemde de 8 kalemde de 4). Yani yukselen sey
+    # N+1 riski degil, SABIT maliyettir ve karsiligi gercek bir sutundur.
+    assert buyuk <= 4, f"ŞS sicak yolu {buyuk} stok sorgusuna cikti (tavan 4)"

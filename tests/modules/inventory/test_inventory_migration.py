@@ -298,6 +298,14 @@ def test_stock_entry_columns_and_delete_semantics():
 
 
 def test_stock_entry_line_columns_and_delete_semantics():
+    """🔴 STOK-BOLUM (2026-08-29): kume IKI ADDITIVE kolonla genisledi.
+
+    `section_id` ve `boq_item_id` SATIR bazindadir (kullanici karari): tek bir
+    sarf fisi ayni gun farkli malzemeleri farkli pozlara cikarabilir. Ikisi de
+    NULLABLE'dir — merkez depoya alim, transfer ve sayim duzeltmesi gibi
+    hareketlerin bolumu YOKTUR ve zorunlu yapmak mevcut akislari 422'ye
+    dusururdu.
+    """
     columns = StockEntryLine.__table__.columns
     assert set(columns.keys()) == {
         "id",
@@ -306,6 +314,8 @@ def test_stock_entry_line_columns_and_delete_semantics():
         "quantity",
         "unit_price",
         "quality",
+        "section_id",
+        "boq_item_id",
     }
     (entry_fk,) = tuple(columns["entry_id"].foreign_keys)
     assert entry_fk.ondelete == "CASCADE", "yetim satir bakiyeyi sisirir"
@@ -313,6 +323,15 @@ def test_stock_entry_line_columns_and_delete_semantics():
     assert item_fk.ondelete == "RESTRICT", "hareketi olan kart silinemez"
     assert not columns["quantity"].nullable
     assert columns["unit_price"].nullable
+
+    # 🔴 SET NULL, CASCADE DEGIL: bolum/poz dusurulse de stok hareketi KALIR.
+    # CASCADE bir bolumun silinmesini BAKIYE degisikligine cevirirdi.
+    (section_fk,) = tuple(columns["section_id"].foreign_keys)
+    (boq_fk,) = tuple(columns["boq_item_id"].foreign_keys)
+    assert (section_fk.ondelete, boq_fk.ondelete) == ("SET NULL", "SET NULL"), (
+        "atif FK'lari CASCADE'e cevrilmis — bolum silmek bakiyeyi degistirir"
+    )
+    assert columns["section_id"].nullable and columns["boq_item_id"].nullable
 
 
 def test_quantity_has_no_sign_constraint():
