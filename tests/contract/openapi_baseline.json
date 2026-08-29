@@ -4144,7 +4144,7 @@
             "$ref": "#/components/schemas/MetricPlaceholder"
           },
           "risks": {
-            "$ref": "#/components/schemas/ListPlaceholder"
+            "$ref": "#/components/schemas/RiskAlertsPlaceholder"
           },
           "role_name": {
             "title": "Role Name",
@@ -20777,6 +20777,97 @@
         ],
         "title": "ReservedKpi",
         "type": "object"
+      },
+      "RiskAlert": {
+        "description": "Kartin TEK satiri — mockup'in her satirinda UC olgu vardir.\n\n`title` ust satir (`13px`), `detail` alt satir (`11px`), `severity` sol\nseridin rengi. `items: list[str]` bunlarin YALNIZ BIRINI tasiyabiliyordu; uc\nolguyu tek metne yapistirmak, ekranin ayristirmak zorunda kalacagi bir sunum\nkararini sunucuda uretmek olurdu (K10, `_pending_approvals` notunun emsali).\n\n🔴 `module` var, `link` YOK ve bu bilinclidir. Emir bir `baglanti?` alani\nonerdi; ISTEMCI ROTASI SUNUCUDA URETILMEZ — bir URL (\"/stok\") frontend'in\nyonlendirme haritasini backend'e kopyalardi ve rota degistigi gun panel\nsessizce olu baglanti basardi. Bunun yerine satir KAYNAK MODULUNU tasir;\nhangi ekrana gidilecegi istemcinin karari kalir.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "module": {
+            "title": "Module",
+            "type": "string"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/RiskSeverity"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "severity",
+          "title",
+          "detail",
+          "module"
+        ],
+        "title": "RiskAlert",
+        "type": "object"
+      },
+      "RiskAlertsPlaceholder": {
+        "description": "\"Risk & Uyarilar\" kartinin zarfi.\n\n🔴 ZARF SINIFI OLCULDU: bu kart NE `MetricPlaceholder` NE `CountPlaceholder`\nailesine girer, cunku ikisi de TEK KAYNAKLI bir alani tarifler ve tri-state\nbilgisini TEK bir `pending_module` stringine sikistirir. Bu kartin UC AYRI\nkaynagi ve UC AYRI izin kapisi vardir; tek bir anahtar kartin ancak UCTE\nBIRINI adlandirabilirdi — servis docstring'inin 2. kusuru tam olarak buydu\n(`_RISKS_MODULE = \"inventory\"` yalnizca ilk satiri besliyordu).\n\nBu yuzden tri-state KARTTAN KAYNAGA TASINDI: her kaynak kendi modulunu ve\nkendi durumunu bildirir (`sources`), kart ise yalnizca \"en az bir kaynak\nkonustu mu\" bilgisini tasir. `pending_module` alani BU ZARFTA YOKTUR —\nbugun uc kaynagin ucu de BAGLIDIR, yani \"modul henuz yazilmadi\" hâli\nURETILEMEZ; uretilemeyen bir hâli semada tasimak `available:false`in\nsebebini yeniden belirsizlestirirdi (ILR-1/2'nin duzelttigi kusurun\naynisi).\n\n🔴 BOS LISTE \"RISK YOK\" DEMEK DEGILDIR — ve bu zarfta oyle olmasi\nSAGLANMISTIR: esigi girilmemis (`min_stock IS NULL`) kalemler AYRI bir\n`warning` satiriyla sayilir (`risks._stock_alerts`). Yani\n`items == []` yalnizca \"bilinen uyari yok VE bilinmeyen esik yok\" hâlinde\ndogar. Emsal `inventory`nin `items_without_price` sayacidir: fiyatsiz kalem\nsessizce 0 sayilmaz, AYRICA raporlanir.",
+        "properties": {
+          "available": {
+            "default": false,
+            "title": "Available",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RiskAlert"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/RiskSource"
+            },
+            "title": "Sources",
+            "type": "array"
+          }
+        },
+        "title": "RiskAlertsPlaceholder",
+        "type": "object"
+      },
+      "RiskSeverity": {
+        "description": "Uyari satirinin SIDDETI — mockup'in UC seridinden OLCULDU.\n\n🔴 Kartin adi (\"Risk & Uyarilar\") icerigini KISMEN YALANLIYOR: ucuncu satir\nbir risk DEGIL, IYI HABERDIR. Kart aslinda SIDDET ETIKETLI BIR UYARI\nAKISIDIR; bu yuzden siddet bir alan olarak tasinir ve `success` gercek bir\nuyedir, suslemesi degil.\n\nRenkler `Ekran 1 - Gosterge Paneli.dc.html:378-395`ten BIREBIR okundu — emir\nmetnindeki esleme TERSTI ve olcum onu curuttu:\n  * `#f59e0b` (kehribar) -> \"Stok kritik seviyede\"  => `warning`\n  * `#ef4444` (kirmizi)  -> \"Hakedis gecikmis\"      => `danger`\n  * `#22c55e` (yesil)    -> \"Hedef asildi\"          => `success`\n\n🔴 RENK DEGERI SUNUCUDA URETILMEZ (K10): burada donen sey ANLAMDIR, sinif\nadi ya da hex degil. Renk/rozet karari istemcinindir — HZ-1'in \"aciliyet\nrozeti sunucuda uretilmez\" kanonunun aynisi.",
+        "enum": [
+          "danger",
+          "warning",
+          "success"
+        ],
+        "title": "RiskSeverity",
+        "type": "string"
+      },
+      "RiskSource": {
+        "description": "Kartin UC kaynagindan biri ve o aktor icin durumu.",
+        "properties": {
+          "module": {
+            "title": "Module",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/RiskSourceState"
+          }
+        },
+        "required": [
+          "module",
+          "state"
+        ],
+        "title": "RiskSource",
+        "type": "object"
+      },
+      "RiskSourceState": {
+        "description": "Bir KAYNAGIN o aktor icin durumu.\n\n`ok` — izin var, kaynak sorgulandi (satir cikmamis olabilir; bu OTORITER\nbir \"o kaynakta uyari yok\"tur).\n`restricted` — 🔴 ROLUN IZNI YOK (ILR-1/2 ucuncu hâli). Kart KAPANMAZ,\nyalnizca O KAYNAK susar: `inventory` gormeyen `accounting` stok satirlarini\ngormez ama hakedis satirlarini GORUR (ILR kanonu: \"izni olana veriyi ver,\nolmayana `restricted()` dondur — kartin tamamini herkese kapatmak gereksiz\ngenistir\").",
+        "enum": [
+          "ok",
+          "restricted"
+        ],
+        "title": "RiskSourceState",
+        "type": "string"
       },
       "RoleCreate": {
         "properties": {

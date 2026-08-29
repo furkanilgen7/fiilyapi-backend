@@ -13,8 +13,8 @@ kart icin bile dogru degildir. Denetim bu yuzden UC SINIF uretti:
 | | | | bu kapidan gecirmiyor |
 | `average_margin` | `progress_payments` | **(C) TUZAK** | ortalama TANIMSIZ + anahtar |
 | | | | YANLIS modulu gosteriyor |
-| `risks` | `inventory` | **(C) TUZAK** | zarf `list[str]`, kart uc kaynakli |
-| | | | ve UC OLGU tasiyan satir istiyor |
+| `risks` | (uc kaynak) | **(A) BAGLANDI** | RISK-1: zarf satirlasti, tek |
+| | | | anahtar KAYNAK LISTESINE dondu |
 
 Gerekceler kartlarin YANINDA durur, burada degil: bir kart baglandiginda ya da
 kaldirilinca gerekcesi de onunla birlikte tasinsin.
@@ -24,12 +24,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.permissions import can_read
 from app.modules.approvals import service as approvals_service
+from app.modules.dashboard.risks import build_risks
 from app.modules.dashboard.schemas import (
     DashboardProjectCard,
     DashboardSummaryResponse,
-    ListPlaceholder,
     MetricPlaceholder,
     PendingApprovalsPlaceholder,
+    RiskAlertsPlaceholder,
 )
 from app.modules.progress_payments.summary import cumulative_gross_by_projects
 from app.modules.projects import service as projects_service
@@ -49,7 +50,6 @@ _PORTFOLIO_MODULE = "progress_payments"
 _RECEIVABLES_MODULE = "invoicing"
 _MARGIN_MODULE = "progress_payments"
 _APPROVALS_MODULE = "approvals"
-_RISKS_MODULE = "inventory"
 
 #: 🔴 YALNIZ SAYIM ISTIYORUZ. `pending_for_user` sayfayi ve TOPLAMI ayri
 #: sorgulardan uretir; `limit=0` sayfayi bos birakir ve satir zenginlestirmesini
@@ -239,31 +239,33 @@ def _average_margin() -> MetricPlaceholder:
     return MetricPlaceholder(pending_module=_MARGIN_MODULE)
 
 
-def _risks() -> ListPlaceholder:
-    """(C) TUZAK — "Risk & Uyarilar" (mockup `:334-351`). UC AYRI kusur.
+async def _risks(session: AsyncSession, user: User) -> RiskAlertsPlaceholder:
+    """✅ **BAGLANDI** (RISK-1) — "Risk & Uyarilar" (mockup `:375-400`).
 
-    1. 🔴 ZARF YETERSIZ. Mockup'in UC satiri ikiser metin + bir SIDDET rengi
-       tasir ("Stok kritik seviyede" / "Liman Altyapi – Demir eksikligi");
-       `items: list[str]` bir metin tasir. Ustelik ucuncu satir
-       ("Hedef asildi", yesil) bir risk DEGIL, iyi haberdir — kart aslinda
-       siddet etiketli bir UYARI AKISIDIR.
-    2. 🔴 ANAHTAR KARTIN UCTE BIRINI KAPSAR. `inventory` yalnizca ilk satiri
-       besler; digerleri hakedis gecikmesi ve takvimdir. Stogu tek basina
-       baglamak kartin ADINI kismen yalan yapardi.
-    3. 🔴 IZIN KAPISI — `_receivables` ile AYNI engel: matriste `hr_manager`
-       ve `accounting` icin `inventory = _N` (`roles/seed_data.py:191`) ama
-       ikisi de gosterge panelini acabiliyor.
+    Eski notun UC kusuru da kapandi; gerekceler kartin YANINDA durur, yani
+    `dashboard/risks.py`de. Ozeti:
 
-    ⚠️ K2 AYRICA ISIRIR: stok durumu `min_stock`tan turer ve o kolon
-    NULLABLE'dir (`inventory/models.py:119`) — esigi girilmemis kalem HICBIR
-    kovaya dusmez. Yani `items=[]` hem "risk yok" hem "risk BILINMIYOR"
-    demeye devam ederdi; kart baglanmis gorunur, gercek risk gorunmezdi.
+    1. **ZARF** — satir artik `RiskAlert` (siddet + baslik + ayrinti + kaynak
+       modul). `items: list[str]` uc olgudan yalnizca birini tasiyabiliyordu.
+       🔴 Kartin ADI hâlâ icerigini kismen yalanliyor ve bu bir SEMA kusuru
+       degil bir ISIMLENDIRME gercegidir: mockup'in ucuncu satiri
+       ("Hedef asildi", YESIL) bir risk DEGIL iyi haberdir — bu yuzden zarf
+       `RiskSeverity.success` uyesini GERCEKTEN uretir.
+    2. **ANAHTAR** — tek `pending_module` SILINDI. Uc kaynagin uc ayri kapisi
+       vardir; tek anahtar kartin ancak uctebirini adlandirabilirdi. Durum
+       artik KAYNAK BASINA (`sources`) bildirilir.
+    3. **IZIN** — her kaynak kendi kapisindan gecer ve kart KISMI dolar
+       (`accounting` stok satirlarini gormez, hakedis satirlarini GORUR).
+
+    ⚠️ K2 (`min_stock` NULLABLE) da kapandi: esigi girilmemis kalemler AYRI bir
+    `warning` satiriyla SAYILIR — bos liste artik "risk yok" ile "risk
+    bilinmiyor"u ayni sayiya cevirmiyor.
     """
-    return ListPlaceholder(pending_module=_RISKS_MODULE)
+    return await build_risks(session, user)
 
 
 async def build_summary(session: AsyncSession, user: User) -> DashboardSummaryResponse:
-    """Gosterge paneli ozeti. Projeler + ONAY ROZETI + PORTFOY gercek, uc kart bos."""
+    """Gosterge paneli ozeti. Projeler + ONAY + PORTFOY + RISK gercek, iki kart bos."""
     projects = await list_projects_for_user(session, user.id)
     role = await session.get(Role, user.role_id)
 
@@ -278,5 +280,5 @@ async def build_summary(session: AsyncSession, user: User) -> DashboardSummaryRe
         receivables=_receivables(),
         average_margin=_average_margin(),
         pending_approvals=await _pending_approvals(session, user),
-        risks=_risks(),
+        risks=await _risks(session, user),
     )

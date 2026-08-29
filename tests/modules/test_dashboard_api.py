@@ -2,9 +2,9 @@ from decimal import Decimal
 
 from app.modules.dashboard.schemas import (
     DashboardSummaryResponse,
-    ListPlaceholder,
     MetricPlaceholder,
     PendingApprovalsPlaceholder,
+    RiskAlertsPlaceholder,
 )
 from app.modules.users.models import UserProjectAccess
 
@@ -43,7 +43,7 @@ def test_summary_serializes_decimal_project_fields():
         receivables=MetricPlaceholder(pending_module="invoicing"),
         average_margin=MetricPlaceholder(pending_module="progress_payments"),
         pending_approvals=PendingApprovalsPlaceholder(pending_module="approvals"),
-        risks=ListPlaceholder(pending_module="inventory"),
+        risks=RiskAlertsPlaceholder(),
     )
 
     dumped = summary.model_dump(mode="json")
@@ -51,6 +51,9 @@ def test_summary_serializes_decimal_project_fields():
     assert dumped["projects"][0]["budget"] == "1500000.00"
     assert dumped["risks"]["available"] is False
     assert dumped["risks"]["items"] == []
+    # RISK-1: tek `pending_module` yerine KAYNAK LISTESI. Bos zarfta liste de
+    # bostur — kartin durumunu artik kaynaklar tasir.
+    assert dumped["risks"]["sources"] == []
 
 
 async def _login(client, user_factory, role_key: str) -> str:

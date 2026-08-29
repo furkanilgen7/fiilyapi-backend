@@ -504,6 +504,30 @@ async def count_summary_rows(
     return (await session.execute(stmt)).scalar_one()
 
 
+async def count_items_without_threshold(
+    session: AsyncSession, ctx: SummaryContext, *, only_moved: bool
+) -> int:
+    """Esigi GIRILMEMIS (`min_stock IS NULL`) gorunur kalem sayisi.
+
+    🔴 NICIN AYRI BIR SAYAC: `status_case` `min_stock` NULL iken durumu `NULL`
+    birakir (uydurma yok) — yani esigi girilmemis kalem HICBIR kovaya dusmez ve
+    "kritik" sayimina da girmez. Bu sayac olmadan bos bir kritik listesi hem
+    "risk yok" hem "risk BILINMIYOR" demeye devam ederdi.
+
+    Emsal AYNI DOSYADADIR: `summary_kpis.items_without_price` de fiyatsiz kalemi
+    sessizce 0 saymaz, AYRICA raporlar. Bu, o kuralin `min_stock` yuzudur.
+
+    Gorunurluk/pasiflik suzgeci KOPYALANMAZ: sayim `_summary_joined` +
+    `_summary_filtered` uzerinden gecer, yani liste/sayim/KPI ile AYNI kumeyi
+    gorur. Ikinci bir suzgec, "3 kalem esiksiz" deyip listede baska bir kume
+    gostermek demekti.
+    """
+    stmt = _summary_joined(select(func.count()).select_from(StockItem), ctx, only_moved=only_moved)
+    stmt = _summary_filtered(stmt, ctx, status=None, category=None, q=None, item_ids=None)
+    stmt = stmt.where(StockItem.min_stock.is_(None))
+    return (await session.execute(stmt)).scalar_one()
+
+
 async def summary_kpis(
     session: AsyncSession,
     ctx: SummaryContext,

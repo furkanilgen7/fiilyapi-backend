@@ -1,3 +1,4 @@
+import enum
 import uuid
 from decimal import Decimal
 
@@ -27,6 +28,11 @@ __all__ = [
     "MetricPlaceholder",
     "ListPlaceholder",
     "PendingApprovalsPlaceholder",
+    "RiskAlert",
+    "RiskAlertsPlaceholder",
+    "RiskSeverity",
+    "RiskSource",
+    "RiskSourceState",
     "DashboardProjectCard",
     "DashboardSummaryResponse",
 ]
@@ -44,6 +50,105 @@ class PendingApprovalsPlaceholder(ListPlaceholder):
     """Onay bekleyenler karti — rozet sayaci tasir."""
 
     count: int = 0
+
+
+class RiskSeverity(str, enum.Enum):
+    """Uyari satirinin SIDDETI — mockup'in UC seridinden OLCULDU.
+
+    🔴 Kartin adi ("Risk & Uyarilar") icerigini KISMEN YALANLIYOR: ucuncu satir
+    bir risk DEGIL, IYI HABERDIR. Kart aslinda SIDDET ETIKETLI BIR UYARI
+    AKISIDIR; bu yuzden siddet bir alan olarak tasinir ve `success` gercek bir
+    uyedir, suslemesi degil.
+
+    Renkler `Ekran 1 - Gosterge Paneli.dc.html:378-395`ten BIREBIR okundu — emir
+    metnindeki esleme TERSTI ve olcum onu curuttu:
+      * `#f59e0b` (kehribar) -> "Stok kritik seviyede"  => `warning`
+      * `#ef4444` (kirmizi)  -> "Hakedis gecikmis"      => `danger`
+      * `#22c55e` (yesil)    -> "Hedef asildi"          => `success`
+
+    🔴 RENK DEGERI SUNUCUDA URETILMEZ (K10): burada donen sey ANLAMDIR, sinif
+    adi ya da hex degil. Renk/rozet karari istemcinindir — HZ-1'in "aciliyet
+    rozeti sunucuda uretilmez" kanonunun aynisi.
+    """
+
+    danger = "danger"
+    warning = "warning"
+    success = "success"
+
+
+class RiskAlert(BaseModel):
+    """Kartin TEK satiri — mockup'in her satirinda UC olgu vardir.
+
+    `title` ust satir (`13px`), `detail` alt satir (`11px`), `severity` sol
+    seridin rengi. `items: list[str]` bunlarin YALNIZ BIRINI tasiyabiliyordu; uc
+    olguyu tek metne yapistirmak, ekranin ayristirmak zorunda kalacagi bir sunum
+    kararini sunucuda uretmek olurdu (K10, `_pending_approvals` notunun emsali).
+
+    🔴 `module` var, `link` YOK ve bu bilinclidir. Emir bir `baglanti?` alani
+    onerdi; ISTEMCI ROTASI SUNUCUDA URETILMEZ — bir URL ("/stok") frontend'in
+    yonlendirme haritasini backend'e kopyalardi ve rota degistigi gun panel
+    sessizce olu baglanti basardi. Bunun yerine satir KAYNAK MODULUNU tasir;
+    hangi ekrana gidilecegi istemcinin karari kalir.
+    """
+
+    severity: RiskSeverity
+    title: str
+    detail: str
+    module: str
+
+
+class RiskSourceState(str, enum.Enum):
+    """Bir KAYNAGIN o aktor icin durumu.
+
+    `ok` — izin var, kaynak sorgulandi (satir cikmamis olabilir; bu OTORITER
+    bir "o kaynakta uyari yok"tur).
+    `restricted` — 🔴 ROLUN IZNI YOK (ILR-1/2 ucuncu hâli). Kart KAPANMAZ,
+    yalnizca O KAYNAK susar: `inventory` gormeyen `accounting` stok satirlarini
+    gormez ama hakedis satirlarini GORUR (ILR kanonu: "izni olana veriyi ver,
+    olmayana `restricted()` dondur — kartin tamamini herkese kapatmak gereksiz
+    genistir").
+    """
+
+    ok = "ok"
+    restricted = "restricted"
+
+
+class RiskSource(BaseModel):
+    """Kartin UC kaynagindan biri ve o aktor icin durumu."""
+
+    module: str
+    state: RiskSourceState
+
+
+class RiskAlertsPlaceholder(BaseModel):
+    """ "Risk & Uyarilar" kartinin zarfi.
+
+    🔴 ZARF SINIFI OLCULDU: bu kart NE `MetricPlaceholder` NE `CountPlaceholder`
+    ailesine girer, cunku ikisi de TEK KAYNAKLI bir alani tarifler ve tri-state
+    bilgisini TEK bir `pending_module` stringine sikistirir. Bu kartin UC AYRI
+    kaynagi ve UC AYRI izin kapisi vardir; tek bir anahtar kartin ancak UCTE
+    BIRINI adlandirabilirdi — servis docstring'inin 2. kusuru tam olarak buydu
+    (`_RISKS_MODULE = "inventory"` yalnizca ilk satiri besliyordu).
+
+    Bu yuzden tri-state KARTTAN KAYNAGA TASINDI: her kaynak kendi modulunu ve
+    kendi durumunu bildirir (`sources`), kart ise yalnizca "en az bir kaynak
+    konustu mu" bilgisini tasir. `pending_module` alani BU ZARFTA YOKTUR —
+    bugun uc kaynagin ucu de BAGLIDIR, yani "modul henuz yazilmadi" hâli
+    URETILEMEZ; uretilemeyen bir hâli semada tasimak `available:false`in
+    sebebini yeniden belirsizlestirirdi (ILR-1/2'nin duzelttigi kusurun
+    aynisi).
+
+    🔴 BOS LISTE "RISK YOK" DEMEK DEGILDIR — ve bu zarfta oyle olmasi
+    SAGLANMISTIR: esigi girilmemis (`min_stock IS NULL`) kalemler AYRI bir
+    `warning` satiriyla sayilir (`risks._stock_alerts`). Yani
+    `items == []` yalnizca "bilinen uyari yok VE bilinmeyen esik yok" hâlinde
+    dogar. Emsal `inventory`nin `items_without_price` sayacidir: fiyatsiz kalem
+    sessizce 0 sayilmaz, AYRICA raporlanir.
+    """
+
+    available: bool = False
+    items: list[RiskAlert] = Field(default_factory=list)
+    sources: list[RiskSource] = Field(default_factory=list)
 
 
 class DashboardProjectCard(BaseModel):
@@ -65,4 +170,4 @@ class DashboardSummaryResponse(BaseModel):
     receivables: MetricPlaceholder
     average_margin: MetricPlaceholder
     pending_approvals: PendingApprovalsPlaceholder
-    risks: ListPlaceholder
+    risks: RiskAlertsPlaceholder
