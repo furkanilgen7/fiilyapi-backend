@@ -224,36 +224,63 @@ async def test_B5_pozitif_kontrol_kimliksiz_istek_401_alir() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_B4_get_db_okuma_dulzeminde_SALT_OKUNUR_motora_cozulur() -> None:
-    """🔴 Beş sessiz varyantın hepsini bir arada öldüren tek ölçüm.
+async def test_B4_GERCEK_bir_ucun_oturumu_SALT_OKUNUR_motordan_gelir() -> None:
+    """🔴 Beş sessiz varyantın hepsini bir arada öldüren ölçüm.
 
-    İddia modül düzeyinde (`ai_engine is not engine`) DEĞİL, **isteğin içinden**
-    kurulur: `dependency_overrides` yanlış monte edilmiş bir düzlemde 200 döner,
-    uç çalışır, hata çıkmaz — ama session ANA (yazılabilir) havuzdan gelir. Farkı
-    yalnız `session.bind` kimliği gösterir.
+    ⚠️ **Bu testin ilk hâli SESSİZ BİR SAHTE-YEŞİLDİ ve mutasyonla yakalandı.**
+    Sonda rotası testin kendisi tarafından `duzlem.include_router(sonda)` ile
+    ekleniyordu — yani sonda HER ZAMAN override'ı görüyordu, `build_read_plane`
+    gerçek rotaları nasıl monte etmiş olursa olsun. `include_router` yerine
+    `okuma_duzlemi.router.routes.append(rota)` (sessiz varyant V6) yazan mutant
+    testten **sağ çıktı**. Ders: bir bekçi, ölçtüğü yolu kendisi kuruyorsa hiçbir
+    şey ölçmüyordur.
 
-    Sonda hiç SQL koşmaz: `AsyncSession` bağlanmadan da `bind`ını bilir, bu yüzden
-    test DB bağlantısı açmaz ve xdist işçi veritabanına dokunmaz.
+    Doğrusu: iddia **taşınmış GERÇEK bir ucun** isteği içinden kurulur. `/projects`
+    seçildi; kimliksiz çağrıda `get_current_user` 401 atar ama FastAPI alt
+    bağımlılıkları ÖNCE çözer, dolayısıyla `get_db` (ve dolayısıyla override) çoktan
+    koşmuştur. Hiç SQL koşulmaz: `AsyncSession` bağlanmadan da `bind`ını bilir.
     """
     from app.core.db import engine as ana_engine
 
     duzlem = build_read_plane(app)
-    sonda = APIRouter()
+    yakalanan: list[AsyncSession] = []
 
-    @sonda.get("/_sonda/bind")
-    async def _bind(session: Annotated[AsyncSession, Depends(get_db)]) -> dict:
-        return {"bind": id(session.bind)}
+    async def casus():
+        async for oturum in get_ai_readonly_db():
+            yakalanan.append(oturum)
+            yield oturum
 
-    duzlem.include_router(sonda)
+    duzlem.dependency_overrides[get_db] = casus
     tasima = httpx.ASGITransport(app=duzlem, raise_app_exceptions=True)
     async with httpx.AsyncClient(transport=tasima, base_url="http://okuma") as istemci:
-        yanit = await istemci.get("/_sonda/bind")
-    assert yanit.status_code == 200, yanit.text
-    assert yanit.json()["bind"] == id(ai_engine), (
-        "Okuma düzlemi ANA motoru kullanıyor — `dependency_overrides` sessizce "
-        "etkisiz. Bkz. readplane.py §2 (beş sessiz varyant)."
+        assert (await istemci.get("/projects")).status_code == 401
+
+    assert yakalanan, (
+        "Taşınmış gerçek uçta `dependency_overrides` HİÇ ÇALIŞMADI — session ANA "
+        "(yazılabilir) havuzdan geldi. Hata yok, 404 yok, sessiz. "
+        "Bkz. readplane.py §2 (beş sessiz varyant)."
     )
+    assert yakalanan[0].bind is ai_engine
     assert ai_engine is not ana_engine
+
+
+def test_B4_yapisal_okuma_dulzeminde_CIPLAK_APIRoute_BULUNMAZ() -> None:
+    """B4'ün ucuz yapısal ikizi: her rota bir `include_router`dan geçmiş olmalı.
+
+    Beş sessiz varyantın üçü (`append`/`extend`/atama) rotaları `router.routes`a
+    ÇIPLAK bırakır; ikisi kaynak app'e bağlı `_IncludedRouter` kopyalar. İkisi de
+    burada yakalanır: kabul edilen tek şekil, sağlayıcısı okuma düzleminin KENDİSİ
+    olan bir `_IncludedRouter`dır.
+    """
+    from fastapi.routing import _IncludedRouter
+
+    duzlem = build_read_plane(app)
+    for rota in duzlem.routes:
+        assert isinstance(rota, _IncludedRouter), (
+            f"Okuma düzleminde çıplak {type(rota).__name__} var — rota "
+            "`include_router`dan geçmemiş, `dependency_overrides` sessizce etkisiz."
+        )
+        assert rota.include_context.dependency_overrides_provider is duzlem
 
 
 async def test_B4_mutasyon_rota_nesnesi_KOPYALANIRSA_override_SESSIZCE_dusuyor() -> None:
@@ -355,6 +382,28 @@ def test_dusuk_oncelikli_rota_listesi_BOS_olmali() -> None:
     routerlar = _tum_routerlar(app)
     assert len(routerlar) >= 38  # 38 üst seviye + 3 iç içe
     assert all(not getattr(r, "_low_priority_routes", None) for r in routerlar)
+
+
+def test_mutasyon_dusuk_oncelikli_rota_DOLUYSA_build_read_plane_PATLAR() -> None:
+    """🔴 Fonksiyonu doğrudan çağırmak yetmez — ÇAĞRI YERİ de bekçilenmeli.
+
+    İlk hâlinde bu bölüm yalnız `_dogrula_dusuk_oncelikli_rota_yok(app)`ı doğrudan
+    çağırıyordu; `build_read_plane`den o satırı SİLEN mutant testten sağ çıkıyordu.
+    Burada mutasyon `build_read_plane` üzerinden koşuyor.
+
+    Listeyi gerçekte `APIRouter.frontend(...)` doldurur (bir dizin ister); ölçülen
+    şey listenin DOLU olması olduğu için nöbetçi bir nesne yeterlidir.
+    """
+    from starlette.routing import Route
+
+    from app.core.router_registry import ROUTERS
+
+    kirli = FastAPI()
+    for router in ROUTERS:
+        kirli.include_router(router)
+    kirli.router._low_priority_routes.append(Route("/_nobetci", endpoint=lambda r: None))
+    with pytest.raises(RuntimeError, match="_low_priority_routes"):
+        build_read_plane(kirli)
 
 
 def test_mutasyon_prefixli_include_DUZ_TASIMAYI_patlatir() -> None:
