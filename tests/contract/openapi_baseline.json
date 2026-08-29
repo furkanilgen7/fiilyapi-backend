@@ -17343,6 +17343,17 @@
             "title": "Site Count",
             "type": "integer"
           },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
+          },
           "start_date": {
             "anyOf": [
               {
@@ -17728,6 +17739,17 @@
           },
           "project_type": {
             "$ref": "#/components/schemas/ProjectType"
+          },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
           },
           "start_date": {
             "anyOf": [
@@ -21510,6 +21532,17 @@
             "title": "Site Id",
             "type": "string"
           },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
+          },
           "sort_order": {
             "title": "Sort Order",
             "type": "integer"
@@ -21760,6 +21793,17 @@
           },
           "progress_pct": {
             "$ref": "#/components/schemas/MetricPlaceholder"
+          },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
           },
           "sort_order": {
             "title": "Sort Order",
@@ -22591,6 +22635,17 @@
             ],
             "title": "Site Manager User Id"
           },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
+          },
           "start_date": {
             "anyOf": [
               {
@@ -23228,6 +23283,17 @@
               }
             ],
             "title": "Site Manager User Id"
+          },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
           },
           "start_date": {
             "anyOf": [
@@ -25142,6 +25208,17 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
           }
         },
         "required": [
@@ -46047,6 +46124,7 @@
     },
     "/projects/{project_id}": {
       "get": {
+        "description": "URL-2 — yol parametresi UUID **ya da** slug kabul eder (karar 2).\n\n🔴 YOL ADI `project_id` OLARAK KALIR: yolun sablonu (`/projects/{project_id}`)\ndegismezse uretilmis istemcinin yol anahtari de degismez. Degisen tek sey\nparametrenin TIPIDIR (`uuid` -> `string`) — sozlesme farkinda gorulecek\nsey budur.\n\n🔴 YAN ETKI: eskiden UUID olmayan bir deger 422 (`uuid_parsing`) alirdi,\nartik 404 alir. Bu KACINILMAZDIR — slug uzayi tam olarak \"UUID olmayan\nmetinler\"dir; ikisi ayni yol parametresinde birlikte yasayamaz.\n\nPATCH ucu BILEREK `uuid.UUID` KALIR: karar 2 \"OKUMA uclari\" der. Yazmanin\nkimligi, okumanin dondurdugu `id`den gelir; yazma yuzeyini tahmin edilebilir\nbir anahtara acmak icin sebep YOKTUR.",
         "operationId": "get_project_endpoint_projects__project_id__get",
         "parameters": [
           {
@@ -46054,7 +46132,6 @@
             "name": "project_id",
             "required": true,
             "schema": {
-              "format": "uuid",
               "title": "Project Id",
               "type": "string"
             }
@@ -50444,9 +50521,40 @@
             "name": "section_id",
             "required": true,
             "schema": {
-              "format": "uuid",
               "title": "Section Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "site",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Site"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
             }
           }
         ],
@@ -50917,6 +51025,7 @@
         ]
       },
       "get": {
+        "description": "URL-2 — yol parametresi UUID **ya da** slug (karar 2).\n\n`project` KAPSAM suzgecidir ve yalniz slug yolunda anlamlidir: `sites.slug`\nPROJE ICINDE tekildir, bu uc ise DUZDUR (yolda proje yok). Frontend URL'i\n(`/projeler/<p>/santiyeler/<s>`) nested oldugu icin bunu her zaman\nverebilir. Verilmezse cozumleme gorunur kume icinde TEK ADAY sartina\nbaglidir — belirsizlik 404'tur (fail-closed), rastgele secim YOKTUR.\nAyrinti: `_visible_site` docstring'i.",
         "operationId": "get_site_endpoint_sites__site_id__get",
         "parameters": [
           {
@@ -50924,9 +51033,24 @@
             "name": "site_id",
             "required": true,
             "schema": {
-              "format": "uuid",
               "title": "Site Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
             }
           }
         ],

@@ -230,6 +230,10 @@ class SiteProjectSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    # URL-2: santiye detayindan PROJE URL'i kurulabilsin diye (kirinti/breadcrumb).
+    # Bu olmadan URL-3 santiye sayfasinda proje slug'ini AYRI bir istekle cekmek
+    # zorunda kalirdi. `from_attributes` zaten `Project.slug`i okur.
+    slug: str | None = None
     name: str
     city: str | None
     employer_name: str | None
