@@ -56,7 +56,14 @@ async def list_subcontractor_progress_payments_endpoint(
     project_id: uuid.UUID | None = None,
     site_id: Annotated[
         uuid.UUID | None,
-        Query(description="Sözleşmesi bu şantiyeye bağlı hakedişler (proje geneli olanlar hariç)"),
+        Query(
+            description=(
+                "Bu şantiyeyi KAPSAYAN hakedişler: sözleşmesi bu şantiyeye bağlı olanlar "
+                "**ve** proje geneli (`site_id IS NULL`) sözleşmelerin hakedişleri. "
+                "Satırın hangisi olduğu `contract_site_id` alanından okunur — proje geneli "
+                "satırlar her şantiyede tekrar döner, şantiye toplamına EKLENMEZ."
+            )
+        ),
     ] = None,
     period_year: int | None = None,
     period_month: Annotated[int | None, Query(ge=1, le=12)] = None,
@@ -68,6 +75,9 @@ async def list_subcontractor_progress_payments_endpoint(
     """L83-101 filtreleri + `audit`/`users` sayfalama deseni (`total`/`limit`/`offset`).
 
     `site_id` (TB2/U2) SÖZLEŞME üzerinden süzer — hakedişin şantiye kolonu yoktur.
+    HAK-NULL: süzgeç EŞİTLİK değil KAPSAMA sorar, proje geneli (`site_id IS
+    NULL`) sözleşmelerin hakedişleri DE döner ve `contract_site_id` ile
+    işaretlenir (gerekçe: `repository._list_stmt`).
     Kapsamı GENİŞLETMEZ: `visible_projects` süzgeci her hâlükârda üstte kalır.
     """
     return await read.list_payments(
@@ -95,7 +105,14 @@ async def subcontractor_progress_payment_summary_endpoint(
     project_id: uuid.UUID | None = None,
     site_id: Annotated[
         uuid.UUID | None,
-        Query(description="Sözleşmesi bu şantiyeye bağlı hakedişler (proje geneli olanlar hariç)"),
+        Query(
+            description=(
+                "Bu şantiyeyi KAPSAYAN hakedişler: sözleşmesi bu şantiyeye bağlı olanlar "
+                "**ve** proje geneli (`site_id IS NULL`) sözleşmelerin hakedişleri. "
+                "Satırın hangisi olduğu `contract_site_id` alanından okunur — proje geneli "
+                "satırlar her şantiyede tekrar döner, şantiye toplamına EKLENMEZ."
+            )
+        ),
     ] = None,
     period_year: int | None = None,
     period_month: Annotated[int | None, Query(ge=1, le=12)] = None,

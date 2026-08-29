@@ -267,9 +267,38 @@ def _list_stmt(
     kümeleri sayardı — sayfalamanın en sinsi hatası.
 
     `site_id` (TB2/U2) hakediş tablosundan DEĞİL, zaten kurulu olan sözleşme
-    join'inden okunur: hakedişin şantiye kolonu YOKTUR, bağ sözleşmededir. Eşitlik
-    süzgeci `site_id IS NULL` (proje geneli) sözleşmeleri kendiliğinden eler —
-    şantiye sekmesi proje geneli hakedişleri GÖSTERMEZ (SD S5 tek-anlamlılık).
+    join'inden okunur: hakedişin şantiye kolonu YOKTUR, bağ sözleşmededir.
+
+    🔴 HAK-NULL — SÜZGEÇ EŞİTLİK DEĞİL, **KAPSAMA** SORUSUDUR.
+
+    Eskiden burada düz `SubcontractorContract.site_id == site_id` vardı ve bu
+    kodun kendi docstring'i sonucu İTİRAF EDİYORDU ("eşitlik süzgeci `site_id
+    IS NULL` sözleşmeleri kendiliğinden eler"). Yazan biliyormuş; sonucu kimse
+    ÖLÇMEMİŞ. Canlıda ölçüldü: yedi taşeron sözleşmesinin YEDİSİ DE proje
+    geneli (`site_id IS NULL`) olduğu için `?site_id=<Cevizli>` **0** satır
+    döndürüyordu, süzgeçsiz çağrı ise 3 hakediş. Yani proje geneli sözleşmelerin
+    hakedişleri HİÇBİR şantiyede, HİÇBİR bölümde görünmüyordu.
+
+    Süzgecin sorduğu soru "sözleşme TAM OLARAK bu şantiyeye mi bağlı" değil,
+    **"bu hakediş bu şantiyeyi KAPSIYOR mu"**dur. Proje geneli bir sözleşme
+    projenin BÜTÜN şantiyelerini kapsar, dolayısıyla bu şantiyeyi DE kapsar —
+    `NULL` satır kümeye GİRER.
+
+    🔴 KÜME GİRİYOR ≠ ŞANTİYENİN PARASI. Aynı proje geneli hakediş projenin N
+    şantiyesinin HEPSİNDE dönecektir; onları şantiyenin parası gibi TOPLAMAK
+    aynı parayı N kez saymak olurdu. Bu yüzden ayrımın kendisi de YAYIMLANIR:
+    liste satırı `contract_site_id` taşır (`read.list_payments`), `NULL` =
+    proje geneli. Toplamı KİM alacaksa iki kümeyi AYIRMAK zorundadır; çağıran
+    ayrımı göremeseydi süzgeci gevşetmek görünürlüğü açıp TOPLAMLARI yalancı
+    yapardı. Kararın istemci tarafı: `progress-payments/shared/site-payment-
+    scope.ts` (şantiye toplamları YALNIZ şantiye kapsamlı satırlardan alınır).
+
+    `_list_stmt` liste, KPI özeti ve sayaç tarafından PAYLAŞILIR ve öyle
+    KALMALIDIR: üçü aynı kümeyi görmezse "Toplam Hakediş" kartı altındaki
+    tablodan başka bir şeyi özetler. Bu yüzden gevşetme üçüne birden uygulanır
+    — özet ucu da artık kapsayan kümeyi özetler ve `site_id` alan bir çağıran
+    kartın "şantiyenin parası" DEĞİL "şantiyeyi kapsayan hakedişler" olduğunu
+    bilerek okumalıdır.
     """
     stmt = (
         select(SubcontractorProgressPayment, SubcontractorContract, Project)
@@ -283,7 +312,14 @@ def _list_stmt(
     if project_id is not None:
         stmt = stmt.where(SubcontractorProgressPayment.project_id == project_id)
     if site_id is not None:
-        stmt = stmt.where(SubcontractorContract.site_id == site_id)
+        # Proje geneli (`site_id IS NULL`) sözleşme HER şantiyeyi kapsar →
+        # kümeye girer. `is_(None)` bacağı düşerse HAK-NULL geri gelir.
+        stmt = stmt.where(
+            or_(
+                SubcontractorContract.site_id == site_id,
+                SubcontractorContract.site_id.is_(None),
+            )
+        )
     if period_year is not None:
         stmt = stmt.where(SubcontractorProgressPayment.period_year == period_year)
     if period_month is not None:
