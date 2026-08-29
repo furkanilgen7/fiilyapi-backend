@@ -481,6 +481,10 @@ class ProjectListItem(BaseModel):
 
     id: uuid.UUID
     code: str
+    # URL-2 — okunabilir URL kimligi. Frontend URL-3'te `/projeler/<slug>`u
+    # buradan basacak. `None` olabilir (adi slug'lanamayan ya da servis
+    # disinda acilmis kayit) — o durumda URL UUID olarak kalir.
+    slug: str | None = None
     name: str
     project_type: ProjectType
     category: str | None

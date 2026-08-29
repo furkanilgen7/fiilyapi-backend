@@ -10,6 +10,7 @@ from app.core.errors import (
     ProjectTypeMismatchError,
     ProjectValidationError,
 )
+from app.core.slug import allocate_slug, slugify, unique_slug
 from app.core.timezone import today
 from app.modules.projects import cost_cards, messages, progress_cards, repository
 from app.modules.projects.cards import (
@@ -101,6 +102,7 @@ def _to_item(
     return ProjectListItem(
         id=project.id,
         code=project.code,
+        slug=project.slug,
         name=project.name,
         project_type=project.project_type,
         category=project.category,
@@ -247,24 +249,53 @@ async def list_projects_overview(
     )
 
 
-async def _visible_project(session: AsyncSession, actor: User, project_id: uuid.UUID) -> Project:
+def project_matches_ref(project: Project, ref: uuid.UUID | str) -> bool:
+    """URL-2: proje YA kimligiyle YA slug'iyla eslesir (karar 2).
+
+    Slug NULL olan bir proje HICBIR slug'la eslesmez: slug tasimayan kayit
+    yalnizca UUID'siyle erisilebilir — istenen davranis budur.
+
+    🔴 `is not None` MUTASYONLA OLCULDU ve **ESDEGER MUTANT** cikti (durustce
+    kaydediliyor): kaldirildiginda 20 API testinin hicbiri kirilmadi. Sebep
+    olculdu — Python'da `None == "slug"` zaten `False`, ve `ref` hicbir zaman
+    `None` olamaz (yol parametresi zorunlu, `parse_ref` `None` dondurmez). Yani
+    bu kosul bugun BIR OLCUTU SAVUNMUYOR, NIYETI BELGELIYOR. Bilincli olarak
+    KALIYOR: `ref`in bir gun opsiyonellesmesi hâlinde "bos referans her slugsuz
+    kaydi acar" kusurunu pesinen kapatir. "Test var" ile "olcutu savunan bekci
+    var" ayni sey degildir — burada IKINCISI YOK.
+    """
+    if isinstance(ref, uuid.UUID):
+        return project.id == ref
+    return project.slug is not None and project.slug == ref
+
+
+async def _visible_project(
+    session: AsyncSession, actor: User, project_ref: uuid.UUID | str
+) -> Project:
     """Gorunur kumede olmayan proje 404 — varligi sizdirilmaz (spec §5.6).
 
     TEK kimlik-ile-erisim kapisi burasidir. Hem OKUMA hem YAZMA uclari bundan
     gecmek ZORUNDA: yalnizca okumayi suzmek, listede hic gorunmeyen bir projeyi
     UUID'sini bilen kullanicinin PATCH ile degistirebilmesi demektir.
+
+    🔴 URL-2 / IDOR: slug TAHMIN EDILEBILIR, UUID degil. Bu yuzden slug
+    cozumlemesi AYRI bir sorgu olarak DEGIL, TAM OLARAK BURADA — gorunur
+    kumenin ICINDE — yapilir. Once cozup sonra suzmek, kapiyi bir satirlik bir
+    dikkatsizlikle atlanabilir kilardi; kume icinde eslestirmek onu YAPISAL
+    olarak atlanamaz yapar. Gormedigi projenin slug'iyla gelen istek, var
+    olmayan slug'la BIREBIR AYNI 404'u alir.
     """
     visible = await visible_projects(session, actor)
-    project = next((p for p in visible if p.id == project_id), None)
+    project = next((p for p in visible if project_matches_ref(p, project_ref)), None)
     if project is None:
         raise NotFoundError("Proje bulunamadı")
     return project
 
 
 async def get_project_detail(
-    session: AsyncSession, actor: User, project_id: uuid.UUID
+    session: AsyncSession, actor: User, project_ref: uuid.UUID | str
 ) -> ProjectDetailResponse:
-    project = await _visible_project(session, actor, project_id)
+    project = await _visible_project(session, actor, project_ref)
     return await build_project_detail(session, project, actor)
 
 
@@ -465,12 +496,21 @@ async def _write_inline_sites(
     # ettiği için modül düzeyinde çember olurdu.
     from app.modules.sites.service import _next_site_code
 
+    # URL-2: proje YENI oldugu icin kapsamda (proje ici) hicbir santiye YOKTUR —
+    # slug'lar DB'ye sorulmadan, biriken kume uzerinde ayrilir. Ayni ada sahip
+    # iki satir ici santiye (`A Blok` / `A. Blok`) burada `a-blok` ve `a-blok-2`
+    # olur; sessizce cakismaz.
+    taken_slugs: set[str] = set()
     for site_input in sites_input:
         code = site_input.code or await _next_site_code(session)
+        slug = unique_slug(slugify(site_input.name), taken_slugs)
+        if slug is not None:
+            taken_slugs.add(slug)
         session.add(
             Site(
                 project_id=project.id,
                 code=code,
+                slug=slug,
                 name=site_input.name,
                 site_manager_name=site_input.site_manager_name,
                 construction_area_m2=site_input.construction_area_m2,
@@ -491,8 +531,13 @@ async def create_project(session: AsyncSession, data: ProjectCreate) -> Project:
     lines = data.budget_lines
     # budget = Σ kalemler (spec §2.3, §3.4): SERVİS hesaplar; istemci `budget` yok sayılır.
     total_budget = lines.material + lines.labor + lines.subcontractor + lines.overhead
+    # URL-2: slug OLUSTURULURKEN uretilir ve AD DEGISINCE DEGISMEZ (kullanici
+    # karari 2026-08-29) — bu yuzden `update_project` slug'a HIC dokunmaz.
+    # Kapsam SIRKET GENELIDIR: `allocate_slug`e suzgec verilmez.
+    slug = await allocate_slug(session, data.name, Project.slug)
     project = Project(
         code=code,
+        slug=slug,
         name=data.name,
         project_type=data.project_type,
         status=data.status,

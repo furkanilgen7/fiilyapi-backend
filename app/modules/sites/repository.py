@@ -347,3 +347,46 @@ async def site_has_progress_payment_lines(session: AsyncSession, site_id: uuid.U
         )
     )
     return bool(result.scalar_one())
+
+
+async def list_sites_by_slug(
+    session: AsyncSession, project_ids: Sequence[uuid.UUID], slug: str
+) -> list[Site]:
+    """URL-2 — verilen PROJELERDEKI slug esleseni santiyeler.
+
+    Gorunurluk suzgeci BURADA UYGULANMAZ (repository kanonu): cagiran taraf
+    `project_ids`i ZATEN gorunur kumeden turetir. Bos liste bos sonuc doner —
+    `IN ()` yazilmaz, SQLAlchemy bunu `false`a cevirir.
+    """
+    if not project_ids:
+        return []
+    result = await session.execute(
+        select(Site)
+        .where(Site.project_id.in_(project_ids), Site.slug == slug)
+        .order_by(Site.project_id, Site.id)
+    )
+    return list(result.scalars().all())
+
+
+async def list_site_ids_for_projects(
+    session: AsyncSession, project_ids: Sequence[uuid.UUID]
+) -> list[uuid.UUID]:
+    """URL-2 — kapsam daraltma icin santiye kimlikleri (tam satir YUKLENMEZ)."""
+    if not project_ids:
+        return []
+    result = await session.execute(select(Site.id).where(Site.project_id.in_(project_ids)))
+    return list(result.scalars().all())
+
+
+async def list_sections_by_slug(
+    session: AsyncSession, site_ids: Sequence[uuid.UUID], slug: str
+) -> list[Section]:
+    """URL-2 — verilen SANTIYELERDEKI slug esleseni bolumler (`list_sites_by_slug` ikizi)."""
+    if not site_ids:
+        return []
+    result = await session.execute(
+        select(Section)
+        .where(Section.site_id.in_(site_ids), Section.slug == slug)
+        .order_by(Section.site_id, Section.id)
+    )
+    return list(result.scalars().all())

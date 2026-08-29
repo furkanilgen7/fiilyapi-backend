@@ -10,6 +10,7 @@ from app.core.deps import get_current_user
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
+from app.core.slug import parse_ref
 from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
@@ -130,11 +131,26 @@ async def get_projects_timeline_endpoint(
     dependencies=[require_permission("projects", AccessLevel.view)],
 )
 async def get_project_endpoint(
-    project_id: uuid.UUID,
+    project_id: str,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> ProjectDetailResponse:
-    return await service.get_project_detail(session, user, project_id)
+    """URL-2 — yol parametresi UUID **ya da** slug kabul eder (karar 2).
+
+    🔴 YOL ADI `project_id` OLARAK KALIR: yolun sablonu (`/projects/{project_id}`)
+    degismezse uretilmis istemcinin yol anahtari de degismez. Degisen tek sey
+    parametrenin TIPIDIR (`uuid` -> `string`) — sozlesme farkinda gorulecek
+    sey budur.
+
+    🔴 YAN ETKI: eskiden UUID olmayan bir deger 422 (`uuid_parsing`) alirdi,
+    artik 404 alir. Bu KACINILMAZDIR — slug uzayi tam olarak "UUID olmayan
+    metinler"dir; ikisi ayni yol parametresinde birlikte yasayamaz.
+
+    PATCH ucu BILEREK `uuid.UUID` KALIR: karar 2 "OKUMA uclari" der. Yazmanin
+    kimligi, okumanin dondurdugu `id`den gelir; yazma yuzeyini tahmin edilebilir
+    bir anahtara acmak icin sebep YOKTUR.
+    """
+    return await service.get_project_detail(session, user, parse_ref(project_id))
 
 
 @router.get(

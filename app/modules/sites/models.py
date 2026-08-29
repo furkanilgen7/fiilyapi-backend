@@ -79,6 +79,18 @@ class Site(Base):
         # ama kisiti global `UNIQUE`'e cevirmek mevcut ad-turevi kodlari (`A-BLOK`
         # iki projede birden olabilir) patlatir.
         UniqueConstraint("project_id", "code", name="uq_sites_project_code"),
+        # URL-2: slug PROJE İÇİNDE tekildir — `uq_sites_project_code`in aynası.
+        # URL nested'dir (`/projeler/<p>/santiyeler/<s>`), yani kapsam URL'de
+        # zaten vardır; global tekillik iki projede birden `a-blok` bulunmasını
+        # gereksiz yere yasaklardı.
+        # Kısmi indeks: slug NULLABLE (gerekçe `Site.slug` alan yorumunda).
+        Index(
+            "uq_sites_project_slug",
+            "project_id",
+            "slug",
+            unique=True,
+            postgresql_where=text("slug IS NOT NULL"),
+        ),
         # ISG uzmani YA sistem kullanicisidir YA dis kaynak (OSGB) — ikisi birden
         # olamaz (spec §3.3). Ucuncu gecerli dal: hicbiri (ISG hicbir kosulda zorunlu degil).
         CheckConstraint(
@@ -98,6 +110,11 @@ class Site(Base):
     # (service._next_site_code, spec §3.2) ve kullanici PATCH ile duzeltebilir.
     code: Mapped[str] = mapped_column(String(50), nullable=False)
     name: Mapped[str] = mapped_column(String(150), nullable=False)
+    # URL-2 — okunabilir URL kimliği. `Project.slug` ile AYNI kurallar:
+    # oluşturulurken üretilir, ad değişince DEĞİŞMEZ, nullable (gerekçe orada).
+    # 🔴 TEK FARK KAPSAMDIR: burada tekillik PROJE İÇİDİR (`code` ile aynı),
+    # `Project.slug`ta şirket geneli. `Section.slug`ta ŞANTİYE İÇİ.
+    slug: Mapped[str | None] = mapped_column(String(160), nullable=True)
     status: Mapped[SiteStatus] = mapped_column(
         Enum(SiteStatus, name="site_status"),
         nullable=False,
@@ -243,6 +260,18 @@ class Section(Base):
             unique=True,
             postgresql_where=text("code IS NOT NULL"),
         ),
+        # URL-2: slug ŞANTİYE İÇİNDE tekildir — `uq_sections_site_code`in aynası.
+        # 🔴 ÖLÇÜLDÜ: `Section.code` zaten nullable ve KISMİ indekslidir, yani
+        # bu üç varlık aynı değildir; slug'ın deseni burada `code`unkiyle
+        # kendiliğinden örtüşür, `sites`ta ise `code` NOT NULL olduğu için
+        # ayrışır (bkz. `Site.slug`).
+        Index(
+            "uq_sections_site_slug",
+            "site_id",
+            "slug",
+            unique=True,
+            postgresql_where=text("slug IS NOT NULL"),
+        ),
         CheckConstraint(
             "planned_worker_count IS NULL OR planned_worker_count >= 0",
             name="ck_sections_planned_worker_count",
@@ -262,6 +291,8 @@ class Section(Base):
     )
     code: Mapped[str | None] = mapped_column(String(50), nullable=True)
     name: Mapped[str] = mapped_column(String(150), nullable=False)
+    # URL-2 — okunabilir URL kimliği; kapsam ŞANTİYE İÇİ (bkz. `__table_args__`).
+    slug: Mapped[str | None] = mapped_column(String(160), nullable=True)
     status: Mapped[SectionStatus] = mapped_column(
         Enum(SectionStatus, name="section_status"),
         nullable=False,

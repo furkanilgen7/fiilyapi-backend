@@ -137,9 +137,15 @@ async def build_section_detail(
 
 
 async def get_site_detail(
-    session: AsyncSession, actor: User, site_id: uuid.UUID
+    session: AsyncSession,
+    actor: User,
+    site_ref: uuid.UUID | str,
+    *,
+    project_ref: uuid.UUID | str | None = None,
 ) -> SiteDetailResponse:
-    site, project = await _visible_site(session, actor, site_id)
+    """URL-2: `site_ref` UUID ya da slug. Kapsam ve fail-closed kurali
+    `_visible_site` docstring'indedir — burada kopyalanmaz."""
+    site, project = await _visible_site(session, actor, site_ref, project_ref=project_ref)
     return await build_site_detail(session, site, actor, project)
 
 
@@ -168,7 +174,12 @@ async def list_sections_for_site(
 
 
 async def get_section_detail(
-    session: AsyncSession, actor: User, section_id: uuid.UUID
+    session: AsyncSession,
+    actor: User,
+    section_ref: uuid.UUID | str,
+    *,
+    site_ref: uuid.UUID | str | None = None,
+    project_ref: uuid.UUID | str | None = None,
 ) -> SectionDetailResponse:
     """P6 §5 — `GET /sections/{section_id}`.
 
@@ -180,5 +191,7 @@ async def get_section_detail(
     Gorunmeyen bolum 404 `Bölüm bulunamadı` doner ve govdesi var olmayan bir
     UUID'ninkiyle BIREBIR AYNIDIR.
     """
-    section, _ = await _visible_section(session, actor, section_id)
+    section, _ = await _visible_section(
+        session, actor, section_ref, site_ref=site_ref, project_ref=project_ref
+    )
     return await build_section_detail(session, section, actor)
