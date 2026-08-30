@@ -34,6 +34,7 @@ from app.modules.subcontractor_progress_payments.models import (
     SubcontractorProgressPaymentLine,
 )
 from app.modules.users.models import User
+from tests._para_gercek import parayi_yatir
 
 pytestmark = pytest.mark.asyncio
 
@@ -163,6 +164,9 @@ async def test_gecerli_gecis_hedef_duruma_goturur(
         admin_kullanicisi,
         status=SubcontractorPaymentStatus(durum),
     )
+    if uc == "mark-paid":
+        # 🔴 PARA-GERCEK: `paid` artık arkasında GERÇEKLEŞMİŞ para ister.
+        await parayi_yatir(seeded_db, payment.id, taseron=True)
     yanit = await client.post(
         f"/subcontractor-progress-payments/{payment.id}/{uc}",
         json=GEREKCE,
@@ -239,6 +243,7 @@ async def test_mark_paid_damgasi(
         admin_kullanicisi,
         status=SubcontractorPaymentStatus.approved,
     )
+    await parayi_yatir(seeded_db, payment.id, taseron=True)
     yanit = await client.post(
         f"/subcontractor-progress-payments/{payment.id}/mark-paid", headers=admin_headers
     )
@@ -719,6 +724,9 @@ async def test_denetim_kaydi_yazilir(
         admin_kullanicisi,
         status=SubcontractorPaymentStatus(durum),
     )
+    if uc == "mark-paid":
+        # 🔴 PARA-GERCEK: `paid` artık arkasında GERÇEKLEŞMİŞ para ister.
+        await parayi_yatir(seeded_db, payment.id, taseron=True)
     yanit = await client.post(
         f"/subcontractor-progress-payments/{payment.id}/{uc}",
         json=GEREKCE,

@@ -50,6 +50,7 @@ from app.modules.progress_payments.models import ProgressPaymentStatus
 from app.modules.progress_payments.transitions import PaymentAction
 from app.modules.subcontractor_progress_payments import transitions as taseron_transitions
 from app.modules.subcontractor_progress_payments.models import SubcontractorPaymentStatus
+from tests._para_gercek import parayi_yatir
 from tests.modules.posting._mu3d import (
     aktor,
     esleme_kur,
@@ -125,6 +126,12 @@ async def test_FISLENEN_OLAY_KUMESI_UC_AILENIN_TABLOLARINDAN_TURETILIR(seeded_db
             payment.approved_by = kullanici.id
         await seeded_db.flush()
 
+        # 🔴 PARA-GERCEK: `mark-paid` artık arkasında GERÇEKLEŞMİŞ para ister;
+        #    kurulmazsa bu tur, ölçtüğü fişleme kuralını değil kapının 409'unu
+        #    gösteren bir kırmızı verirdi.
+        if eylem is PaymentAction.mark_paid:
+            await parayi_yatir(seeded_db, payment.id, taseron=False)
+
         once = await _kaynak_damgalari(seeded_db)
         # `reject` gerekçe ZORUNLU ister (taşeron ailesinde kolon, işverende
         #    denetim metni) — verilmezse test, ölçtüğü kuralı değil kurulumu
@@ -157,6 +164,12 @@ async def test_FISLENEN_OLAY_KUMESI_UC_AILENIN_TABLOLARINDAN_TURETILIR(seeded_db
             payment.approved_at = datetime.now(DISPLAY_TIMEZONE)
             payment.approved_by = kullanici.id
         await seeded_db.flush()
+
+        # 🔴 PARA-GERCEK: `mark-paid` artık arkasında GERÇEKLEŞMİŞ para ister;
+        #    kurulmazsa bu tur, ölçtüğü fişleme kuralını değil kapının 409'unu
+        #    gösteren bir kırmızı verirdi.
+        if eylem is PaymentAction.mark_paid:
+            await parayi_yatir(seeded_db, payment.id, taseron=True)
 
         once = await _kaynak_damgalari(seeded_db)
         # `reject` gerekçe ZORUNLU ister (taşeron ailesinde kolon, işverende

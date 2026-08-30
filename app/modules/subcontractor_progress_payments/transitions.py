@@ -22,6 +22,22 @@ Yön TEK taraflıdır (`subcontractor_progress_payments` → `progress_payments`
    İşverendeki "reject `submitted_at`'i temizlemez" asimetrisi burada da
    korunur (gönderim GERÇEKTEN olmuştur, damga yeniden `submit`te üzerine yazılır).
 
+## 🔴 PARA-GERCEK — `paid` DAMGASI ARTIK BEDAVA DEĞİL
+
+Kullanıcının kuralı: *"Nakit olarak görmeden veya çekin vadesi gelip de tahsil
+edilmeden 'ödendi' gözükmemesi gerekiyor."* Canlıda ÜÇ taşeron hakedişi
+arkalarında hiçbir ödeme kaydı olmadan `paid` görünüyordu.
+
+`mark_paid` artık `_assert_para_gercek`ten geçer: hakedişin bağlayıcı faturasına
+yazılmış ve NAKDE GEÇMİŞ ödemeler netini karşılamıyorsa **409**. Nakdin tanımı
+`treasury.balance.cash_realized_condition`tır (banka bakiyesinin tek kaynağı) —
+yani çek portföyde beklerken hakediş ödenmiş SAYILMAZ, tahsil/ödeme damgası
+düştüğü an SAYILIR.
+
+🔴 Kapı İLERİ yöndedir: tablo DEĞİŞMEDİ, `paid` hâlâ TERMİNALDİR. Gerekçe ve
+kapsam dışı bırakılan karar (ödeme silinirse/karşılıksız çıkarsa) kardeş
+dosyanın docstring'inde TEK KOPYA olarak durur.
+
 ## Kotanın nihai bekçisi: ONAY anı (spec §4)
 
 `approve` kotayı KİLİT ALTINDA yeniden doğrular ve bunu **sırasız TAM küme**
@@ -45,10 +61,12 @@ from app.core.timezone import to_display
 from app.modules.approvals import service as approvals_service
 from app.modules.approvals.models import ApprovalDocumentType
 from app.modules.contracts.models import SubcontractorContract
+from app.modules.invoicing.models import Invoice
 from app.modules.progress_payments import calculations
 from app.modules.progress_payments.transitions import PaymentAction, build_transition_table
 from app.modules.projects.models import Project
 from app.modules.subcontractor_progress_payments import (
+    amounts,
     guards,
     lines,
     posting,
@@ -59,6 +77,7 @@ from app.modules.subcontractor_progress_payments.models import (
     SubcontractorPaymentStatus,
     SubcontractorProgressPayment,
 )
+from app.modules.treasury import realized
 from app.modules.users.models import User
 
 _ZERO = Decimal("0")
@@ -196,6 +215,28 @@ def _stamp(
         payment.approved_by = None
 
 
+async def _assert_para_gercek(session: AsyncSession, payment: SubcontractorProgressPayment) -> None:
+    """🔴 PARA-GERCEK — `mark-paid`in ÖN KOŞULU. İşveren ikizinin AYNASI.
+
+    Kullanıcının kuralı: *"Nakit olarak görmeden veya çekin vadesi gelip de
+    tahsil edilmeden 'ödendi' gözükmemesi gerekiyor."* Canlıda ÜÇ taşeron
+    hakedişi arkalarında tek kuruş ödeme olmadan `paid` damgası taşıyordu;
+    `mark_paid` hiçbir şeye bakmıyordu.
+
+    Net `amounts.calculation_for`dan gelir — ekranın (ve `upcoming.py`nin
+    "Yaklaşan Ödemeler" kartının) gördüğü NETİN TA KENDİSİ. Brüt kullanılsaydı
+    kesintili her hakediş için kullanıcıdan olduğundan FAZLA para beklenirdi ve
+    hakediş hiç kapanamazdı; hesap burada İKİNCİ KEZ YAZILMAZ.
+
+    Bu ailede sözleşme NULL olamaz (`visible_payment_locked` onu zorunlu döner),
+    bu yüzden işveren ikizindeki fail-closed sözleşme dalının karşılığı YOKTUR.
+    """
+    net = (await amounts.calculation_for(session, payment)).net
+    await realized.assert_realized_covers(
+        session, Invoice.subcontractor_progress_payment_id, payment.id, net
+    )
+
+
 async def _apply_action_rules(
     session: AsyncSession,
     contract: SubcontractorContract,
@@ -208,6 +249,8 @@ async def _apply_action_rules(
         guards.validate_submit(payment)
     elif action is PaymentAction.approve:
         await _revalidate_quota(session, contract, payment)
+    elif action is PaymentAction.mark_paid:
+        await _assert_para_gercek(session, payment)
     elif action is PaymentAction.reject:
         return guards.validate_reject(reason)
     return None
