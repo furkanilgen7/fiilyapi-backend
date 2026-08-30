@@ -90,3 +90,35 @@ async def record_tool_call(
             )
         )
         await session.commit()
+
+
+async def record_ai_turn(
+    *,
+    user_id: uuid.UUID | None,
+    detail: str,
+    ip_address: str | None = None,
+) -> None:
+    """Tur başına **TEK** özet satırı (`AuditAction.ai_turn`) — AI-1'in ürettiği.
+
+    🔴 `record_audit` **COMMIT ETMEZ** (docstring'i birebir böyle der) ve
+    commit'i normalde `get_db` sahiplenir. Ama bu satır bir **akış** yanıtının
+    sonunda yazılır: `StreamingResponse` gövdesi bittiğinde istek session'ının
+    hâlâ açık olduğuna güvenmek ölçülmemiş bir varsayımdır ve yanılırsa özet
+    satırı SESSİZCE düşer. Bu yüzden `record_tool_call` ile aynı disiplin
+    uygulanır: **kendi session'ı, kendi commit'i.**
+
+    🔴 `record_audit`ın imzası DEĞİŞTİRİLMEZ (110 çağrı yeri); burada yalnız
+    ÇAĞRILIR ve commit dışarıdan verilir.
+    """
+    from app.modules.audit.models import AuditAction
+    from app.modules.audit.service import record_audit
+
+    async with SessionLocal() as session:
+        await record_audit(
+            session,
+            action=AuditAction.ai_turn,
+            detail=detail,
+            actor_user_id=user_id,
+            ip_address=ip_address,
+        )
+        await session.commit()

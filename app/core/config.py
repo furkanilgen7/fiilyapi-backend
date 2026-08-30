@@ -78,6 +78,26 @@ class Settings(BaseSettings):
     # dwg gibi tiplerin güvenilir tek bir MIME'i yok.
     allowed_document_extensions: str = "pdf,doc,docx,xls,xlsx,csv,dwg,jpg,jpeg,png,heic,zip"
 
+    # ------------------------------------------------------------------ #
+    # FİİL AI (AI-1) — sağlayıcı yapılandırması
+    # ------------------------------------------------------------------ #
+    # 🔴 Anahtarlar YALNIZ ortamdan gelir; DB'de DURMAZ. Ölçülmüş sebep:
+    # şirket ayarları `company` tablosunda düz `String` sütunlar olarak yaşıyor
+    # ve o tablo `settings:view` olan HERKESE açık. Bir sağlayıcı anahtarını
+    # oraya koymak, sırrı bir izin seviyesinin arkasına saklamak olurdu.
+    ai_openai_api_key: str = ""
+    ai_anthropic_api_key: str = ""
+    ai_gemini_api_key: str = ""
+    # Boş = AI kapalı. Uygulama yine de AÇILIR; `POST /ai/chat` dürüst hata döner
+    # (bkz. `app/modules/ai/providers/factory.py` başlığı — açılışı kırmak
+    # canlıyı çökertir ve bir AI anahtarının eksikliği hakediş girişini
+    # durdurmak için sebep değildir).
+    ai_provider: str = ""
+    ai_model: str = "gpt-4.1-mini"
+    # Tur başına azami araç çağrısı. Aşımda model `butce_asildi` zarfını görür ve
+    # bunu DÜRÜSTÇE basar — "kayıt yok" DEMEZ.
+    ai_max_tool_calls: int = 8
+
     @field_validator("database_url", "test_database_url")
     @classmethod
     def _normalize_pg_driver(cls, value: str) -> str:

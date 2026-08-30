@@ -217,6 +217,22 @@
         "title": "AccountingPeriodStatus",
         "type": "string"
       },
+      "AiChatRequest": {
+        "description": "`POST /ai/chat` gövdesi — **durumsuz** tur (§9-A3 kararı bekliyor).\n\n🔴 `conversation_id` alanı YOKTUR: `ai_conversations`/`ai_messages` tabloları\naçılmadı ve olmayan bir kimliği kabul eden bir alan, istemciye \"konuşma\nsürüyor\" yalanını söyletirdi.\n\n🔴 `model` / `provider` / `temperature` alanları da YOKTUR: sağlayıcı ve\nmodel **sunucu** yapılandırmasıdır. İstemcinin model seçebilmesi, maliyeti\nve veri işleyicisini istemciye devretmek olurdu.",
+        "properties": {
+          "mesaj": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Mesaj",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mesaj"
+        ],
+        "title": "AiChatRequest",
+        "type": "object"
+      },
       "AiContextResponse": {
         "description": "S14'ün korkuluğu: AI sınırını **bilerek** çağırsın.\n\n`/auth/me` kapsam taşımaz; AI sınırını bilmeden çağırır ve 404'ü yalana\nçevirir. Bu uç `permissions` + görünür araç sicili + yetki dışı modülleri\nbirlikte verir.",
         "properties": {
@@ -34777,6 +34793,62 @@
         "summary": "Reopen Accounting Period Endpoint",
         "tags": [
           "accounting"
+        ]
+      }
+    },
+    "/ai/chat": {
+      "post": {
+        "description": "Tek bir kullanıcı mesajı için ajan turunu akıtır.\n\nKapı: `ai:view` (`_VIEW`). 🔴 `ai:full` diye bir şey YOKTUR.\n\n🔴 Sağlayıcı yapılandırılmamışsa **503 + dürüst mesaj** döner, genel bir 500\nDEĞİL: \"sistem hatası\" cümlesi operatörü yanlış yerde arattırır. Hata akış\nBAŞLAMADAN verilir; yarısı akmış bir yanıtın içine hata gömmek, istemciye\n\"cevap geldi ama eksik\" hissi verirdi.",
+        "operationId": "ai_chat_endpoint_ai_chat_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Sunucu-gönderimli olay akışı (SSE)."
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "AI sağlayıcısı yapılandırılmadı ya da tanınmıyor."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Ai Chat Endpoint",
+        "tags": [
+          "ai"
         ]
       }
     },

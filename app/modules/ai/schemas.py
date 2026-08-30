@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class AiToolRead(BaseModel):
@@ -51,3 +51,18 @@ class AiContextResponse(BaseModel):
     #: bir rol proje kimliklerini buradan sızdırabilirdi. Kullanıcı proje
     #: kümesini `projeleri_listele` aracıyla, kendi kapısından geçerek öğrenir.
     proje_kimlikleri_notu: str
+
+
+class AiChatRequest(BaseModel):
+    """`POST /ai/chat` gövdesi — **durumsuz** tur (§9-A3 kararı bekliyor).
+
+    🔴 `conversation_id` alanı YOKTUR: `ai_conversations`/`ai_messages` tabloları
+    açılmadı ve olmayan bir kimliği kabul eden bir alan, istemciye "konuşma
+    sürüyor" yalanını söyletirdi.
+
+    🔴 `model` / `provider` / `temperature` alanları da YOKTUR: sağlayıcı ve
+    model **sunucu** yapılandırmasıdır. İstemcinin model seçebilmesi, maliyeti
+    ve veri işleyicisini istemciye devretmek olurdu.
+    """
+
+    mesaj: str = Field(min_length=1, max_length=4000)
