@@ -141,6 +141,14 @@ MODULES: list[dict] = [
     # `Ayarlar - İzin Matrisi` mockup'ında satırı YOKTUR — bilinçli sapma.
     # sort_order 21: mevcut modüllerin sırası KAYDIRILMAZ (sona eklenir).
     {"key": "equipment", "name": "Makine & Ekipman", "group": ModuleGroup.SAHA, "sort_order": 21},
+    # AI-0b spec §8 T4: 22. modul. Grup SISTEM (`settings`/`user_management`
+    # yani) — AI bir SAHA ya da MALI yuzeyi degil, sistem yetenegidir.
+    # sort_order 22: mevcut modullerin sirasi KAYDIRILMAZ (sona eklenir).
+    # `boq`/`contracts`/`sales`/`documents`/`equipment` gibi `Ayarlar - Izin
+    # Matrisi` mockup'inda satiri YOKTUR — bilincli sapma. Ama ekran modul
+    # bazli gizleme YAPMADIGI icin (`PermissionMatrix.tsx` `useModules()` tum
+    # modulleri ceker) satir ekranda GORUNUR; bu bir karar degil, OLGUDUR.
+    {"key": "ai", "name": "FİİL AI", "group": ModuleGroup.SISTEM, "sort_order": 22},
 ]
 
 # Kısayollar — matrisi okunur tutmak için.
@@ -236,6 +244,22 @@ MATRIX: dict[str, list[tuple[AccessLevel, Scope]]] = {
     # Silme yalnız system_admin'dedir (`_A`; `full` silmeyi kapsamaz) — zaten
     # DELETE ucu YOKTUR, kullanımdan kaldırma `is_active=false` iledir.
     "equipment": [_A, _F, _F, _V, _N, _F, _F, _V],
+    # AI-0b · kullanici karari 2026-08-29: "AI'i herkes KENDI KAPSAMINDA
+    # kullanabilsin." Yani hicbir rol `_N` degildir.
+    #
+    # 🔴 system_admin = `_A` SECIM DEGIL ZORUNLULUKTUR: `test_seed_matrix.py::
+    # test_system_admin_has_admin_level_everywhere` her modulde `admin` bekler.
+    #
+    # 🔴 patron `_F` DEGIL `_V`: `ai` modulunde `full` HICBIR SEY IFADE ETMEZ.
+    # Yazma kapisi seviyede degil ROL ANAHTARINDADIR (`SYSTEM_ADMIN_KEY`,
+    # spec §6.1). `_F` yazsaydik Izin Matrisi ekrani var OLMAYAN bir yetkiyi
+    # ("Tam") gosterirdi. Anlamli seviye kumesi `{none, view}`; ekrandaki tek
+    # gercek ayrim "AI'i kullanabilir / kullanamaz"dir.
+    #
+    # ⚠️ system_admin sutunu ekrandan DEGISTIRILEMEZ (`PermissionMatrix.tsx`
+    # `readOnly = role.key === SYSTEM_ADMIN_KEY`), yani buraya `_V` yazilsaydi
+    # sonsuza kadar `_V` kalirdi.
+    "ai": [_A, _V, _V, _V, _V, _V, _V, _V],
 }
 
 
@@ -244,7 +268,7 @@ async def seed_reference_data(session: AsyncSession) -> None:
 
     Idempotent: hangi başlangıç durumundan çalıştırılırsa çalıştırılsın (boş DB,
     tamamen seed edilmiş DB, ya da roller/modüller var ama role_permissions boş)
-    sonuçta 8 rol, 21 modül ve 168 izin satırı bulunur; mevcut satırlar
+    sonuçta 8 rol, 22 modül ve 176 izin satırı bulunur; mevcut satırlar
     üzerine yazılmaz ve `uq_role_module` UNIQUE kısıtı asla ihlal edilmez.
     """
     existing_role_rows = (await session.execute(select(Role))).scalars().all()

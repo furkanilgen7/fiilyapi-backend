@@ -21,7 +21,7 @@ async def test_create_custom_role_seeds_full_matrix(seeded_db):
             .where(RolePermission.role_id == role.id)
         )
     ).scalar_one()
-    assert count == 21  # her modul icin bir hucre (none/all)
+    assert count == 22  # her modul icin bir hucre (none/all)
 
 
 async def test_create_custom_role_duplicate_key_raises(seeded_db):
@@ -56,4 +56,4 @@ async def test_delete_role_in_use_rejected(seeded_db, user_factory):
 async def test_get_role_matrix_returns_all_modules(seeded_db):
     patron = (await seeded_db.execute(select(Role).where(Role.key == "patron"))).scalar_one()
     matrix = await repository.get_role_matrix(seeded_db, patron.id)
-    assert len(matrix) == 21
+    assert len(matrix) == 22

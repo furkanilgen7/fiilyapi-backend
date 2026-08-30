@@ -26,6 +26,12 @@ class AuditAction(str, enum.Enum):
     delete = "delete"
     approve = "approve"
     backup = "backup"
+    # AI-0b: FIIL AI'in bir TURUNUN ozet satiri (spec §2.2 KATMAN 6 / S8).
+    # `approve`/`backup` gibi ureticisi SONRAKI fazda (AI-1 `POST /ai/chat`)
+    # gelir; enumu simdi acmak ikinci bir enum takas migration'ini onler.
+    # Araç-basina ayrintili iz AYRI tablodadir (`ai_tool_calls`) — bu uye
+    # denetim gunlugune TUR BASINA TEK ozet satir dusurmek icindir.
+    ai_turn = "ai_turn"
 
 
 class AuditLog(Base):

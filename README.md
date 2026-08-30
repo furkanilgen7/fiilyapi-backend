@@ -160,10 +160,18 @@ git diff -- tests/contract/openapi_baseline.json        # beklenen fark bu mu?
 .venv/bin/pytest tests/contract/                        # yeşile dönmeli
 
 # 2) Frontend sözleşmesini ve tiplerini yenile  🔴 DEVİR BORCU
-.venv/bin/python -c "import json; from app.main import app; print(json.dumps(app.openapi(), ensure_ascii=False, indent=2))" > openapi.json
-cp openapi.json ../frontend/openapi/openapi.json
+#    🔴 KAYNAK **TABAN DOSYASIDIR**, `app.openapi()` çıktısı DEĞİL (AI-0b'de ölçüldü):
+#    taban `sort_keys=True` ile yazılır, `app.openapi()` ise ekleme sırasını korur.
+#    Doğrudan üretilen dosya SIRASIZ olur ve devir 22.000 satırlık sahte bir diff
+#    üretir. Ölçüm: `git show HEAD:tests/contract/openapi_baseline.json` ile
+#    `frontend/openapi/openapi.json` **cmp ile BİREBİR AYNI** çıktı.
+cp tests/contract/openapi_baseline.json ../frontend/openapi/openapi.json
 cd ../frontend && pnpm gen:api   # openapi-typescript openapi/openapi.json -o src/lib/api/schema.d.ts
 ```
+
+⚠️ Eskiden burada `python -c "... json.dumps(app.openapi(), indent=2)" > openapi.json`
++ `cp` yazıyordu. O komut **`sort_keys` taşımıyordu** ve fiilen hiç kullanılmamıştı;
+`frontend/scripts/gen-api.md` de aynı hatanın ikinci kopyasıydı. İkisi de düzeltildi.
 
 🔴 Sözleşmeyi değiştiren şef, **raporuna frontend devri gerektiğini yazar**. Tabanı
 gerekçesiz yenilemek kapıyı hükümsüz kılar.

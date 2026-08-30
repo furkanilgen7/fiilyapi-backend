@@ -715,6 +715,12 @@ async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
     orada **KIRICI** olarak ölçülmüştür (`StockEntryLineResponse.required`
     genişledi). Yani 233→**234** · 341→**342**.
 
+    🔴 **AI-0b (+2 yol / +2 operasyon):** `GET /ai/tools` + `GET /ai/context`.
+    Yani 234→**236** · 342→**344**. Aynı dilim `audit_action` enum'una
+    `ai_turn` uyesini de ekler: bu sayaçların HİÇBİRİNİ oynatmaz ama
+    sözleşme tabanını KIRICI biçimde değiştirir (`AuditAction.enum`) —
+    K-DEVIR2'nin birebir vakası.
+
     🔴 **Bu iki sayaç sözleşmenin kırıcılığına KÖRDÜR** ve bu turda yeniden
     ölçüldü: yol/operasyon sayısının beklendiği gibi +1/+1 oynaması, devrin
     kırıcı OLMADIĞININ kanıtı DEĞİLDİR (K-DEVIR2). İki kapı birbirinin yerine
@@ -730,5 +736,5 @@ async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
         for metot in uc
         if metot in {"get", "post", "put", "patch", "delete"}
     )
-    assert len(yollar) == 234
-    assert operasyonlar == 342
+    assert len(yollar) == 236
+    assert operasyonlar == 344

@@ -78,6 +78,7 @@ from app.modules.accounting.accounts_router import router as accounting_accounts
 from app.modules.accounting.periods_router import router as accounting_periods_router
 from app.modules.accounting.reports_router import router as accounting_reports_router
 from app.modules.accounting.router import router as accounting_journal_router
+from app.modules.ai.router import router as ai_router
 from app.modules.approvals.router import router as approvals_router
 from app.modules.audit.router import router as audit_router
 from app.modules.auth.router import router as auth_router
@@ -133,6 +134,9 @@ ROUTERS: tuple[APIRouter, ...] = (
     accounting_journal_router,
     accounting_periods_router,
     accounting_reports_router,
+    # AI-0b T6 — `GET /ai/tools` + `GET /ai/context`. `/ai` kokunde
+    # `"/{param}"` bicimli hicbir rota YOK, dolayisiyla sira tuzagi da yok.
+    ai_router,
     approvals_router,
     audit_router,
     auth_router,

@@ -19,6 +19,7 @@ from app.core.ratelimit import limiter
 from app.core.security import hash_password
 from app.main import app
 from app.modules.accounting import models as accounting_models  # noqa: F401
+from app.modules.ai import models as ai_models  # noqa: F401
 from app.modules.approvals import models as approvals_models  # noqa: F401
 from app.modules.audit import models as audit_models  # noqa: F401
 from app.modules.boq import models as boq_models  # noqa: F401
