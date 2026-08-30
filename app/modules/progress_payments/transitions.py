@@ -43,6 +43,28 @@ geri çek + reddet → seq1'i 1.000'e yükselt (yazma kontrolü `seq < 1` baktı
 seq2'yi GÖRMEZ) → seq2'yi, sonra seq1'i onayla ⇒ 1.400 > 1.000, hiçbir uç hata
 vermez. Kota kronolojik değil TOPLAM bir kısıttır; sıraya bağlanması kavramsal
 hataydı. §6.6'nın gösterim kolonları sıra tabanlı KALIR (spec §6.5/§6.6 ayrımı).
+
+## 🔴 PARA-GERCEK — `paid` DAMGASI ARTIK BEDAVA DEĞİL
+
+Kullanıcının kuralı: *"Nakit olarak görmeden veya çekin vadesi gelip de tahsil
+edilmeden 'ödendi' gözükmemesi gerekiyor."*
+
+`mark_paid` eskiden tabloda YALNIZCA bir çiftti ve `_stamp` sadece `paid_at`
+yazıyordu: arkasında para hareketi olup olmadığına HİÇ BAKILMIYORDU. Artık
+`_assert_para_gercek` bir ÖN KOŞULDUR ve gerçekleşen ödeme hakediş NETİNİ
+karşılamıyorsa geçiş **409**dur.
+
+🔴 **KAPI İLERİ YÖNDEDİR; tablo DEĞİŞMEDİ.** `paid` bu tablonun hiçbir çiftinde
+hâlâ KAYNAK DEĞİLDİR (K7). Ters bir geçiş (`paid → approved`) açmak, kaydın
+geri sarılması ile para hareketi arasındaki bağı koparırdı — aynı kural
+`subcontractor_progress_payments`, `payroll` ve `treasury/instruments`ta da
+YAZILIDIR. Ödeme sonradan silinir ya da çek karşılıksız çıkarsa ne olacağı AYRI
+bir karardır ve bu dilimde ÇÖZÜLMEMİŞTİR.
+
+Kapı İKİ ailede de vardır (taşeron ikizi aynı adı taşır): işverende para bize
+GELİR, taşeronda bizden ÇIKAR ama kural aynıdır ve tek ailede uygulansaydı iki
+kopya zamanla ayrışırdı. `payroll`ün `paid`i BAŞKA bir olgudur (bordro dönemi)
+ve bu dilimde DOKUNULMAMIŞTIR.
 """
 
 import enum
@@ -57,6 +79,7 @@ from app.core.errors import ConflictError, SiteValidationError
 from app.core.timezone import to_display
 from app.modules.approvals import service as approvals_service
 from app.modules.approvals.models import ApprovalDocumentType
+from app.modules.invoicing.models import Invoice
 from app.modules.progress_payments import (
     calculations,
     guards,
@@ -67,6 +90,7 @@ from app.modules.progress_payments import (
 )
 from app.modules.progress_payments.models import ProgressPayment, ProgressPaymentStatus
 from app.modules.projects.models import Project, ProjectContract
+from app.modules.treasury import realized
 from app.modules.users.models import User
 
 _ZERO = Decimal("0")
@@ -284,6 +308,22 @@ def _stamp(payment: ProgressPayment, action: PaymentAction, actor: User) -> None
         payment.approved_by = None
 
 
+async def _assert_para_gercek(session: AsyncSession, payment: ProgressPayment) -> None:
+    """🔴 PARA-GERCEK — `mark-paid`in ÖN KOŞULU: para GERÇEKTEN geldi mi?
+
+    Kullanıcının kuralı: *"Nakit olarak görmeden veya çekin vadesi gelip de
+    tahsil edilmeden 'ödendi' gözükmemesi gerekiyor."* Bu kapı öncesinde
+    `mark_paid` hiçbir şeye BAKMIYORDU — `_stamp` yalnız `paid_at`i yazıyordu ve
+    arkasında tek kuruş hareket olmadan hakediş "ödendi" görünebiliyordu.
+
+    Eşik hakediş neti DEĞİL, bağlayıcı FATURANIN `total`idir; gerekçesi (iki
+    formülün KDV matrahı farklıdır ve net eşik ULAŞILAMAZDIR) `treasury.realized`
+    modülünün docstring'inde TEK KOPYA olarak durur. Sözleşme bu yolda
+    OKUNMAZ — eşik artık sözleşme bedeline hiç bağlı değildir.
+    """
+    await realized.assert_realized_covers(session, Invoice.progress_payment_id, payment.id)
+
+
 async def _apply_action_rules(
     session: AsyncSession,
     payment: ProgressPayment,
@@ -308,6 +348,8 @@ async def _apply_action_rules(
         guards.validate_submit(payment, contract)
     elif action is PaymentAction.approve:
         await _revalidate_quota(session, payment)
+    elif action is PaymentAction.mark_paid:
+        await _assert_para_gercek(session, payment)
     elif action is PaymentAction.reject:
         return approvals_service.clean_reject_reason(reason)
     return None

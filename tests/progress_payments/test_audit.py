@@ -30,6 +30,7 @@ from app.modules.audit.models import AuditLog
 from app.modules.progress_payments import service as pp_service
 from app.modules.progress_payments.models import ProgressPayment, ProgressPaymentStatus
 from app.modules.users.models import User
+from tests._para_gercek import parayi_yatir
 
 pytestmark = pytest.mark.asyncio
 
@@ -213,6 +214,8 @@ async def test_her_durum_gecisi_yazar(
     await _adim("reject", muhasebe_headers)
     await _adim("submit", admin_headers)
     await _adim("approve", muhasebe_headers)
+    # 🔴 PARA-GERCEK: `mark-paid` artık arkasında GERÇEKLEŞMİŞ para ister.
+    await parayi_yatir(db_session, payment_id, taseron=False)
     await _adim("mark-paid", muhasebe_headers)
 
 
@@ -263,6 +266,7 @@ async def test_mark_paid_mesaji_dogru_metni_tasir(
 ) -> None:
     await client.post(f"/progress-payments/{gecerli_taslak}/submit", headers=admin_headers)
     await client.post(f"/progress-payments/{gecerli_taslak}/approve", headers=admin_headers)
+    await parayi_yatir(db_session, gecerli_taslak, taseron=False)
     onceki = await _mevcut_kimlikler(db_session)
     yanit = await client.post(
         f"/progress-payments/{gecerli_taslak}/mark-paid", headers=admin_headers

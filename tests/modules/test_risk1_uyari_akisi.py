@@ -16,6 +16,7 @@ GORMELI. Yalnizca olumsuz taraf cakilsaydi, her seyi gizleyen bozuk bir kart da
 yesil gecerdi.
 """
 
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import date, timedelta
@@ -174,14 +175,19 @@ def _ogle(gun: date):
     return datetime.combine(gun, time(12, 0), tzinfo=UTC)
 
 
-async def _faturala(session, hakedis, yazan) -> None:
-    """CIFT SAYIM KAPISI kurulumu: hakedis faturalandiysa odenecek olan FATURADIR."""
+async def _faturala(session, hakedis, yazan, *, status=InvoiceStatus.approved) -> None:
+    """CIFT SAYIM KAPISI kurulumu: hakedis faturalandiysa odenecek olan FATURADIR.
+
+    🔴 HZ-CIFT: `status` PARAMETRIKTIR cunku kapinin sarti DURUM TASIR. Sabit
+    `approved` birakilsaydi kusurun kendisi (onaylanmamis faturali borcun
+    kartTAN da listeden de kaybolmasi) bu dosyada hic olculemezdi.
+    """
     session.add(
         Invoice(
             direction=InvoiceDirection.incoming,
-            invoice_no="RISK000000001",
+            invoice_no=f"RISK{uuid.uuid4().hex[:9].upper()}",
             document_type=InvoiceDocumentType.einvoice,
-            status=InvoiceStatus.approved,
+            status=status,
             issue_date=date(2026, 8, 1),
             party_name="Çelik OSB",
             subcontractor_progress_payment_id=hakedis.id,
@@ -340,11 +346,20 @@ async def test_vadesi_GELMEMIS_hakedis_satir_URETMEZ(seeded_db, user_factory, pr
     assert _satirlar(kart["items"], _GECIKME_BASLIK) == []
 
 
-async def test_FATURALANMIS_hakedis_satir_URETMEZ(seeded_db, user_factory, project_factory):
-    """(7) KARSIT KANIT — CIFT SAYIM KAPISI (`upcoming`in kardesi).
+async def test_FATURALANMIS_hakedis_HALA_gecikmis_sayilir(seeded_db, user_factory, project_factory):
+    """(7) 🔴 DENETIM BULGUSU 4 — DAVRANIS TERSINE CEVRILDI.
 
-    Hakedis faturalandiysa odenecek olan FATURADIR; ikisi de listelenseydi ayni
-    gecikme kartta iki satir uretirdi."""
+    Eskiden bu test "faturalanmis hakedis satir URETMEZ" diyordu ve gerekcesi
+    `upcoming.py`den ODUNC ALINMISTI: *"ikisi de listelenseydi ayni gecikme iki
+    satir uretirdi"*. O gerekce BURADA GECERSIZDIR cunku bu kartta bir FATURA
+    DALI YOKTUR (olculdu: `dashboard` paketi `app.modules.invoicing`i hic import
+    etmez, `command grep ... EXIT=1`). Dislama hicbir cift sayimi engellemiyor,
+    yalnizca gecikmis borcu SESSIZCE siliyordu.
+
+    Faturasi kesilmis olmak bir borcu gecikmis olmaktan CIKARMAZ. Uyariyi
+    susturan tek sey borcun KAPANMASIDIR (`paid`) ve o damga ODM-2'den sonra
+    ancak GERCEKLESMIS para ile basilabilir — karsit kanit:
+    `test_ODENMIS_hakedis_satir_URETMEZ`."""
     yazan = await _aktor(seeded_db, user_factory, "risk-yz3@d.co", role_key="system_admin")
     user = await _aktor(seeded_db, user_factory, "risk-hk3@d.co")
     proje = await project_factory(code="RISK-HK3")
@@ -355,7 +370,29 @@ async def test_FATURALANMIS_hakedis_satir_URETMEZ(seeded_db, user_factory, proje
 
     kart = await _kart(seeded_db, user)
 
-    assert _satirlar(kart["items"], _GECIKME_BASLIK) == []
+    assert len(_satirlar(kart["items"], _GECIKME_BASLIK)) == 1
+
+
+@pytest.mark.parametrize("durum", [InvoiceStatus.pending, InvoiceStatus.disputed])
+async def test_ONAYLANMAMIS_faturali_gecikme_KARTTA_KALIR(
+    seeded_db, user_factory, project_factory, durum
+):
+    """🔴 Faturanin DURUMU ne olursa olsun gecikme uyarisi DUSMEZ (bulgu 4).
+
+    Bu kartta fatura dali olmadigi icin dislama tamamen kaldirildi; test, hangi
+    durumda olursa olsun faturalanmis bir gecikmenin panelde KALDIGINI kilitler.
+    """
+    yazan = await _aktor(seeded_db, user_factory, "risk-yz3b@d.co", role_key="system_admin")
+    user = await _aktor(seeded_db, user_factory, "risk-hk3b@d.co")
+    proje = await project_factory(code="RISK-HK3B")
+    hakedis = await _hakedis(
+        seeded_db, proje, yazan, onay_gunu=today() - timedelta(days=44), vade_gun=30
+    )
+    await _faturala(seeded_db, hakedis, yazan, status=durum)
+
+    kart = await _kart(seeded_db, user)
+
+    assert len(_satirlar(kart["items"], _GECIKME_BASLIK)) == 1
 
 
 async def test_GORUNMEYEN_projenin_gecikmesi_SIZMAZ(seeded_db, user_factory, project_factory):

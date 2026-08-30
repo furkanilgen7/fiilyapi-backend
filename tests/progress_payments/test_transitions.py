@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.progress_payments import guards, lines, service, transitions
 from app.modules.progress_payments.models import ProgressPayment, ProgressPaymentStatus
 from app.modules.users.models import User
+from tests._para_gercek import parayi_yatir
 
 pytestmark = pytest.mark.asyncio
 
@@ -93,6 +94,7 @@ async def test_gecersiz_gecis_409(
 async def test_gecerli_gecis_hedef_duruma_goturur(
     client: AsyncClient,
     admin_headers: dict[str, str],
+    seeded_db: AsyncSession,
     hakedis_fabrikasi,
     cift: tuple[str, str],
     hedef: str,
@@ -102,6 +104,9 @@ async def test_gecerli_gecis_hedef_duruma_goturur(
     kontrolü bunu kaçırırdı."""
     durum, uc = cift
     payment_id = await hakedis_fabrikasi(ProgressPaymentStatus(durum))
+    if uc == "mark-paid":
+        # 🔴 PARA-GERCEK: `paid` artık arkasında GERÇEKLEŞMİŞ para ister.
+        await parayi_yatir(seeded_db, payment_id, taseron=False)
     yanit = await client.post(
         f"/progress-payments/{payment_id}/{uc}", json=_govde(uc), headers=admin_headers
     )
@@ -162,6 +167,7 @@ async def test_mark_paid_damgasi(
     KORUNUR (ödeme onayı geçersiz kılmaz)."""
     payment_id = await hakedis_fabrikasi(ProgressPaymentStatus.pending_approval)
     await client.post(f"/progress-payments/{payment_id}/approve", headers=muhasebe_headers)
+    await parayi_yatir(seeded_db, payment_id, taseron=False)
     yanit = await client.post(
         f"/progress-payments/{payment_id}/mark-paid", headers=muhasebe_headers
     )
@@ -361,7 +367,10 @@ async def test_saha_approve_edemez_403(
 
 
 async def test_muhasebe_reject_ve_mark_paid_yapabilir(
-    client: AsyncClient, muhasebe_headers: dict[str, str], hakedis_fabrikasi
+    client: AsyncClient,
+    muhasebe_headers: dict[str, str],
+    seeded_db: AsyncSession,
+    hakedis_fabrikasi,
 ) -> None:
     """`reject` ve `mark-paid` de ONAY seviyesindedir (§7 tablosu, K11)."""
     ret_edilecek = await hakedis_fabrikasi(ProgressPaymentStatus.pending_approval)
@@ -371,6 +380,7 @@ async def test_muhasebe_reject_ve_mark_paid_yapabilir(
     assert ret.status_code == 200, ret.text
 
     odenecek = await hakedis_fabrikasi(ProgressPaymentStatus.approved)
+    await parayi_yatir(seeded_db, odenecek, taseron=False)
     odeme = await client.post(f"/progress-payments/{odenecek}/mark-paid", headers=muhasebe_headers)
     assert odeme.status_code == 200, odeme.text
 
