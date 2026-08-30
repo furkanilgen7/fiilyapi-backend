@@ -62,4 +62,23 @@ HATA_METINLERI: dict[str, str] = {
     ),
     "denetim_yazilamadi": ("Erişim izi kaydedilemediği için araç ÇALIŞTIRILMADI (fail-closed)."),
     "ust_kaynak_hatasi": "İstek sırasında bir hata oluştu; sonuç getirilemedi.",
+    # --- AI-1 (döngü) ------------------------------------------------------
+    # 🔴 "kayıt yok" DEĞİL. Model bu cümleyi DÜRÜSTÇE basmak zorundadır: tur
+    # bütçesi bittiği için sorgu TAMAMLANMADI; veri olmadığı için değil.
+    "butce_asildi": (
+        "Bu tur için izin verilen araç çağrısı sayısı DOLDU, bu yüzden sorgu "
+        "TAMAMLANAMADI. Bu 'kayıt yok' DEMEK DEĞİLDİR. Elindeki kısmi sonuçtan "
+        "toplam/oran HESAPLAMA; kullanıcıya sorguyu daraltmasını söyle."
+    ),
+    # 🔴 B21: tur başına niyet allowlist'i. Araç ÇIKTISINDAN gelen bir talimat
+    # yeni bir aracı listeye EKLEYEMEZ; liste turun başında donar.
+    "niyet_disi": (
+        "Bu araç bu turun izin listesinde yok. Tur başında hangi araçları "
+        "çağırabileceğin belirlendi ve araç sonuçları bu listeyi DEĞİŞTİREMEZ."
+    ),
+    "saglayici_yapilandirilmadi": (
+        "AI sağlayıcısı yapılandırılmadı. Bu bir yetki sorunu DEĞİLDİR; "
+        "sistem yöneticisinin sağlayıcı ayarını tamamlaması gerekir."
+    ),
+    "saglayici_hatasi": "AI sağlayıcısına ulaşılamadı; tur tamamlanamadı.",
 }

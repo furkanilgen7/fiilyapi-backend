@@ -721,6 +721,18 @@ async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
     sözleşme tabanını KIRICI biçimde değiştirir (`AuditAction.enum`) —
     K-DEVIR2'nin birebir vakası.
 
+    🔴 **AI-1 (+1 yol / +1 operasyon):** `POST /ai/chat` — SSE akışı. Yani
+    236→**237** · 344→**345**. İki ayrıntı ölçüldü ve kayda geçiyor:
+      * Bu yol **tek operasyonlu** (`post`); `GET /ai/tools` ve `GET /ai/context`
+        AI-0b'de zaten sayılmıştı, tekrar sayılmaz.
+      * Devir **EKLEMELİDİR, KIRICI DEĞİL**: `openapi_baseline.json` farkı
+        ölçüldü ve **72 ekleme / 0 silme**dir. Yani bu turda sayaçların +1/+1
+        oynaması ile devrin kırıcı olmaması AYNI ANDA doğru — ama biri
+        ötekinin kanıtı DEĞİLDİR (aşağıdaki K-DEVIR2 notu aynen geçerli;
+        kırıcılık `git diff --numstat` ile AYRICA ölçüldü).
+      * `AuditAction.ai_turn` bu dilimde **ÜRETİCİ** kazandı (`POST /ai/chat`);
+        enum AI-0b'de zaten açılmıştı, yani sözleşme tabanı bu kez OYNAMAZ.
+
     🔴 **Bu iki sayaç sözleşmenin kırıcılığına KÖRDÜR** ve bu turda yeniden
     ölçüldü: yol/operasyon sayısının beklendiği gibi +1/+1 oynaması, devrin
     kırıcı OLMADIĞININ kanıtı DEĞİLDİR (K-DEVIR2). İki kapı birbirinin yerine
@@ -736,5 +748,5 @@ async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
         for metot in uc
         if metot in {"get", "post", "put", "patch", "delete"}
     )
-    assert len(yollar) == 236
-    assert operasyonlar == 344
+    assert len(yollar) == 237
+    assert operasyonlar == 345
