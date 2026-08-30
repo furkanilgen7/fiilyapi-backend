@@ -45,6 +45,17 @@ kaynak hakedişle uyuştuğunu doğrulayan HİÇBİR kural yoktur
 ödenebilir. Bu, kapıdan ÖNCE de var olan bir boşluktur ve kapatılması iki
 formülün hangisinin "doğru tutar" olduğuna dair bir ÜRÜN KARARI gerektirir.
 
+## 🔴 BAĞLAYICI FATURANIN ÜÇ ŞARTI
+
+Faturanın kaynağa BAĞLI OLMASI yetmez; "bağlayıcı" sayılması için:
+
+    1. `document_type <> 'refund'`   (asıl belge, iade değil)
+    2. `total > 0`                   🔴 kusur 1 — sıfır tutarda `0 < 0` False'tur
+    3. yön kaynağın para akışına uygun  🔴 kusur 2 — `SOURCE_DIRECTION`
+
+2 ve 3 bağımsız bir denetim turunda bulundu ve ikisi de CANLIDA AÇIKTI.
+Gerekçeleri `assert_realized_covers` ve `SOURCE_DIRECTION`dadır.
+
 ## Nakdin tanımı — bir DAR, bir GENİŞ
 
 `treasury/balance.py::cash_realized_condition()` (ODM-1 D2) BANKA BAKİYESİNİN
@@ -60,13 +71,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import InstrumentedAttribute
 
 from app.core.errors import ConflictError
-from app.modules.invoicing.models import Invoice, InvoiceDocumentType
+from app.modules.invoicing.models import Invoice, InvoiceDirection, InvoiceDocumentType
 from app.modules.treasury import balance
 from app.modules.treasury.models import Payment, PaymentMethodKind
 
 __all__ = [
+    "BINDING_INVOICE_INVALID",
     "NEGOTIABLE_METHODS",
     "PAYMENT_NOT_REALIZED",
+    "SOURCE_DIRECTION",
     "SOURCE_NOT_INVOICED",
     "assert_realized_covers",
     "binding_invoice_for_source",
@@ -79,6 +92,40 @@ __all__ = [
 #: ötekinde "ödemeyi tamamla / çeki tahsil et". Tek metin olsaydı faturası hiç
 #: olmayan kullanıcı ödeme aramaya çıkardı.
 SOURCE_NOT_INVOICED = "Hakediş ödendi işaretlenemez: önce hakedişe bağlı fatura kesilmelidir."
+
+#: 🔴 409 — bağlayıcı fatura VAR ama BELGE OLARAK GEÇERSİZ: tutarı sıfır ya da
+#: yönü kaynağın para akışına ters. Üçüncü bir metindir çünkü kullanıcının
+#: yapacağı iş de üçüncüdür: "fatura kes" değil, "ödeme yaz" değil — **bu
+#: faturayı düzelt/sil ve doğrusunu kes**.
+BINDING_INVOICE_INVALID = (
+    "Hakediş ödendi işaretlenemez: hakedişe bağlı fatura geçersiz — tutarı sıfır "
+    "ya da yönü hakedişin para akışına ters. Faturayı düzeltip yeniden deneyin."
+)
+
+#: 🔴 KAYNAK KOLONU → faturanın olması gereken YÖNÜ. Tablo TEK KOPYADIR ve
+#: uydurulmadı, YEVMİYE ROLLERİNDEN ölçüldü:
+#:
+#:   * işveren hakedişi  → `120 receivable` BORÇ / `600 revenue` ALACAK
+#:     (`progress_payments.posting`) → para BİZE GELİR → faturayı BİZ keseriz
+#:     → **giden** (`outgoing`);
+#:   * taşeron hakedişi  → `740 expense` BORÇ / `320 payable` ALACAK
+#:     (`subcontractor_progress_payments.posting`) → para BİZDEN ÇIKAR →
+#:     faturayı taşeron keser → **gelen** (`incoming`).
+#:
+#: `treasury.payments_service._UYUMLU_YON` de aynı ikiliyi kullanır (giden ↔
+#: alınan çek, gelen ↔ verilen çek); yani üç yer de AYNI yön anlayışındadır.
+#:
+#: 🔴 Neden GEREKLİ (denetim kusuru 2): yön denetlenmezse taşerona kesilen bir
+#: GİDEN fatura (kesinti/ceza) hakedişe bağlanabilir; taşeron onu BİZE öderse
+#: `realized` bir TAHSİLATLA dolar ve kapı geçer — yani bize GİREN para,
+#: taşerona olan borcumuzu "ödenmiş" gösterir. Taşerona tek kuruş çıkmamıştır.
+#:
+#: Okuma `.get()` iledir: yeni bir kaynak kolonu eklenirse yön BİLİNMEZ olur ve
+#: bilinmeyen REDDEDİLİR (fail-closed) — `KeyError` ham 500 verirdi.
+SOURCE_DIRECTION: dict[str, InvoiceDirection] = {
+    "progress_payment_id": InvoiceDirection.outgoing,
+    "subcontractor_progress_payment_id": InvoiceDirection.incoming,
+}
 
 #: 🔴 409 — evrağın GÖVDESİ kusurlu değildir (422 olurdu); engel kaydın
 #: ARKASINDAKİ para durumudur.
@@ -137,16 +184,21 @@ async def binding_invoice_for_source(
     session: AsyncSession,
     source_column: InstrumentedAttribute[uuid.UUID | None],
     source_id: uuid.UUID,
-) -> tuple[uuid.UUID, Decimal] | None:
-    """Kaynağın BAĞLAYICI faturası: `(id, total)` ya da `None`.
+) -> tuple[uuid.UUID, Decimal, InvoiceDirection] | None:
+    """Kaynağın BAĞLAYICI faturası: `(id, total, direction)` ya da `None`.
 
     `document_type <> 'refund'` süzgeci sayesinde sonuç EN FAZLA BİR SATIRDIR ve
     bu bir varsayım değil ŞEMA GARANTİSİDİR: `invoicing.models.
     SOURCE_UNIQUE_INDEXES` kaynak başına kısmi UNIQUE indeks kurar (`WHERE
-    document_type <> 'refund'`). Süzgeç o sabitle AYNI enum üyesinden türer, yani
-    üye yeniden adlandırılırsa ikisi de aynı anda kırılır.
+    document_type <> 'refund'`). Süzgeç o sabitle AYNI enum üyesinden türer.
+
+    🔴 **GEÇERLİLİK BURADA SÜZÜLMEZ, ÇAĞIRANDA DENETLENİR.** Tutar/yön şartları
+    bu sorguya eklenseydi geçersiz bir fatura "hiç fatura yok" ile AYNI sonucu
+    (`None`) verirdi ve kullanıcı, sistemde duran bozuk faturayı hiç görmeden
+    "fatura kes" mesajı alırdı — üstelik kısmi UNIQUE indeks yüzünden ikinci bir
+    asıl fatura KESEMEZDİ. Üç hâl üç ayrı 409'dur.
     """
-    stmt = select(Invoice.id, Invoice.total).where(
+    stmt = select(Invoice.id, Invoice.total, Invoice.direction).where(
         source_column == source_id,
         Invoice.document_type != InvoiceDocumentType.refund,
     )
@@ -195,33 +247,71 @@ async def assert_realized_covers(
     source_column: InstrumentedAttribute[uuid.UUID | None],
     source_id: uuid.UUID,
 ) -> None:
-    """`mark-paid` kapısı. İKİ ayrı engel, İKİ ayrı 409 metni.
+    """`mark-paid` kapısı. ÜÇ ayrı engel, ÜÇ ayrı 409 metni.
 
-    🔴 **KAPI İLERİ YÖNDEDİR.** Geçişi ENGELLER; `paid`den çıkan bir ters geçiş
-    AÇMAZ. `paid` bu depodaki DÖRT evrak ailesinde de TERMİNALDİR ve gerekçesi
-    yazılıdır ("banka çıkışı olmuş bir kaydı geri sarmak, kayıt ile para
-    hareketi arasındaki bağı koparırdı"). Ödeme sonradan silinirse/karşılıksız
-    çıkarsa ne olacağı AYRI bir karardır ve bu dilimde çözülmemiştir.
+    ## 🔴 BAĞLAYICI FATURA "VAR" DEMEK YETMEZ (denetim kusuru 1)
 
-    🔴 **KİLİT GEREKMEZ ve gerekçesi ölçülmüştür (İK-2 "EŞİK = KİLİT" kanonunun
-    SINIRI).** O kanon eşiğin TÜKETİLDİĞİ hâller içindir. Burada tüketilen bir
-    şey YOKTUR:
+    İlk uygulama yalnız faturanın VARLIĞINA bakıyordu ve `realized < total`
+    karşılaştırması **sıfır tutarlı faturada `0 < 0` → False** verdiği için kapı
+    BOŞTA GEÇİYORDU. Senaryo canlıda çalışır durumdaydı:
 
-    * aynı hakediş üzerinde iki eşzamanlı `mark-paid` ZATEN serileşir —
-      `visible_payment_locked` satırı `FOR UPDATE` + `populate_existing` ile
-      kilitler ve ikinci istek durumu kilit ALTINDA yeniden okuyup **409** alır;
-    * iki FARKLI hakediş aynı parayı sayamaz: `payments.invoice_id` NOT NULL,
-      `ck_invoices_single_source` bir faturada en fazla BİR kaynak kolonuna izin
-      verir ve `SOURCE_UNIQUE_INDEXES` bir kaynağa en fazla BİR asıl fatura
-      bağlar. Çift sayım için kilit değil ŞEMA gerekir ve o şema yerindedir.
+        `POST /invoices` + `subcontractor_progress_payment_id=<hakediş>` ve
+        `lines` HİÇ GÖNDERİLMEZ (şema `default_factory=list`, meşru) →
+        `amounts.compute` `subtotal=0` → `total=0,00` → `realized=0` →
+        `0 < 0` False → `mark-paid` **200**, sıfır ödemeyle "Ödendi".
 
-    Karşılaştırma `<` iledir: TAM EŞİT tutar GEÇER (fazlası zaten
-    `PAYMENT_EXCEEDS_TOTAL` ile fatura tarafında engellidir).
+    Aynı sonuç `unit_price=0` kalemle de üretilir (`_UNIT_PRICE = Field(ge=0)`).
+
+    İki ağırlaştırıcı vardı: (a) kalemsiz fatura `approve` EDİLEMEZ
+    (`validation.gate_blockers` → `LINES_REQUIRED`), yani kapı hiçbir zaman
+    geçerli belge olamayacak bir kaydı "bağlayıcı fatura" sayıyordu; (b) kısmi
+    UNIQUE indeks kaynak başına tek asıl faturaya izin verdiği için sahte fatura
+    slotu KALICI olarak işgal ediyor, gerçek fatura o hakedişe bir daha hiç
+    bağlanamıyordu — ve `paid` TERMİNAL.
+
+    Bu yüzden `total > 0` ARTIK ŞARTTIR.
+
+    ## 🔴 DURUM ŞARTI BİLEREK YOKTUR — ölçüldü ve gerekçelendirildi
+
+    "Kalemsiz fatura onaylanamıyorsa `approved` isteyelim" doğal görünür ama
+    YANLIŞTIR:
+
+    * `approved` GİDEN faturada ULAŞILAMAZ bir durumdur — `OUTGOING_TRANSITIONS`
+      yalnız `draft → sent → collected` taşır. Yani durum şartı zorunlu olarak
+      YÖNE GÖRE DEĞİŞEN bir tablo olurdu ve `invoicing.transitions`ın durum
+      bilgisini İKİNCİ KEZ yazardı; iki tablo bir gün ayrışırdı.
+    * Kullanıcının kuralı PARANIN hareketiyle ilgilidir, evrak onayıyla değil:
+      gelen fatura sisteme `pending` girer ve ödemesi o hâldeyken yapılabilir.
+      `test_FATURA_pending_iken_de_odeme_SAYILIR` bunu zaten kilitler; durum
+      şartı onu kırardı ve parayı ödemiş kullanıcı hakedişi kapatamazdı.
+    * Ve gereksizdir: denetimin bulduğu tek durum-bağıntılı açık SIFIR TUTARLI
+      faturaydı, onu `total > 0` daha doğrudan kapatır.
+
+    ## Kapı İLERİ YÖNDEDİR
+
+    `paid` DÖRT evrak ailesinde de TERMİNALDİR; ters geçiş AÇILMAZ. Ödeme
+    sonradan silinirse/karşılıksız çıkarsa ne olacağı AYRI bir karardır.
+
+    ## Kilit gerekmez (İK-2 "EŞİK = KİLİT" kanonunun SINIRI)
+
+    O kanon eşiğin TÜKETİLDİĞİ hâller içindir; burada tüketilen bir şey yoktur:
+    aynı hakedişte iki eşzamanlı `mark-paid` `visible_payment_locked`
+    (`FOR UPDATE` + `populate_existing`) ile serileşir ve ikincisi 409 alır; iki
+    FARKLI hakediş aynı parayı sayamaz çünkü `payments.invoice_id` NOT NULL,
+    `ck_invoices_single_source` ve `SOURCE_UNIQUE_INDEXES` bunu ŞEMA düzeyinde
+    imkânsız kılar.
+
+    Karşılaştırma `<` iledir: TAM EŞİT tutar GEÇER.
     """
     binding = await binding_invoice_for_source(session, source_column, source_id)
     if binding is None:
         raise ConflictError(SOURCE_NOT_INVOICED)
-    _, total = binding
+
+    _, total, direction = binding
+    beklenen_yon = SOURCE_DIRECTION.get(source_column.key)
+    if total <= 0 or direction is not beklenen_yon:
+        raise ConflictError(BINDING_INVOICE_INVALID)
+
     realized = await realized_total_for_source(session, source_column, source_id)
     if realized < total:
         raise ConflictError(PAYMENT_NOT_REALIZED)
