@@ -162,6 +162,7 @@ async def fatura(
     vat_amount: str = "0.00",
     status: InvoiceStatus | None = None,
     issue_date: date = TARIH,
+    document_type: InvoiceDocumentType = InvoiceDocumentType.einvoice,
 ) -> Invoice:
     """Faturayı DOĞRUDAN kurar; para kolonları AÇIKÇA verilir.
 
@@ -174,7 +175,7 @@ async def fatura(
     invoice = Invoice(
         direction=direction,
         invoice_no=f"MU3C{uuid.uuid4().hex[:10].upper()}",
-        document_type=InvoiceDocumentType.einvoice,
+        document_type=document_type,
         status=(
             status
             if status is not None

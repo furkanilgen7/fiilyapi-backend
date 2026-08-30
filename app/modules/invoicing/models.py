@@ -159,6 +159,24 @@ class InvoicePaymentMethod(str, enum.Enum):
 #: iadede, canlıda görünürdü.
 BINDING_SOURCE_WHERE = f"document_type <> '{InvoiceDocumentType.refund.value}'"
 
+
+def is_refund(invoice: "Invoice") -> bool:
+    """🔴 KRIT-IADE — *"bu belge bir İADE mi"* sorusunun **TEK** kaynağı.
+
+    Model dosyasında durur ve durmak ZORUNDADIR: bu soruyu bugün ÜÇ ayrı katman
+    soruyor (fatura fişi · ödeme fişi · KDV beyannamesi) ve üçü de aynı cevabı
+    vermek zorundadır. Üç yerde `invoice.document_type is
+    InvoiceDocumentType.refund` yazılsaydı, dördüncü bir yüzey eklendiğinde
+    (mizan · KPI şeridi) onu SORMAYAN bir kopya doğar ve kusur yine YALNIZ O
+    YÜZEYDE açılırdı — KRIT-IADE'nin kusuru tam olarak buydu.
+
+    🔴 Enum üyesiyle kıyaslanır, metinle DEĞİL (`BINDING_SOURCE_WHERE`in aynı
+    kanonu): üye yeniden adlandırıldığında metin karşılaştırması sessizce
+    `False` döner ve her iade normal fatura gibi fişlenirdi.
+    """
+    return invoice.document_type is InvoiceDocumentType.refund
+
+
 #: 🔴 MU-3D — kaynak FK'si başına TEKİLLİK indeksleri: `(kolon adı, indeks adı)`.
 #:
 #: ## Neden GEREKLİ (ölçülmüş açık)

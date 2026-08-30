@@ -100,7 +100,7 @@ from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.accounting.models import JournalSourceType
-from app.modules.invoicing.models import Invoice, InvoiceDirection
+from app.modules.invoicing.models import Invoice, InvoiceDirection, is_refund
 from app.modules.invoicing.transitions import InvoiceAction
 from app.modules.posting import service as posting_service
 from app.modules.posting.service import PostingLine, PostingOutcome
@@ -167,6 +167,15 @@ _DESCRIPTION_PREFIX: dict[InvoiceDirection, str] = {
     InvoiceDirection.incoming: "Alış faturası",
 }
 
+#: 🔴 KRIT-IADE — İADE faturasının fiş açıklaması. Yön eki AYNI kalır (belge
+#: hâlâ o yönün belgesidir) ama metin İADE olduğunu SÖYLER: iade fişi asıl
+#: faturanın TERSİ bacakları taşır ve mizanda `600`ü BORÇLANDIRAN bir satır
+#: "Satış faturası" diye okunsaydı, defteri okuyan bir kusur arardı.
+_REFUND_DESCRIPTION_PREFIX: dict[InvoiceDirection, str] = {
+    InvoiceDirection.outgoing: "Satış iade faturası",
+    InvoiceDirection.incoming: "Alış iade faturası",
+}
+
 _ZERO = Decimal("0")
 
 
@@ -176,7 +185,10 @@ def description_for(invoice: Invoice) -> str:
     Taraf adı faturanın SNAPSHOT'undan (`party_name`) okunur, cari kartından
     DEĞİL (K7): kart sonradan düzeltilse bile fişin metni faturayı anlatmalıdır.
     """
-    return f"{_DESCRIPTION_PREFIX[invoice.direction]} {invoice.invoice_no} — {invoice.party_name}"
+    onek = (_REFUND_DESCRIPTION_PREFIX if is_refund(invoice) else _DESCRIPTION_PREFIX)[
+        invoice.direction
+    ]
+    return f"{onek} {invoice.invoice_no} — {invoice.party_name}"
 
 
 def _outgoing_lines(invoice: Invoice) -> list[PostingLine]:
@@ -203,14 +215,76 @@ _BUILDERS = {
 }
 
 
+def _aynalanmis(satir: PostingLine) -> PostingLine:
+    """Bacağın TARAFINI çevirir; TUTARINI değil.
+
+    `role_key` DEĞİŞMEZ ve değişmemelidir: iade, satışın hesabını (`600`)
+    BORÇLANDIRAN bir kayıttır — başka bir hesaba (ör. `610 Satıştan İadeler`)
+    yazan bir uygulama `posting_rules`a YENİ SATIRLAR ve dolayısıyla bir
+    migration isterdi; üstelik `vat_return`/mizan mutabakatı `600`ün netine
+    baktığı için iki taban SESSİZCE ayrışırdı.
+    """
+    return PostingLine(role_key=satir.role_key, debit=satir.credit, credit=satir.debit)
+
+
 def lines_for(invoice: Invoice) -> list[PostingLine]:
     """Faturanın bacakları — TUTARI SIFIR OLANLAR SÜZÜLÜR (modül docstring'i).
 
     Sıra SABİTTİR ve `sort_order`a birebir düşer: borç bacakları önce, alacak
     bacakları sonra. Sıra rastgele olsaydı aynı fatura iki koşuda farklı
     dizilmiş bir defter satırı üretirdi.
+
+    ## 🔴 KRIT-IADE — İADE FATURASI AYNI YÖNÜN **TERSİNİ** YAZAR
+
+    KRIT-IADE öncesi bu fonksiyon YALNIZ `direction`a dallanıyordu: bir iade
+    faturası, aynı yöndeki normal bir faturayla BİREBİR AYNI fişi üretiyordu.
+    Yani hasılatı/gideri ve cariyi AZALTMASI gereken belge onları ARTIRIYORDU
+    ve fiş dengeli olduğu için mizan hiçbir şey görmüyordu (§4.6 damga vergisi
+    kusurunun kardeşi: **dengeli bir fiş yanlış yönde de olabilir**).
+
+    ### Neden AYNALAMA, neden STORNO DEĞİL
+
+    `progress_payments/transitions.py`deki storno deseni (`posting.reverse_*`)
+    buraya UYMAZ ve uyamaz, üç ölçülmüş sebeple:
+
+    1. **Storno bir BELGENİN KENDİ fişini ters çevirir** — kaynağı
+       `(source_type, source_id)` damgasıdır. İade AYRI bir belgedir ve kendi
+       `invoices.id`sini taşır (`_source_id`); asıl faturanın damgasıyla
+       çağrılsaydı `post_document`in idempotanlık dalına düşer, `created=False`
+       döner ve HİÇBİR ŞEY yazmazdı.
+    2. **İade KISMİ olabilir.** Storno orijinalin TAMAMINI nötrler; 1.000'lik
+       satışın 400'lük iadesi bir stornoyla ifade EDİLEMEZ.
+    3. **Ürün bu kararı ZATEN vermiştir**: `source_posting.py` *"Kesilmiş bir
+       faturanın düzeltilmesi bu üründe İADE FATURASIDIR ve o ayrı bir
+       belgedir; **kendi fişini kendisi yazar**"* der.
+
+    ### Neden EKSİ TUTAR DEĞİL
+
+    `ck_invoice_lines_quantity_positive` miktarı POZİTİF tutar: iade faturası
+    eksi tutar TAŞIYAMAZ, yani ters yönü tutarın işareti DEĞİL yalnızca bacağın
+    TARAFI ifade edebilir. Ayrıca `ck_journal_lines_single_side` eksi bacağı
+    zaten reddederdi.
+
+    Aynı kanonun Hazine'deki kardeşi `realized.realized_total_for_source`tır:
+    orası da iadenin parasını `-Payment.amount` ile TERS yönde sayar.
     """
-    return [satir for satir in _BUILDERS[invoice.direction](invoice) if _doludur(satir)]
+    satirlar = _BUILDERS[invoice.direction](invoice)
+    if is_refund(invoice):
+        # 🔴 Aynalama SIRAYI da bozar (borç bacakları alacak olur). Sıra
+        # yeniden kurulur ki "borç önce" değişmezi İADEDE de tutsun; bozuk
+        # bırakılsaydı `sort_order` bir belge tipinde başka türlü dizilir ve
+        # defter okuyucusu aynı fişi iki farklı düzende görürdü.
+        satirlar = sorted((_aynalanmis(satir) for satir in satirlar), key=_alacak_mi)
+    return [satir for satir in satirlar if _doludur(satir)]
+
+
+def _alacak_mi(satir: PostingLine) -> bool:
+    """`sorted` anahtarı — `False` (borç) `True`dan (alacak) ÖNCE gelir.
+
+    `sorted` KARARLIDIR: aynı taraftaki bacakların kendi aralarındaki sırası
+    korunur, yani cari bacağı tevkifat bacağından önce kalır.
+    """
+    return satir.credit > _ZERO
 
 
 def _doludur(satir: PostingLine) -> bool:

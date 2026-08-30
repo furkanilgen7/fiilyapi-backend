@@ -43,6 +43,16 @@ yapısal olarak imkânsızdır.
 | Hesaplanan KDV | `outgoing` | `sent` · `collected` |
 | İndirilecek KDV | `incoming` | `approved` |
 
+🔴 **KRIT-IADE — `document_type` DA BİR GİRDİDİR.** İade faturası
+(`InvoiceDocumentType.refund`) aynı yönün normal faturasıyla AYNI kapıdan
+geçer ama tutarları **EKSİ İŞARETLE** girer: hesaplanan KDV'yi ve indirilecek
+KDV'yi DÜŞÜRÜR. Öncesinde bu modül belge tipini HİÇ görmüyordu ve iade
+beyannameyi ARTIRIYORDU. İşaret yerine iadeyi tümüyle SÜZMEK de yanlış olurdu:
+o zaman iade hiçbir yerde görünmez, beyan asıl faturanın tamamını taşımaya
+devam ederdi. İade fişleri de aynı işareti taşır
+(`invoicing.posting.lines_for`), dolayısıyla İŞ 3 mutabakatı (beyanname ↔
+`391`/`191` neti) İADE FATURASINDA DA tutar ve bekçisi odur.
+
 `draft` GİRMEZ (fatura henüz kesilmemiştir), `pending` GİRMEZ (henüz
 onaylanmamıştır), `disputed` GİRMEZ (itiraz altındadır, indirim hakkı
 belirsizdir). Gerekçe `journal_entries`in `POSTING_STATUSES` kanonuyla
@@ -112,6 +122,7 @@ from app.modules.invoicing.models import (
     InvoiceDirection,
     InvoiceLine,
     InvoiceStatus,
+    is_refund,
 )
 
 __all__ = ["build_vat_return", "due_date_for", "month_bounds"]
@@ -128,6 +139,13 @@ DEDUCTION_SOURCE = "Alışlar"
 DUE_DAY = 28
 
 ZERO = round_money(Decimal(0))
+
+#: 🔴 KRIT-IADE — beyana giren tutarın İŞARETİ. İade faturası aynı yöndeki
+#: normal faturanın TERSİDİR: hesaplanan KDV'yi DÜŞÜRÜR, indirilecek KDV'yi
+#: DÜŞÜRÜR. `+1` bir süs değildir — sabit olmadan işaret hesabın içine gömülür
+#: ve bir mutant onu sessizce silebilirdi.
+ISARET_NORMAL = Decimal(1)
+ISARET_IADE = Decimal(-1)
 
 
 def month_bounds(year: int, month: int) -> tuple[date, date]:
@@ -196,20 +214,27 @@ async def build_vat_return(session: AsyncSession, *, year: int, month: int) -> V
             retention_rate=invoice.retention_rate,
             withholding_rate=invoice.withholding_rate,
         )
+        # 🔴 KRIT-IADE — İADE, aynı yöndeki normal faturanın TERSİ İŞARETLE
+        # girer. Öncesinde bu modül `document_type`ı HİÇ görmüyordu ve iade
+        # faturası hesaplanan KDV'yi DÜŞÜRECEĞİ yerde ARTIRIYORDU; beyan,
+        # devlete olmayan bir borç yazıyordu. Kalemler POZİTİF olmak
+        # ZORUNDADIR (`ck_invoice_lines_quantity_positive`), yani ters yön
+        # tutarın işaretiyle DEĞİL yalnız burada ifade edilebilir.
+        isaret = ISARET_IADE if is_refund(invoice) else ISARET_NORMAL
         if invoice.direction is InvoiceDirection.incoming:
-            deduction_base += hesap.tax_base
-            deduction_vat += hesap.vat_amount
+            deduction_base += isaret * hesap.tax_base
+            deduction_vat += isaret * hesap.vat_amount
             continue
 
         for line, matrah, vergi in zip(
             lines, hesap.line_tax_bases, hesap.line_vat_amounts, strict=True
         ):
             if line.vat_rate == 0:
-                exempt_base += matrah
+                exempt_base += isaret * matrah
                 continue
             grup = taxable[line.vat_rate]
-            grup[0] += matrah
-            grup[1] += vergi
+            grup[0] += isaret * matrah
+            grup[1] += isaret * vergi
 
     taxable_rows = [
         VatTaxableRow(rate=oran, base=grup[0], vat=grup[1])

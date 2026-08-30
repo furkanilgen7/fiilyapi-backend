@@ -210,13 +210,25 @@ PAYMENT_INSTRUMENT_NOT_PORTFOLIO_DELETE = "Portföyden çıkmış bir çek/sened
 #:   **verilen** (`issued`) bir çek çıkar.
 #:
 #: Model docstring'i (`models.py:277`) bunu zaten söylüyor: *"`payments`ta yön
-#: bağlı faturanın `direction`'ından gelir"*. Tablo TAMDIR (iki yön de yazılı)
-#: ama okuma yine de `.get()` iledir: yeni bir fatura yönü açılırsa eşleme
-#: BİLİNMEZ olur ve bilinmeyen **REDDEDİLİR** (fail-closed) — `KeyError` ham 500
-#: verirdi, sessiz kabul ise yönsüz bir bağ yazardı.
-_UYUMLU_YON: dict[InvoiceDirection, FinancialInstrumentDirection] = {
-    InvoiceDirection.outgoing: FinancialInstrumentDirection.received,
-    InvoiceDirection.incoming: FinancialInstrumentDirection.issued,
+#: bağlı faturanın `direction`'ından gelir"*.
+#:
+#: 🔴 Eski hâlde anahtar `InvoiceDirection`dı ve okuma `.get()` ileydi: tablo
+#: eksik kalabilecek bir enum'la anahtarlandığı için fail-closed bir savunma
+#: gerekiyordu. Anahtar artık `bool`dur ve iki hâli de yazılıdır, yani tablo
+#: YAPISAL OLARAK TAMDIR — `.get()` savunması artık ölçülemez bir dal olurdu ve
+#: kaldırılmıştır. Yeni bir `InvoiceDirection` üyesi açıldığında REDDEDEN taraf
+#: artık `posting.cash_inflow`un kendisidir (`INVOICE_DIRECTION_UNMAPPED`, 422)
+#: ve savunma o TEK kopyada yaşar.
+#:
+#: 🔴 KRIT-IADE — anahtar YÖN DEĞİL, **PARANIN AKIŞIDIR** (`posting.cash_inflow`).
+#: Normal faturada ikisi aynıdır ve bu tablo DAVRANIŞ DEĞİŞTİRMEZ; İADE
+#: faturasında ayrışırlar: giden bir iadenin parası DIŞARI akar, yani bağlanacak
+#: evrak VERİLEN (`issued`) bir çektir. `direction`a bakan eski tablo o ödemeye
+#: ALINAN bir çek bağlanmasını ister, `posting.lines_for` de onu `101 Alınan
+#: Çekler`e ALACAK yazardı — elde olmayan bir çek portföyden düşerdi.
+_UYUMLU_YON: dict[bool, FinancialInstrumentDirection] = {
+    True: FinancialInstrumentDirection.received,
+    False: FinancialInstrumentDirection.issued,
 }
 
 
@@ -366,7 +378,7 @@ async def _instrument_or_none(
     instrument = await instruments_service.visible_instrument(
         session, actor, instrument_id, for_update=True
     )
-    if _UYUMLU_YON.get(invoice.direction) is not instrument.direction:
+    if _UYUMLU_YON[posting.cash_inflow(invoice)] is not instrument.direction:
         raise TreasuryValidationError(PAYMENT_INSTRUMENT_DIRECTION_MISMATCH)
     if instrument.status is not FinancialInstrumentStatus.portfolio:
         raise TreasuryValidationError(PAYMENT_INSTRUMENT_NOT_PORTFOLIO)
