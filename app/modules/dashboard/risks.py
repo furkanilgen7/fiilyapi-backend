@@ -92,7 +92,7 @@ from app.modules.subcontractor_progress_payments.models import (
     SubcontractorPaymentStatus,
     SubcontractorProgressPayment,
 )
-from app.modules.treasury.upcoming import invoiced_condition, progress_payment_due_expression
+from app.modules.treasury.upcoming import progress_payment_due_expression
 from app.modules.users.models import User
 
 #: Kaynak modulleri — izin kapisi ve `sources[].module` AYNI stringi kullanir ki
@@ -186,13 +186,28 @@ async def _overdue_payment_alerts(
 
     Suzgecin her parcasi `upcoming`in kardesidir, bu kart icin ICAT EDILMEDI:
       * `approved` — taslak/beklemedeki hakedis bir BORC degildir.
-      * `~faturalanmis` — CIFT SAYIM KAPISI. Hakedis faturalandiysa odenecek
-        olan FATURADIR (vade, tutar ve odeme kaydi onun uzerindedir); ikisi de
-        listelenseydi ayni gecikme iki satir uretirdi. 🔴 Yuklem `upcoming.
-        invoiced_condition()`tan ITHAL EDILIR, IKINCI KEZ YAZILMAZ — vade
-        ifadesiyle (K3) birebir ayni gerekce. HZ-CIFT'te olculdu: durumsuz
-        yazilmis kopya BU DOSYADA DA vardi ve onaylanmamis faturasi olan her
-        gecikmis hakedis paneldeki uyaridan SESSIZCE dusuyordu.
+      * 🔴 **`~faturalanmis` SUZGECI KALDIRILDI (denetim bulgusu 4).** Eskiden
+        burada "hakedis faturalandiysa satir uretme" diye bir dislama vardi ve
+        gerekcesi `upcoming.py`den ODUNC ALINMISTI: *"ikisi de listelenseydi
+        ayni borc iki satir uretirdi"*. O gerekce BURADA GECERSIZDIR cunku bu
+        dosyada bir FATURA DALI YOKTUR — olculdu:
+
+            command grep -rn "app.modules.invoicing" app/modules/dashboard/
+            -> EXIT=1 (hic yok)
+
+        Yani dislama hicbir cift sayimi engellemiyor, YALNIZCA gecikmis borcu
+        panelden SESSIZCE siliyordu. Faturasi kesilmis olmak bir borcu gecikmis
+        olmaktan CIKARMAZ.
+
+        Gecikme uyarisini susturan sey artik BORCUN KAPANMASIDIR: `status ==
+        approved` suzgeci `paid` hakedisleri zaten disarida birakir ve ODM-2'den
+        sonra `paid` damgasi ancak GERCEKLESMIS para ile basilabilir. Yani
+        "odendi" tek durdurucudur ve o damga artik bedava degildir.
+
+        KABUL EDILEN SAPMA: faturasi daha ILERI bir vadeyle kesilmis bir hakedis,
+        kendi TURETILMIS vadesi gectiginde erken uyari verebilir. Bilincli
+        tercihtir — bu deponun fail-closed kanonu: borcun sessizce kaybolmasi,
+        fazladan gorunmesinden cok daha pahalidir.
       * `project_id IN gorunur` — IDOR. Suzgec dusseydi kapsam disi bir projenin
         TASERON ADI ve gecikmesi panelde okunurdu.
     TEK FARK PENCEREDIR: `upcoming` gelecege bakar (`vade >= bugun`), bu kart
@@ -205,7 +220,6 @@ async def _overdue_payment_alerts(
         return []
     bugun = today()
     vade = progress_payment_due_expression()
-    faturalanmis = invoiced_condition()
     stmt = (
         select(SubcontractorContract.subcontractor_name, vade)
         .select_from(SubcontractorProgressPayment)
@@ -217,7 +231,6 @@ async def _overdue_payment_alerts(
             SubcontractorProgressPayment.status == SubcontractorPaymentStatus.approved,
             SubcontractorProgressPayment.project_id.in_(project_ids),
             vade < bugun,
-            ~faturalanmis,
         )
         .order_by(vade, SubcontractorProgressPayment.id)
         .limit(MAX_ALERTS_PER_SOURCE)

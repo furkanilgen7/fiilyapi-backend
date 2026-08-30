@@ -33,6 +33,9 @@ from tests.modules.treasury._hz1_upcoming import _gun, _liste, _onay_zamani
 
 pytestmark = pytest.mark.asyncio
 
+#: "parametre verilmedi" ile "acikca None verildi"yi ayiran nobetci.
+_EKSIK = object()
+
 
 async def _hakedis_ve_fatura(
     taseron_hakedisi_fabrikasi,
@@ -40,6 +43,7 @@ async def _hakedis_ve_fatura(
     *,
     status: InvoiceStatus,
     direction: InvoiceDirection = InvoiceDirection.incoming,
+    due_date: object = _EKSIK,
 ):
     """Vadesi pencerede olan onaylı hakediş + ona bağlı fatura."""
     hakedis = await taseron_hakedisi_fabrikasi(
@@ -49,7 +53,7 @@ async def _hakedis_ve_fatura(
         direction=direction,
         status=status,
         total="1000.00",
-        due_date=_gun(3),
+        due_date=_gun(3) if due_date is _EKSIK else due_date,
         source_payment=hakedis,
     )
     return hakedis
@@ -161,20 +165,29 @@ async def test_G5_GIDEN_fatura_hakedisi_DUSURMEZ(
     assert [s["source_type"] for s in items] == ["subcontractor_progress_payment"], items
 
 
-async def test_yuklem_TEK_KOPYADIR_risks_de_ayni_kaynagi_okur() -> None:
-    """🔴 İKİ YÜZEY, TEK YÜKLEM.
+async def test_BULGU3_VADESIZ_onayli_fatura_hakedisi_LISTEDEN_DUSURMEZ(
+    client: AsyncClient,
+    seeded_db: AsyncSession,
+    admin_headers,
+    taseron_hakedisi_fabrikasi,
+    fatura_fabrikasi,
+) -> None:
+    """🔴 DENETİM BULGUSU 3 — kusurun ayakta kalan yarısı.
 
-    Kusur ölçüldüğünde `dashboard/risks.py` AYNI durumsuz kopyayı taşıyordu.
-    Yüklem `upcoming.invoiced_condition`ta tek kopyaya indirildi; bu bekçi,
-    risks tarafında ikinci bir `exists()` yeniden doğmasını engeller
-    (`progress_payment_due_expression`ın paylaşım gerekçesiyle aynı desen).
+    Muhasebe taşeron faturasını **vade alanını boş bırakarak** girer ve onaylar.
+    Fatura satırı listeye GİREMEZ (`due_date IS NOT NULL` fail-closed elenir).
+    Dışlama yüklemi vadeye bakmasaydı hakediş de düşerdi ve borç YİNE iki
+    listeden birden kaybolurdu — kapatılan kusurun aynısı, farklı hücrede.
     """
-    import inspect
+    await _hakedis_ve_fatura(
+        taseron_hakedisi_fabrikasi,
+        fatura_fabrikasi,
+        status=InvoiceStatus.approved,
+        due_date=None,
+    )
 
-    from app.modules.dashboard import risks
-    from app.modules.treasury import upcoming
+    items = await _liste(client, admin_headers)
 
-    kaynak = inspect.getsource(risks._overdue_payment_alerts)
-    assert "invoiced_condition()" in kaynak
-    assert "exists()" not in kaynak, "risks.py yeniden kendi kopyasını yazmış"
-    assert risks.invoiced_condition is upcoming.invoiced_condition
+    kaynaklar = [s["source_type"] for s in items]
+    assert kaynaklar == ["subcontractor_progress_payment"], items
+    assert Decimal(items[0]["amount"]) == Decimal("1000.00")

@@ -1,21 +1,25 @@
 """PARA-GERCEK — `mark-paid` kapısının ARKASINDAKİ parayı kuran ORTAK yardımcı.
 
-Kapı şunu ister: hakedişin **bağlayıcı faturasına** yazılmış ve **nakde geçmiş**
-ödemeler, hakedişin NETİNİ karşılasın. Bu modül o zinciri (`hakediş ← fatura ←
-ödeme`) test tarafında kurar.
+Kapı şunu ister: hakedişin **bağlayıcı faturası** olsun ve o faturaya yazılmış
+**nakde geçmiş** ödemeler faturanın `total`ini karşılasın.
 
-🔴 **NET ÜRÜN KODUNDAN OKUNUR, testte yeniden hesaplanmaz** (`hakedis_neti`).
-Elle bir sayı yazılsaydı hesap formülü değiştiği gün bu yardımcı sessizce yanlış
-tutarı yatırır ve sınır testi (`tam eşit tutar GEÇER`) hiçbir şey ölçmezdi.
+## 🔴 FATURA, ÜRÜNÜN KENDİ PARA MOTORUNDAN GEÇER (denetim bulgusu 2)
 
-🔴 **`odeme_yaz` bilerek ORM düzeyindedir, uç üzerinden DEĞİL.** Sebep, kapının
-kendi bekçisini kurmasını önlemektir: `POST /invoices/{id}/payments` ucu
-`PAYMENT_EXCEEDS_TOTAL` gibi KENDİ kurallarını da uygular ve "eksik ödeme" /
-"portföydeki çek" gibi hâlleri kurmak o kuralların etrafından dolaşmayı
-gerektirirdi. Ucun GERÇEKTEN çalıştığı ayrıca ve AÇIKÇA
-`tests/subcontractor_progress_payments/test_para_gercek.py::
-test_UCTAN_UCA_gercek_uclarla_hakedis_odenebiliyor`de kanıtlanır — yani bu
-yardımcı kolaylık, uçtan uca kanıt ise ayrı bir testtir.
+İlk hâlinde `fatura_kes` para kolonlarını ELLE dolduruyordu
+(`subtotal = tax_base = total = tutar`, tüm oranlar 0). Yani kapının
+karşılaştırdığı iki sayı testte ZORLA eşitleniyordu ve
+`invoicing.amounts.compute` HİÇ çağrılmıyordu. Sonuç: kapının kesintili bir
+hakedişte ULAŞILAMAZ olduğu (eşik hakediş netiydi, ödeme tavanı fatura
+`total`i) **dört kapıdan da yeşil geçti**.
+
+Bu, bu turda doğan kanonun vahşi doğada görülmesidir: **bir bekçi, ölçtüğü
+yolu KENDİSİ kuruyorsa hiçbir şey ölçmüyordur.**
+
+Artık fatura, kullanıcının yapacağı şeyin aynısıyla kurulur: hakedişin BRÜTÜ
+tek kalem olarak, hakedişin KENDİ oranlarıyla (`vat_pct` · `advance_pct` ·
+`retainage_pct`) `invoicing.amounts.compute`a verilir ve dönen yedi alan
+kolonlara birebir yazılır. Oranlar sıfırlanmaz — fixture'ın kesintileri
+(avans %10 · teminat %5 · KDV %20) faturaya AYNEN taşınır.
 """
 
 import uuid
@@ -25,6 +29,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.invoicing import amounts as invoice_amounts
 from app.modules.invoicing.models import (
     Invoice,
     InvoiceDirection,
@@ -32,10 +37,7 @@ from app.modules.invoicing.models import (
     InvoiceStatus,
 )
 from app.modules.progress_payments import calculations
-from app.modules.progress_payments import repository as pp_repository
-from app.modules.progress_payments import service as pp_service
 from app.modules.progress_payments.models import ProgressPayment
-from app.modules.subcontractor_progress_payments import amounts as sub_amounts
 from app.modules.subcontractor_progress_payments.models import SubcontractorProgressPayment
 from app.modules.treasury.models import (
     BankAccount,
@@ -61,45 +63,28 @@ _AILE = {
 }
 
 #: Fatura yönü → o yöne bağlanabilecek çek/senedin YÖNÜ (FIN-PAY K3). Ürün bu
-#: eşlemeyi `_UYUMLU_YON`da uygular ve uymayan bağı **422** ile reddeder; test
-#: kurulumu da aynı eşlemeye uymak ZORUNDADIR, yoksa kurduğu çek gerçek üründe
-#: hiç bağlanamayacak bir çek olurdu.
+#: eşlemeyi `_UYUMLU_YON`da uygular ve uymayan bağı **422** ile reddeder.
 _EVRAK_YONU = {
     InvoiceDirection.outgoing: FinancialInstrumentDirection.received,
     InvoiceDirection.incoming: FinancialInstrumentDirection.issued,
 }
 
 
-async def hakedis_neti(session: AsyncSession, payment_id: uuid.UUID, *, taseron: bool) -> Decimal:
-    """Hakedişin NETİ — kapının baktığı sayının ta kendisi, ÜRÜN kodundan.
+async def _hakedis(session: AsyncSession, payment_id: uuid.UUID, *, taseron: bool):
+    model = SubcontractorProgressPayment if taseron else ProgressPayment
+    payment = await session.get(model, payment_id)
+    assert payment is not None, "kurulum: hakediş bulunamadı"
+    return payment
 
-    Taşeron tarafında `amounts.calculation_for`, işveren tarafında
-    `service.calculation_block` çağrılır; ikisi de ekranın gösterdiği net ile
-    aynı tek kopyadır.
-    """
-    if taseron:
-        payment = await session.get(SubcontractorProgressPayment, payment_id)
-        assert payment is not None
-        return (await sub_amounts.calculation_for(session, payment)).net
 
-    payment = await session.get(ProgressPayment, payment_id)
-    assert payment is not None
-    contract = await pp_repository.get_contract_locked(session, payment.project_id)
-    assert contract is not None
-    prior = await pp_repository.list_completed_payments(
-        session, payment.project_id, before_sequence_no=payment.sequence_no
-    )
-    advance = calculations.cumulative_state(prior, contract.amount).advance_recovered
-    return pp_service.calculation_block(payment, contract, advance).net
+async def hakedis_bruttu(session: AsyncSession, payment_id: uuid.UUID, *, taseron: bool) -> Decimal:
+    """Hakedişin BRÜTÜ — ürünün tek toplama kopyasından (`calculations.gross_total`)."""
+    payment = await _hakedis(session, payment_id, taseron=taseron)
+    return calculations.gross_total(payment.lines)
 
 
 async def _banka_hesabi(session: AsyncSession) -> BankAccount:
-    """Testin ödemesini yazacağı hesap; varsa YENİDEN AÇILMAZ.
-
-    Aynı oturumda iki kez çağrıldığında ikinci bir hesap açmak `uq_bank_accounts_iban`
-    kısmi indeksine takılmazdı ama bakiye testleriyle aynı veritabanını paylaşan
-    kurulumlarda gereksiz gürültü üretirdi.
-    """
+    """Testin ödemesini yazacağı hesap; varsa YENİDEN AÇILMAZ."""
     mevcut = (
         await session.execute(select(BankAccount).where(BankAccount.bank_name == "PARA-GERCEK"))
     ).scalar_one_or_none()
@@ -120,16 +105,36 @@ async def fatura_kes(
     payment_id: uuid.UUID,
     *,
     taseron: bool,
-    tutar: Decimal,
+    brut: Decimal | None = None,
     status: InvoiceStatus | None = None,
     document_type: InvoiceDocumentType = InvoiceDocumentType.einvoice,
+    kaynaga_bagla: bool = True,
+    due_date: date | None = date(2026, 3, 1),
 ) -> Invoice:
-    """Hakedişe BAĞLI fatura. Varsayılan durum yönün GİRİŞ durumudur.
+    """Hakedişe bağlı fatura — para kolonları ÜRÜNÜN motorundan (bulgu 2).
 
-    Gelen fatura sisteme `pending` girer, giden `draft` (`InvoiceStatus` K2) —
-    varsayılanlar bu yüzden yöne göredir, tek bir sabit değil.
+    Oranlar hakedişin KENDİ kolonlarından okunur; kesintiler faturaya AYNEN
+    taşınır. Böylece `total`, kullanıcının gerçekten keseceği faturanınkiyle
+    aynı sayıdır ve kapı gerçek koşulda ölçülür.
+
+    Varsayılan durum yönün GİRİŞ durumudur: gelen fatura `pending`, giden
+    `draft` (`InvoiceStatus` K2).
     """
     yon, kaynak_kolonu = _AILE[taseron]
+    payment = await _hakedis(session, payment_id, taseron=taseron)
+    tutar = brut if brut is not None else calculations.gross_total(payment.lines)
+
+    hesap = invoice_amounts.compute(
+        [
+            invoice_amounts.LineInput(
+                quantity=Decimal("1"), unit_price=tutar, vat_rate=payment.vat_pct
+            )
+        ],
+        advance_rate=payment.advance_pct,
+        retention_rate=payment.retainage_pct,
+        withholding_rate=None,
+    )
+
     kullanici = (await session.execute(select(User).limit(1))).scalars().first()
     assert kullanici is not None, "Test kurulumunda kullanıcı yok"
     varsayilan = InvoiceStatus.pending if yon is InvoiceDirection.incoming else InvoiceStatus.draft
@@ -139,17 +144,21 @@ async def fatura_kes(
         document_type=document_type,
         status=status if status is not None else varsayilan,
         issue_date=date(2026, 1, 15),
+        due_date=due_date,
         party_name="PARA-GERCEK Taraf",
-        subtotal=tutar,
-        advance_amount=Decimal("0.00"),
-        retention_amount=Decimal("0.00"),
-        tax_base=tutar,
-        vat_amount=Decimal("0.00"),
-        withholding_amount=Decimal("0.00"),
-        total=tutar,
+        subtotal=hesap.subtotal,
+        advance_rate=payment.advance_pct,
+        advance_amount=hesap.advance_amount,
+        retention_rate=payment.retainage_pct,
+        retention_amount=hesap.retention_amount,
+        tax_base=hesap.tax_base,
+        vat_amount=hesap.vat_amount,
+        withholding_amount=hesap.withholding_amount,
+        total=hesap.total,
         created_by_id=kullanici.id,
     )
-    setattr(fatura, kaynak_kolonu, payment_id)
+    if kaynaga_bagla:
+        setattr(fatura, kaynak_kolonu, payment_id)
     session.add(fatura)
     await session.flush()
     return fatura
@@ -157,30 +166,24 @@ async def fatura_kes(
 
 async def odeme_yaz(
     session: AsyncSession,
-    payment_id: uuid.UUID,
+    fatura: Invoice,
     *,
     taseron: bool,
     tutar: Decimal,
     evrak_durumu: FinancialInstrumentStatus | None = None,
-    fatura: Invoice | None = None,
+    method: PaymentMethodKind | None = None,
 ) -> Payment:
-    """Hakedişin faturasına `tutar` kadar ödeme yazar.
+    """Faturaya `tutar` kadar ödeme yazar.
 
     `evrak_durumu`:
 
-    * **`None`** → çek/senet BAĞI YOKTUR. Ürünün tanımına göre bu ödeme
-      DOĞRUDAN nakittir (`cash_realized_condition` ilk dalı) — `method` etiketi
-      ne olursa olsun (ODM-1 D1).
+    * **`None`** → çek/senet BAĞI YOKTUR. Varsayılan `method` bu hâlde
+      `transfer`dır, yani para indi demektir. 🔴 `method=cheque` ile ÇAĞRILIRSA
+      kapı bunu SAYMAZ (`gate_realized_condition` fail-closed dalı) — bekçisi
+      ayrı bir testtir.
     * **dolu** → o durumda bir çek AÇILIR ve ödeme ona BAĞLANIR. `portfolio`
-      verildiğinde para henüz hareket etmemiştir ve kapı bu ödemeyi SAYMAMALIDIR;
-      `collected`/`paid` verildiğinde saymalıdır.
+      verildiğinde para henüz hareket etmemiştir.
     """
-    yon, _ = _AILE[taseron]
-    fatura = (
-        fatura
-        if fatura is not None
-        else await fatura_kes(session, payment_id, taseron=taseron, tutar=tutar)
-    )
     hesap = await _banka_hesabi(session)
     kullanici = (await session.execute(select(User).limit(1))).scalars().first()
     assert kullanici is not None
@@ -189,7 +192,7 @@ async def odeme_yaz(
     if evrak_durumu is not None:
         evrak = FinancialInstrument(
             instrument_kind=FinancialInstrumentKind.cheque,
-            direction=_EVRAK_YONU[yon],
+            direction=_EVRAK_YONU[_AILE[taseron][0]],
             serial_no=uuid.uuid4().hex[:10],
             drawer_name="PARA-GERCEK Keşideci",
             issue_date=date(2026, 1, 15),
@@ -201,12 +204,13 @@ async def odeme_yaz(
         await session.flush()
         evrak_id = evrak.id
 
+    if method is None:
+        method = PaymentMethodKind.cheque if evrak_durumu else PaymentMethodKind.transfer
+
     odeme = Payment(
         invoice_id=fatura.id,
         bank_account_id=hesap.id,
-        # Etiket bilerek `cheque`tir: kapının `method`e DEĞİL BAĞA baktığını,
-        # bağsız bir `cheque` ödemesinin de nakit sayıldığını görünür kılar.
-        method=PaymentMethodKind.cheque if evrak_durumu else PaymentMethodKind.transfer,
+        method=method,
         financial_instrument_id=evrak_id,
         amount=tutar,
         paid_on=date(2026, 2, 1),
@@ -224,12 +228,18 @@ async def parayi_yatir(
     taseron: bool,
     evrak_durumu: FinancialInstrumentStatus | None = None,
     fark: Decimal = Decimal("0.00"),
+    method: PaymentMethodKind | None = None,
+    status: InvoiceStatus | None = None,
 ) -> Decimal:
-    """Netin TAMAMINI (`fark` kadar sapmayla) yatırır; yatırılan tutarı döner.
+    """Fatura keser ve `total`in TAMAMINI (`fark` sapmasıyla) yatırır.
 
-    `fark=Decimal("-0.01")` sınırın ALTINI, `0` TAM EŞİTİ kurar — G3'ün iki yarısı.
+    🔴 Eşik FATURANIN `total`idir (hakediş neti DEĞİL) — gerekçe
+    `treasury/realized.py` docstring'inde. `fark=Decimal("-0.01")` sınırın
+    ALTINI, `0` TAM EŞİTİ kurar.
     """
-    net = await hakedis_neti(session, payment_id, taseron=taseron)
-    tutar = net + fark
-    await odeme_yaz(session, payment_id, taseron=taseron, tutar=tutar, evrak_durumu=evrak_durumu)
+    fatura = await fatura_kes(session, payment_id, taseron=taseron, status=status)
+    tutar = fatura.total + fark
+    await odeme_yaz(
+        session, fatura, taseron=taseron, tutar=tutar, evrak_durumu=evrak_durumu, method=method
+    )
     return tutar

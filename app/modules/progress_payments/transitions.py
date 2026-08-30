@@ -308,38 +308,20 @@ def _stamp(payment: ProgressPayment, action: PaymentAction, actor: User) -> None
         payment.approved_by = None
 
 
-async def _assert_para_gercek(
-    session: AsyncSession, payment: ProgressPayment, contract: ProjectContract | None
-) -> None:
+async def _assert_para_gercek(session: AsyncSession, payment: ProgressPayment) -> None:
     """🔴 PARA-GERCEK — `mark-paid`in ÖN KOŞULU: para GERÇEKTEN geldi mi?
 
     Kullanıcının kuralı: *"Nakit olarak görmeden veya çekin vadesi gelip de
     tahsil edilmeden 'ödendi' gözükmemesi gerekiyor."* Bu kapı öncesinde
     `mark_paid` hiçbir şeye BAKMIYORDU — `_stamp` yalnız `paid_at`i yazıyordu ve
-    arkasında tek kuruş hareket olmadan hakediş "ödendi" görünebiliyordu
-    (canlıda üç taşeron hakedişinde tam olarak bu oldu).
+    arkasında tek kuruş hareket olmadan hakediş "ödendi" görünebiliyordu.
 
-    Zincir `hakediş ← fatura ← ödeme`dir ve toplamın tanımı `treasury.realized`
-    modülündedir; "nakde geçti mi" yüklemi ise banka bakiyesinin TEK kaynağından
-    (`treasury.balance.cash_realized_condition`) gelir — burada ikinci kez
-    yazılmaz.
-
-    🔴 Sözleşme YOKSA (onaydan sonra silinmiş olabilir) net BELİRLENEMEZ ve kapı
-    fail-closed davranır: `submit`in aynı hâlde verdiği metinle **422**. Sessizce
-    geçirmek, kuralın tam olarak yasakladığı damgayı basardı; `contract.amount`a
-    körlemesine dokunmak ise ham **500** olurdu.
+    Eşik hakediş neti DEĞİL, bağlayıcı FATURANIN `total`idir; gerekçesi (iki
+    formülün KDV matrahı farklıdır ve net eşik ULAŞILAMAZDIR) `treasury.realized`
+    modülünün docstring'inde TEK KOPYA olarak durur. Sözleşme bu yolda
+    OKUNMAZ — eşik artık sözleşme bedeline hiç bağlı değildir.
     """
-    if contract is None:
-        raise SiteValidationError(guards.NO_EMPLOYER_CONTRACT)
-    # Kümülatif avans durumu `_fisle` ile AYNI iki adımdan okunur (sıra ARTAN
-    # `sequence_no`; `before_sequence_no` kaydın KENDİSİNİ dışlar) — net, ekranın
-    # gördüğü `calculation_block`un ta kendisidir.
-    prior = await repository.list_completed_payments(
-        session, payment.project_id, before_sequence_no=payment.sequence_no
-    )
-    advance_recovered = calculations.cumulative_state(prior, contract.amount).advance_recovered
-    net = service.calculation_block(payment, contract, advance_recovered).net
-    await realized.assert_realized_covers(session, Invoice.progress_payment_id, payment.id, net)
+    await realized.assert_realized_covers(session, Invoice.progress_payment_id, payment.id)
 
 
 async def _apply_action_rules(
@@ -367,7 +349,7 @@ async def _apply_action_rules(
     elif action is PaymentAction.approve:
         await _revalidate_quota(session, payment)
     elif action is PaymentAction.mark_paid:
-        await _assert_para_gercek(session, payment, contract)
+        await _assert_para_gercek(session, payment)
     elif action is PaymentAction.reject:
         return approvals_service.clean_reject_reason(reason)
     return None

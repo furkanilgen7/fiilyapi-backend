@@ -223,9 +223,17 @@ def invoiced_condition():
     engellenir. Listeye girebilen her fatura `incoming` + `approved`tır;
     dolayısıyla bu iki şart yeter ve KAPSAR.
 
-    * **Vade/pencere/`kalan > 0` şartları EKLENMEZ.** Eklenseydi, faturası
-      onaylı ama vadesi pencere DIŞINDA olan bir hakediş kendi TÜRETİLMİŞ
-      vadesiyle listeye geri gelirdi — oysa artık gerçek vade faturanınkidir.
+    * 🔴 **`due_date IS NOT NULL` ŞARTTIR (denetim bulgusu 3).** İlk uygulama
+      onu ATLAMIŞTI ve kusurun aynısı başka bir hücrede ayakta kalmıştı:
+      muhasebe taşeron faturasını **vade alanını boş bırakarak** girip
+      onaylarsa, fatura satırı listeye giremez (`due_date` NULL fail-closed
+      elenir) ve hakediş de "faturalanmış" sayılıp düşerdi — borç YİNE iki
+      listeden birden kaybolurdu.
+    * **Pencere ve `kalan > 0` şartları EKLENMEZ.** Eklenseydi, faturası onaylı
+      ama vadesi pencere DIŞINDA olan bir hakediş kendi TÜRETİLMİŞ vadesiyle
+      listeye geri gelirdi — oysa artık gerçek vade faturanınkidir. Borç
+      kaybolmaz: pencere dışı olması "yaklaşan" olmamasıdır, gecikirse
+      `dashboard/risks.py` yüzeyi onu basar.
     * **`document_type <> 'refund'` EKLENMEZ.** Eklenseydi, hakedişe bağlı
       onaylı bir GELEN iade faturası hem kendisi listelenir hem hakedişi geri
       getirir, yani tam olarak kaçınılan çift satır doğardı.
@@ -236,16 +244,19 @@ def invoiced_condition():
     * **`collected` GİDEN tarafın durumudur**; `direction == incoming` şartı onu
       zaten eler.
 
-    🔴 Yüklem BURADA TEK KEZ yazılır çünkü onu okuyan İKİ yüzey vardır: bu uç
-    ("Yaklaşan Ödemeler") ve `dashboard/risks.py` ("Hakediş gecikmiş" uyarısı).
-    İkinci bir kopya, aynı kusuru bir yüzeyde açık bırakırdı — nitekim kusur
-    ölçüldüğünde İKİSİNDE DE vardı. `progress_payment_due_expression`ın paylaşım
-    gerekçesiyle birebir aynı desen.
+    🔴 **BU YÜKLEM YALNIZ BU UCA AİTTİR ve paylaşılmaz (denetim bulgusu 4).**
+    Meşruiyeti bu dosyada bir FATURA DALI bulunmasından gelir: iki satır aynı
+    borcu üretebildiği için biri elenmelidir. `dashboard/risks.py`de fatura dalı
+    YOKTUR (ölçüldü: `dashboard` paketi `app.modules.invoicing`i hiç import
+    etmez) — orada aynı yüklem hiçbir çift sayımı engellemez, yalnızca gecikmiş
+    borcu görünmez yapardı. Kod tekrarını silmek uğruna GEREKÇESİ olmayan bir
+    yere yüklem taşınmaz.
     """
     return exists().where(
         Invoice.subcontractor_progress_payment_id == SubcontractorProgressPayment.id,
         Invoice.direction == InvoiceDirection.incoming,
         Invoice.status == InvoiceStatus.approved,
+        Invoice.due_date.is_not(None),
     )
 
 

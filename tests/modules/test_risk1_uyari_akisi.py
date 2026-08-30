@@ -346,11 +346,20 @@ async def test_vadesi_GELMEMIS_hakedis_satir_URETMEZ(seeded_db, user_factory, pr
     assert _satirlar(kart["items"], _GECIKME_BASLIK) == []
 
 
-async def test_FATURALANMIS_hakedis_satir_URETMEZ(seeded_db, user_factory, project_factory):
-    """(7) KARSIT KANIT — CIFT SAYIM KAPISI (`upcoming`in kardesi).
+async def test_FATURALANMIS_hakedis_HALA_gecikmis_sayilir(seeded_db, user_factory, project_factory):
+    """(7) 🔴 DENETIM BULGUSU 4 — DAVRANIS TERSINE CEVRILDI.
 
-    Hakedis faturalandiysa odenecek olan FATURADIR; ikisi de listelenseydi ayni
-    gecikme kartta iki satir uretirdi."""
+    Eskiden bu test "faturalanmis hakedis satir URETMEZ" diyordu ve gerekcesi
+    `upcoming.py`den ODUNC ALINMISTI: *"ikisi de listelenseydi ayni gecikme iki
+    satir uretirdi"*. O gerekce BURADA GECERSIZDIR cunku bu kartta bir FATURA
+    DALI YOKTUR (olculdu: `dashboard` paketi `app.modules.invoicing`i hic import
+    etmez, `command grep ... EXIT=1`). Dislama hicbir cift sayimi engellemiyor,
+    yalnizca gecikmis borcu SESSIZCE siliyordu.
+
+    Faturasi kesilmis olmak bir borcu gecikmis olmaktan CIKARMAZ. Uyariyi
+    susturan tek sey borcun KAPANMASIDIR (`paid`) ve o damga ODM-2'den sonra
+    ancak GERCEKLESMIS para ile basilabilir — karsit kanit:
+    `test_ODENMIS_hakedis_satir_URETMEZ`."""
     yazan = await _aktor(seeded_db, user_factory, "risk-yz3@d.co", role_key="system_admin")
     user = await _aktor(seeded_db, user_factory, "risk-hk3@d.co")
     proje = await project_factory(code="RISK-HK3")
@@ -361,19 +370,17 @@ async def test_FATURALANMIS_hakedis_satir_URETMEZ(seeded_db, user_factory, proje
 
     kart = await _kart(seeded_db, user)
 
-    assert _satirlar(kart["items"], _GECIKME_BASLIK) == []
+    assert len(_satirlar(kart["items"], _GECIKME_BASLIK)) == 1
 
 
 @pytest.mark.parametrize("durum", [InvoiceStatus.pending, InvoiceStatus.disputed])
 async def test_ONAYLANMAMIS_faturali_gecikme_KARTTA_KALIR(
     seeded_db, user_factory, project_factory, durum
 ):
-    """🔴 HZ-CIFT — kusurun bu yuzeydeki hâli.
+    """🔴 Faturanin DURUMU ne olursa olsun gecikme uyarisi DUSMEZ (bulgu 4).
 
-    Gelen fatura sisteme `pending` girer. Durumsuz yazilmis cift sayim kapisi,
-    fatura kesildigi andan onaylandigi ana kadar gecikmis borcu panelden de
-    SESSIZCE dusuruyordu (fatura satiri da girmiyordu: o suzgec `approved`
-    istiyor). Karsit kanit hemen yukarida: `approved` faturali hakedis DUSER.
+    Bu kartta fatura dali olmadigi icin dislama tamamen kaldirildi; test, hangi
+    durumda olursa olsun faturalanmis bir gecikmenin panelde KALDIGINI kilitler.
     """
     yazan = await _aktor(seeded_db, user_factory, "risk-yz3b@d.co", role_key="system_admin")
     user = await _aktor(seeded_db, user_factory, "risk-hk3b@d.co")

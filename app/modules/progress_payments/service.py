@@ -360,7 +360,7 @@ def _prior_payments(
     return [p for p in completed if p.sequence_no < before_sequence_no]
 
 
-def calculation_block(
+def _calculation_block(
     payment: ProgressPayment, contract: ProjectContract, advance_recovered: Decimal
 ) -> PaymentCalculationBlock:
     """E15 151-172 / OLU 179-196 ödeme hesabı — liste VE detay tarafından paylaşılır.
@@ -369,11 +369,6 @@ def calculation_block(
     (O2, H4 denetimi): `get_detail` hem bunu hem `_progress_block`'un ihtiyaç
     duyduğu `prior_gross_total`'ı AYNI `_history_state` çağrısından karşılar —
     aynı argümanlarla iki kez sorgu koşmaz.
-
-    🔴 PARA-GERCEK ile AÇIK (public) hâle geldi: `transitions`ın `mark-paid`
-    kapısı hakedişin NETİNE bakar ve o hesap burada İKİNCİ KEZ YAZILMAZ. Özel
-    kalsaydı kapı ya kendi kopyasını yazardı (aynı hakediş için ekranla
-    ayrışabilen ikinci bir "net") ya da özel bir ada dokunurdu.
     """
     gross = _gross_total(payment.lines)
     vat = calculations.vat_amount(gross, payment.vat_pct)
@@ -417,7 +412,7 @@ async def list_payments(
             completed_by_project.get(payment.project_id, []), payment.sequence_no
         )
         advance_recovered, _ = _history_state(prior, project.contract.amount)
-        calc = calculation_block(payment, project.contract, advance_recovered)
+        calc = _calculation_block(payment, project.contract, advance_recovered)
         items.append(
             ProgressPaymentListItem(
                 id=payment.id,
@@ -553,7 +548,7 @@ async def _progress_block(
     """E15 177-190 (spec §8). Eksik veri → `None` (zarif düşüş).
 
     `prior_gross_total` çağıran tarafından geçirilir (O2, H4 denetimi) — `get_detail`
-    aynı `_history_state` sonucunu `calculation_block`'un `advance_recovered`'ıyla
+    aynı `_history_state` sonucunu `_calculation_block`'un `advance_recovered`'ıyla
     PAYLAŞIR, burada YENİDEN sorgulanmaz.
     """
     cumulative_gross = prior_gross_total + gross
@@ -607,7 +602,7 @@ async def build_detail(
     )
     line_rows, groups, physical_numerator = await _line_rows(session, payment, prior_payments)
     advance_recovered, prior_gross_total = _history_state(prior_payments, contract.amount)
-    calc = calculation_block(payment, contract, advance_recovered)
+    calc = _calculation_block(payment, contract, advance_recovered)
     progress = await _progress_block(
         session, project, contract, calc.gross, physical_numerator, prior_gross_total
     )

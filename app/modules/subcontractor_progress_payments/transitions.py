@@ -66,7 +66,6 @@ from app.modules.progress_payments import calculations
 from app.modules.progress_payments.transitions import PaymentAction, build_transition_table
 from app.modules.projects.models import Project
 from app.modules.subcontractor_progress_payments import (
-    amounts,
     guards,
     lines,
     posting,
@@ -218,22 +217,14 @@ def _stamp(
 async def _assert_para_gercek(session: AsyncSession, payment: SubcontractorProgressPayment) -> None:
     """🔴 PARA-GERCEK — `mark-paid`in ÖN KOŞULU. İşveren ikizinin AYNASI.
 
-    Kullanıcının kuralı: *"Nakit olarak görmeden veya çekin vadesi gelip de
-    tahsil edilmeden 'ödendi' gözükmemesi gerekiyor."* Canlıda ÜÇ taşeron
-    hakedişi arkalarında tek kuruş ödeme olmadan `paid` damgası taşıyordu;
-    `mark_paid` hiçbir şeye bakmıyordu.
+    Canlıda ÜÇ taşeron hakedişi arkalarında tek kuruş ödeme olmadan `paid`
+    damgası taşıyordu; `mark_paid` hiçbir şeye bakmıyordu.
 
-    Net `amounts.calculation_for`dan gelir — ekranın (ve `upcoming.py`nin
-    "Yaklaşan Ödemeler" kartının) gördüğü NETİN TA KENDİSİ. Brüt kullanılsaydı
-    kesintili her hakediş için kullanıcıdan olduğundan FAZLA para beklenirdi ve
-    hakediş hiç kapanamazdı; hesap burada İKİNCİ KEZ YAZILMAZ.
-
-    Bu ailede sözleşme NULL olamaz (`visible_payment_locked` onu zorunlu döner),
-    bu yüzden işveren ikizindeki fail-closed sözleşme dalının karşılığı YOKTUR.
+    Eşik bağlayıcı FATURANIN `total`idir (hakediş neti DEĞİL) ve gerekçesi
+    kardeş modül `treasury.realized`dedir.
     """
-    net = (await amounts.calculation_for(session, payment)).net
     await realized.assert_realized_covers(
-        session, Invoice.subcontractor_progress_payment_id, payment.id, net
+        session, Invoice.subcontractor_progress_payment_id, payment.id
     )
 
 
