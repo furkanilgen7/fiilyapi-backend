@@ -76,6 +76,12 @@ Onaylı bir hakediş FATURALANDIYSA (`invoices.subcontractor_progress_payment_id
 de listelenseydi aynı borç iki satır üretir ve nakit ihtiyacı sessizce iki
 katına çıkardı. Süzgeç `NOT EXISTS`tir — hakediş başına sorgu değil.
 
+🔴 **"FATURALANDI" ŞARTI, faturanın LİSTEYE GİRME şartıyla AYNI olmak
+ZORUNDADIR** ve HZ-CIFT'e kadar DEĞİLDİ: dışlama durumsuzdu, dahil etme
+`incoming + approved` istiyordu ve arada kalan her borç İKİ LİSTEDEN BİRDEN
+kayboluyordu. Yüklem artık `invoiced_condition()`ta TEK KOPYADIR (gerekçe ve
+her şartın neden var/yok olduğu orada) ve `dashboard/risks.py` de onu OKUR.
+
 🔴 **Aynı kapının BORDRO hâli YAPISALDIR, süzgeç istemez.** Taşeron
 personelinin bordro satırı `excluded`tır ve neti dönemin ödenebilir toplamına
 GİRMEZ (`payroll/models.py` `PayrollLineStatus` docstring'i +
@@ -155,6 +161,7 @@ __all__ = [
     "MAX_DAYS",
     "MIN_DAYS",
     "build_upcoming_payments",
+    "invoiced_condition",
     "progress_payment_due_expression",
 ]
 
@@ -188,6 +195,58 @@ def progress_payment_due_expression():
         func.timezone(settings.display_timezone, SubcontractorProgressPayment.approved_at), Date
     )
     return tr_gunu + cast(SubcontractorContract.payment_term_days, Integer)
+
+
+def invoiced_condition():
+    """🔴 ÇİFT SAYIM KAPISININ TEK KOPYASI — "bu hakediş FATURALANDI mı?".
+
+    ## Kusur (HZ-CIFT, kullanıcının bildirdiği canlı hâl)
+
+    Bu yüklem eskiden DURUM ŞARTI TAŞIMIYORDU: yalnız
+    `Invoice.subcontractor_progress_payment_id == …` bakıyordu. Oysa fatura dalı
+    (`_invoice_rows`) satırı listeye almak için `direction == incoming` **ve**
+    `status == approved` şart koşar. Sonuç, borcun İKİ LİSTEDEN BİRDEN
+    kaybolmasıydı:
+
+    * hakediş düşerdi — "faturalanmış" sayıldığı için,
+    * fatura da girmezdi — henüz `approved` olmadığı için.
+
+    Ve bu istisnai bir hâl DEĞİLDİ: gelen fatura sisteme **`pending`** olarak
+    girer (`InvoiceStatus` K2 — *"`draft` yalnız GİDEN tarafta anlamlıdır"*),
+    yani taşeron faturası kesildiği andan onaylandığı ana kadar HER borç
+    görünmez oluyordu. Dosyanın kendi kanonu (yukarıda) *"Aynı `approved`
+    şartını iki mevcut kaynak da taşır"* diyordu — kod bunu yapmıyordu.
+
+    ## Neden TAM OLARAK bu iki şart, ne bir eksik ne bir fazla
+
+    Çift sayım ancak dışlama kümesi, faturanın GÖRÜNME koşullarını KAPSIYORSA
+    engellenir. Listeye girebilen her fatura `incoming` + `approved`tır;
+    dolayısıyla bu iki şart yeter ve KAPSAR.
+
+    * **Vade/pencere/`kalan > 0` şartları EKLENMEZ.** Eklenseydi, faturası
+      onaylı ama vadesi pencere DIŞINDA olan bir hakediş kendi TÜRETİLMİŞ
+      vadesiyle listeye geri gelirdi — oysa artık gerçek vade faturanınkidir.
+    * **`document_type <> 'refund'` EKLENMEZ.** Eklenseydi, hakedişe bağlı
+      onaylı bir GELEN iade faturası hem kendisi listelenir hem hakedişi geri
+      getirir, yani tam olarak kaçınılan çift satır doğardı.
+    * **`disputed` DIŞLAMAZ** ve bu bilinçlidir (fail-closed): itiraz edilmiş
+      faturanın borcu ORTADAN KALKMAZ, yalnız fatura satırı listeye giremez —
+      hakediş listede KALIR ve borç görünür olmayı sürdürür. Sessizce kaybolması
+      fazladan görünmesinden çok daha pahalıdır.
+    * **`collected` GİDEN tarafın durumudur**; `direction == incoming` şartı onu
+      zaten eler.
+
+    🔴 Yüklem BURADA TEK KEZ yazılır çünkü onu okuyan İKİ yüzey vardır: bu uç
+    ("Yaklaşan Ödemeler") ve `dashboard/risks.py` ("Hakediş gecikmiş" uyarısı).
+    İkinci bir kopya, aynı kusuru bir yüzeyde açık bırakırdı — nitekim kusur
+    ölçüldüğünde İKİSİNDE DE vardı. `progress_payment_due_expression`ın paylaşım
+    gerekçesiyle birebir aynı desen.
+    """
+    return exists().where(
+        Invoice.subcontractor_progress_payment_id == SubcontractorProgressPayment.id,
+        Invoice.direction == InvoiceDirection.incoming,
+        Invoice.status == InvoiceStatus.approved,
+    )
 
 
 async def _invoice_rows(
@@ -254,9 +313,7 @@ async def _progress_payment_rows(
     if not project_ids:
         return []
     vade = progress_payment_due_expression()
-    faturalanmis = exists().where(
-        Invoice.subcontractor_progress_payment_id == SubcontractorProgressPayment.id
-    )
+    faturalanmis = invoiced_condition()
     stmt = (
         select(SubcontractorProgressPayment, SubcontractorContract.subcontractor_name, vade)
         .join(

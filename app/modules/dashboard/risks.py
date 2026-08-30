@@ -70,7 +70,7 @@ sorgusunu HIC odemez. Bekcisi `test_kart_sorgu_sayisi_SATIR_SAYISINDAN_BAGIMSIZ`
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import exists, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.permissions import can_read
@@ -85,7 +85,6 @@ from app.modules.dashboard.schemas import (
 )
 from app.modules.inventory import repository as inventory_repository
 from app.modules.inventory.balance import StockStatus
-from app.modules.invoicing.models import Invoice
 from app.modules.projects.models import Project
 from app.modules.projects.service import visible_projects
 from app.modules.sites.models import Section, SectionStatus, Site
@@ -93,7 +92,7 @@ from app.modules.subcontractor_progress_payments.models import (
     SubcontractorPaymentStatus,
     SubcontractorProgressPayment,
 )
-from app.modules.treasury.upcoming import progress_payment_due_expression
+from app.modules.treasury.upcoming import invoiced_condition, progress_payment_due_expression
 from app.modules.users.models import User
 
 #: Kaynak modulleri — izin kapisi ve `sources[].module` AYNI stringi kullanir ki
@@ -189,7 +188,11 @@ async def _overdue_payment_alerts(
       * `approved` — taslak/beklemedeki hakedis bir BORC degildir.
       * `~faturalanmis` — CIFT SAYIM KAPISI. Hakedis faturalandiysa odenecek
         olan FATURADIR (vade, tutar ve odeme kaydi onun uzerindedir); ikisi de
-        listelenseydi ayni gecikme iki satir uretirdi.
+        listelenseydi ayni gecikme iki satir uretirdi. 🔴 Yuklem `upcoming.
+        invoiced_condition()`tan ITHAL EDILIR, IKINCI KEZ YAZILMAZ — vade
+        ifadesiyle (K3) birebir ayni gerekce. HZ-CIFT'te olculdu: durumsuz
+        yazilmis kopya BU DOSYADA DA vardi ve onaylanmamis faturasi olan her
+        gecikmis hakedis paneldeki uyaridan SESSIZCE dusuyordu.
       * `project_id IN gorunur` — IDOR. Suzgec dusseydi kapsam disi bir projenin
         TASERON ADI ve gecikmesi panelde okunurdu.
     TEK FARK PENCEREDIR: `upcoming` gelecege bakar (`vade >= bugun`), bu kart
@@ -202,9 +205,7 @@ async def _overdue_payment_alerts(
         return []
     bugun = today()
     vade = progress_payment_due_expression()
-    faturalanmis = exists().where(
-        Invoice.subcontractor_progress_payment_id == SubcontractorProgressPayment.id
-    )
+    faturalanmis = invoiced_condition()
     stmt = (
         select(SubcontractorContract.subcontractor_name, vade)
         .select_from(SubcontractorProgressPayment)

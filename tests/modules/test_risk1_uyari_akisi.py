@@ -16,6 +16,7 @@ GORMELI. Yalnizca olumsuz taraf cakilsaydi, her seyi gizleyen bozuk bir kart da
 yesil gecerdi.
 """
 
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import date, timedelta
@@ -174,14 +175,19 @@ def _ogle(gun: date):
     return datetime.combine(gun, time(12, 0), tzinfo=UTC)
 
 
-async def _faturala(session, hakedis, yazan) -> None:
-    """CIFT SAYIM KAPISI kurulumu: hakedis faturalandiysa odenecek olan FATURADIR."""
+async def _faturala(session, hakedis, yazan, *, status=InvoiceStatus.approved) -> None:
+    """CIFT SAYIM KAPISI kurulumu: hakedis faturalandiysa odenecek olan FATURADIR.
+
+    🔴 HZ-CIFT: `status` PARAMETRIKTIR cunku kapinin sarti DURUM TASIR. Sabit
+    `approved` birakilsaydi kusurun kendisi (onaylanmamis faturali borcun
+    kartTAN da listeden de kaybolmasi) bu dosyada hic olculemezdi.
+    """
     session.add(
         Invoice(
             direction=InvoiceDirection.incoming,
-            invoice_no="RISK000000001",
+            invoice_no=f"RISK{uuid.uuid4().hex[:9].upper()}",
             document_type=InvoiceDocumentType.einvoice,
-            status=InvoiceStatus.approved,
+            status=status,
             issue_date=date(2026, 8, 1),
             party_name="Çelik OSB",
             subcontractor_progress_payment_id=hakedis.id,
@@ -356,6 +362,30 @@ async def test_FATURALANMIS_hakedis_satir_URETMEZ(seeded_db, user_factory, proje
     kart = await _kart(seeded_db, user)
 
     assert _satirlar(kart["items"], _GECIKME_BASLIK) == []
+
+
+@pytest.mark.parametrize("durum", [InvoiceStatus.pending, InvoiceStatus.disputed])
+async def test_ONAYLANMAMIS_faturali_gecikme_KARTTA_KALIR(
+    seeded_db, user_factory, project_factory, durum
+):
+    """🔴 HZ-CIFT — kusurun bu yuzeydeki hâli.
+
+    Gelen fatura sisteme `pending` girer. Durumsuz yazilmis cift sayim kapisi,
+    fatura kesildigi andan onaylandigi ana kadar gecikmis borcu panelden de
+    SESSIZCE dusuruyordu (fatura satiri da girmiyordu: o suzgec `approved`
+    istiyor). Karsit kanit hemen yukarida: `approved` faturali hakedis DUSER.
+    """
+    yazan = await _aktor(seeded_db, user_factory, "risk-yz3b@d.co", role_key="system_admin")
+    user = await _aktor(seeded_db, user_factory, "risk-hk3b@d.co")
+    proje = await project_factory(code="RISK-HK3B")
+    hakedis = await _hakedis(
+        seeded_db, proje, yazan, onay_gunu=today() - timedelta(days=44), vade_gun=30
+    )
+    await _faturala(seeded_db, hakedis, yazan, status=durum)
+
+    kart = await _kart(seeded_db, user)
+
+    assert len(_satirlar(kart["items"], _GECIKME_BASLIK)) == 1
 
 
 async def test_GORUNMEYEN_projenin_gecikmesi_SIZMAZ(seeded_db, user_factory, project_factory):
