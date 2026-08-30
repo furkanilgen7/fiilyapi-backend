@@ -90,3 +90,42 @@ jobs:
       - run: alembic upgrade head
       - run: alembic downgrade -1
       - run: alembic upgrade head
+
+  # 🔴 ÜRETİM KİLİDİ KAPISI (PROD-LOCK, 2026-08-30). Bu iş, ölçülmüş bir CANLI
+  # ÇÖKÜŞÜN ardından eklendi ve kusurun sınıfını kapatır.
+  #
+  # OLAY: AI-0b `app/modules/ai/registry.py`ye MODÜL DÜZEYİNDE `import httpx` koydu.
+  # `main.py` → `core/router_registry.py` → `ai/router.py` zinciriyle bu import
+  # AÇILIŞTA çalışır. `httpx` o güne kadar yalnız `[project.optional-dependencies]
+  # dev` bloğundaydı (backend'de HİÇ giden HTTP çağrısı yoktu, httpx testlerin
+  # `ASGITransport`u içindi) ve `requirements.lock`ta YOKTU.
+  #
+  # SONUÇ: üretim imajı `ModuleNotFoundError: No module named 'httpx'` ile açıldı,
+  # `uvicorn` HİÇ başlamadı, canlı backend 502 verdi — DÖRT KAPININ DÖRDÜ DE YEŞİLKEN.
+  #
+  # SEBEP YAPISALDI: `test` ve `alembic-cycle` işlerinin ikisi de
+  # `requirements-dev.lock` kurar (httpx VAR); `Dockerfile` ise `requirements.lock`
+  # kurar (httpx YOKTU). Yani CI, canlının fiilen kurduğu ağacı HİÇ SINAMIYORDU.
+  # Bu iş tam olarak o boşluğu kapatır: Docker'ın kurduğu kilidi kurar ve
+  # uvicorn'un yaptığı ŞEYİ yapar — `app.main`i import eder.
+  #
+  # 🔴 `--no-deps` ve `-e .` KULLANILMAZ: amaç projeyi kurmak değil, imajın
+  # ağacını BİREBİR yeniden üretmektir. Dockerfile da `pip install -e .` koşmaz;
+  # uygulama koduna `WORKDIR` üzerinden erişilir, bu iş de `PYTHONPATH=.` ile aynısını yapar.
+  prod-lock-import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --upgrade pip && pip install -r requirements.lock
+      # DB'ye BAĞLANMAZ: `app.main` import'u motoru kurar ama bağlantı AÇMAZ
+      # (`create_async_engine` tembeldir). Sahte bir DSN yeterlidir ve bu bilinçlidir —
+      # iş bir PG servisi istemez, böylece kapı hızlı ve kırılgansız kalır.
+      - name: uvicorn'un yaptigini yap - app.main'i import et
+        env:
+          DATABASE_URL: postgresql+asyncpg://ci:ci@127.0.0.1:5432/ci
+          JWT_SECRET: ci-secret
+          PYTHONPATH: .
+        run: python -c "from app.main import app; print('app.main OK, rota ogesi:', len(app.routes))"
