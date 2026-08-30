@@ -354,3 +354,70 @@ async def test_NORMAL_faturanin_bag_kapisi_DEGISMEDI(seeded_db: AsyncSession, us
         (KOD_ALINAN_CEK, "480.00", "0.00"),
         (KOD_ALICILAR, "0.00", "480.00"),
     ]
+
+
+# --------------------------------------------------------------------------- #
+# 🔴 HAZİNE BAKİYESİ — YEVMİYE İLE MUTABAKAT (ÜÇÜNCÜ KARDEŞ KUSUR)
+# --------------------------------------------------------------------------- #
+
+
+async def test_BAKIYE_ile_YEVMIYE_iade_iceren_kumede_de_TUTAR(
+    seeded_db: AsyncSession, user_factory
+):
+    """🔴 `balance.inflow_condition()` de `document_type` KÖRÜYDÜ.
+
+    Ölçüm: `command grep -n "document_type" app/modules/treasury/balance.py` →
+    **EXIT=1**. Giden bir İADE faturasının geri ödemesi banka bakiyesini
+    ARTIRIYORDU — kasadan çıkan para girmiş gibi sayılıyordu ve kart tek bir
+    sayı bastığı için kusur ekranda GÖRÜNMÜYORDU.
+
+    Bu test, iki taban arasındaki mutabakatı iade İÇEREN bir kümede kurar:
+
+        Hazine bakiyesi (`balance`, `payments`ten türer)
+            == `102 Bankalar` neti (yevmiyeden türer)
+
+    İki yamadan YALNIZ BİRİ yapılsaydı (fiş aynalanır, bakiye aynalanmazsa ya
+    da tersi) bu iddia KIRMIZI olurdu — tek yönlü bir yamayı yakalayan başka
+    kapı yok.
+    """
+    from app.modules.treasury import balance as balance_module
+
+    await esleme_kur(seeded_db)
+    hesap = await banka_hesabi(seeded_db, opening_balance="0.00")
+    creator = await aktor(seeded_db, user_factory)
+    satis = await fatura(
+        seeded_db,
+        creator,
+        direction=InvoiceDirection.outgoing,
+        total="1200.00",
+        status=InvoiceStatus.sent,
+    )
+    iade = await fatura(
+        seeded_db,
+        creator,
+        direction=InvoiceDirection.outgoing,
+        total="480.00",
+        status=InvoiceStatus.sent,
+        document_type=InvoiceDocumentType.refund,
+    )
+    alis_iadesi = await fatura(
+        seeded_db,
+        creator,
+        direction=InvoiceDirection.incoming,
+        total="200.00",
+        status=InvoiceStatus.approved,
+        document_type=InvoiceDocumentType.refund,
+    )
+
+    await _ode(seeded_db, user_factory, satis, hesap, "1200.00")
+    await _ode(seeded_db, user_factory, iade, hesap, "480.00")
+    await _ode(seeded_db, user_factory, alis_iadesi, hesap, "200.00")
+
+    # Beklenen: +1200 − 480 + 200 = 920.
+    bakiyeler = await balance_module.balances_for(seeded_db, [hesap.id])
+    assert bakiyeler[hesap.id] == Decimal("920.00"), (
+        "Hazine bakiyesi iade ödemesini YANLIŞ yönde saydı"
+    )
+    assert await hesap_neti(seeded_db, KOD_BANKA) == Decimal("920.00"), (
+        "yevmiyedeki `102` neti ile Hazine bakiyesi AYRIŞTI"
+    )

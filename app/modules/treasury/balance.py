@@ -48,10 +48,20 @@ import uuid
 from collections.abc import Sequence
 from decimal import Decimal
 
-from sqlalchemy import ColumnElement, Select, Subquery, case, func, literal, or_, select
+from sqlalchemy import (
+    ColumnElement,
+    Select,
+    Subquery,
+    and_,
+    case,
+    func,
+    literal,
+    or_,
+    select,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.invoicing.models import Invoice, InvoiceDirection
+from app.modules.invoicing.models import Invoice, InvoiceDirection, InvoiceDocumentType
 from app.modules.treasury.models import (
     BankAccount,
     FinancialInstrument,
@@ -72,8 +82,35 @@ def inflow_condition() -> ColumnElement[bool]:
     (`cash_flow.py`, T5). İkinci bir yerde `direction == outgoing` yazılsaydı
     biri bir gün değişir, öteki kalır ve grafik ile kart TERS işaret basardı —
     üstelik ikisi de "bir sayı" gösterdiği için kusur ekranda görünmezdi.
+
+    ## 🔴 KRIT-IADE — `document_type` DA BİR GİRDİDİR
+
+    KRIT-IADE öncesi bu yüklem YALNIZ `direction`a bakıyordu, yani giden bir
+    **İADE** faturasının geri ödemesi banka bakiyesini **ARTIRIYORDU**: kasadan
+    çıkan para, girmiş gibi sayılıyordu. Kusur ekranda görünmezdi çünkü kart tek
+    bir sayı basar.
+
+    Yüklem `posting.cash_inflow`un SQL karşılığıdır ve öyle KALMALIDIR: biri
+    Python nesnesine (fiş yazarken), öteki satıra (bakiye toplarken) bakar ama
+    ikisi AYNI soruyu sorar. Ayrışsalardı yevmiyedeki `102` neti ile Hazine
+    bakiyesi sessizce farklılaşır ve mutabakat testi (D9) bunu ancak iade
+    içeren bir veri kümesinde görürdü.
+
+    🔴 XOR açıkça İKİ DALLA yazılır, `!=` ile değil: `direction != outgoing`
+    biçimindeki bir kısaltma NULL `document_type`ta üç değerli mantığa düşer
+    ve satırı SESSİZCE sayımın dışında bırakırdı (kolon bugün NOT NULL'dır ama
+    yüklem o kolonun bir gün gevşemesine dayanmamalıdır).
     """
-    return Invoice.direction == InvoiceDirection.outgoing
+    return or_(
+        and_(
+            Invoice.direction == InvoiceDirection.outgoing,
+            Invoice.document_type != InvoiceDocumentType.refund,
+        ),
+        and_(
+            Invoice.direction == InvoiceDirection.incoming,
+            Invoice.document_type == InvoiceDocumentType.refund,
+        ),
+    )
 
 
 #: Enstrümanın "para gerçekten el değiştirdi" damgaları (ODM-1 D2). Demet
