@@ -217,6 +217,105 @@
         "title": "AccountingPeriodStatus",
         "type": "string"
       },
+      "AiContextResponse": {
+        "description": "S14'ün korkuluğu: AI sınırını **bilerek** çağırsın.\n\n`/auth/me` kapsam taşımaz; AI sınırını bilmeden çağırır ve 404'ü yalana\nçevirir. Bu uç `permissions` + görünür araç sicili + yetki dışı modülleri\nbirlikte verir.",
+        "properties": {
+          "arac_adlari": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Arac Adlari",
+            "type": "array"
+          },
+          "permissions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Permissions",
+            "type": "object"
+          },
+          "proje_kimlikleri_notu": {
+            "title": "Proje Kimlikleri Notu",
+            "type": "string"
+          },
+          "role_key": {
+            "title": "Role Key",
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          },
+          "yetkisiz_moduller": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Yetkisiz Moduller",
+            "type": "array"
+          }
+        },
+        "required": [
+          "user_id",
+          "role_key",
+          "permissions",
+          "arac_adlari",
+          "yetkisiz_moduller",
+          "proje_kimlikleri_notu"
+        ],
+        "title": "AiContextResponse",
+        "type": "object"
+      },
+      "AiToolListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AiToolRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "AiToolListResponse",
+        "type": "object"
+      },
+      "AiToolRead": {
+        "description": "Aktörün görebildiği bir araç. 🔴 `ucler` ve `kapilar` YAYINLANMAZ.\n\nUç listesi bir iç uygulama detayıdır; yayınlamak istemciye \"şu yolu çağır\"\nfikri verirdi ve `navigate_to`nun kapalı-enum kararını (S22) dolanırdı.",
+        "properties": {
+          "aciklama": {
+            "title": "Aciklama",
+            "type": "string"
+          },
+          "ad": {
+            "title": "Ad",
+            "type": "string"
+          },
+          "kapsam": {
+            "title": "Kapsam",
+            "type": "string"
+          },
+          "kume": {
+            "title": "Kume",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ad",
+          "aciklama",
+          "kapsam",
+          "kume"
+        ],
+        "title": "AiToolRead",
+        "type": "object"
+      },
       "ApprovalDocumentType": {
         "description": "Zincire giren evrak aileleri (K4 — bu dilim YALNIZ bu ucudur).\n\nFatura ve bordro donemi OK-1B'nin isidir. IZIN TALEBI ve BORDRO SATIRI\nzincire HIC GIRMEZ (kullanici karari): izin talebinin ₺ tutari yoktur ve\nesik anlamsizdir; 48 personellik bir bordro ise 48 zincir acardi.",
         "enum": [
@@ -574,7 +673,8 @@
           "update",
           "delete",
           "approve",
-          "backup"
+          "backup",
+          "ai_turn"
         ],
         "title": "AuditAction",
         "type": "string"
@@ -34677,6 +34777,72 @@
         "summary": "Reopen Accounting Period Endpoint",
         "tags": [
           "accounting"
+        ]
+      }
+    },
+    "/ai/context": {
+      "get": {
+        "description": "AI'ın sınırı — S14'ün korkuluğu.",
+        "operationId": "get_ai_context_endpoint_ai_context_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiContextResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Ai Context Endpoint",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/ai/tools": {
+      "get": {
+        "description": "Aktörün **görebildiği** araçlar (Kapı A'nın yayınlanmış hâli).\n\nCanlı doğrulama: iki farklı rolle çağrılıp listelerin FARKLI geldiği\nölçülür. Aynı gelirse Kapı A hiçbir şey yapmıyordur.",
+        "operationId": "list_ai_tools_endpoint_ai_tools_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiToolListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Ai Tools Endpoint",
+        "tags": [
+          "ai"
         ]
       }
     },

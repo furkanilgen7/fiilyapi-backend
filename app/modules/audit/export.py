@@ -37,6 +37,7 @@ ACTION_LABELS: dict[AuditAction, str] = {
     AuditAction.delete: "Silme",
     AuditAction.approve: "Onay",
     AuditAction.backup: "Yedekleme",
+    AuditAction.ai_turn: "AI Turu",
 }
 
 #: Aktoru olmayan (otomatik) satirlarin kullanici sutunu.

@@ -405,7 +405,12 @@ def test_permission_module_is_seeded_as_21st():
     assert row["name"] == "Makine & Ekipman"
     assert row["group"] is ModuleGroup.SAHA
     assert row["sort_order"] == 21
-    assert row["sort_order"] == max(module["sort_order"] for module in MODULES)
+    # 🔴 AI-0b: `equipment` artık SON modül DEĞİL — 22. modül `ai` (sort_order
+    # 22) eklendi. Ölçülen şey "sona eklendi" olgusu değil, **`equipment`in
+    # kendi sırasının KAYMADIĞI**dır; `max(...)` iddiası her yeni modülde
+    # ritüelle güncellenen bir sihirli sayıya dönüşürdü. Yerine: `equipment`ten
+    # SONRA gelen modüller ADIYLA sayılır.
+    assert {m["key"] for m in MODULES if m["sort_order"] > row["sort_order"]} == {"ai"}
     assert MODULE_KEY in MATRIX
 
 
