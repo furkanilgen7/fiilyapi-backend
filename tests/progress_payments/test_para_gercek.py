@@ -18,10 +18,15 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.invoicing.models import InvoiceDirection
 from app.modules.progress_payments.models import ProgressPaymentStatus
 from app.modules.treasury.models import FinancialInstrumentStatus, PaymentMethodKind
-from app.modules.treasury.realized import PAYMENT_NOT_REALIZED, SOURCE_NOT_INVOICED
-from tests._para_gercek import parayi_yatir
+from app.modules.treasury.realized import (
+    BINDING_INVOICE_INVALID,
+    PAYMENT_NOT_REALIZED,
+    SOURCE_NOT_INVOICED,
+)
+from tests._para_gercek import fatura_kes, odeme_yaz, parayi_yatir
 
 pytestmark = pytest.mark.asyncio
 
@@ -215,3 +220,66 @@ async def test_kapi_ILGISIZ_bir_hakedisin_parasini_saymaz(
 
     toplam = await realized_total_for_source(seeded_db, Invoice.progress_payment_id, uuid.uuid4())
     assert toplam == Decimal("0")
+
+
+async def test_G7_SIFIR_tutarli_baglayici_fatura_REDDEDILIR(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    seeded_db: AsyncSession,
+    hakedis_fabrikasi,
+) -> None:
+    """Kalemsiz fatura bu ailede de kapıyı boşta geçiremez (kusur 1)."""
+    payment_id = await hakedis_fabrikasi(ProgressPaymentStatus.approved)
+    fatura = await fatura_kes(seeded_db, payment_id, taseron=False, kalemsiz=True)
+    assert fatura.total == Decimal("0.00")
+
+    yanit = await client.post(f"/progress-payments/{payment_id}/mark-paid", headers=admin_headers)
+
+    assert yanit.status_code == 409, yanit.text
+    assert yanit.json()["detail"] == BINDING_INVOICE_INVALID
+
+
+async def test_G8_YANLIS_YONLU_fatura_REDDEDILIR(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    seeded_db: AsyncSession,
+    hakedis_fabrikasi,
+) -> None:
+    """🔴 YÖN BU AİLEDE TERSTİR ve asimetri burada ölçülür.
+
+    İşveren hakedişinde para BİZE GELİR (`120 receivable` / `600 revenue`), yani
+    bağlayıcı belge GİDEN faturadır. Buraya bağlanmış bir GELEN fatura, bizim
+    ÖDEDİĞİMİZ bir borcu işverenin bize olan borcunun kapanması gibi gösterirdi.
+
+    `SOURCE_DIRECTION` tablosu iki aileyi tek bir yöne eşitleseydi, taşeron
+    testleri yeşil kalırken bu test kırmızıya dönerdi.
+    """
+    payment_id = await hakedis_fabrikasi(ProgressPaymentStatus.approved)
+    ters = await fatura_kes(
+        seeded_db, payment_id, taseron=False, direction=InvoiceDirection.incoming
+    )
+    assert ters.total > 0
+    await odeme_yaz(seeded_db, ters, taseron=False, tutar=ters.total)
+
+    yanit = await client.post(f"/progress-payments/{payment_id}/mark-paid", headers=admin_headers)
+
+    assert yanit.status_code == 409, yanit.text
+    assert yanit.json()["detail"] == BINDING_INVOICE_INVALID
+
+
+async def test_G8_POZITIF_KONTROL_GIDEN_fatura_GECER(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    seeded_db: AsyncSession,
+    hakedis_fabrikasi,
+) -> None:
+    """Doğru yön (GİDEN) aynı tutarla GEÇER — reddin yönden geldiğinin kanıtı."""
+    payment_id = await hakedis_fabrikasi(ProgressPaymentStatus.approved)
+    dogru = await fatura_kes(
+        seeded_db, payment_id, taseron=False, direction=InvoiceDirection.outgoing
+    )
+    await odeme_yaz(seeded_db, dogru, taseron=False, tutar=dogru.total)
+
+    yanit = await client.post(f"/progress-payments/{payment_id}/mark-paid", headers=admin_headers)
+
+    assert yanit.status_code == 200, yanit.text

@@ -110,6 +110,8 @@ async def fatura_kes(
     document_type: InvoiceDocumentType = InvoiceDocumentType.einvoice,
     kaynaga_bagla: bool = True,
     due_date: date | None = date(2026, 3, 1),
+    kalemsiz: bool = False,
+    direction: InvoiceDirection | None = None,
 ) -> Invoice:
     """Hakedişe bağlı fatura — para kolonları ÜRÜNÜN motorundan (bulgu 2).
 
@@ -119,17 +121,35 @@ async def fatura_kes(
 
     Varsayılan durum yönün GİRİŞ durumudur: gelen fatura `pending`, giden
     `draft` (`InvoiceStatus` K2).
+
+    🔴 **BOZUK HÂLLER DE KURULABİLİR — ve bu ZORUNLUDUR (denetim kusuru 1'in
+    sebebi).** Bu yardımcı eskiden HER ZAMAN `quantity=1, unit_price=<brüt>`
+    yazıyordu; `total = 0` hâli hiçbir testte kurulamıyordu ve kapının sıfır
+    tutarlı faturada (`0 < 0` → False) boşta geçtiğini DÖRT KAPI DA görmedi.
+    Kanon: *bir bekçi, ölçtüğü yolu kendisi kuruyorsa hiçbir şey ölçmüyordur.*
+
+    * `kalemsiz=True` → `compute` BOŞ kalem listesiyle çağrılır (şemanın
+      `default_factory=list` ile meşru saydığı hâlin birebir aynısı) → `total=0`.
+    * `brut=Decimal("0")` → `unit_price=0` kalemi (`_UNIT_PRICE = Field(ge=0)`)
+      → yine `total=0`, ama BU KEZ kalem VARDIR.
+    * `direction=` → yönü kaynağın para akışına TERS kurar (kusur 2).
     """
-    yon, kaynak_kolonu = _AILE[taseron]
+    varsayilan_yon, kaynak_kolonu = _AILE[taseron]
+    yon = direction if direction is not None else varsayilan_yon
     payment = await _hakedis(session, payment_id, taseron=taseron)
     tutar = brut if brut is not None else calculations.gross_total(payment.lines)
 
-    hesap = invoice_amounts.compute(
-        [
+    kalemler = (
+        []
+        if kalemsiz
+        else [
             invoice_amounts.LineInput(
                 quantity=Decimal("1"), unit_price=tutar, vat_rate=payment.vat_pct
             )
-        ],
+        ]
+    )
+    hesap = invoice_amounts.compute(
+        kalemler,
         advance_rate=payment.advance_pct,
         retention_rate=payment.retainage_pct,
         withholding_rate=None,
