@@ -302,13 +302,31 @@ async def save_lines(
     `service → lines → service` döngüsel importu doğardı (plan bu fonksiyonu
     `lines.save_lines` diye adlandırıyordu — sapma ve gerekçesi budur).
 
+    🔴 **KRIT-HAKEDIS K5 — DURUM KAPISI KİLİT ALTINDA OKUNUR.**
+
+    Kapının kendisi (`status != draft → 409`) eskiden de VARDI; açık olan şey
+    kapının okuduğu durumun BAYAT olabilmesiydi. `_visible_payment` kilitsiz
+    okur: eşzamanlı bir `approve` ile bu uç BİRBİRİNİ GÖRMEDEN geçebiliyordu —
+    bu uç `draft` okur, `approve` `FOR UPDATE` alıp commit eder, bu uç hâlâ eski
+    görüşüyle satırları YAZAR. Sonuç onaylanmış VE fişlenmiş bir hakedişin
+    satırlarının değişmesidir; fişin tutarı donmuş olduğu için (`posting.py`:
+    *fişin kendisi snapshot'tır*) mizan ile ekran SESSİZCE ayrışır ve hiçbir
+    kolon farkı bunu ele vermez.
+
+    `visible_payment_locked` kilit sırasını `create`/`transitions.perform`/
+    `delete_payment` ile AYNI tutar (önce sözleşme, sonra hakediş) ve kilitli
+    satırı `populate_existing=True` ile YENİDEN okur — kilit tek başına yetmez,
+    ORM kimlik haritası kilitli satırın BAYAT alanlarını döndürebilirdi.
+
+    🔴 Taşeron ikizi (`subcontractor_progress_payments.service.save_lines`) bu
+    kilidi ZATEN alıyordu; iki aile ayrışmıştı ve simetri burada kurulur.
+
     İkinci öğe: gövdeden adreslenemediği için düşen **bağı kopmuş satır sayısı**
     (O3) — router bunu yanıtın `dropped_orphan_count` alanına taşır.
     """
-    payment, project = await _visible_payment(session, actor, payment_id)
+    payment, project, contract = await visible_payment_locked(session, actor, payment_id)
     if payment.status != ProgressPaymentStatus.draft:
         raise ConflictError(guards.INVALID_STATUS_TRANSITION)
-    contract = project.contract
     if contract is None:
         raise SiteValidationError(guards.NO_EMPLOYER_CONTRACT)
 

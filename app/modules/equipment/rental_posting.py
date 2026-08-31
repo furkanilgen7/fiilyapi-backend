@@ -207,6 +207,22 @@ async def post_on_approval(
     (kapalı dönem **409** · eksik eşleme **422**) onay da GERİ ALINIR —
     "onaylı ama fişsiz" bir kira hakedişi DOĞMAZ. COMMIT ETMEZ.
     """
+    # 🔴 KRIT-HAKEDIS K3 — faturası zaten fişlenmiş kira hakedişi YENİDEN
+    #    FİŞLENMEZ (`reject_invoice` → yeniden `approve_invoice` turu). Gerekçe
+    #    `invoicing.source_posting.source_replaced_by_invoice` docstring'indedir.
+    #
+    # 🔴 İTHALAT FONKSİYON İÇİNDEDİR ve olmak ZORUNDADIR: `source_posting` bu
+    #    modülü (`rental_posting.reverse_rental_invoice`) `SOURCE_REVERSERS`
+    #    için ithal eder — tepede yazılsaydı GERÇEK bir döngü doğar ve uygulama
+    #    açılışta `ImportError` ile ölürdü. Kardeş iki aile bu kısıtı taşımaz
+    #    (onların `posting` modülü `source_posting`i ithal etmez).
+    from app.modules.invoicing import source_posting
+    from app.modules.invoicing.models import Invoice
+
+    if await source_posting.source_replaced_by_invoice(
+        session, Invoice.equipment_rental_invoice_id, invoice.id
+    ):
+        return
     # `session.get` — kimlik haritasından okur, ikinci bir sorgu koşmaz
     # (`_supplier_display` ile AYNI desen).
     supplier = await session.get(Supplier, invoice.supplier_id)

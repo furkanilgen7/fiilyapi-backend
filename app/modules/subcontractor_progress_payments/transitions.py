@@ -61,6 +61,7 @@ from app.core.timezone import to_display
 from app.modules.approvals import service as approvals_service
 from app.modules.approvals.models import ApprovalDocumentType
 from app.modules.contracts.models import SubcontractorContract
+from app.modules.invoicing import source_posting
 from app.modules.invoicing.models import Invoice
 from app.modules.progress_payments import calculations
 from app.modules.progress_payments.transitions import PaymentAction, build_transition_table
@@ -161,6 +162,12 @@ async def _fisle(
         await posting.reverse_subcontractor_payment(session, actor, payment.id)
         return
     if new_status is not SubcontractorPaymentStatus.approved:
+        return
+    # 🔴 KRIT-HAKEDIS K3 — gerekçe kardeş dosyada TEK KOPYA
+    #    (`invoicing.source_posting.source_replaced_by_invoice`).
+    if await source_posting.source_replaced_by_invoice(
+        session, Invoice.subcontractor_progress_payment_id, payment.id
+    ):
         return
     contract_amount = await repository.get_contract_amount(session, payment.contract_id)
     # 🔴 `sequence_no` ARTAN sıra ŞARTTIR: avans mahsubu zinciri sıralıdır ve

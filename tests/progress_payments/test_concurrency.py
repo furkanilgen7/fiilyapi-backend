@@ -533,3 +533,134 @@ async def _mu3d_esleme() -> None:
     girmez ve eşleme aranmaz.
     """
     return None
+
+
+# --------------------------------------------------------------------------- #
+# 🔴 KRIT-HAKEDIS K5 — `PUT …/lines` DURUM KAPISININ TOCTOU YARIŞI
+# --------------------------------------------------------------------------- #
+
+
+async def _lock_bekleyen_pid(pid_disinda: set[int]) -> int | None:
+    """`pg_stat_activity`de gerçekten SATIR KİLİDİ bekleyen bir arka planın pid'i.
+
+    🔴 Bariyer SABİT SÜRELİ DEĞİLDİR (`asyncio.sleep(0.5)` bu depoda FLAKY
+    ilan edildi). Beklemenin TÜRÜ de doğrulanır: `wait_event_type='Lock'` +
+    `wait_event IN ('transactionid','tuple')` — yani gerçekten bir SATIR
+    kilidinde bekliyor. Yalnız "task bitmedi" iddiası, görevin başka bir
+    sebeple (ör. yavaş sorgu, havuz beklemesi) ilerlememesini de KİLİT sanardı.
+    """
+    async with _SessionFactory() as gozlemci:
+        rows = (
+            await gozlemci.execute(
+                text(
+                    "SELECT pid, wait_event FROM pg_stat_activity "
+                    "WHERE datname = current_database() "
+                    "AND wait_event_type = 'Lock' "
+                    "AND wait_event IN ('transactionid', 'tuple')"
+                )
+            )
+        ).all()
+    for pid, _wait_event in rows:
+        if pid not in pid_disinda:
+            return pid
+    return None
+
+
+async def _kilitte_bekledigini_dogrula(task: asyncio.Task, *, mesaj: str) -> None:
+    """Görev SATIR KİLİDİNDE bekleyene kadar YOKLAR; bekleme yoksa KIRMIZI.
+
+    🔴 POZİTİF KONTROL: `save_lines`ten kilit kaldırıldığında görev hiç
+    beklemez ve buraya `TimeoutError` DEĞİL, `task.done()` ile düşer — mesaj
+    tam olarak o mutantı adlandırır.
+    """
+    for _ in range(100):
+        if task.done():
+            raise AssertionError(mesaj)
+        if await _lock_bekleyen_pid(set()) is not None:
+            return
+        await asyncio.sleep(0.05)
+    raise AssertionError(f"5 sn içinde SATIR KİLİDİ beklemesi GÖRÜLMEDİ: {mesaj}")
+
+
+async def _attempt_save_lines(payment_id: uuid.UUID, actor_id: uuid.UUID) -> str:
+    """`PUT …/lines` — BOŞ gövde, yani "tüm satırları sil".
+
+    Boş gövde bilinçlidir: kapı delinirse hasar ÖLÇÜLEBİLİR olur (onaylanmış
+    ve fişlenmiş bir hakedişin satırları tamamen boşalır ve ekrandaki brüt
+    sıfıra düşerken fişteki tutar donmuş kalır).
+    """
+    async with _SessionFactory() as session:
+        actor = await session.get(User, actor_id)
+        try:
+            await service.save_lines(session, actor, payment_id, schemas.ProgressPaymentLinesSave())
+            await session.commit()
+            return "saved"
+        except ConflictError:
+            await session.rollback()
+            return "conflict"
+
+
+async def test_satir_yazma_esZamanli_onay_kazanirsa_409_alir() -> None:
+    """🔴 K5 — `save_lines`in durum kapısı KİLİTSİZ okunuyordu (TOCTOU).
+
+    Kapının kendisi VARDI (`status != draft → 409`) ve düz *"onaydan sonra
+    satır değişir"* iddiası YANLIŞTI. Gerçek açık YARIŞTI: durum kilitsiz
+    okunduğu için eşzamanlı bir `approve` ile `PUT /lines` BİRBİRİNİ GÖRMEDEN
+    geçebiliyordu — tx-A `draft` okur, tx-B `approve` eder ve commit eder,
+    tx-A hâlâ eski görüşüyle satırları yazar. Sonuç: ONAYLANMIŞ VE FİŞLENMİŞ
+    bir hakedişin satırları onaydan SONRA değişir; fişin tutarı donmuş
+    kaldığı için mizan ile ekran SESSİZCE ayrışır.
+
+    🔴 Taşeron ikizi (`subcontractor_progress_payments.service.save_lines`) bu
+    kilidi ZATEN alıyordu (`visible_payment_locked`) — iki aile ayrışmıştı ve
+    bu test simetriyi sabitler.
+
+    Desen `test_silinirken_esZamanli_onay_kazanirsa_409_alir` ile aynıdır;
+    bariyer ondan FARKLI olarak sabit süreli değil `pg_stat_activity`
+    yoklamalıdır (kilidin TÜRÜ de doğrulanır).
+    """
+    project_id, user_id, payment_id, ikinci_user_id = await _onay_kurulumu()
+    release_lock = asyncio.Event()
+    gorevler: list[asyncio.Task] = []
+    try:
+        lock_acquired = asyncio.Event()
+
+        task_approve = asyncio.create_task(
+            _attempt_approve_and_hold(payment_id, user_id, lock_acquired, release_lock)
+        )
+        gorevler.append(task_approve)
+        await asyncio.wait_for(lock_acquired.wait(), timeout=5)
+
+        task_lines = asyncio.create_task(_attempt_save_lines(payment_id, ikinci_user_id))
+        gorevler.append(task_lines)
+        try:
+            # 🔴 `release_lock` HER HÂLDE bırakılır: iddia kırmızıya döndüğünde
+            #    de tx1'in `FOR UPDATE` kilidi açık kalırsa `finally`deki
+            #    temizlik SONSUZA KADAR bekler ve kırmızı bir kusur, ASILI bir
+            #    teste dönüşürdü (mutant koşusu böyle ölçülemez hâle gelirdi).
+            await _kilitte_bekledigini_dogrula(
+                task_lines,
+                mesaj=(
+                    "`PUT /lines` onay kilidi serbest bırakılmadan ilerledi — "
+                    "`save_lines` durum kapısını KİLİTSİZ okuyor (K5 TOCTOU)"
+                ),
+            )
+        finally:
+            release_lock.set()
+
+        onay_sonucu = await asyncio.wait_for(task_approve, timeout=10)
+        satir_sonucu = await asyncio.wait_for(task_lines, timeout=10)
+
+        assert onay_sonucu == "approved"
+        assert satir_sonucu == "conflict", (
+            "satır yazma, tazelenmiş `approved` durumunu GÖRMEDİ — onaylanmış "
+            "hakedişin satırları TOCTOU ile değiştirildi"
+        )
+
+        async with _SessionFactory() as verify_session:
+            payment = await verify_session.get(ProgressPayment, payment_id)
+            assert payment.status is ProgressPaymentStatus.approved
+    finally:
+        release_lock.set()
+        await asyncio.gather(*gorevler, return_exceptions=True)
+        await _onay_temizligi(project_id, user_id, ikinci_user_id)
