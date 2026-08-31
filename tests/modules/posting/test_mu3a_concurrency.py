@@ -34,7 +34,7 @@ kalabilir. Bu dosya HEM TEK BAŞINA HEM DOSYA BÜTÜN koşturulup raporlanır.
 
 import asyncio
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import date
 from decimal import Decimal
 
@@ -67,7 +67,12 @@ CARI_ROL = "payable"
 
 #: Bariyer yoklama bütçesi. SABİT BİR `sleep` DEĞİL: kilit görünene kadar
 #: yoklanır ve görünmezse test AÇIKÇA düşer.
-BARIYER_TIMEOUT_SN = 5.0
+BARIYER_TIMEOUT_SN = 20.0
+"""🔴 CI'da 5.0 sn YETMİYORDU (EXPORT-XLSX turunda yerelde de üretildi).
+
+Bu tavanı yükseltmek bekçiyi ZAYIFLATMAZ: kilit hiç alınmazsa bariyer yine
+düşer, yalnız daha geç düşer. Dar tutmanın bedeli ise SAHTE KIRMIZIYDI —
+yavaş bir makinede ikinci görev kilide varmadan süre doluyordu."""
 BARIYER_ARALIK_SN = 0.05
 
 
@@ -183,11 +188,22 @@ async def _danisma_kilidinde_bekleyen_var_mi(gozlemci: AsyncSession) -> bool:
     `pg_advisory_xact_lock`tan geldiğini söyler. Yalnız `Lock` bakılsaydı dönem
     satırının `FOR UPDATE` kilidi (`transactionid`/`tuple`) de sayılır ve
     danışma kilidi hiç alınmasa bile bariyer yeşil geçerdi.
+
+    🔴 `datname = current_database()` ŞARTTIR (EXPORT-XLSX turunda ölçüldü).
+    `pg_stat_activity` SUNUCU GENELİDİR: bu dosya kendi tek kullanımlık
+    veritabanını kurar, ama depoda danışma kilidi kullanan İKİ dosya daha
+    vardır (`procurement/test_select_and_order_yarisi.py`,
+    `invoicing/test_validation.py`) ve `-n 4` altında AYNI ANDA koşabilirler.
+    Süzgeç olmadan BAŞKA bir veritabanındaki bekleyen bu bariyeri tatmin eder;
+    bariyer, bu testin kilidi HİÇ alınmasa bile yeşil geçerdi — yani bekçi
+    doğru sonucu YANLIŞ SEBEPLE verirdi. `pid <> pg_backend_pid()` ise
+    gözlemcinin kendisini saymamak içindir.
     """
     sayi = await gozlemci.scalar(
         text(
             "SELECT count(*) FROM pg_stat_activity "
-            "WHERE wait_event_type = 'Lock' AND wait_event = 'advisory'"
+            "WHERE wait_event_type = 'Lock' AND wait_event = 'advisory' "
+            "AND datname = current_database() AND pid <> pg_backend_pid()"
         )
     )
     return bool(sayi)
@@ -209,6 +225,30 @@ async def _bariyer(gozlemci: AsyncSession, gorev: asyncio.Task) -> None:
     )
 
 
+async def _gorevi_sonlandir(gorev: asyncio.Task) -> None:
+    """Arka plan görevini HER YOLDA kapat — oturum ve engine kapanmadan ÖNCE.
+
+    🔴 EXPORT-XLSX turunda CI'da ölçülen KUSUR buydu. Görev `ikinci` oturumunu
+    kullanır ama o oturumun SAHİBİ `async with` bloğudur. Blok bir istisnayla
+    çıkarsa (bariyer düşerse) oturum, ardından `engine.dispose()` bağlantıyı
+    görev HÂLÂ ÜZERİNDEYKEN kapatır. asyncpg bunu
+    `ConnectionDoesNotExistError` ya da "another operation is in progress"
+    diye bildirir ve bu gürültü ASIL hatayı — "ikinci onay danışma kilidinde
+    BEKLEMEDİ" — EZER. Yani bekçi düştüğünde NEDEN düştüğü okunamaz hâle
+    gelirdi; testin kendisi kendi teşhisini yok ediyordu.
+
+    Yerelde görünmezdi çünkü bariyer hiç zaman aşımına uğramıyordu; CI'da
+    makine yavaşladıkça uğradı. Sıralamayı DEĞİŞTİRMEZ: yarış aynen kurulur,
+    yalnız görev başıboş bırakılmaz.
+    """
+    if not gorev.done():
+        gorev.cancel()
+    # İstisnayı TÜKET: alınmayan görev istisnası asyncio tarafından ayrıca
+    # loglanır ve gerçek hatanın üstünü örter.
+    with suppress(BaseException):
+        await gorev
+
+
 async def test_eszamanli_iki_onay_TEK_fis_uretir():
     """tx1 fişi yazar ama COMMIT ETMEZ; tx2'nin BEKLEDİĞİ ölçülür, sonra sonuç."""
     async with _yaris_ortami() as ortam:
@@ -222,19 +262,25 @@ async def test_eszamanli_iki_onay_TEK_fis_uretir():
             assert ilk.created is True
 
             gorev = asyncio.create_task(_fisle_ve_commit(ortam, ikinci, belge_id))
-            await _bariyer(gozlemci, gorev)
-            assert not gorev.done()
+            try:
+                await _bariyer(gozlemci, gorev)
+                assert not gorev.done()
 
-            await birinci.commit()
-            sonuc = await gorev
+                await birinci.commit()
+                sonuc = await gorev
 
-            # 🔴 Kaybeden İSTİSNA ALMAZ: kilidi devraldıktan sonra TAZE bir okuma
-            # yapar (READ COMMITTED) ve kazananın fişini döndürür.
-            assert sonuc.created is False
-            assert sonuc.entry.id == ilk.entry.id
+                # 🔴 Kaybeden İSTİSNA ALMAZ: kilidi devraldıktan sonra TAZE bir
+                # okuma yapar (READ COMMITTED) ve kazananın fişini döndürür.
+                assert sonuc.created is False
+                assert sonuc.entry.id == ilk.entry.id
 
-            toplam = await gozlemci.scalar(select(func.count()).select_from(JournalEntry))
-            assert toplam == 1
+                toplam = await gozlemci.scalar(select(func.count()).select_from(JournalEntry))
+                assert toplam == 1
+            finally:
+                # Bariyer düşerse görev BAŞIBOŞ kalırdı; aşağıdaki `async with`
+                # çıkışı onun bağlantısını altından çeker ve asyncpg gürültüsü
+                # asıl hatayı ezer. Sıra ŞART: görev önce, oturumlar sonra.
+                await _gorevi_sonlandir(gorev)
 
 
 async def test_KILIT_OLMASA_DA_DB_ikinci_fisi_REDDEDER():
