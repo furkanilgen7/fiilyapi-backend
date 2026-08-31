@@ -312,6 +312,169 @@ async def test_S8_TASLAK_donemde_onay_yine_KOMSU_adima_gecer(
     assert ikinci.json()["skipped_already_approved"] == 3
 
 
+# --- 🔴 KRIT-BORDRO: ödenecek satırı olmayan dönem onaylanamaz --------------
+#
+# Ölçülen zarar: boş bir dönem İKİ istekte `approved` oluyordu ve o andan sonra
+# `compute` 409, satır `PATCH` 409, dönem `DELETE` 405 (uç YOK), aynı ayı
+# yeniden açmak 409 (UQ `year, month`) — o ayın bordrosu elle SQL dışında
+# kurtarılamaz hâle geliyordu.
+#
+# Bekçi YENİ DEĞİLDİR: `compute_flow._promote_period_after_compute` bu zararı
+# ("geri dönüşü olmayan bir boş onay") zaten tarif edip KENDİ kapısında
+# durduruyordu. Kusur, aynı `draft → pending_approval` çiftinin onay ucundan
+# ELLE de sürülebilmesiydi. Yüklem artık `core.has_payable_line`de TEK KOPYA.
+#
+# 🔴 Bu blokta dönem `donem` fixture'ıyla DEĞİL, ÜRÜNÜN KENDİ UCUYLA
+# (`POST /payroll/periods`) açılır: fixture dönemi ORM'de elle kurar ve kapı
+# o zaman "ürünün ürettiği bir hâli" değil "testin kurduğu bir hâli" ölçmüş
+# olurdu.
+
+
+async def _donem_ac(client, headers, *, month: int) -> str:
+    resp = await client.post(
+        "/payroll/periods", json={"year": 2026, "month": month}, headers=headers
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()["id"]
+
+
+async def _donem_durumu(client, headers, period_id: str) -> str:
+    resp = await client.get(f"/payroll/periods/{period_id}", headers=headers)
+    assert resp.status_code == 200, resp.text
+    return resp.json()["status"]
+
+
+async def test_KRIT_HIC_SATIRI_OLMAYAN_donem_ONAYLANAMAZ_409(client, ik_headers, oranlar):
+    """🔴 Hesaplanmamış (satırsız) dönem onay zincirine GİRMEZ — İLK tıkta 409.
+
+    Zincire hiç girmemesi ŞARTTIR: `pending_approval`a düşseydi ikinci tık
+    dönemi `approved` yapar ve `compute` kapısı o ayın üzerine KALICI kapanırdı.
+    """
+    period_id = await _donem_ac(client, ik_headers, month=7)
+
+    resp = await client.post(f"/payroll/periods/{period_id}/approve", headers=ik_headers)
+    assert resp.status_code == 409, resp.text
+    assert "Ödenecek satırı olmayan" in resp.json()["detail"]
+
+    # 🔴 Dönem YAZILMAMIŞ olmalı: 409 yanıtı, "girip çıkmış" bir durumu örtmez.
+    assert await _donem_durumu(client, ik_headers, period_id) == PayrollPeriodStatus.draft.value
+
+
+async def test_KRIT_PUANTAJSIZ_donem_ONAYLANAMAZ_ve_PUANTAJ_GIRILINCE_ONAYLANIR(
+    client, ik_headers, oranlar, personel_fabrikasi, puantaj_fabrikasi
+):
+    """🔴 Kullanıcının bildirdiği hâl + POZİTİF KONTROL aynı testte.
+
+    Puantaj girilmemişken tüm satırlar `uncomputed`tır (S4): dönemde ödenecek
+    hiçbir şey yoktur ve onay **409**dur. `compute` kapısı AÇIK kalır — kapının
+    işi kullanıcıyı tıkamak değil, KURTARILABİLİR tarafta tutmaktır.
+
+    🔴 İkinci yarı KARŞIT KANITTIR (K-IKIZ1): puantaj girilip dönem yeniden
+    hesaplandığında AYNI dönem AYNI uçtan **200** ile onaylanır. Bu olmadan her
+    gövdeye 409 veren bozuk bir uç da testi yeşil geçirirdi.
+    """
+    kisi = await personel_fabrikasi("Ayşe Demir")
+    period_id = await _donem_ac(client, ik_headers, month=7)
+
+    ilk_hesap = await client.post(f"/payroll/periods/{period_id}/compute", headers=ik_headers)
+    assert ilk_hesap.status_code == 200, ilk_hesap.text
+    assert await _donem_durumu(client, ik_headers, period_id) == PayrollPeriodStatus.draft.value
+
+    reddedilen = await client.post(f"/payroll/periods/{period_id}/approve", headers=ik_headers)
+    assert reddedilen.status_code == 409, reddedilen.text
+    assert await _donem_durumu(client, ik_headers, period_id) == PayrollPeriodStatus.draft.value
+
+    # --- POZİTİF KONTROL: dolu dönem AYNI uçtan GEÇMELİ ---
+    await puantaj_fabrikasi(kisi, [1, 2, 3, 4, 5])
+    ikinci_hesap = await client.post(f"/payroll/periods/{period_id}/compute", headers=ik_headers)
+    assert ikinci_hesap.status_code == 200, ikinci_hesap.text
+    assert (
+        await _donem_durumu(client, ik_headers, period_id)
+        == PayrollPeriodStatus.pending_approval.value
+    )
+
+    gecen = await client.post(f"/payroll/periods/{period_id}/approve", headers=ik_headers)
+    assert gecen.status_code == 200, gecen.text
+    assert gecen.json()["period_status"] == PayrollPeriodStatus.approved.value
+    assert gecen.json()["approved"] == 1
+
+
+async def test_KRIT_ODENEBILIR_SATIRI_KALMAYAN_PENDING_APPROVAL_donemi_ONAYLANAMAZ_409(
+    client, ik_headers, oranlar, personel_fabrikasi, puantaj_fabrikasi, db_session
+):
+    """🔴 İKİNCİ ADIM da bekçilenir — ve bu hâl ULAŞILABİLİRDİR (ölçüldü).
+
+    Terfi (`_promote_period_after_compute`) yalnız `draft` döneme bakar, yani
+    `pending_approval`a çıkmış bir dönem ödenebilir satırını SONRADAN
+    kaybedebilir: personelin ücret tanımı kaldırılıp `compute` yeniden koşarsa
+    satır `uncomputed`a düşer, dönem `pending_approval` KALIR. Denetim yalnız
+    `draft → pending_approval` çiftine konsaydı buradaki TEK tık dönemi yine
+    boş boş `approved` yapardı — kapı kurulmuş ama HÂL ATLANMIŞ olurdu.
+
+    Kapının kullanıcıya bıraktığı çıkış onay değil YENİDEN HESAPTIR:
+    `pending_approval` kilitli olmadığı için `compute` hâlâ **200**dür.
+    """
+    kisi = await personel_fabrikasi("Ayşe Demir")
+    await puantaj_fabrikasi(kisi, [1, 2, 3, 4, 5])
+    period_id = await _donem_ac(client, ik_headers, month=7)
+    assert (
+        await client.post(f"/payroll/periods/{period_id}/compute", headers=ik_headers)
+    ).status_code == 200
+    assert (
+        await _donem_durumu(client, ik_headers, period_id)
+        == PayrollPeriodStatus.pending_approval.value
+    )
+
+    # Ücret tanımı kalkar → yeniden hesapta satır `uncomputed`a düşer.
+    kisi.wage_type = None
+    kisi.wage_amount = None
+    await db_session.flush()
+    assert (
+        await client.post(f"/payroll/periods/{period_id}/compute", headers=ik_headers)
+    ).status_code == 200
+    assert (
+        await _donem_durumu(client, ik_headers, period_id)
+        == PayrollPeriodStatus.pending_approval.value
+    )
+
+    resp = await client.post(f"/payroll/periods/{period_id}/approve", headers=ik_headers)
+    assert resp.status_code == 409, resp.text
+    assert (
+        await _donem_durumu(client, ik_headers, period_id)
+        == PayrollPeriodStatus.pending_approval.value
+    )
+    # Kurtarma yolu AÇIK: dönem hâlâ hesaplanabilir.
+    assert (
+        await client.post(f"/payroll/periods/{period_id}/compute", headers=ik_headers)
+    ).status_code == 200
+
+
+async def test_KRIT_TEK_TEK_ONAYLANMIS_satirli_donem_ONAYLANABILIR(
+    client, ik_headers, oranlar, personel_fabrikasi, puantaj_fabrikasi
+):
+    """🔴 Kapı `pending` DEĞİL `PAYABLE` sorar — ve fark ÖLÇÜLEBİLİRDİR.
+
+    `draft` dönem kilitli değildir, yani kullanıcı satırı TEK TEK onaylayıp
+    (`approve_line`) dönemi `pending` satırsız bırakabilir. Bekçi yalnız
+    `pending` sorsaydı, içinde onaylanmış GERÇEK bir satır bulunan bu dönem
+    onaylanamaz olur ve kapı kusursuz bir dönemi TIKARDI.
+    """
+    kisi = await personel_fabrikasi("Ayşe Demir")
+    await puantaj_fabrikasi(kisi, [1, 2, 3, 4, 5])
+    period_id = await _donem_ac(client, ik_headers, month=7)
+    await client.post(f"/payroll/periods/{period_id}/compute", headers=ik_headers)
+
+    detay = (await client.get(f"/payroll/periods/{period_id}", headers=ik_headers)).json()
+    satir = [s for bolum in detay["sections"] for s in bolum["lines"]][0]
+    tekil = await client.post(f"/payroll/lines/{satir['id']}/approve", headers=ik_headers)
+    assert tekil.status_code == 200, tekil.text
+
+    resp = await client.post(f"/payroll/periods/{period_id}/approve", headers=ik_headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["period_status"] == PayrollPeriodStatus.approved.value
+    assert resp.json()["skipped_already_approved"] == 1
+
+
 async def test_ODENMIS_donem_yeniden_onaylanamaz_409(
     client, ik_headers, donem, dort_tip, db_session
 ):

@@ -81,6 +81,23 @@ LINE_NOT_APPROVED = "Yalnız onaylanmış bir satırın onayı geri alınabilir"
 #: ÖDEMEDİR, onay ucundan basılmaz) ya da `paid`.
 PERIOD_NOT_APPROVABLE = "Bordro dönemi onay adımına geçirilemez"
 
+#: 🔴 409 — KRIT-BORDRO: ÖDENECEK SATIRI OLMAYAN DÖNEM ONAY ZİNCİRİNE GİRMEZ.
+#:
+#: `PERIOD_NOT_APPROVABLE`ın kardeşi ama sorusu BAŞKADIR ve bu yüzden ayrı bir
+#: cümledir: orası "dönemin ilerletecek ADIMI var mı", burası "ilerletmeye
+#: DEĞER bir şey var mı" diye sorar. Aynı metin kullanılsaydı puantajını
+#: girmemiş kullanıcıya "bu dönem onaylanamaz" denir, YAPMASI GEREKEN İŞ
+#: söylenmezdi.
+#:
+#: Gerekçe `compute_flow._promote_period_after_compute`te ZATEN yazılıdır ve
+#: burada tekrarlanmaz; özeti: `approved` `compute` kapısını (S5) o ayın
+#: üzerine KALICI olarak kapatır, dönemi silen/geri alan bir uç YOKTUR ve UQ
+#: `(year, month)` aynı ayı ikinci kez açtırmaz — yani boş bir onay o ayın
+#: bordrosunu elle SQL dışında kurtarılamaz hâle getirir.
+PERIOD_EMPTY_NOT_APPROVABLE = (
+    "Ödenecek satırı olmayan bordro dönemi onaylanamaz: önce puantajı girip dönemi hesaplayın"
+)
+
 #: 409 — T4b: onaylanmış/ödenmiş dönemin ÖDEME TAKVİMİ değişmez. `paid`te
 #: gerçekleşmiş bir olayın kaydını sonradan düzeltmek para izini bozardı;
 #: `approved`ta ise onaylanmış bordronun takvimi tek taraflı kaymamalıdır —

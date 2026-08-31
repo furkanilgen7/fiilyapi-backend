@@ -44740,7 +44740,7 @@
     },
     "/payroll/periods/{period_id}/approve": {
       "post": {
-        "description": "BY 303 \"Tümünü Onayla\" — dönemi TEK ADIM ilerletir, `pending` satırları onaylar.\n\n`draft → pending_approval → approved`; **atlama YOKTUR** (S8), üçüncü çağrı\n**409**. Ödeme damgası bu uçtan basılmaz (`/pay` ayrıdır).\n\n🔴 \"Tümünü\" onaylamaz: `uncomputed` (S4) ve taşeron (K2) satırlar ATLANIR ve\nyanıtta **sebebe göre ayrı sayılarla** raporlanır — sessiz atlama yoktur\n(WORKFLOW §3).\n\n🔴 **MU-3E:** `approved` adımında bordronun TAHAKKUK FİŞİ kesilir\n(`730` gider · `335` personele borç · `360` vergi · `361` SGK). Fiş\nyazılamazsa onay da geri alınır: hedef ayın muhasebe dönemi kapalıysa\n**409**, hesap eşlemesi ya da satır bileşeni eksikse **422**.",
+        "description": "BY 303 \"Tümünü Onayla\" — dönemi TEK ADIM ilerletir, `pending` satırları onaylar.\n\n`draft → pending_approval → approved`; **atlama YOKTUR** (S8), üçüncü çağrı\n**409**. Ödeme damgası bu uçtan basılmaz (`/pay` ayrıdır).\n\n🔴 \"Tümünü\" onaylamaz: `uncomputed` (S4) ve taşeron (K2) satırlar ATLANIR ve\nyanıtta **sebebe göre ayrı sayılarla** raporlanır — sessiz atlama yoktur\n(WORKFLOW §3).\n\n🔴 **KRIT-BORDRO:** dönemde ÖDENEBİLİR satır yoksa **409** — ne ilk ne\nikinci adım. Boş bir onay `compute` kapısını (S5) o ayın üzerine KALICI\nolarak kapatırdı: dönemi geri alan/silen uç yoktur ve UQ `(year, month)`\naynı ayı ikinci kez açtırmaz. Gerekçenin tamamı `service/approvals.py`dedir.\n\n🔴 **MU-3E:** `approved` adımında bordronun TAHAKKUK FİŞİ kesilir\n(`730` gider · `335` personele borç · `360` vergi · `361` SGK). Fiş\nyazılamazsa onay da geri alınır: hedef ayın muhasebe dönemi kapalıysa\n**409**, hesap eşlemesi ya da satır bileşeni eksikse **422**.",
         "operationId": "approve_payroll_period_endpoint_payroll_periods__period_id__approve_post",
         "parameters": [
           {
@@ -44772,7 +44772,7 @@
             "description": "Kayıt bulunamadı"
           },
           "409": {
-            "description": "Dönem onay adımına geçirilemez ya da muhasebe dönemi kapalı"
+            "description": "Dönem onay adımına geçirilemez, ödenecek satırı yok ya da muhasebe dönemi kapalı"
           },
           "422": {
             "description": "Bordro fişi yazılamadı: hesap eşlemesi ya da satır bileşeni eksik"
