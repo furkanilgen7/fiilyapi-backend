@@ -1,10 +1,10 @@
 import uuid
 from typing import Annotated
-from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import http
 from app.core.access import AccessLevel
 from app.core.db import get_db
 from app.core.deps import get_current_user
@@ -401,16 +401,6 @@ async def import_units_endpoint(
     return result
 
 
-def _content_disposition(filename: str) -> str:
-    """`boq/router.py` ile ayni kural: RFC 5987 `filename*` (UTF-8) yaninda
-    ASCII-guvenli bir `filename` de yollanir — proje kodu Turkce karakter
-    icerebilir ve eski istemciler `filename*` okumaz."""
-    ascii_fallback = filename.encode("ascii", errors="ignore").decode("ascii").replace('"', "")
-    if not ascii_fallback:
-        ascii_fallback = "unite-sablonu.xlsx"
-    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(filename)}"
-
-
 @router.get(
     "/projects/{project_id}/units/import/template",
     dependencies=[_VIEW],
@@ -438,7 +428,9 @@ async def units_import_template_endpoint(
     return Response(
         content=build_template_workbook().getvalue(),
         media_type=XLSX_MEDIA_TYPE,
-        headers={"Content-Disposition": _content_disposition(f"unite-sablonu-{project.code}.xlsx")},
+        headers={
+            "Content-Disposition": http.content_disposition(f"unite-sablonu-{project.code}.xlsx")
+        },
     )
 
 
@@ -472,5 +464,5 @@ async def units_export_endpoint(
     return Response(
         content=build_units_workbook(units).getvalue(),
         media_type=XLSX_MEDIA_TYPE,
-        headers={"Content-Disposition": _content_disposition(export.filename(project.code))},
+        headers={"Content-Disposition": http.content_disposition(export.filename(project.code))},
     )

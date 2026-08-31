@@ -32,11 +32,11 @@ görebilen indirebilir. Denetim günlüğüne YAZMAZ (T7 kuralı: okumalar denet
 
 import uuid
 from typing import Annotated
-from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import http
 from app.core.access import AccessLevel
 from app.core.db import get_db
 from app.core.deps import get_current_user
@@ -88,18 +88,6 @@ async def get_site_timesheet_endpoint(
     return await matrix.build(session, site, project, section, year=year, month=month)
 
 
-def _content_disposition(name: str) -> str:
-    """`boq/router.py._content_disposition` ile BİREBİR aynı kural.
-
-    Dosya adı Türkçe karakter içerebilir: RFC 5987 `filename*` (UTF-8) yanında
-    eski istemciler için ASCII'ye indirgenmiş bir `filename` de yollanır.
-    """
-    ascii_fallback = name.encode("ascii", errors="ignore").decode("ascii").replace('"', "")
-    if not ascii_fallback:
-        ascii_fallback = "puantaj.xlsx"
-    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(name)}"
-
-
 @router.get(
     "/sites/{site_id}/timesheet/export.xlsx",
     dependencies=[_VIEW],
@@ -128,7 +116,7 @@ async def export_site_timesheet_endpoint(
     return Response(
         content=buffer.getvalue(),
         media_type=export.XLSX_MEDIA_TYPE,
-        headers={"Content-Disposition": _content_disposition(name)},
+        headers={"Content-Disposition": http.content_disposition(name)},
     )
 
 

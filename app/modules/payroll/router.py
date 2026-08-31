@@ -37,11 +37,11 @@ açılmaz (spec §1); SGK 96-118'in çalışan listesi de açılmaz (spec §5 ö
 
 import uuid
 from typing import Annotated
-from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import http
 from app.core.access import AccessLevel
 from app.core.db import get_db
 from app.core.deps import get_current_user
@@ -586,18 +586,6 @@ async def replace_payroll_tax_brackets_endpoint(
     return PayrollTaxBracketListResponse(items=rows, total=len(rows))
 
 
-def _content_disposition(name: str) -> str:
-    """`timesheet/router.py._content_disposition` ile BİREBİR aynı kural.
-
-    Dosya adı Türkçe karakter içerebilir: RFC 5987 `filename*` (UTF-8) yanında
-    eski istemciler için ASCII'ye indirgenmiş bir `filename` de yollanır.
-    """
-    ascii_fallback = name.encode("ascii", errors="ignore").decode("ascii").replace('"', "")
-    if not ascii_fallback:
-        ascii_fallback = "bordro.xlsx"
-    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(name)}"
-
-
 @router.get(
     "/payroll/periods/{period_id}/export",
     dependencies=[_VIEW],
@@ -623,6 +611,8 @@ async def export_payroll_period_endpoint(
         content=buffer.getvalue(),
         media_type=export.XLSX_MEDIA_TYPE,
         headers={
-            "Content-Disposition": _content_disposition(export.filename(detail.year, detail.month))
+            "Content-Disposition": http.content_disposition(
+                export.filename(detail.year, detail.month)
+            )
         },
     )

@@ -12,6 +12,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import http
 from app.core.access import AccessLevel
 from app.core.db import get_db
 from app.core.openapi import COMMON_ERROR_RESPONSES
@@ -113,5 +114,5 @@ async def export_audit_log_endpoint(
     return Response(
         content=buffer.getvalue(),
         media_type=XLSX_MEDIA_TYPE,
-        headers={"Content-Disposition": f'attachment; filename="{XLSX_FILENAME}"'},
+        headers={"Content-Disposition": http.content_disposition(XLSX_FILENAME)},
     )
