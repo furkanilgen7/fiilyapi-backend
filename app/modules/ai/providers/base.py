@@ -41,6 +41,7 @@ import enum
 from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any, Protocol, runtime_checkable
 
+from app.modules.ai.blocks import YapisalBlok
 from app.modules.ai.registry import ToolSpec
 
 
@@ -152,12 +153,31 @@ class AracSonuclandi(AiOlay):
     satir_sayisi: int | None = None
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class YapisalBloklar(AiOlay):
+    """🔴 SAĞLAYICI OLAYI **DEĞİL** — `AracSonuclandi` gibi yalnız `loop.py` üretir.
+
+    Mockup'ın metrik kartları / kâr barı / stok kartları / "Kaynak" rozetleri bu
+    olaydan çizilir. Bloklar **araç sonucunun yapısal gövdesinden** üretilir
+    (`presenters.py`); modelin yazdığı hiçbir bayt okunmaz. Bir sağlayıcı
+    adaptörünün bunu üretmesi bir HATADIR ve bekçisi `SAGLAYICI_OLAYLARI`dır.
+
+    Blok listesi BOŞSA olay hiç yayılmaz — boş bir kart iskeleti basmak
+    "veri var ama gelmedi" yalanını söylerdi.
+    """
+
+    cagri_id: str
+    arac_adi: str
+    bloklar: tuple[YapisalBlok, ...]
+
+
 _OLAY_ADLARI: dict[type, str] = {
     MetinParcasi: "metin",
     AracCagrisiBasladi: "arac_basladi",
     AracArgumanParcasi: "arac_arguman",
     AracCagrisiHazir: "arac_hazir",
     AracSonuclandi: "arac_sonuc",
+    YapisalBloklar: "yapisal_blok",
     TurBitti: "tur_bitti",
     Reddetme: "reddetme",
     Hata: "hata",

@@ -95,6 +95,10 @@ class AiProje(BaseModel):
     name: str
     status: str
     type: str
+    #: 🔴 FİNANSAL ilerleme (`ProjectListItem.progress_pct`), FİZİKSEL DEĞİL —
+    #: `projects/schemas.py` ikisini KASTEN ayırır. `None` bırakılabilir: uç
+    #: alanı taşımazsa 0 yazmak "hiç ilerlemedi" demek olurdu (uydurma).
+    progress_pct: Decimal | None = None
 
 
 class AiProjeListesi(BaseModel):

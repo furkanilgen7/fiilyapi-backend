@@ -135,3 +135,94 @@ class AiToolCall(Base):
     http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+# --------------------------------------------------------------------------- #
+# AI-CHAT-2 / K2 — sohbet saklama
+# --------------------------------------------------------------------------- #
+#
+# 🔴 **KULLANICI KARARI (A3, 2026-08-30): SORU + ÖZET SAKLANIR, ARAÇ SONUÇ
+# GÖVDELERİ HİÇ SAKLANMAZ.**
+#
+# | saklanır | saklanmaz |
+# |---|---|
+# | kullanıcının sorusu | araç sonuç **gövdeleri** (bordro satırı, TCKN, personel) |
+# | modelin cevap **metni** | yapısal bloklar (metrik kartı, stok listesi) |
+# | araç **çağrı adları** | araç argümanları |
+# | zarf **hâlleri** (`Ok`/`Restricted`…) | `veri` alanının kendisi |
+#
+# 🔴 **DÜRÜST SONUÇ:** geçmiş bir sohbet açıldığında metrik kartları ve varlık
+# listeleri **yeniden çizilemez** — verisi yok. Bu bir kusur değil, kararın
+# bedelidir; ekran bunu açıkça söyler ("kartlar saklanmadı, özet gösteriliyor")
+# ve sessizce boş kart BASMAZ.
+#
+# 🔴 **SAHİPLİK:** bir kullanıcı başkasının sohbetini listeleyemez/okuyamaz.
+# Kapı repository'de (`WHERE user_id = :actor`) ve bekçisi kapıya ÇARPAN bir
+# testtir (`test_aichat2_sohbet.py::test_KIKIZ1_...`). 404 döner, 403 değil:
+# S14'ün "görünmeyen-var-olan ile var-olmayan BAYT BAYT AYNI" kuralı.
+
+
+class AiMessageRole(str, enum.Enum):
+    """🔴 İKİ üye. `arac` rolü BURADA YOKTUR — araç sonucu saklanmıyor (A3)."""
+
+    kullanici = "kullanici"
+    asistan = "asistan"
+
+
+class AiConversation(Base):
+    """Bir sohbet. **Sahibine** bağlıdır ve başkası okuyamaz."""
+
+    __tablename__ = "ai_conversations"
+    __table_args__ = (
+        # Listeleme her zaman "benim sohbetlerim, yeniden eskiye".
+        Index("ix_ai_conversations_user_updated", "user_id", desc("updated_at")),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    #: 🔴 `SET NULL` DEĞİL `CASCADE` — `ai_tool_calls`tan bilinçli SAPMA.
+    #: Orada iz **atfedilebilirlik** için yaşar; burada içerik kullanıcının kendi
+    #: sorularıdır. Sahipsiz kalan bir sohbet hiçbir kapının arkasında değildir
+    #: ama kullanıcının metnini taşımaya devam ederdi.
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    #: İlk sorudan türetilir ve KIRPILIR. Modelden başlık İSTENMEZ: ikinci bir
+    #: model çağrısı turun maliyetini ve gecikmesini iki katına çıkarırdı.
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class AiMessage(Base):
+    """Bir mesaj. 🔴 Araç sonuç **gövdesi** taşıyan hiçbir kolon YOKTUR."""
+
+    __tablename__ = "ai_messages"
+    __table_args__ = (Index("ix_ai_messages_conversation", "conversation_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ai_conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    role: Mapped[AiMessageRole] = mapped_column(
+        Enum(AiMessageRole, name="ai_message_role"), nullable=False
+    )
+    #: Kullanıcının sorusu ya da modelin cevap METNİ. Araç gövdesi ASLA.
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    #: Çağrılan araçların ADLARI — argümanları değil, sonuçları değil.
+    tool_names: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, default=list)
+    #: Zarf HÂLLERİ (`Ok` · `Restricted` · `Truncated` …) — `veri` alanı yok.
+    #: 🔴 `tool_names` ile aynı sırada ve aynı uzunlukta; ikisi bir ÇİFTTİR ve
+    #: ayrışırsa iz yalan söyler (bekçisi var).
+    tool_states: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, default=list)
+    #: `TurSebebi` değeri. 🔴 `bitti`/`filtrelendi` AYRI TUTULUR (§5-30): ikisi
+    #: aynı ekrana düşerse panel "cevap bu" der ve YALAN SÖYLER.
+    finish_reason: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    #: Mockup'ın "09:42 · 1,8 sn" damgasının `sn` yarısı.
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
