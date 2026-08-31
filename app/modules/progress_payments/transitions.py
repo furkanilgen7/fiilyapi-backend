@@ -79,6 +79,7 @@ from app.core.errors import ConflictError, SiteValidationError
 from app.core.timezone import to_display
 from app.modules.approvals import service as approvals_service
 from app.modules.approvals.models import ApprovalDocumentType
+from app.modules.invoicing import source_posting
 from app.modules.invoicing.models import Invoice
 from app.modules.progress_payments import (
     calculations,
@@ -257,6 +258,16 @@ async def _fisle(
         await posting.reverse_progress_payment(session, actor, payment.id)
         return
     if new_status is not ProgressPaymentStatus.approved:
+        return
+    # 🔴 KRIT-HAKEDIS K3 — TAKASIN GERİ DÖNÜŞÜ. Faturası zaten fişlenmiş bir
+    #    hakediş YENİDEN FİŞLENMEZ: `unapprove` canlı fiş bulamayıp sessizce
+    #    döner (faturanın stornosu onu çoktan `reversed` yapmıştır) ve buradaki
+    #    yeniden onay, faturanın fişinin YANINA ikinci bir canlı fiş yazardı.
+    #    Gerekçenin tamamı `invoicing.source_posting.source_replaced_by_invoice`
+    #    docstring'indedir (takasın öteki yarısıyla TEK dosyada durur).
+    if await source_posting.source_replaced_by_invoice(
+        session, Invoice.progress_payment_id, payment.id
+    ):
         return
     # 🔴 Zincir `sequence_no` ARTAN sırada olmalıdır (avans tavanı sıralıdır) —
     #    repository öyle döner. `before_sequence_no` kaydın KENDİSİNİ dışlar.

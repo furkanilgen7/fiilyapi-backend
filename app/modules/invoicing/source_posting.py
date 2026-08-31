@@ -62,15 +62,19 @@ istenen budur: itiraz edilmiş bir faturanın arkasındaki gider hâlâ gerçekt
 import uuid
 from collections.abc import Awaitable, Callable
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import InstrumentedAttribute
 
+from app.modules.accounting.models import JournalEntry, JournalSourceType
 from app.modules.equipment import rental_posting
 from app.modules.invoicing.models import Invoice
+from app.modules.posting.repository import CANCELLED_STATUS
 from app.modules.progress_payments import posting as progress_posting
 from app.modules.subcontractor_progress_payments import posting as subcontractor_posting
 from app.modules.users.models import User
 
-__all__ = ["SOURCE_REVERSERS", "reverse_source_entry"]
+__all__ = ["SOURCE_REVERSERS", "reverse_source_entry", "source_replaced_by_invoice"]
 
 #: 🔴 `invoices` kaynak FK'si → o ailenin STORNO fonksiyonu.
 #:
@@ -116,3 +120,50 @@ async def reverse_source_entry(session: AsyncSession, actor: User, invoice: Invo
             continue
         yazildi = await storno(session, actor, kaynak_id) or yazildi
     return yazildi
+
+
+async def source_replaced_by_invoice(
+    session: AsyncSession,
+    source_column: InstrumentedAttribute[uuid.UUID | None],
+    source_id: uuid.UUID,
+) -> bool:
+    """🔴 KRIT-HAKEDIS K3 — TAKASIN İKİNCİ YARISI: *"bu kaynağın yerini fatura ALDI mı?"*
+
+    `reverse_source_entry` takası BİR YÖNDE kurar (fatura fişlenince kaynağın
+    fişi storno edilir) ve MU-3D bunu ölçtü. Ölçülmeyen yön ŞUYDU:
+
+        approve       → hakediş fişi CANLI
+        fatura `send` → takas: hakediş fişi `reversed`, faturanın fişi CANLI
+        unapprove     → `reverse_*` CANLI fiş BULAMAZ, sessizce `False` döner
+        approve       → `post_document`in idempotanlık dalı da CANLI fiş
+                        aramaktadır ve bulamaz ⇒ **YENİ** bir hakediş fişi yazar
+
+    Sonuç: faturanın fişi ile yeni hakediş fişi AYNI hasılatı/gideri İKİ KEZ
+    taşır. 🔴 **Mizan DENKTİR** (her fiş kendi içinde dengelidir), yani denklik
+    kontrolü bu kusuru GÖRMEZ — ölçülmesi gereken şey hesabın NETİDİR.
+
+    Kapı bu yüzden fişleme kancasının İÇİNDEDİR ve fail-closed'dur: kaynağın
+    yerini alan CANLI bir fatura fişi varsa kaynak YENİDEN FİŞLENMEZ. Kaydın
+    mali izi yok olmaz — faturanın fişi zaten defterdedir ve `unapprove`
+    hakedişin kümülatif kümeden çıkmasını sağlamıştır.
+
+    🔴 **KÜME `reverse_source_entry`inkiyle AYNIDIR ve olmak ZORUNDADIR:**
+    `document_type` süzgeci YOKTUR çünkü storno tarafında da yoktur. Buraya bir
+    süzgeç eklenseydi, storno eden ama "yerini aldı" sayılmayan bir fatura
+    sınıfı doğar ve tam o sınıfta çift kayıt geri gelirdi — hiçbir kolon farkı
+    da bunu ele vermezdi.
+
+    "CANLI" tanımı `posting.repository.CANCELLED_STATUS`tan TEK KOPYA okunur
+    (`entry_for_source`in süzgeciyle aynı enum üyesi).
+    """
+    stmt = (
+        select(Invoice.id)
+        .join(
+            JournalEntry,
+            (JournalEntry.source_type == JournalSourceType.invoice)
+            & (JournalEntry.source_id == Invoice.id),
+        )
+        .where(source_column == source_id, JournalEntry.status != CANCELLED_STATUS)
+        .limit(1)
+    )
+    return (await session.execute(stmt)).first() is not None

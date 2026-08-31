@@ -266,3 +266,177 @@ async def test_KAYNAKSIZ_fatura_HICBIR_hakedisi_STORNOLAMAZ(seeded_db, user_fact
         await canli_fis(seeded_db, JournalSourceType.subcontractor_progress_payment, payment.id)
         is not None
     ), "kaynağa bağlı OLMAYAN fatura bir hakediş fişini stornoladı"
+
+
+# --------------------------------------------------------------------------- #
+# 🔴 KRIT-HAKEDIS K3 — TAKASTAN SONRA GERİ ALIP YENİDEN ONAYLAMA
+# --------------------------------------------------------------------------- #
+
+
+async def test_TAKASTAN_SONRA_unapprove_YENIDEN_approve_HASILATI_IKI_KEZ_YAZMAZ(
+    seeded_db, user_factory
+):
+    """🔴 K3 — faturalanmış hakedişin onayı geri alınıp yeniden verilirse ÇİFT KAYIT.
+
+    Ölçülen zincir:
+
+        approve        → hakediş fişi CANLI (600 = −45.000)
+        fatura `send`  → İŞ 2 takası: hakediş fişi `reversed`, fatura fişi CANLI
+        unapprove      → `reverse_progress_payment` CANLI fiş BULAMAZ (`False`)
+        approve        → `post_document` idempotanlık dalına DÜŞMEZ (canlı fiş
+                         yok) ve YENİ bir canlı hakediş fişi yazar
+
+    Sonuç: faturanın fişi + yeni hakediş fişi AYNI hasılatı İKİ KEZ taşır.
+    Mizan denktir (her fiş kendi içinde dengeli), yani DENKLİK bu kusuru
+    GÖRMEZ — ölçülmesi gereken şey `600`ün NETİDİR.
+    """
+    from tests.modules.posting._mu3d import KOD_ALICILAR, KOD_SATIS
+
+    await esleme_kur(seeded_db)
+    kullanici = await aktor(seeded_db, user_factory)
+    payment, _contract, _project = await isveren_hakedisi(seeded_db, kullanici)
+    await isveren_transitions.perform(seeded_db, kullanici, payment.id, PaymentAction.approve)
+
+    data = InvoiceCreate(
+        direction=InvoiceDirection.outgoing,
+        document_type=InvoiceDocumentType.einvoice,
+        issue_date=TARIH,
+        party_name="Güneşkent İnşaat A.Ş.",
+        progress_payment_id=payment.id,
+        lines=[
+            InvoiceLineCreate(
+                description="Hakediş bedeli",
+                quantity=Decimal("1"),
+                unit="Ad",
+                unit_price=Decimal("45000.00"),
+                vat_rate=Decimal("20"),
+            )
+        ],
+    )
+    invoice, _m = await invoicing_service.create_invoice(seeded_db, kullanici, data)
+    await invoicing_state.perform_transition(seeded_db, kullanici, invoice.id, InvoiceAction.send)
+
+    takas_sonrasi_satis = await hesap_neti(seeded_db, KOD_SATIS)
+    assert takas_sonrasi_satis == Decimal("-45000.00")
+
+    await isveren_transitions.perform(seeded_db, kullanici, payment.id, PaymentAction.unapprove)
+    await isveren_transitions.perform(seeded_db, kullanici, payment.id, PaymentAction.approve)
+
+    assert await hesap_neti(seeded_db, KOD_SATIS) == takas_sonrasi_satis, (
+        "ÇİFT HASILAT: faturalanmış hakediş yeniden onaylanınca ikinci bir CANLI "
+        "fiş yazdı; faturanın fişi zaten defterdeydi"
+    )
+    assert await hesap_neti(seeded_db, KOD_ALICILAR) == Decimal("54000.00"), (
+        "ÇİFT ALACAK: `120` faturanın KDV'li totalinden fazlasını taşıyor"
+    )
+    assert await canli_fis(seeded_db, JournalSourceType.invoice, invoice.id) is not None
+    assert await canli_fis(seeded_db, JournalSourceType.progress_payment, payment.id) is None, (
+        "faturalanmış hakediş yeniden onaylanınca KENDİ fişini yeniden yazdı"
+    )
+
+
+async def test_TASERON_ikizinde_de_TAKAS_GERI_DONUSU_GIDERI_IKI_KEZ_YAZMAZ(seeded_db, user_factory):
+    """🔴 K3'ün AYNADAKİ hâli — kusur ÜÇ ailede de AYNIYDI (ölçüldü).
+
+    Fiş yazma kancası üç ailede de tek kalıptır; kapı tek kopyadır ama
+    ÇAĞRISI üç yerdedir, dolayısıyla üç yerde de çakılır (§5-20: çağrı yeri de
+    mutanttır).
+    """
+    await esleme_kur(seeded_db)
+    kullanici = await aktor(seeded_db, user_factory)
+    payment, _c = await taseron_hakedisi(seeded_db, kullanici)
+    await taseron_transitions.perform(seeded_db, kullanici, payment.id, PaymentAction.approve)
+
+    invoice = await _gelen_fatura(
+        seeded_db,
+        kullanici,
+        kaynak_alani="subcontractor_progress_payment_id",
+        kaynak_id=payment.id,
+        tutar="8500.00",
+    )
+    await invoicing_state.perform_transition(
+        seeded_db, kullanici, invoice.id, InvoiceAction.approve
+    )
+    takas_sonrasi = await hesap_neti(seeded_db, KOD_GIDER)
+    assert takas_sonrasi == Decimal("8500.00")
+
+    await taseron_transitions.perform(seeded_db, kullanici, payment.id, PaymentAction.unapprove)
+    await taseron_transitions.perform(seeded_db, kullanici, payment.id, PaymentAction.approve)
+
+    assert await hesap_neti(seeded_db, KOD_GIDER) == takas_sonrasi, (
+        "ÇİFT GİDER: faturalanmış taşeron hakedişi yeniden onaylanınca ikinci bir CANLI fiş yazdı"
+    )
+    assert (
+        await canli_fis(seeded_db, JournalSourceType.subcontractor_progress_payment, payment.id)
+        is None
+    )
+
+
+async def test_KIRA_hakedisinde_de_TAKAS_GERI_DONUSU_GIDERI_IKI_KEZ_YAZMAZ(seeded_db, user_factory):
+    """🔴 K3'ün ÜÇÜNCÜ ailedeki hâli: `reject_invoice` → yeniden `approve_invoice`."""
+    from app.modules.equipment import rental_service
+    from tests.modules.posting._mu3d import kira_hakedisi
+
+    await esleme_kur(seeded_db)
+    kullanici = await aktor(seeded_db, user_factory)
+    kira, _supplier = await kira_hakedisi(seeded_db)
+    await rental_service.approve_invoice(seeded_db, kullanici, kira.id)
+
+    invoice = await _gelen_fatura(
+        seeded_db,
+        kullanici,
+        kaynak_alani="equipment_rental_invoice_id",
+        kaynak_id=kira.id,
+        tutar="100000.00",
+    )
+    await invoicing_state.perform_transition(
+        seeded_db, kullanici, invoice.id, InvoiceAction.approve
+    )
+    takas_sonrasi = await hesap_neti(seeded_db, KOD_GIDER)
+    assert takas_sonrasi == Decimal("100000.00")
+
+    await rental_service.reject_invoice(seeded_db, kullanici, kira.id)
+    await rental_service.approve_invoice(seeded_db, kullanici, kira.id)
+
+    assert await hesap_neti(seeded_db, KOD_GIDER) == takas_sonrasi, (
+        "ÇİFT GİDER: faturalanmış kira hakedişi yeniden onaylanınca ikinci bir CANLI fiş yazdı"
+    )
+    assert await canli_fis(seeded_db, JournalSourceType.equipment_rental_invoice, kira.id) is None
+
+
+async def test_FATURASI_SILINMIS_hakedis_yeniden_onaylandiginda_FIS_YAZAR(seeded_db, user_factory):
+    """🔴 KAPININ TERS YÖNÜ — yeni kapı MEŞRU yeniden fişlemeyi ENGELLEMEZ.
+
+    Faturası HİÇ FİŞLENMEMİŞ (taslak) bir hakedişte `unapprove` gerçek bir
+    storno yazar ve yeniden onay fişi GERİ GETİRMELİDİR. Bu test olmadan
+    `source_replaced_by_invoice`i DAİMA `True` döndüren bir mutant sağ kalırdı
+    ve ürün, geri alınan her hakedişi kalıcı olarak FİŞSİZ bırakırdı.
+    """
+    await esleme_kur(seeded_db)
+    kullanici = await aktor(seeded_db, user_factory)
+    payment, _c = await taseron_hakedisi(seeded_db, kullanici)
+    await taseron_transitions.perform(seeded_db, kullanici, payment.id, PaymentAction.approve)
+
+    # Fatura VAR ama `pending` — kendi fişi HENÜZ YAZILMADI, takas olmadı.
+    await _gelen_fatura(
+        seeded_db,
+        kullanici,
+        kaynak_alani="subcontractor_progress_payment_id",
+        kaynak_id=payment.id,
+        tutar="8500.00",
+    )
+
+    await taseron_transitions.perform(seeded_db, kullanici, payment.id, PaymentAction.unapprove)
+    assert (
+        await canli_fis(seeded_db, JournalSourceType.subcontractor_progress_payment, payment.id)
+        is None
+    ), "gerçek storno yazılmadı"
+    assert await hesap_neti(seeded_db, KOD_GIDER) == Decimal("0.00")
+
+    await taseron_transitions.perform(seeded_db, kullanici, payment.id, PaymentAction.approve)
+
+    assert (
+        await canli_fis(seeded_db, JournalSourceType.subcontractor_progress_payment, payment.id)
+        is not None
+    ), "yeni kapı MEŞRU yeniden fişlemeyi de engelledi — gider kalıcı olarak kayboldu"
+    assert await hesap_neti(seeded_db, KOD_GIDER) == Decimal("8500.00")
