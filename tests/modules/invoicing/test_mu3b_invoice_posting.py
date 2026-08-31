@@ -95,6 +95,7 @@ async def fatura_kur(
     withholding_rate: Decimal | None = None,
     issue_date: date = TARIH,
     invoice_no: str | None = None,
+    document_type: InvoiceDocumentType = InvoiceDocumentType.einvoice,
 ) -> Invoice:
     """Faturayı ORM ile kurar; para kolonlarını `amounts.compute` DOLDURUR.
 
@@ -117,7 +118,7 @@ async def fatura_kur(
     invoice = Invoice(
         direction=direction,
         invoice_no=invoice_no or f"MU3B{uuid.uuid4().hex[:10].upper()}",
-        document_type=InvoiceDocumentType.einvoice,
+        document_type=document_type,
         status=(
             InvoiceStatus.draft if direction is InvoiceDirection.outgoing else InvoiceStatus.pending
         ),

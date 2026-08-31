@@ -114,7 +114,7 @@ from app.core.errors import TreasuryValidationError
 from app.modules.accounting import state_service as accounting_state_service
 from app.modules.accounting.models import JournalSourceType
 from app.modules.accounting.transitions import JournalAction
-from app.modules.invoicing.models import Invoice, InvoiceDirection
+from app.modules.invoicing.models import Invoice, InvoiceDirection, is_refund
 from app.modules.posting import repository as posting_repository
 from app.modules.posting import service as posting_service
 from app.modules.posting.service import PostingLine, PostingOutcome
@@ -122,6 +122,7 @@ from app.modules.treasury.models import BankAccount, BankAccountType, Payment
 from app.modules.users.models import User
 
 __all__ = [
+    "INVOICE_DIRECTION_UNMAPPED",
     "PAYMENT_ACCOUNT_TYPE_UNMAPPED",
     "PAYMENT_POSTING_RULES",
     "ROLE_BANK",
@@ -131,6 +132,7 @@ __all__ = [
     "ROLE_PAYABLE",
     "ROLE_RECEIVABLE",
     "SOURCE_TYPE",
+    "cash_inflow",
     "cash_role_for",
     "description_for",
     "lines_for",
@@ -221,7 +223,50 @@ _DESCRIPTION_PREFIX: dict[InvoiceDirection, str] = {
     InvoiceDirection.incoming: "Ödeme",
 }
 
+#: 🔴 KRIT-IADE — İADE faturasının ödemesinde para TERS yöne akar, dolayısıyla
+#: metin de tersini söylemelidir: giden bir iade faturasının parası TAHSİL
+#: EDİLMEZ, GERİ ÖDENİR. Eski metin ("Tahsilat") mizanda `102`yi ALACAKLANDIRAN
+#: bir satırın başlığı olurdu ve defteri okuyan onu bir kusur sanardı.
+_REFUND_DESCRIPTION_PREFIX: dict[InvoiceDirection, str] = {
+    InvoiceDirection.outgoing: "İade ödemesi",
+    InvoiceDirection.incoming: "İade tahsilatı",
+}
+
 _ZERO = Decimal("0")
+
+
+#: Fatura yönü → *"parası İÇERİ mi akar"*. İADE bunu TERSİNE çevirir
+#: (`cash_inflow`). `.get()` ile okunur ve bilinmeyen yön REDDEDİLİR: bu,
+#: `_UYUMLU_YON`da yaşayan fail-closed savunmanın TEK KOPYAYA taşınmış hâlidir.
+_INFLOW_BY_DIRECTION: dict[InvoiceDirection, bool] = {
+    InvoiceDirection.outgoing: True,
+    InvoiceDirection.incoming: False,
+}
+
+# 422 — eşlenmemiş fatura yönü. Bugün ulaşılamaz (iki yönün ikisi de eşlenmiştir)
+# ama korkuluk olarak durur; `PAYMENT_ACCOUNT_TYPE_UNMAPPED`in kardeşi.
+INVOICE_DIRECTION_UNMAPPED = "Fatura yönü için para akışı eşlemesi tanımlı değil"
+
+
+def cash_inflow(invoice: Invoice) -> bool:
+    """🔴 KRIT-IADE — *"bu faturanın parası İÇERİ mi akar"* sorusunun TEK kaynağı.
+
+    `direction` TEK BAŞINA yetmez ve KRIT-IADE'nin kusuru tam olarak buydu:
+    giden bir **iade** faturasının parası dışarı akar, gelen bir iadeninki
+    içeri. İki girdi (`direction` + `document_type`) bir XOR ile birleşir.
+
+    Üç yüzey bu tek fonksiyonu okur — ödeme fişinin nakit bacağı, çek/senet ara
+    hesabı (`101`/`103`) ve bağın yön uyumu kapısı (FIN-PAY K3). Üçü ayrı ayrı
+    yazılsaydı biri iadeyi öğrenir, öteki öğrenmez ve fark yalnız iade
+    faturasında, canlıda açılırdı.
+
+    Bilinmeyen yön **422**'dir (fail-closed): ham `KeyError` 500 verirdi, sessiz
+    bir varsayılan ise parayı YANLIŞ yöne akıtır ve fiş yine dengeli görünürdü.
+    """
+    akis = _INFLOW_BY_DIRECTION.get(invoice.direction)
+    if akis is None:
+        raise TreasuryValidationError(INVOICE_DIRECTION_UNMAPPED)
+    return akis is not is_refund(invoice)
 
 
 def cash_role_for(account: BankAccount) -> str:
@@ -239,9 +284,12 @@ def cash_role_for(account: BankAccount) -> str:
 #: okunmamalıdır: bağın yön uyumu `payments_service._instrument_or_none`ta
 #: ZATEN 422 ile kapatılmıştır (FIN-PAY K3), burada ikinci kez okunsaydı aynı
 #: kural iki yerde yaşar ve biri gevşediğinde öteki sessizce telafi ederdi.
-_INSTRUMENT_ROLE: dict[InvoiceDirection, str] = {
-    InvoiceDirection.outgoing: ROLE_INSTRUMENT_RECEIVABLE,
-    InvoiceDirection.incoming: ROLE_INSTRUMENT_PAYABLE,
+#: 🔴 KRIT-IADE — anahtar YÖN DEĞİL, **PARANIN AKIŞIDIR** (`cash_inflow`).
+#: Normal faturada ikisi aynıdır; İADE faturasında AYRIŞIRLAR ve `direction`a
+#: bakan eski eşleme, geri verilen bir çeki `101 Alınan Çekler`e yazardı.
+_INSTRUMENT_ROLE: dict[bool, str] = {
+    True: ROLE_INSTRUMENT_RECEIVABLE,
+    False: ROLE_INSTRUMENT_PAYABLE,
 }
 
 #: 🔴 Bağlı ödemenin fiş açıklamasına eklenen AYIRAÇ. Fişin hangi hâl olduğu
@@ -267,7 +315,10 @@ def description_for(payment: Payment, invoice: Invoice, account: BankAccount) ->
     """
     hesap_adi = account.display_name or account.bank_name
     ayirac = "" if payment.financial_instrument_id is None else _INSTRUMENT_SUFFIX
-    return f"{_DESCRIPTION_PREFIX[invoice.direction]} {invoice.invoice_no} — {hesap_adi}{ayirac}"
+    onek = (_REFUND_DESCRIPTION_PREFIX if is_refund(invoice) else _DESCRIPTION_PREFIX)[
+        invoice.direction
+    ]
+    return f"{onek} {invoice.invoice_no} — {hesap_adi}{ayirac}"
 
 
 def payment_cash_role(payment: Payment, invoice: Invoice, account: BankAccount) -> str:
@@ -292,7 +343,7 @@ def payment_cash_role(payment: Payment, invoice: Invoice, account: BankAccount) 
     """
     if payment.financial_instrument_id is None:
         return cash_role_for(account)
-    return _INSTRUMENT_ROLE[invoice.direction]
+    return _INSTRUMENT_ROLE[cash_inflow(invoice)]
 
 
 def lines_for(payment: Payment, invoice: Invoice, account: BankAccount) -> list[PostingLine]:
@@ -303,6 +354,30 @@ def lines_for(payment: Payment, invoice: Invoice, account: BankAccount) -> list[
     `(0, 0)` bacağı yapısal olarak doğamaz. Bir süzgeç yazılsaydı hiçbir zaman
     koşmayan bir dal, okuyucuya var olmayan bir hâli varmış gibi gösterirdi.
 
+    ## 🔴 KRIT-IADE — İADE FATURASININ ÖDEMESİ TERS AKAR
+
+    KRIT-IADE öncesi bu fonksiyon da YALNIZ `direction`a dallanıyordu ve giden
+    bir İADE faturasının geri ödemesini **TAHSİLAT** gibi fişliyordu: kasaya
+    hiç girmeyen para `102`ye BORÇ yazılıyor, kapanması gereken `120` bir kez
+    daha kapatılıyordu. Fiş dengeliydi, yani mizan hiçbir şey görmüyordu.
+
+    Cari bacağı YÖNDEN, nakit bacağının TARAFI ise yön + belge tipinden çıkar:
+
+        | fatura yönü | belge tipi | para   | nakit | cari   |
+        |-------------|------------|--------|-------|--------|
+        | outgoing    | normal     | GİRER  | borç  | 120 A  |
+        | outgoing    | refund     | ÇIKAR  | alacak| 120 B  |
+        | incoming    | normal     | ÇIKAR  | alacak| 320 B  |
+        | incoming    | refund     | GİRER  | borç  | 320 A  |
+
+    Cari hesabın DEĞİŞMEMESİ bilinçlidir: iade faturasının kendi fişi (MU-3B +
+    KRIT-IADE) `120`yi ALACAKLANDIRMIŞTIR; geri ödeme onu BORÇLANDIRARAK
+    kapatır. Ayrı bir hesap seçilseydi cari asla netlenmezdi.
+
+    Hazine'deki kardeş kanon `realized.realized_total_for_source`tır: orası da
+    iade ödemesini `-Payment.amount` ile ters yönde sayar. İki yüzey AYNI
+    olguya bakar ve KRIT-IADE öncesi AYRIŞIYORLARDI.
+
     🔴 **ODM-1 D1 — nakit bacağı BAĞLI ödemede `101`/`103`e KAYAR.** Cari bacağı
     (`120`/`320`) DEĞİŞMEZ: alacak/borç çekin alınmasıyla KAPANIR, çünkü
     müşteri borcunu ödemiştir; henüz kapanmamış olan şey paranın HESABA
@@ -310,15 +385,19 @@ def lines_for(payment: Payment, invoice: Invoice, account: BankAccount) -> list[
     `payments.amount`tır, yani denge YAPISAL olarak korunur.
     """
     nakit = payment_cash_role(payment, invoice, account)
-    if invoice.direction is InvoiceDirection.outgoing:
-        # TAHSİLAT: para GİRER, alıcı carisi KAPANIR.
+    # 🔴 Cari bacağı YÖNDEN çıkar (belge hangi carinin belgesiyse odur), nakit
+    # bacağının TARAFI ise PARANIN AKIŞINDAN (`cash_inflow`) — KRIT-IADE'de
+    # ayrışan tam olarak bu ikisiydi.
+    cari = ROLE_RECEIVABLE if invoice.direction is InvoiceDirection.outgoing else ROLE_PAYABLE
+    if cash_inflow(invoice):
+        # TAHSİLAT: para GİRER, cari KAPANIR.
         return [
             PostingLine(role_key=nakit, debit=payment.amount),
-            PostingLine(role_key=ROLE_RECEIVABLE, credit=payment.amount),
+            PostingLine(role_key=cari, credit=payment.amount),
         ]
-    # ÖDEME: satıcı carisi KAPANIR, para ÇIKAR.
+    # ÖDEME: cari KAPANIR, para ÇIKAR.
     return [
-        PostingLine(role_key=ROLE_PAYABLE, debit=payment.amount),
+        PostingLine(role_key=cari, debit=payment.amount),
         PostingLine(role_key=nakit, credit=payment.amount),
     ]
 
