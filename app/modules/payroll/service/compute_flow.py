@@ -47,7 +47,6 @@ from app.core.errors import ConflictError
 from app.modules.payroll import compute, guards, transitions
 from app.modules.payroll.models import (
     PayrollLine,
-    PayrollLineStatus,
     PayrollOvertimeRate,
     PayrollPeriod,
     PayrollPeriodStatus,
@@ -57,6 +56,7 @@ from app.modules.payroll.service.core import (
     LOCKED_LINE_STATUSES,
     LOCKED_PERIOD_STATUSES,
     _lock_period,
+    has_payable_line,
     month_bounds,
     rates_by_source,
 )
@@ -235,17 +235,26 @@ def _promote_period_after_compute(period: PayrollPeriod, lines: list[PayrollLine
     kapısından geçer — durum elle atanıp tablo ATLANMAZ, yoksa zincirin şekli
     ikinci bir yerde yaşamaya başlardı.
 
-    **Boş dönem onaya DÜŞMEZ:** hesaplanabilir (`pending`) tek satır bile yoksa
-    dönem `draft` KALIR. Düşseydi kullanıcı onaylayacak satırı olmayan bir
-    dönemi `approved` yapabilir ve `compute` kapısı (S5) o ayın üzerine
-    kapanırdı — geri dönüşü olmayan bir boş onay.
+    **Boş dönem onaya DÜŞMEZ:** ödenebilir tek satır bile yoksa dönem `draft`
+    KALIR. Düşseydi kullanıcı onaylayacak satırı olmayan bir dönemi `approved`
+    yapabilir ve `compute` kapısı (S5) o ayın üzerine kapanırdı — geri dönüşü
+    olmayan bir boş onay.
+
+    🔴 **KRIT-BORDRO — bu invariant ARTIK TEK KOPYADIR ve İKİ kapıda durur.**
+    Yukarıdaki cümle yalnız BU kapıyı (compute'un kendiliğinden terfisi)
+    bekçiliyordu; aynı `draft → pending_approval` çiftini kullanıcı onay
+    ucundan (`approve_period`) ELLE de sürebiliyor ve orada denetim YOKTU —
+    yani tarif edilen zarar başka bir yoldan serbestçe üretilebiliyordu
+    (ölçüm: boş dönem iki istekte `approved`). Yüklem
+    `service.core.has_payable_line`e taşındı; buradaki `any(...)` ile oradaki
+    `if` iki AYRI kopya olsaydı biri güncellenince öteki sessizce ayrışırdı.
 
     Çağıran `compute_period`in KİLİDİ altındadır (EŞİK = KİLİT): durum yazımı
     `_lock_period`in aldığı `FOR UPDATE` penceresinin içindedir.
     """
     if period.status is not PayrollPeriodStatus.draft:
         return
-    if not any(line.status is PayrollLineStatus.pending for line in lines):
+    if not has_payable_line(lines):
         return
     transitions.assert_period_transition(period.status, PayrollPeriodStatus.pending_approval)
     period.status = PayrollPeriodStatus.pending_approval

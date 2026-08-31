@@ -343,7 +343,11 @@ async def reject_payroll_line_endpoint(
     "/payroll/periods/{period_id}/approve",
     response_model=PayrollPeriodApproveResult,
     responses={
-        409: {"description": "Dönem onay adımına geçirilemez ya da muhasebe dönemi kapalı"},
+        409: {
+            "description": (
+                "Dönem onay adımına geçirilemez, ödenecek satırı yok ya da muhasebe dönemi kapalı"
+            )
+        },
         422: {"description": "Bordro fişi yazılamadı: hesap eşlemesi ya da satır bileşeni eksik"},
     },
     dependencies=[_FULL],
@@ -362,6 +366,11 @@ async def approve_payroll_period_endpoint(
     🔴 "Tümünü" onaylamaz: `uncomputed` (S4) ve taşeron (K2) satırlar ATLANIR ve
     yanıtta **sebebe göre ayrı sayılarla** raporlanır — sessiz atlama yoktur
     (WORKFLOW §3).
+
+    🔴 **KRIT-BORDRO:** dönemde ÖDENEBİLİR satır yoksa **409** — ne ilk ne
+    ikinci adım. Boş bir onay `compute` kapısını (S5) o ayın üzerine KALICI
+    olarak kapatırdı: dönemi geri alan/silen uç yoktur ve UQ `(year, month)`
+    aynı ayı ikinci kez açtırmaz. Gerekçenin tamamı `service/approvals.py`dedir.
 
     🔴 **MU-3E:** `approved` adımında bordronun TAHAKKUK FİŞİ kesilir
     (`730` gider · `335` personele borç · `360` vergi · `361` SGK). Fiş

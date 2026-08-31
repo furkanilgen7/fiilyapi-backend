@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
-from app.modules.payroll import guards, schemas
+from app.modules.payroll import guards, schemas, summary
 from app.modules.payroll.models import (
     PayrollLine,
     PayrollLineStatus,
@@ -42,6 +42,41 @@ LOCKED_LINE_STATUSES = frozenset({PayrollLineStatus.approved, PayrollLineStatus.
 #: İzin anahtarı — TEK KOPYA `guards.PERMISSION_MODULE`dedir (SA emsali); router
 #: `service.PERMISSION_MODULE` yazmaya devam eder.
 PERMISSION_MODULE = guards.PERMISSION_MODULE
+
+
+def has_payable_line(lines: list[PayrollLine]) -> bool:
+    """🔴 KRIT-BORDRO — dönemde ÖDENECEK bir şey var mı? **TEK tanım, İKİ kapı.**
+
+    Bu yüklem bir kolaylık değil bir INVARIANTIN evidir: *ödenecek satırı
+    olmayan bir dönem onay zincirine GİRMEZ.* Zararı
+    `compute_flow._promote_period_after_compute` docstring'i tarifler — `approved`
+    `compute` kapısını (S5) o ayın üzerine KALICI olarak kapatır, dönemi geri
+    alan ya da silen bir uç YOKTUR ve UQ `(year, month)` aynı ayı ikinci kez
+    açtırmaz.
+
+    🔴 **Kapı ÖLÇÜLDÜ ve YANLIŞ YERDEYDİ.** Invariant yalnız `compute`un
+    KENDİLİĞİNDEN yaptığı `draft → pending_approval` terfisinde duruyordu; aynı
+    çifti kullanıcı `POST /payroll/periods/{id}/approve` ile ELLE de sürebilir
+    ve orada hiçbir denetim yoktu. Ölçüm (boş dönem, iki istek): 200 →
+    `pending_approval`, 200 → `approved`; ardından `compute` 409, `PATCH` 409,
+    `DELETE` 405, aynı ayı yeniden açmak 409. Yani ikinci kapı BİRİNCİSİNİN
+    yasakladığı hâli serbestçe üretiyordu. Çare kapıyı silmek değil, yüklemi
+    TEK KOPYA yapıp İKİ kapıya birden koymaktır — iki yerde iki `any(...)`
+    yazılsaydı biri güncellenince öteki sessizce ayrışırdı.
+
+    Küme `summary.PAYABLE_LINE_STATUSES`ten İTHAL EDİLİR, buraya elle
+    `{pending, approved, paid}` diye YAZILMAZ (`posting.postable_lines`
+    emsali): "ödenebilir satır" ile "ödeme tabanına giren satır" AYNI kümedir
+    ve ayrışırsa onay kapısı, fişin görmediği bir satır yüzünden açılırdı.
+
+    🔴 `pending` DEĞİL `PAYABLE` sorulur ve fark ÖLÇÜLDÜ: `draft` bir dönem
+    kilitli DEĞİLDİR (`LOCKED_PERIOD_STATUSES`), yani kullanıcı satırları
+    TEK TEK onaylayıp (`approve_line`) dönemi `pending` satırsız bırakabilir.
+    Yalnız `pending` sorulsaydı o dönem — içinde onaylanmış, ödenmeyi bekleyen
+    gerçek satırlar varken — onaylanamaz hâle gelir, kapı KUSURSUZ bir dönemi
+    tıkardı.
+    """
+    return any(line.status in summary.PAYABLE_LINE_STATUSES for line in lines)
 
 
 def month_bounds(year: int, month: int) -> tuple[date, date]:

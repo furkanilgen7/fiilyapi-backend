@@ -27,6 +27,7 @@ from app.modules.payroll.service.core import (
     _lock_period,
     _locked_line,
     _locked_period_lines,
+    has_payable_line,
     rates_by_source,
 )
 from app.modules.users.models import User
@@ -172,6 +173,36 @@ async def approve_period(
     Fiş yazılamazsa (kapalı dönem **409** · eksik eşleme ya da eksik bileşen
     **422**) ONAY DA GERİ ALINIR — AYNI transaction'dadır. "Onaylı ama fişsiz"
     bir bordro DOĞMAZ.
+
+    🔴 **KRIT-BORDRO — ÖDENECEK SATIRI OLMAYAN DÖNEM BU UÇTAN DA GEÇEMEZ (409).**
+
+    Bu kapı yeni bir icat DEĞİL, `compute_flow._promote_period_after_compute`te
+    ZATEN tarif edilmiş ve orada bekçilenmiş invariantın İKİNCİ KAPIYA
+    uygulanmasıdır; yüklem `core.has_payable_line`de TEK KOPYADIR. Oradaki
+    bekçi `compute`un KENDİLİĞİNDEN yaptığı terfiyi kapatıyordu, ama AYNI
+    `draft → pending_approval` çiftini kullanıcı BU UÇTAN elle sürebiliyordu —
+    bekçi yanlış kapıda duruyordu.
+
+    Ölçülen zarar (boş dönem, iki istek): `approve` 200 → `pending_approval`,
+    `approve` 200 → `approved`. Ardından `compute` **409**, satır `PATCH`
+    **409**, dönem `DELETE` **405** (uç yok), aynı ayı yeniden açmak **409**
+    (UQ `year, month`). Yani o ayın bordrosu elle SQL dışında kurtarılamaz
+    hâle geliyordu — "geri dönüşü olmayan bir boş onay"ın birebir kendisi.
+
+    🔴 Denetim İKİ ADIMDA DA koşar, yalnız `draft → pending_approval`de değil.
+    `pending_approval → approved` adımında ulaşılamaz DEĞİLDİR ve bu ÖLÇÜLDÜ:
+    puantajı girilmiş bir dönem `pending_approval`a terfi ettikten SONRA
+    personelin ücret tanımı kaldırılıp `compute` yeniden koşarsa satır
+    `uncomputed`a düşer, dönem `pending_approval` KALIR (terfi yalnız `draft`a
+    bakar) ve ikinci tık dönemi yine boş boş `approved` yapardı. O dönemin
+    doğru çıkışı onay değil YENİDEN HESAPTIR ve `pending_approval` kilitli
+    olmadığı için o yol AÇIKTIR — kapı kullanıcıyı tıkamaz, kurtarılabilir
+    tarafta tutar.
+
+    🔴 Denetim satır döngüsünden ÖNCE ve `period.status` yazımından ÖNCEDİR:
+    sonraya konsaydı satırlar onaylanmış, dönem ilerletilmiş olurdu ve 409
+    yalnız yanıtı değiştirir, YAZIYI geri almazdı (`ConflictError` transaction'ı
+    düşürse bile kapı "hiç girmeme" değil "girip çıkma" olurdu).
     """
     period = await _lock_period(session, period_id)
     hedef = transitions.next_period_step(period.status)
@@ -183,6 +214,8 @@ async def approve_period(
     # Satır listesi DEĞİŞKENE ALINIR: MU-3E fişi AYNI kümeyi tutarlar. Yeniden
     # okunsaydı fiş, onaylanan satırlardan BAŞKA bir küme üzerinde tanımlanabilirdi.
     satirlar = await _locked_period_lines(session, period.id)
+    if not has_payable_line(satirlar):
+        raise ConflictError(guards.PERIOD_EMPTY_NOT_APPROVABLE)
     for line in satirlar:
         if line.status is PayrollLineStatus.uncomputed:
             atlanan_uncomputed += 1
