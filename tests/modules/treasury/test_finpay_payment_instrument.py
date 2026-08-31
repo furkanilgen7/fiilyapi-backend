@@ -748,5 +748,12 @@ async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
         for metot in uc
         if metot in {"get", "post", "put", "patch", "delete"}
     )
-    assert len(yollar) == 237
-    assert operasyonlar == 345
+    # AI-CHAT-2: 237→239 yol, 345→348 operasyon. Ek olan İKİ yol
+    # (`/ai/conversations`, `/ai/conversations/{conversation_id}`) ve ÜÇ
+    # operasyon (GET liste · GET detay · DELETE) sohbet saklamanın (A3)
+    # uçlarıdır. Devir TAM EKtir: ortak şemalarda `required` DEĞİŞMEDİ ve
+    # hiçbir alanın `type`ı değişmedi — ama bu iki sayaç zaten buna KÖRDÜR
+    # (K-DEVIR2), kırıcılığın kanıtı `tests/contract/openapi_baseline.json`
+    # farkıdır.
+    assert len(yollar) == 239
+    assert operasyonlar == 348
