@@ -349,15 +349,23 @@ def test_B15_POZITIF_KONTROL_catalog_handlerlari_GERCEKTEN_import_eder() -> None
 # --------------------------------------------------------------------------- #
 
 
-def test_S15_ai_altinda_SessionLocal_YALNIZ_audit_pyde() -> None:
+def test_S15_ai_altinda_SessionLocal_YALNIZ_audit_ve_conversations_pyde() -> None:
+    """🔴 AI-CHAT-2'de küme İKİ üyeye çıktı — sessizce değil, **ADIYLA**.
+
+    `conversations.py` asistan cevabını saklar ve bu yazı §5-33 gereği akış
+    gövdesinde, yani `get_db` SÖKÜLDÜKTEN sonra koşar: istek session'ı kapalı,
+    `AiSessionLocal` salt-okunur. Geriye tek doğru seçenek kendi yazılabilir
+    session'ıdır. Üçüncü bir dosya eklenirse bu test yine kırmızı olur.
+    """
     kullananlar = {
         yol.name
         for yol in AI_KOK.rglob("*.py")
         if re.search(r"^\s*(async with )?SessionLocal\(", yol.read_text(encoding="utf-8"), re.M)
     }
-    assert kullananlar == {"audit.py"}, (
+    assert kullananlar == {"audit.py", "conversations.py"}, (
         f"`SessionLocal(` beklenmedik dosyalarda: {sorted(kullananlar)}. "
-        "Tek istisna `audit.py`dir (denetim ayrı session ister)."
+        "İki istisna vardır: `audit.py` (denetim ayrı session ister) ve "
+        "`conversations.py` (asistan cevabı akış gövdesinde saklanır, §5-33)."
     )
 
 

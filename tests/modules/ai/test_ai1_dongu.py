@@ -749,11 +749,20 @@ async def test_chat_govdesi_BOS_mesaji_reddeder(client, user_factory, seeded_db)
     assert yanit.status_code == 422
 
 
-def test_chat_govdesi_MODEL_ve_KONUSMA_alani_TASIMAZ() -> None:
-    """🔴 Sağlayıcı/model SUNUCU yapılandırmasıdır; `conversation_id` yoktur (A3)."""
+def test_chat_govdesi_MODEL_alani_TASIMAZ() -> None:
+    """🔴 Sağlayıcı/model SUNUCU yapılandırmasıdır — istemci SEÇEMEZ.
+
+    AI-CHAT-2 GÜNCELLEMESİ: bu test eskiden `== {"mesaj"}` diyordu, yani A3
+    kararı beklerken `conversation_id`nin **yokluğunu** da bekçiliyordu. Karar
+    kapandı (soru + özet saklanır) ve alan açıldı. Bekçinin ASIL invaryantı
+    korunur ve GÜÇLENDİRİLİR: model/sağlayıcı/örnekleme seçimi istemciye
+    devredilemez — maliyeti ve veri işleyicisini istemciye devretmek olurdu.
+    """
     from app.modules.ai.schemas import AiChatRequest
 
-    assert set(AiChatRequest.model_fields) == {"mesaj"}
+    assert set(AiChatRequest.model_fields) == {"mesaj", "conversation_id"}
+    for yasak in ("model", "provider", "saglayici", "temperature", "top_p", "top_k", "sistem"):
+        assert yasak not in AiChatRequest.model_fields, yasak
 
 
 def test_YETKILERIM_ve_NAVIGATE_TO_hala_kayitli() -> None:

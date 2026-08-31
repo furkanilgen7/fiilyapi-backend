@@ -218,8 +218,20 @@
         "type": "string"
       },
       "AiChatRequest": {
-        "description": "`POST /ai/chat` gövdesi — **durumsuz** tur (§9-A3 kararı bekliyor).\n\n🔴 `conversation_id` alanı YOKTUR: `ai_conversations`/`ai_messages` tabloları\naçılmadı ve olmayan bir kimliği kabul eden bir alan, istemciye \"konuşma\nsürüyor\" yalanını söyletirdi.\n\n🔴 `model` / `provider` / `temperature` alanları da YOKTUR: sağlayıcı ve\nmodel **sunucu** yapılandırmasıdır. İstemcinin model seçebilmesi, maliyeti\nve veri işleyicisini istemciye devretmek olurdu.",
+        "description": "`POST /ai/chat` gövdesi.\n\n🔴 `conversation_id` AI-CHAT-2'de AÇILDI (§9-A3 kararı kapandı: soru + özet\nsaklanır, araç sonuç gövdeleri saklanmaz). **İSTEĞE BAĞLIDIR**: verilmezse\nyeni bir sohbet açılır. Başkasına ait bir kimlik verilirse **404** döner —\n403 DEĞİL, çünkü 403 \"bu var ama senin değil\" der (S14 varlık sızıntısı).\n\n🔴 `model` / `provider` / `temperature` alanları YOKTUR: sağlayıcı ve model\n**sunucu** yapılandırmasıdır. İstemcinin model seçebilmesi, maliyeti ve veri\nişleyicisini istemciye devretmek olurdu.",
         "properties": {
+          "conversation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
           "mesaj": {
             "maxLength": 4000,
             "minLength": 1,
@@ -280,6 +292,179 @@
           "proje_kimlikleri_notu"
         ],
         "title": "AiContextResponse",
+        "type": "object"
+      },
+      "AiConversationDetail": {
+        "properties": {
+          "bloklar_saklanmadi_notu": {
+            "default": "Bu sohbetin kartları saklanmadı; yalnız sorular, cevap metni ve araç izlerinin özeti gösteriliyor. Araç sonuçları (bordro satırı, personel verisi gibi) HİÇ SAKLANMAZ.",
+            "title": "Bloklar Saklanmadi Notu",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/AiMessageRead"
+            },
+            "title": "Messages",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "created_at",
+          "updated_at",
+          "messages"
+        ],
+        "title": "AiConversationDetail",
+        "type": "object"
+      },
+      "AiConversationListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AiConversationRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "AiConversationListResponse",
+        "type": "object"
+      },
+      "AiConversationRead": {
+        "description": "Sol sütundaki sohbet kartı (mockup 70-118).",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "message_count": {
+            "title": "Message Count",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "created_at",
+          "updated_at",
+          "message_count"
+        ],
+        "title": "AiConversationRead",
+        "type": "object"
+      },
+      "AiMessageRead": {
+        "description": "🔴 Araç sonuç GÖVDESİ taşıyan alan YOKTUR ve olmayacaktır (A3).",
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "finish_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finish Reason"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "tool_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tool Names",
+            "type": "array"
+          },
+          "tool_states": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tool States",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "role",
+          "content",
+          "created_at",
+          "tool_names",
+          "tool_states",
+          "finish_reason",
+          "duration_ms"
+        ],
+        "title": "AiMessageRead",
         "type": "object"
       },
       "AiToolListResponse": {
@@ -34880,6 +35065,175 @@
           }
         ],
         "summary": "Get Ai Context Endpoint",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/ai/conversations": {
+      "get": {
+        "description": "Aktörün **kendi** sohbetleri, yeniden eskiye (mockup sol sütunu).",
+        "operationId": "list_ai_conversations_endpoint_ai_conversations_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiConversationListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Ai Conversations Endpoint",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/ai/conversations/{conversation_id}": {
+      "delete": {
+        "description": "Kendi sohbetini siler. Mesajlar FK CASCADE ile gider.\n\n🔴 Bu uç bir **KVKK gereğidir**, süs değil: kullanıcı kendi sorularını\nsilebilmelidir. `ai_tool_calls` izi SİLİNMEZ — o tablo atfedilebilirlik\niçin değişmezdir ve içinde araç sonuç gövdesi yoktur.",
+        "operationId": "delete_ai_conversation_endpoint_ai_conversations__conversation_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Ai Conversation Endpoint",
+        "tags": [
+          "ai"
+        ]
+      },
+      "get": {
+        "description": "Tek bir sohbet + mesajları. 🔴 Başkasınınki **404** (403 DEĞİL, S14).",
+        "operationId": "get_ai_conversation_endpoint_ai_conversations__conversation_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiConversationDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Ai Conversation Endpoint",
         "tags": [
           "ai"
         ]

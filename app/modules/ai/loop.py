@@ -48,6 +48,7 @@ from app.core.security import TokenError, decode_token
 from app.modules.ai import guards
 from app.modules.ai.actor import aktor_baglami
 from app.modules.ai.db import AiSessionLocal
+from app.modules.ai.presenters import bloklari_uret
 from app.modules.ai.prompt import sistem_promptu
 from app.modules.ai.providers.base import (
     AiOlay,
@@ -61,6 +62,7 @@ from app.modules.ai.providers.base import (
     Reddetme,
     TurBitti,
     TurSebebi,
+    YapisalBloklar,
 )
 from app.modules.ai.registry import ActorContext, ToolKapsami, ToolRegistry
 from app.modules.ai.result import AracSonucu, Ok, ToolError, Truncated
@@ -231,6 +233,13 @@ async def ajan_turu(
             )
             harcanan += 1
             yield _sonuc_olayi(cagri, sonuc)
+            # 🔴 K1: zengin bloklar araç sonucunun YAPISAL gövdesinden üretilir,
+            # modelin metninden ASLA. Blok yoksa olay hiç yayılmaz.
+            bloklar = bloklari_uret(cagri.arac_adi, sonuc)
+            if bloklar:
+                yield YapisalBloklar(
+                    cagri_id=cagri.cagri_id, arac_adi=cagri.arac_adi, bloklar=bloklar
+                )
             gecmis.append(_arac_mesaji(cagri, sonuc))
 
     yield TurBitti(sebep=sebep, kullanim=kullanim)

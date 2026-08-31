@@ -25,8 +25,10 @@ dışıydı). Ölçülene kadar bu satır bir önlemdir, kanıt değil.
 from __future__ import annotations
 
 import dataclasses
+import enum
 import json
 from collections.abc import AsyncIterator
+from typing import Any
 
 from app.modules.ai.providers.base import AiOlay
 
@@ -43,11 +45,35 @@ SSE_BASLIKLARI: dict[str, str] = {
 }
 
 
+def _json_varsayilani(deger: Any) -> Any:
+    """🔴 Enum → `.value`. `default=str` YETMEZ.
+
+    `EkranAnahtari` bir `str, Enum`dur; `json.dumps` onu str alt sınıfı sayıp
+    ham değeri ("stok") yazar, ama `dataclasses.asdict` **kopyalarken** tipi
+    korur ve tek bir üye `str` tabanını kaybederse (ya da bir gün `enum.Enum`a
+    dönerse) `default=str` sessizce `"EkranAnahtari.stok"` yazardı — istemcinin
+    rota kataloğu bunu çözemez ve derin bağlantı **sessizce** ölürdü.
+    Bekçisi `test_aichat2_akis.py::test_sse_karesi_ekran_anahtarini_DEGERIYLE_yazar`.
+    """
+    if isinstance(deger, enum.Enum):
+        return deger.value
+    return str(deger)
+
+
 def sse_kodla(olay: AiOlay) -> bytes:
     """Tek olayı bir SSE karesine çevirir."""
     govde = dataclasses.asdict(olay)
+    # 🔴 `tip` bir `@property`dir; `asdict` property OKUMAZ. Blokların ayırıcısı
+    # bu yüzden burada elle eklenir — yoksa istemcinin birleşimi çözülemez.
+    bloklar = govde.get("bloklar")
+    if bloklar is not None:
+        govde["bloklar"] = [
+            {"tip": ham.tip, **islenmis}
+            for ham, islenmis in zip(olay.bloklar, bloklar, strict=True)  # type: ignore[attr-defined]
+        ]
     return (
-        f"event: {olay.olay_adi}\ndata: {json.dumps(govde, ensure_ascii=False, default=str)}\n\n"
+        f"event: {olay.olay_adi}\n"
+        f"data: {json.dumps(govde, ensure_ascii=False, default=_json_varsayilani)}\n\n"
     ).encode()
 
 

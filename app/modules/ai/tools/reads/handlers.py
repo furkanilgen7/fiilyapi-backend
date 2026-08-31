@@ -66,6 +66,7 @@ async def projeleri_listele(ctx: AracBaglami, girdi: Any) -> AracSonucu:
             # `ProjectListItem`). Araç yanıtında `type` diye yayınlanır ama
             # okuma doğru anahtardan yapılır.
             type=p["project_type"],
+            progress_pct=p.get("progress_pct"),
         ).model_dump(mode="json")
         for p in govde["items"]
     ]

@@ -8,6 +8,7 @@ FARKLI geldiği ölçülür.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from pydantic import BaseModel, Field
 
@@ -54,15 +55,76 @@ class AiContextResponse(BaseModel):
 
 
 class AiChatRequest(BaseModel):
-    """`POST /ai/chat` gövdesi — **durumsuz** tur (§9-A3 kararı bekliyor).
+    """`POST /ai/chat` gövdesi.
 
-    🔴 `conversation_id` alanı YOKTUR: `ai_conversations`/`ai_messages` tabloları
-    açılmadı ve olmayan bir kimliği kabul eden bir alan, istemciye "konuşma
-    sürüyor" yalanını söyletirdi.
+    🔴 `conversation_id` AI-CHAT-2'de AÇILDI (§9-A3 kararı kapandı: soru + özet
+    saklanır, araç sonuç gövdeleri saklanmaz). **İSTEĞE BAĞLIDIR**: verilmezse
+    yeni bir sohbet açılır. Başkasına ait bir kimlik verilirse **404** döner —
+    403 DEĞİL, çünkü 403 "bu var ama senin değil" der (S14 varlık sızıntısı).
 
-    🔴 `model` / `provider` / `temperature` alanları da YOKTUR: sağlayıcı ve
-    model **sunucu** yapılandırmasıdır. İstemcinin model seçebilmesi, maliyeti
-    ve veri işleyicisini istemciye devretmek olurdu.
+    🔴 `model` / `provider` / `temperature` alanları YOKTUR: sağlayıcı ve model
+    **sunucu** yapılandırmasıdır. İstemcinin model seçebilmesi, maliyeti ve veri
+    işleyicisini istemciye devretmek olurdu.
     """
 
     mesaj: str = Field(min_length=1, max_length=4000)
+    conversation_id: uuid.UUID | None = None
+
+
+# --------------------------------------------------------------------------- #
+# AI-CHAT-2 / K2 — sohbet saklama şemaları
+# --------------------------------------------------------------------------- #
+
+#: 🔴 Ekranda DÜRÜSTÇE basılır. Geçmiş bir sohbet açıldığında metrik kartları ve
+#: varlık listeleri **yeniden çizilemez**: araç sonuç gövdeleri saklanmıyor (A3).
+#: Sessizce boş kart basmak, kullanıcıya "veri yoktu" yalanını söylerdi.
+BLOKLAR_SAKLANMADI = (
+    "Bu sohbetin kartları saklanmadı; yalnız sorular, cevap metni ve araç "
+    "izlerinin özeti gösteriliyor. Araç sonuçları (bordro satırı, personel "
+    "verisi gibi) HİÇ SAKLANMAZ."
+)
+
+
+class AiConversationRead(BaseModel):
+    """Sol sütundaki sohbet kartı (mockup 70-118)."""
+
+    id: uuid.UUID
+    title: str
+    created_at: datetime
+    updated_at: datetime
+    #: Mockup'ın "4 mesaj · 09:42" satırının ilk yarısı. `COUNT`la ölçülür,
+    #: `len(items)` ile DEĞİL: liste sayfalanır, sayaç sayfalanmaz.
+    message_count: int
+
+
+class AiConversationListResponse(BaseModel):
+    items: list[AiConversationRead]
+    total: int
+
+
+class AiMessageRead(BaseModel):
+    """🔴 Araç sonuç GÖVDESİ taşıyan alan YOKTUR ve olmayacaktır (A3)."""
+
+    id: uuid.UUID
+    role: str
+    content: str
+    created_at: datetime
+    #: Yalnız ADLAR. Argümanlar ve sonuçlar saklanmadı.
+    tool_names: list[str]
+    #: Zarf HÂLLERİ (`Ok` · `Restricted` · `Truncated` …), `tool_names` ile
+    #: aynı sırada ve aynı uzunlukta.
+    tool_states: list[str]
+    #: 🔴 `bitti` ile `filtrelendi` AYRI (§5-30). Panel ikisini aynı cümleye
+    #: düşürürse "cevap bu" der ve yalan söyler.
+    finish_reason: str | None
+    duration_ms: int | None
+
+
+class AiConversationDetail(BaseModel):
+    id: uuid.UUID
+    title: str
+    created_at: datetime
+    updated_at: datetime
+    messages: list[AiMessageRead]
+    #: 🔴 Kararın bedeli EKRANDA yazar; sessizce boş kart basılmaz.
+    bloklar_saklanmadi_notu: str = BLOKLAR_SAKLANMADI
