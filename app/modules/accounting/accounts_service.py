@@ -148,7 +148,7 @@ async def list_accounts(
     q: str | None,
     account_type: ChartAccountType | None,
     is_active: bool | None,
-    limit: int,
+    limit: int | None,
     offset: int,
 ) -> ChartAccountListResponse:
     """HP:58-62 tablosunun veri kaynağı — her satır TÜRETİLMİŞ bakiye taşır.
@@ -158,6 +158,12 @@ async def list_accounts(
 
     `total` süzgeçle AYNI yardımcıdan geçer; ayrışsaydı pasif hesaplar "sayfa
     dışında kalmış" gibi görünürdü.
+
+    🔴 **`limit=None` → SAYFALAMA YOK** (`audit.repository` emsali): eşleşen tüm
+    hesaplar döner. Liste ucu bunu ASLA göndermez (orada `limit` hâlâ `int` ve
+    tavanı 200'dür, aşımı **422**); tek çağıranı `export.xlsx` ucudur ve Excel
+    ile ekran AYNI süzgeç/sıralama/bakiye kaynağından beslensin diye ikinci bir
+    sorgu yolu açılmaz.
     """
     satirlar = await repository.list_accounts_with_balance(
         session, q=q, account_type=account_type, is_active=is_active, limit=limit, offset=offset
@@ -168,7 +174,15 @@ async def list_accounts(
     return ChartAccountListResponse(
         items=[ChartAccountResponse.from_row(account, bakiye) for account, bakiye in satirlar],
         total=total,
-        limit=limit,
+        # 🔴 `limit=None` (Excel ucu) zarfa `total` olarak yazılır ve bu bir
+        # KIRPMA DEĞİLDİR: hiçbir sınır uygulanmadığında uygulanabilecek en
+        # küçük doğru sınır kümenin kendi büyüklüğüdür, yani `items` tam
+        # olduğunda `limit == total` doğrudur. Alanın kendisi `int | None`a
+        # genişletilmedi çünkü `ChartAccountListResponse` bu dilimin dosya
+        # sınırı DIŞINDADIR (`schemas.py`) ve nullable bir `limit` liste ucunun
+        # yayımlanmış sözleşmesini değiştirirdi. Dosya ucu zarfın sayfalama
+        # alanlarını zaten OKUMAZ; yalnız `items` kullanılır.
+        limit=total if limit is None else limit,
         offset=offset,
     )
 

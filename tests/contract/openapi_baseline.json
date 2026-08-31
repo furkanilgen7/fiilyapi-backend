@@ -37001,6 +37001,95 @@
         ]
       }
     },
+    "/chart-of-accounts/export.xlsx": {
+      "get": {
+        "description": "Hesap planının Excel çıktısı (HP:49 `Excel`).\n\n🔴 Zarf **`accounts_service.list_accounts` ile — LİSTE UCUYLA AYNI\nÇAĞRIDAN** gelir ve ÜÇ süzgeç de (HP:47 arama · HP:60 `Tür` · HP:62\n`Durum`) birebir aynı adlarla geçer: kullanıcı ekranda ne süzdüyse dosyada\nonu bulur. İkinci bir sorgu/süzgeç yolu AÇILMAZ — ayrı yazılsalardı\ndosyanın süzgeci ile ekranınki zamanla ayrışır ve **süzgeç dışı satırların\ndosyaya sızması** (veri kaçağı) hiçbir yerden görülmezdi.\n\n🔴 **`limit`/`offset` YOKTUR: eşleşen TÜM hesaplar yazılır** (`limit=None`).\nSessiz kırpma yapılmaz — 200 hesabı aşan bir hesap planında dosya, eksik\nolduğu HİÇBİR YERDEN anlaşılamayan bir belge olurdu. Liste ucunun kendi\ntavanı (200, aşımı **422**) DEĞİŞMEDİ.\n\nKapsam süzgeci YOKTUR (spec §3): hesap planı şirket geneli bir katalogdur.\n\nOkuma ucudur: `record_audit` ÇAĞIRMAZ ve `Request` parametresi bile ALMAZ.",
+        "operationId": "export_chart_accounts_endpoint_chart_of_accounts_export_xlsx_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "account_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ChartAccountType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Account Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "is_active",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Is Active"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {}
+            },
+            "description": "Excel dosyasi"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Export Chart Accounts Endpoint",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
     "/chart-of-accounts/{account_id}": {
       "delete": {
         "description": "**YALNIZ `admin`** → 204; fiş satırı ya da alt hesabı olan hesap **409**.\n\n`full` seviyesi (muhasebe) 403 alır — gerekçe modül docstring'indedir.\n409 SERVİSTEN gelir: ham FK ihlalinin 500'ü ya da ayrımsız \"Veri bütünlüğü\nhatası\" kullanıcıya SIZMAZ. Yanıt gövdesizdir.",
@@ -40867,6 +40956,86 @@
         ]
       }
     },
+    "/equipment/work-summary/export.xlsx": {
+      "get": {
+        "description": "M3 \"Excel İndir\": çalışma kaydının Excel çıktısı — EKRANLA AYNI KÜME.\n\nZarf ekran ucuyla AYNI çağrıdan (`service.work_summary`) gelir: aynı\ngörünürlük kapsamı (`_visible_project_ids`), aynı ay sınırları, aynı\nsüzgeç, aynı toplam kaynağı. İkinci bir sorgu/hesap yolu AÇILMAZ.\n\nYüzey ZATEN sayfalanmamıştır — kırpma kavramı yoktur, `limit` almaz.\n\nOkuma ucudur — `_audit` ÇAĞIRMAZ ve `Request` parametresi bile ALMAZ\n(`units/router.py` P4 T7 kuralı).",
+        "operationId": "work_summary_export_endpoint_equipment_work_summary_export_xlsx_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "year",
+            "required": true,
+            "schema": {
+              "maximum": 2200,
+              "minimum": 2000,
+              "title": "Year",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "month",
+            "required": true,
+            "schema": {
+              "maximum": 12,
+              "minimum": 1,
+              "title": "Month",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "site_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Site Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {}
+            },
+            "description": "Excel dosyasi"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Work Summary Export Endpoint",
+        "tags": [
+          "equipment"
+        ]
+      }
+    },
     "/equipment/{equipment_id}": {
       "get": {
         "description": "Görünmeyen kayıt var olmayanla AYNI 404'ü döner (spec §4).",
@@ -43398,6 +43567,116 @@
         ]
       }
     },
+    "/journal/export.xlsx": {
+      "get": {
+        "description": "Yevmiye defterinin Excel çıktısı (E8:66 / `Muhasebe - Profesyonel` satır 116).\n\n🔴 Zarf **`ledger.build_ledger` ile — DEFTER UCUYLA AYNI ÇAĞRIDAN** gelir:\ndönem varsayılanı (`ledger.default_period()`), `account_id` ve `status`\nsüzgeçleri, `POSTING_STATUSES` kuralı ve DESC sırası birebir aynıdır.\nİkinci bir sorgu yolu AÇILMAZ — ayrışsalardı süzgeç dışı satırlar dosyaya\nsızabilir ve bu hiçbir yerden görülmezdi.\n\n🔴 **`limit`/`offset` YOKTUR: ayın eşleşen TÜM satırları yazılır**\n(`limit=None`). Bu GÜVENLİDİR ve `ledger.py`nin 3. tuzağının doğrudan\nsonucudur: koşan bakiye ALT sorgudaki pencere fonksiyonundan gelir ve ayın\nTAMAMI üzerinde koşar, `LIMIT` yalnız DIŞ sorguya uygulanır — sınır\nkaldırılınca `carried_balance` ve `running_balance` aynen doğru kalır.\nDefter ucunun kendi tavanı (200, aşımı **422**) DEĞİŞMEDİ.\n\nDönem, dosya adı ile sorgunun AYNI ayı göstermesi için TEK yerde çözülür.\n\nOkuma ucudur: `_audit` ÇAĞIRMAZ ve `Request` parametresi bile ALMAZ.",
+        "operationId": "journal_export_endpoint_journal_export_xlsx_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "year",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 2999,
+                  "minimum": 1900,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Year"
+            }
+          },
+          {
+            "in": "query",
+            "name": "month",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 12,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Month"
+            }
+          },
+          {
+            "in": "query",
+            "name": "account_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Account Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/JournalEntryStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {}
+            },
+            "description": "Excel dosyasi"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Journal Export Endpoint",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
     "/leave-balances/{personnel_id}/{year}": {
       "get": {
         "description": "İZ bakiye satırı: hak / devreden / kullanılan / kalan / kullanım yüzdesi.\n\nHepsi TÜREVdir (`annual_entitlement` KOLON DEĞİL, spec §5 K1). Bakiye SATIRI\nolmayan personel için de 200 döner (devreden 0) — satır yalnız MANUEL devreden\niçindir, yokluğu veri eksikliği değildir. Personel yok → 404.\n\nHak/kalan/yüzde **null** olabilir: kıdem 1 yılı doldurmadıysa ya da `hire_date`\nboşsa hak hesaplanamaz (İZ 163 \"1 yıl dolunca hak kazanır\") — ekran 0 değil\n\"Hak yok\" basar.",
@@ -44617,6 +44896,35 @@
         ]
       }
     },
+    "/payroll/periods/export.xlsx": {
+      "get": {
+        "description": "BG \"Excel İndir\": bordro GEÇMİŞİNİN Excel çıktısı — EKRANLA AYNI KÜME.\n\nSatırlar liste ucuyla AYNI çağrıdan (`service.period_rows`) gelir: aynı\nsıralama (yıl/ay DESC), aynı toplam kaynağı (`summary.build_period_summary`),\naynı kapı (`_VIEW`). İkinci bir sorgu/hesap yolu AÇILMAZ.\n\n`limit`/`offset` YOKTUR — TÜM dönemler yazılır (sessiz kırpma yok). Liste\nucunun 200'lük tavanı yerinde KALIR.\n\nOkuma ucudur — `_audit` ÇAĞIRMAZ ve `Request` parametresi bile ALMAZ\n(`units/router.py` P4 T7 kuralı).",
+        "operationId": "export_payroll_periods_endpoint_payroll_periods_export_xlsx_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {}
+            },
+            "description": "Excel dosyasi"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Export Payroll Periods Endpoint",
+        "tags": [
+          "payroll"
+        ]
+      }
+    },
     "/payroll/periods/{period_id}": {
       "get": {
         "description": "BY ekranı: dört özet kartı (69-93) + tip bazında gruplanmış satırlar.\n\n🔴 İlk üç kart ÖDEME tabanını gösterir (`excluded` taşeron ve `uncomputed`\nsatırlar HARİÇ, K2/S4); dördüncü kart MALİYET tabanını (`excluded` DAHİL) ve\nhesabı **`brüt + SGK işveren + işsizlik işveren + kısa çalışma`**dır\n(spec §7) — BY 92'nin \"SGK işveren payı dahil\" ETİKETİ mockup'tan, HESAP\nspec'ten gelir.\n\nGörünmeyen dönem var olmayanla AYNI 404'ü alır.",
@@ -45363,10 +45671,34 @@
     },
     "/personnel": {
       "get": {
-        "description": "`q` YALNIZ ada kısmi bakar (spec §3); süzgeçler AND'lidir.\n\n`is_active` GÖNDERİLMEZSE süzgeç uygulanmaz — pasif personel sessizce\ngizlenmez; ekran hangi kümeyi istediğini açıkça söyler. `project_id`\n(İK-1 §5 K4) `assigned_project_id`e göre DARALTIR — yetki genişletmez;\n`is_draft` taslakları ayıklamak için opsiyoneldir.",
+        "description": "`q` YALNIZ ada kısmi bakar (spec §3); süzgeçler AND'lidir.\n\n`is_active` GÖNDERİLMEZSE süzgeç uygulanmaz — pasif personel sessizce\ngizlenmez; ekran hangi kümeyi istediğini açıkça söyler. `project_id`\n(İK-1 §5 K4) `assigned_project_id`e göre DARALTIR — yetki genişletmez;\n`is_draft` taslakları ayıklamak için opsiyoneldir.\n\nSayfa tavanı **200'de KALIR**: `limit=None` yalnız `export.xlsx` ucunun\nhakkıdır (orada sayfalama kavramı yoktur).",
         "operationId": "list_personnel_endpoint_personnel_get",
         "parameters": [
           {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Ad içinde kısmi arama (spec §3)",
             "in": "query",
             "name": "q",
             "required": false,
@@ -45379,6 +45711,7 @@
                   "type": "null"
                 }
               ],
+              "description": "Ad içinde kısmi arama (spec §3)",
               "title": "Q"
             }
           },
@@ -45462,29 +45795,6 @@
                 }
               ],
               "title": "Is Draft"
-            }
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 50,
-              "maximum": 200,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "offset",
-            "required": false,
-            "schema": {
-              "default": 0,
-              "minimum": 0,
-              "title": "Offset",
-              "type": "integer"
             }
           }
         ],
@@ -45716,6 +46026,147 @@
           }
         ],
         "summary": "Update Personnel Document Endpoint",
+        "tags": [
+          "personnel"
+        ]
+      }
+    },
+    "/personnel/export.xlsx": {
+      "get": {
+        "description": "PE \"Dışa Aktar\": kartoteksin Excel çıktısı — EKRANLA AYNI KÜME.\n\nSatırlar liste ucuyla AYNI çağrıdan (`personnel_items`) gelir: aynı süzgeç\nkümesi, aynı sıralama (`ORDER BY full_name`), aynı kapı (`_VIEW`). İkinci\nbir sorgu/süzgeç yolu AÇILMAZ.\n\n`limit`/`offset` YOKTUR — eşleşen TÜM kayıtlar yazılır (sessiz kırpma yok).\nKapsam ekrandan geniş DEĞİLDİR; sütun kümesi de ekranı aşmaz (TCKN/IBAN/\ntelefon/adres DOSYAYA GİRMEZ, bkz. `export.py` docstring'i).\n\nOkuma ucudur — `_audit` ÇAĞIRMAZ ve `Request` parametresi bile ALMAZ\n(`units/router.py` P4 T7 kuralı).",
+        "operationId": "personnel_export_endpoint_personnel_export_xlsx_get",
+        "parameters": [
+          {
+            "description": "Ad içinde kısmi arama (spec §3)",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Ad içinde kısmi arama (spec §3)",
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/WorkerSource"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          },
+          {
+            "in": "query",
+            "name": "subcontractor_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Subcontractor Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "is_active",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Is Active"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "is_draft",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Is Draft"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {}
+            },
+            "description": "Excel dosyasi"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Personnel Export Endpoint",
         "tags": [
           "personnel"
         ]
@@ -56209,6 +56660,79 @@
           }
         ],
         "summary": "Trial Balance Endpoint",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
+    "/trial-balance/export.xlsx": {
+      "get": {
+        "description": "Mizanın Excel çıktısı (mockup satır 48 `Excel`).\n\n🔴 Zarf **`build_trial_balance` ile — EKRANIN UCUYLA AYNI ÇAĞRIDAN** gelir:\nparametreler, bantlar, `include_empty` varsayılanı ve satır sırası birebir\naynıdır. İkinci bir sorgu/süzgeç yolu AÇILMAZ (`units`/`payroll` emsali:\nbir kere kur, iki kere bas) — ayrışsalardı ekran ile dosya aynı dönem için\nfarklı bir mizan gösterir ve hangisinin doğru olduğu tartışılırdı.\n\nSayfalama YOKTUR ve BURADA DA yoktur: `build_trial_balance` zaten kümenin\ntamamını döner, dolayısıyla sessiz kırpma yapısal olarak imkânsızdır.\n\n`year`/`month` burada da ZORUNLUDUR (sunucunun \"bugün\"ü hiç okunmaz) —\naksi hâlde dosya adı, kullanıcının hangi dönemi indirdiğini yalan söylerdi.\n\nOkuma ucudur: `record_audit` ÇAĞIRMAZ ve `Request` parametresi bile ALMAZ.",
+        "operationId": "trial_balance_export_endpoint_trial_balance_export_xlsx_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "year",
+            "required": true,
+            "schema": {
+              "maximum": 2100,
+              "minimum": 2000,
+              "title": "Year",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "month",
+            "required": true,
+            "schema": {
+              "maximum": 12,
+              "minimum": 1,
+              "title": "Month",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_empty",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Empty",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {}
+            },
+            "description": "Excel dosyasi"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Trial Balance Export Endpoint",
         "tags": [
           "accounting"
         ]

@@ -16,6 +16,7 @@ DEĞİŞMEDİ, yeni izin modülü AÇILMADI, izin migration'ı YOKTUR**). Seviye
 | `POST /journal-entries/{id}/post` | `full` |
 | `POST /journal-entries/{id}/reverse` | `full` → **201** |
 | `GET /journal` | `view` |
+| `GET /journal/export.xlsx` | `view` |
 
 **Neden `DELETE` düz `admin`:** `full` silmeyi KAPSAMAZ (repo kanonu) ve
 `procurement`in `can_delete` taslak istisnası burada GEÇERSİZDİR — fişin sahibi
@@ -41,17 +42,25 @@ segment bazında eşler, önek benzerliği eşleşme üretmez.
 
 ## AÇILMAYAN uçlar (spec §9, icat yasağı)
 
-`Dışa Aktar` (E8:66) · mizan (HP:33) · KDV beyanı (HP:36) · banka mutabakatı
-(HP:34) · mali tablolar (HP:38) — hepsi **MU-2+**dır ve hiçbirinin tablosu
-çizilmemiştir. Fatura/hazine/bordro → otomatik fiş üretimi **MU-3**'tür.
+Mizan (HP:33) · KDV beyanı (HP:36) · mali tablolar (HP:38) `reports_router`a
+açıldı; banka mutabakatı (HP:34) hâlâ AÇILMAMIŞTIR. Fatura/hazine/bordro →
+otomatik fiş üretimi **MU-3**'tür.
+
+`Dışa Aktar` (E8:66) EXPORT-XLSX'te açıldı: `GET /journal/export.xlsx`, defter
+ucuyla AYNI `build_ledger` çağrısından beslenir ve `limit=None` ile ayın
+TAMAMINI yazar.
+
+🔴 `/journal/export.xlsx` iki segmentlidir ama `/journal/{param}` biçiminde bir
+rota YOKTUR — çakışma yoktur ve sıra serbesttir.
 """
 
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import http
 from app.core.access import AccessLevel
 from app.core.db import get_db
 from app.core.deps import get_current_user
@@ -59,6 +68,7 @@ from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
 from app.modules.accounting import (
+    export,
     guards,
     ledger,
     periods_service,
@@ -461,4 +471,63 @@ async def journal_ledger_endpoint(
         status=status_filter,
         limit=limit,
         offset=offset,
+    )
+
+
+# --- Uç 16: defterin Excel çıktısı ---
+
+
+@router.get(
+    "/journal/export.xlsx",
+    dependencies=[_VIEW],
+    response_class=Response,
+    responses={200: {"content": {export.XLSX_MEDIA_TYPE: {}}, "description": "Excel dosyasi"}},
+)
+async def journal_export_endpoint(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    year: _YEAR = None,
+    month: _MONTH = None,
+    account_id: uuid.UUID | None = None,
+    status_filter: Annotated[JournalEntryStatus | None, Query(alias="status")] = None,
+) -> Response:
+    """Yevmiye defterinin Excel çıktısı (E8:66 / `Muhasebe - Profesyonel` satır 116).
+
+    🔴 Zarf **`ledger.build_ledger` ile — DEFTER UCUYLA AYNI ÇAĞRIDAN** gelir:
+    dönem varsayılanı (`ledger.default_period()`), `account_id` ve `status`
+    süzgeçleri, `POSTING_STATUSES` kuralı ve DESC sırası birebir aynıdır.
+    İkinci bir sorgu yolu AÇILMAZ — ayrışsalardı süzgeç dışı satırlar dosyaya
+    sızabilir ve bu hiçbir yerden görülmezdi.
+
+    🔴 **`limit`/`offset` YOKTUR: ayın eşleşen TÜM satırları yazılır**
+    (`limit=None`). Bu GÜVENLİDİR ve `ledger.py`nin 3. tuzağının doğrudan
+    sonucudur: koşan bakiye ALT sorgudaki pencere fonksiyonundan gelir ve ayın
+    TAMAMI üzerinde koşar, `LIMIT` yalnız DIŞ sorguya uygulanır — sınır
+    kaldırılınca `carried_balance` ve `running_balance` aynen doğru kalır.
+    Defter ucunun kendi tavanı (200, aşımı **422**) DEĞİŞMEDİ.
+
+    Dönem, dosya adı ile sorgunun AYNI ayı göstermesi için TEK yerde çözülür.
+
+    Okuma ucudur: `_audit` ÇAĞIRMAZ ve `Request` parametresi bile ALMAZ.
+    """
+    varsayilan_yil, varsayilan_ay = ledger.default_period()
+    donem_yili = varsayilan_yil if year is None else year
+    donem_ayi = varsayilan_ay if month is None else month
+    defter = await ledger.build_ledger(
+        session,
+        year=donem_yili,
+        month=donem_ayi,
+        account_id=account_id,
+        status=status_filter,
+        limit=None,
+        offset=0,
+    )
+    return Response(
+        content=export.build_journal_workbook(defter).getvalue(),
+        media_type=export.XLSX_MEDIA_TYPE,
+        headers={
+            "Content-Disposition": http.content_disposition(
+                export.journal_filename(donem_yili, donem_ayi)
+            )
+        },
     )

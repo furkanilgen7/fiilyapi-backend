@@ -737,6 +737,26 @@ async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
     ölçüldü: yol/operasyon sayısının beklendiği gibi +1/+1 oynaması, devrin
     kırıcı OLMADIĞININ kanıtı DEĞİLDİR (K-DEVIR2). İki kapı birbirinin yerine
     geçmez.
+
+    🔴 **EXPORT-XLSX (+6 yol / +6 operasyon):** alti ekranin Excel disa aktarimi.
+    `GET /trial-balance/export.xlsx` · `GET /chart-of-accounts/export.xlsx` ·
+    `GET /journal/export.xlsx` · `GET /personnel/export.xlsx` ·
+    `GET /payroll/periods/export.xlsx` · `GET /equipment/work-summary/export.xlsx`.
+    Her biri TEK yol, TEK operasyon (GET). Dilim ilk yazildiginda taban
+    237/345'ti; AI-CHAT-2 araya girip tabani 239/348'e tasidi, dolayisiyla
+    yururlukteki sayilar **239→245 · 348→354**tur. Sayilar rebase'ten SONRA
+    YENIDEN OLCULDU (app.openapi()), eski degerden TURETILMEDI.
+
+    ⚠️ Bu dilim Kanon 3'un BESINCI olcusunu gosterir: alti ucun hepsi mevcut
+    BIR SERVISI ikinci kez basar, yeni bir sorgu yolu ACMAZ. Yani sozlesme
+    +6 buyudu ama ARKASINDAKI kume sayisi DEGISMEDI. "Yeni uc = yeni veri
+    yuzeyi" varsayimi burada yanlistir; genisleyen yalniz SUNUM'dur.
+
+    ⚠️ Ayni dilim uc mevcut servisin `limit` parametresini `int | None`a
+    genisletti (`accounts_service.list_accounts` · `ledger.build_ledger` ·
+    `personnel` + `payroll` satir fonksiyonlari). Bu ne yol ne operasyon
+    acar ve LISTE uclarinin kendi 200 tavani DEGISMEDI — sadece disa
+    aktarma `limit=None` gecebilir.
     """
     from app.main import app
 
@@ -755,5 +775,9 @@ async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
     # hiçbir alanın `type`ı değişmedi — ama bu iki sayaç zaten buna KÖRDÜR
     # (K-DEVIR2), kırıcılığın kanıtı `tests/contract/openapi_baseline.json`
     # farkıdır.
-    assert len(yollar) == 239
-    assert operasyonlar == 348
+    #
+    # EXPORT-XLSX bunun ÜSTÜNE +6 yol / +6 operasyon ekler (aşağıdaki
+    # docstring girdisi). Rebase sonrası sayılar YENİDEN ÖLÇÜLDÜ, eski
+    # 243/351'den türetilmedi: 239→245 · 348→354.
+    assert len(yollar) == 245
+    assert operasyonlar == 354

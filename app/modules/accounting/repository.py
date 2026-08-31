@@ -121,10 +121,13 @@ async def list_accounts_with_balance(
     q: str | None,
     account_type: ChartAccountType | None,
     is_active: bool | None,
-    limit: int,
+    limit: int | None,
     offset: int,
 ) -> list[tuple[ChartAccount, Decimal]]:
     """Satır + TÜRETİLMİŞ bakiye, hesap sayısından bağımsız TEK sorguda.
+
+    `limit=None` eşleşen TÜM satırları döner (Excel ucu için) — sayfalama
+    zarfı bir EKRAN kavramıdır, dosya kümenin tamamını taşır.
 
     Sıralama `code ASC`tir (spec §7) ve hiyerarşiyi KENDİLİĞİNDEN üretir: metin
     sırası `10` · `100` · `12` · `120` · `120.01` verir, yani HP'nin grup-altı
@@ -135,7 +138,16 @@ async def list_accounts_with_balance(
     stmt = _filtered(
         select_accounts_with_balance(), q=q, account_type=account_type, is_active=is_active
     )
-    stmt = stmt.order_by(ChartAccount.code).limit(limit).offset(offset)
+    stmt = stmt.order_by(ChartAccount.code).offset(offset)
+    if limit is not None:
+        # 🔴 `limit=None` = SINIR YOK, eşleşen TÜM hesaplar (`audit.repository.
+        # list_audit_entries` emsali — depoda bu genişlemenin TEK kutsanmış
+        # yazımı odur). Excel ucu bunu kullanır: sessizce kırpılmış bir hesap
+        # planı, eksik olduğu HİÇBİR YERDEN anlaşılamayan bir belge olurdu.
+        # `.limit(None)` yazmak da işe yarardı ama koşul AÇIK durur: niyetin
+        # SQLAlchemy'nin `None` davranışına saklanması, sonraki okuyucuya
+        # kırpmanın kaldırıldığını göstermez.
+        stmt = stmt.limit(limit)
     return [(account, bakiye) for account, bakiye in (await session.execute(stmt)).all()]
 
 

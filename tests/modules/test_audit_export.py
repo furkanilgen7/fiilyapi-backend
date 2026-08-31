@@ -162,7 +162,11 @@ async def test_mime_ve_content_disposition(client, user_factory, seeded_db):
 
     resp = await _download(client, headers)
     assert resp.headers["content-type"].startswith(_XLSX_MIME)
-    assert resp.headers["content-disposition"] == 'attachment; filename="denetim-gunlugu.xlsx"'
+    # EXPORT-XLSX: `audit` artik tek kaynagi (`app.core.http`) kullanir; onceki
+    # hali `filename*` TASIMIYORDU. Iki ad birlikte verilir.
+    assert resp.headers["content-disposition"] == (
+        "attachment; filename=\"denetim-gunlugu.xlsx\"; filename*=UTF-8''denetim-gunlugu.xlsx"
+    )
 
 
 async def test_indirilen_dosya_acilabilir_ve_baslik_satiri_dogru(client, user_factory, seeded_db):

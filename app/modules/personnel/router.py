@@ -19,11 +19,13 @@ bağlıdır; kartoteksten çıkarma `PATCH {"is_active": false}` ile yapılır.
 """
 
 import uuid
+from dataclasses import dataclass
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Query, Request, status
+from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import http
 from app.core.access import AccessLevel
 from app.core.db import get_db
 from app.core.deps import get_current_user
@@ -33,7 +35,8 @@ from app.core.ratelimit import client_ip
 from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
-from app.modules.personnel import repository, service
+from app.modules.personnel import export, repository, service
+from app.modules.personnel.export import XLSX_MEDIA_TYPE, build_personnel_workbook
 from app.modules.personnel.models import LeaveStatus
 from app.modules.personnel.schemas import (
     HrDocumentsSummaryResponse,
@@ -70,15 +73,56 @@ _FULL = require_permission(service.PERMISSION_MODULE, AccessLevel.full)
 _ADMIN = require_permission(service.PERMISSION_MODULE, AccessLevel.admin)
 
 
+@dataclass
+class PersonnelFilters:
+    """Liste ve dışa aktarma uçlarının PAYLAŞTIĞI süzgeç kümesi — tek yerde tanımlı.
+
+    `audit/router.py:AuditFilters` emsali. İki uç aynı `dataclass`ı `Depends()`
+    ile alır: sorgu parametrelerinin adları, tipleri ve varsayılanları TEK
+    yerdedir. Kopyalansaydı Excel bir gün ekrandan BAŞKA bir kümeyi indirmeye
+    başlar ve fark hiçbir testte görünmezdi.
+    """
+
+    q: Annotated[str | None, Query(description="Ad içinde kısmi arama (spec §3)")] = None
+    source: Annotated[WorkerSource | None, Query()] = None
+    subcontractor_id: Annotated[uuid.UUID | None, Query()] = None
+    is_active: Annotated[bool | None, Query()] = None
+    project_id: Annotated[uuid.UUID | None, Query()] = None
+    is_draft: Annotated[bool | None, Query()] = None
+
+    def as_kwargs(self) -> dict[str, object]:
+        return {
+            "q": self.q,
+            "source": self.source,
+            "subcontractor_id": self.subcontractor_id,
+            "is_active": self.is_active,
+            "project_id": self.project_id,
+            "is_draft": self.is_draft,
+        }
+
+
+async def personnel_items(
+    session: AsyncSession,
+    filters: PersonnelFilters,
+    *,
+    limit: int | None,
+    offset: int = 0,
+) -> list[PersonnelResponse]:
+    """Ekranı da Excel'i de BESLEYEN tek okuma yolu (EXPORT-XLSX §1).
+
+    `limit=None` süzgece uyan TÜM kayıtları getirir (`repository.list_personnel`
+    docstring'i): dışa aktarma sessizce kırpılmaz.
+    """
+    rows = await repository.list_personnel(
+        session, limit=limit, offset=offset, **filters.as_kwargs()
+    )
+    return [PersonnelResponse.model_validate(row) for row in rows]
+
+
 @router.get("/personnel", response_model=PersonnelListResponse, dependencies=[_VIEW])
 async def list_personnel_endpoint(
     session: Annotated[AsyncSession, Depends(get_db)],
-    q: str | None = None,
-    source: WorkerSource | None = None,
-    subcontractor_id: uuid.UUID | None = None,
-    is_active: bool | None = None,
-    project_id: uuid.UUID | None = None,
-    is_draft: bool | None = None,
+    filters: Annotated[PersonnelFilters, Depends()],
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> PersonnelListResponse:
@@ -88,32 +132,43 @@ async def list_personnel_endpoint(
     gizlenmez; ekran hangi kümeyi istediğini açıkça söyler. `project_id`
     (İK-1 §5 K4) `assigned_project_id`e göre DARALTIR — yetki genişletmez;
     `is_draft` taslakları ayıklamak için opsiyoneldir.
+
+    Sayfa tavanı **200'de KALIR**: `limit=None` yalnız `export.xlsx` ucunun
+    hakkıdır (orada sayfalama kavramı yoktur).
     """
-    items = await repository.list_personnel(
-        session,
-        q=q,
-        source=source,
-        subcontractor_id=subcontractor_id,
-        is_active=is_active,
-        project_id=project_id,
-        is_draft=is_draft,
-        limit=limit,
-        offset=offset,
-    )
-    total = await repository.count_personnel(
-        session,
-        q=q,
-        source=source,
-        subcontractor_id=subcontractor_id,
-        is_active=is_active,
-        project_id=project_id,
-        is_draft=is_draft,
-    )
-    return PersonnelListResponse(
-        items=[PersonnelResponse.model_validate(p) for p in items],
-        total=total,
-        limit=limit,
-        offset=offset,
+    items = await personnel_items(session, filters, limit=limit, offset=offset)
+    total = await repository.count_personnel(session, **filters.as_kwargs())
+    return PersonnelListResponse(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.get(
+    "/personnel/export.xlsx",
+    dependencies=[_VIEW],
+    response_class=Response,
+    responses={200: {"content": {XLSX_MEDIA_TYPE: {}}, "description": "Excel dosyasi"}},
+)
+async def personnel_export_endpoint(
+    session: Annotated[AsyncSession, Depends(get_db)],
+    filters: Annotated[PersonnelFilters, Depends()],
+) -> Response:
+    """PE "Dışa Aktar": kartoteksin Excel çıktısı — EKRANLA AYNI KÜME.
+
+    Satırlar liste ucuyla AYNI çağrıdan (`personnel_items`) gelir: aynı süzgeç
+    kümesi, aynı sıralama (`ORDER BY full_name`), aynı kapı (`_VIEW`). İkinci
+    bir sorgu/süzgeç yolu AÇILMAZ.
+
+    `limit`/`offset` YOKTUR — eşleşen TÜM kayıtlar yazılır (sessiz kırpma yok).
+    Kapsam ekrandan geniş DEĞİLDİR; sütun kümesi de ekranı aşmaz (TCKN/IBAN/
+    telefon/adres DOSYAYA GİRMEZ, bkz. `export.py` docstring'i).
+
+    Okuma ucudur — `_audit` ÇAĞIRMAZ ve `Request` parametresi bile ALMAZ
+    (`units/router.py` P4 T7 kuralı).
+    """
+    items = await personnel_items(session, filters, limit=None)
+    return Response(
+        content=build_personnel_workbook(items).getvalue(),
+        media_type=XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": http.content_disposition(export.filename())},
     )
 
 

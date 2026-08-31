@@ -8,6 +8,7 @@ ve üç kapı buradan çıkar:
 | Uç | Yetki |
 |---|---|
 | `GET /chart-of-accounts` | `view` |
+| `GET /chart-of-accounts/export.xlsx` | `view` |
 | `POST /chart-of-accounts` | `full` |
 | `GET /chart-of-accounts/{id}` | `view` |
 | `PATCH /chart-of-accounts/{id}` | `full` |
@@ -25,9 +26,12 @@ kayıt değişmeden/yok olmadan ÖNCE kurulur. 🔴 Yeni `AuditAction` üyesi A�
 ## AÇILMAYAN uçlar (spec §9, icat yasağı)
 
 Yevmiye uçları (`/journal-entries…`, `/journal`) **T3b'nindir** ve AYRI bir
-router'dadır. `Excel` (HP:49) dışa aktarımı, mizan (HP:33), KDV beyanı (HP:36),
-banka mutabakatı (HP:34) ve mali tablolar (HP:38) **MU-2+**dır; hiçbirinin
-tablosu çizilmemiştir.
+router'dadır. Mizan (HP:33), KDV beyanı (HP:36) ve mali tablolar (HP:38)
+`reports_router`dadır; banka mutabakatı (HP:34) hâlâ AÇILMAMIŞTIR.
+
+`Excel` (HP:49) EXPORT-XLSX'te açıldı: `GET /chart-of-accounts/export.xlsx`,
+liste ucuyla AYNI servis çağrısından beslenir ve `limit=None` ile kümenin
+TAMAMINI yazar.
 
 ## Rota sırası
 
@@ -43,16 +47,17 @@ Ayrılmış yer aşağıda işaretlidir; bekçi testi
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import http
 from app.core.access import AccessLevel
 from app.core.db import get_db
 from app.core.deps import get_current_user
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
-from app.modules.accounting import accounts_service, guards
+from app.modules.accounting import accounts_service, export, guards
 from app.modules.accounting.models import ChartAccountType
 from app.modules.accounting.schemas import (
     ChartAccountCreate,
@@ -166,12 +171,62 @@ async def create_chart_account_endpoint(
 
 
 # --------------------------------------------------------------------------- #
-# 🔴 AYRILMIŞ YER — iki segmentli LİTERAL `/chart-of-accounts/<literal>` yolları.
+# 🔴 İKİ SEGMENTLİ LİTERAL YOLLAR — aşağıdaki UUID rotasının ÜSTÜNDE durmak
+# ZORUNDADIRLAR (MK-2 dersi): FastAPI yolları KAYIT SIRASINA göre eşler ve
+# sonra kaydedilen `export.xlsx` bir `account_id` sanılıp **422**ye düşerdi.
+# --------------------------------------------------------------------------- #
+
+
+@router.get(
+    "/chart-of-accounts/export.xlsx",
+    dependencies=[_VIEW],
+    response_class=Response,
+    responses={200: {"content": {export.XLSX_MEDIA_TYPE: {}}, "description": "Excel dosyasi"}},
+)
+async def export_chart_accounts_endpoint(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    q: str | None = None,
+    account_type: ChartAccountType | None = None,
+    is_active: bool | None = None,
+) -> Response:
+    """Hesap planının Excel çıktısı (HP:49 `Excel`).
+
+    🔴 Zarf **`accounts_service.list_accounts` ile — LİSTE UCUYLA AYNI
+    ÇAĞRIDAN** gelir ve ÜÇ süzgeç de (HP:47 arama · HP:60 `Tür` · HP:62
+    `Durum`) birebir aynı adlarla geçer: kullanıcı ekranda ne süzdüyse dosyada
+    onu bulur. İkinci bir sorgu/süzgeç yolu AÇILMAZ — ayrı yazılsalardı
+    dosyanın süzgeci ile ekranınki zamanla ayrışır ve **süzgeç dışı satırların
+    dosyaya sızması** (veri kaçağı) hiçbir yerden görülmezdi.
+
+    🔴 **`limit`/`offset` YOKTUR: eşleşen TÜM hesaplar yazılır** (`limit=None`).
+    Sessiz kırpma yapılmaz — 200 hesabı aşan bir hesap planında dosya, eksik
+    olduğu HİÇBİR YERDEN anlaşılamayan bir belge olurdu. Liste ucunun kendi
+    tavanı (200, aşımı **422**) DEĞİŞMEDİ.
+
+    Kapsam süzgeci YOKTUR (spec §3): hesap planı şirket geneli bir katalogdur.
+
+    Okuma ucudur: `record_audit` ÇAĞIRMAZ ve `Request` parametresi bile ALMAZ.
+    """
+    accounts = await accounts_service.list_accounts(
+        session, q=q, account_type=account_type, is_active=is_active, limit=None, offset=0
+    )
+    return Response(
+        content=export.build_chart_of_accounts_workbook(accounts).getvalue(),
+        media_type=export.XLSX_MEDIA_TYPE,
+        headers={
+            "Content-Disposition": http.content_disposition(export.chart_of_accounts_filename())
+        },
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 🔴 AYRILMIŞ YER — başka iki segmentli LİTERAL `/chart-of-accounts/<literal>` yolları.
 #
 # Aşağıdaki `/chart-of-accounts/{account_id}` (UUID) rotasıyla ÇAKIŞIRLAR:
 # FastAPI yolları KAYIT SIRASINA göre eşler, sonra kaydedilen literal bir UUID
-# sanılıp 422'ye düşer (MK-2 dersi). Bugün böyle bir yol YOKTUR; eklenecek olan
-# HER biri bu satırın ÜSTÜNE gelir.
+# sanılıp 422'ye düşer (MK-2 dersi). Bugün YALNIZ `export.xlsx` vardır ve
+# yukarıdadır; eklenecek olan HER yeni literal de bu satırın ÜSTÜNE gelir.
 # --------------------------------------------------------------------------- #
 
 

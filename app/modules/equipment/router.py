@@ -42,6 +42,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import http
 from app.core.access import AccessLevel
 from app.core.db import get_db
 from app.core.deps import get_current_user
@@ -50,7 +51,7 @@ from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
-from app.modules.equipment import detail_service, service
+from app.modules.equipment import detail_service, service, work_summary_export
 from app.modules.equipment.detail_schemas import EquipmentDetailResponse
 from app.modules.equipment.models import (
     EquipmentCategory,
@@ -228,6 +229,47 @@ async def work_summary_endpoint(
     satırlarıyla tutarsızdır ve kopyalanmaz.
     """
     return await service.work_summary(session, user, year=year, month=month, site_id=site_id)
+
+
+@router.get(
+    "/work-summary/export.xlsx",
+    dependencies=[_VIEW],
+    response_class=Response,
+    responses={
+        200: {
+            "content": {work_summary_export.XLSX_MEDIA_TYPE: {}},
+            "description": "Excel dosyasi",
+        }
+    },
+)
+async def work_summary_export_endpoint(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    year: Annotated[int, Query(ge=2000, le=2200)],
+    month: Annotated[int, Query(ge=1, le=12)],
+    site_id: uuid.UUID | None = None,
+) -> Response:
+    """M3 "Excel İndir": çalışma kaydının Excel çıktısı — EKRANLA AYNI KÜME.
+
+    Zarf ekran ucuyla AYNI çağrıdan (`service.work_summary`) gelir: aynı
+    görünürlük kapsamı (`_visible_project_ids`), aynı ay sınırları, aynı
+    süzgeç, aynı toplam kaynağı. İkinci bir sorgu/hesap yolu AÇILMAZ.
+
+    Yüzey ZATEN sayfalanmamıştır — kırpma kavramı yoktur, `limit` almaz.
+
+    Okuma ucudur — `_audit` ÇAĞIRMAZ ve `Request` parametresi bile ALMAZ
+    (`units/router.py` P4 T7 kuralı).
+    """
+    ozet = await service.work_summary(session, user, year=year, month=month, site_id=site_id)
+    return Response(
+        content=work_summary_export.build_work_summary_workbook(ozet).getvalue(),
+        media_type=work_summary_export.XLSX_MEDIA_TYPE,
+        headers={
+            "Content-Disposition": http.content_disposition(
+                work_summary_export.filename(year, month)
+            )
+        },
+    )
 
 
 @router.post(

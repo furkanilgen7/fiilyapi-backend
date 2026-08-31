@@ -28,9 +28,8 @@ korunur (`test_beyaz_listedeki_her_uzantinin_mime_karsiligi_var`).
 """
 
 import re
-import unicodedata
-from urllib.parse import quote
 
+from app.core import http
 from app.core.config import settings
 from app.core.errors import DocumentValidationError
 from app.modules.documents import guards
@@ -61,9 +60,6 @@ görünen iki ayrı klasör/belge adı üretip tekillik kontrolünü anlamsızla
 _EDGE_NOISE = re.compile(r"^[\s.]+|[\s.]+$")
 """Baştaki/sondaki boşluk ve noktalar. `rapor.exe .` gibi adlarda gerçek uzantıyı
 gizlemeye çalışan girişimler bu temizlikten SONRA sınanır."""
-
-_ASCII_UNSAFE = re.compile(r"[^A-Za-z0-9 ._\-()]")
-"""`Content-Disposition`ın ASCII yedeğinde bırakılan karakter kümesi dışı her şey."""
 
 MIME_BY_EXTENSION = {
     "pdf": "application/pdf",
@@ -142,25 +138,14 @@ def mime_for_filename(filename: str) -> str:
 
 
 def _ascii_fallback(filename: str) -> str:
-    """Latin-1 dışı karakterleri düşürerek eski istemciler için yedek ad üretir.
-
-    NFKD ayrıştırması "ü"yü "u" + birleşen aksana böler, `ascii/ignore` aksanı
-    atar; böylece "Günlük" tamamen kaybolmak yerine "Gunluk" olur. Kalanların da
-    tırnak/kontrol karakteri taşımaması gerekir — aksi hâlde ad başlığı bölerdi.
-    """
-    duz = unicodedata.normalize("NFKD", filename).encode("ascii", "ignore").decode("ascii")
-    guvenli = _ASCII_UNSAFE.sub("_", duz).strip()
-    return guvenli or FALLBACK_ASCII_FILENAME
+    """Geriye dönük ad — tek kaynak `app.core.http.ascii_fallback`tır."""
+    return http.ascii_fallback(filename, FALLBACK_ASCII_FILENAME)
 
 
 def content_disposition(filename: str) -> str:
-    """`attachment` + ASCII yedeği + RFC 5987 UTF-8 adı.
+    """`app.core.http.content_disposition`a delege eder — TEK KAYNAK oradadır.
 
-    İki ad birlikte verilir: `filename*`i anlayan tarayıcı onu, anlamayan ASCII
-    yedeğini kullanır. `attachment` zorunludur — `inline` olsaydı tarayıcı
-    arşivdeki bir HTML/SVG'yi uygulamanın kaynağında ÇALIŞTIRIRDI.
+    Belge arşivinin ASCII yedeği boşalırsa "belge" olur (arşiv künyesindeki ad
+    hiçbir zaman boş görünmesin diye); kural gövdesi ortaktır.
     """
-    return (
-        f'attachment; filename="{_ascii_fallback(filename)}"; '
-        f"filename*=UTF-8''{quote(filename, safe='')}"
-    )
+    return http.content_disposition(filename, FALLBACK_ASCII_FILENAME)

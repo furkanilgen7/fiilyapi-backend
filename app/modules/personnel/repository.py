@@ -65,17 +65,24 @@ async def list_personnel(
     is_active: bool | None = None,
     project_id: uuid.UUID | None = None,
     is_draft: bool | None = None,
-    limit: int = 50,
+    limit: int | None = 50,
     offset: int = 0,
 ) -> list[Personnel]:
     """Arama YALNIZ `full_name` üzerindedir (spec §3) ve `ILIKE %q%` kısmi eşleşmedir.
 
     Sıralama DB'de (`ORDER BY full_name`) — sayfalama deterministik olsun.
+
+    🔴 **`limit=None` EŞLEŞEN TÜM kayıtları döner** (`audit/repository.py`
+    emsali, EXPORT-XLSX): Excel ucu ekranın 200'lük tavanıyla kırpılsaydı dosya
+    SESSİZCE eksik olurdu — indiren kişi eksikliği göremez. Tavan LİSTE ucunun
+    kendi imzasındadır (`Query(le=200)`) ve orada DEĞİŞMEZ.
     """
     stmt = _filtreli(
         select(Personnel), q, source, subcontractor_id, is_active, project_id, is_draft
     )
-    stmt = stmt.order_by(Personnel.full_name).limit(limit).offset(offset)
+    stmt = stmt.order_by(Personnel.full_name).offset(offset)
+    if limit is not None:
+        stmt = stmt.limit(limit)
     return list((await session.execute(stmt)).scalars().all())
 
 

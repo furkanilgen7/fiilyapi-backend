@@ -52,6 +52,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import http
 from app.core.access import AccessLevel
 from app.core.db import get_db
 from app.core.deps import get_current_user
@@ -517,7 +518,7 @@ async def export_quote_comparison_endpoint(
     return Response(
         content=buffer.getvalue(),
         media_type=XLSX_MEDIA_TYPE,
-        headers={"Content-Disposition": f'attachment; filename="{dosya_adi}"'},
+        headers={"Content-Disposition": http.content_disposition(dosya_adi)},
     )
 
 

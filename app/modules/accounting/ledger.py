@@ -187,7 +187,7 @@ async def build_ledger(
     month: int,
     account_id: uuid.UUID | None,
     status: JournalEntryStatus | None,
-    limit: int,
+    limit: int | None,
     offset: int,
 ) -> LedgerResponse:
     """E8'in tablosu — üç sorgu (devir · sayım · sayfa), satır sayısından bağımsız.
@@ -200,6 +200,12 @@ async def build_ledger(
 
     2 ile 3 birleştirilseydi (`LIMIT` içeride) her sayfa sıfırdan birikir ve
     2. sayfanın bakiyesi yalan olurdu.
+
+    🔴 **`limit=None` → SAYFALAMA YOK** (Excel ucu, `audit.repository` emsali):
+    ayın eşleşen TÜM satırları döner. Bu, yukarıdaki 3. maddenin doğrudan
+    sonucudur — `LIMIT` zaten yalnız DIŞ sorgudadır, dolayısıyla kaldırılması
+    devri ve koşan bakiyeyi etkilemez. `GET /journal` bunu ASLA göndermez
+    (orada `limit` hâlâ `int`, tavan 200, aşım **422**).
     """
     ilk_gun, son_gun = month_bounds(year, month)
     carried = await _carried_balance(session, ilk_gun=ilk_gun, account_id=account_id, status=status)
@@ -238,9 +244,16 @@ async def build_ledger(
             alt.c.sort_order.desc(),
             alt.c.line_id.desc(),
         )
-        .limit(limit)
         .offset(offset)
     )
+    if limit is not None:
+        # 🔴 `limit=None` = SINIR YOK (`audit.repository.list_audit_entries`
+        # emsali). Burada GÜVENLİDİR ve tam da 3. tuzağın yapısından ötürü:
+        # pencere fonksiyonu ALT sorgudadır ve ayın TAMAMI üzerinde koşar,
+        # `LIMIT` yalnız DIŞ sorguya uygulanır. Sınır kaldırılınca alt sorgu
+        # değişmez, dış sorgu tüm satırları döner — `carried_balance` ve
+        # `running_balance` AYNEN doğru kalır.
+        dis = dis.limit(limit)
     satirlar = (await session.execute(dis)).mappings().all()
 
     return LedgerResponse(
@@ -261,7 +274,14 @@ async def build_ledger(
             for satir in satirlar
         ],
         total=total,
-        limit=limit,
+        # 🔴 `limit=None` (Excel ucu) zarfa `total` olarak yazılır: sınır
+        # uygulanmadığında uygulanabilecek en küçük doğru sınır kümenin kendi
+        # büyüklüğüdür (`items` TAMDIR, `limit == total`). Alan `int | None`a
+        # genişletilmedi çünkü `LedgerResponse` bu dilimin dosya sınırı
+        # DIŞINDADIR (`schemas.py`) ve nullable bir `limit` `GET /journal`ın
+        # yayımlanmış sözleşmesini değiştirirdi. Dosya ucu zarfın sayfalama
+        # alanlarını okumaz; yalnız `items` kullanılır.
+        limit=total if limit is None else limit,
         offset=offset,
         carried_balance=carried,
     )

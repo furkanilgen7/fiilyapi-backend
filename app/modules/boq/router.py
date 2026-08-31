@@ -1,10 +1,10 @@
 import uuid
 from typing import Annotated
-from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import http
 from app.core.access import AccessLevel
 from app.core.db import get_db
 from app.core.deps import get_current_user
@@ -74,19 +74,6 @@ async def get_boq_endpoint(
     return await service.get_boq_for_site(session, user, site_id, section_id)
 
 
-def _content_disposition(filename: str) -> str:
-    """Spec §5.3: dosya adi santiye kodundan turer, Turkce karakter icerebilir.
-
-    RFC 5987 `filename*` UTF-8 parametresiyle birlikte ASCII-guvenli bir
-    `filename` da yollanir (eski istemciler icin dusus): Turkce karakterler
-    ASCII'ye yaklastirilir/atlanir, tirnak kacisi yapilir.
-    """
-    ascii_fallback = filename.encode("ascii", errors="ignore").decode("ascii").replace('"', "")
-    if not ascii_fallback:
-        ascii_fallback = "is-kalemleri.xlsx"
-    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(filename)}"
-
-
 @router.get(
     "/sites/{site_id}/boq/export",
     dependencies=[_VIEW],
@@ -112,7 +99,7 @@ async def export_boq_endpoint(
     return Response(
         content=buffer.getvalue(),
         media_type=XLSX_MEDIA_TYPE,
-        headers={"Content-Disposition": _content_disposition(filename)},
+        headers={"Content-Disposition": http.content_disposition(filename)},
     )
 
 
