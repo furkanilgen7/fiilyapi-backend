@@ -36,9 +36,10 @@ olarak imkânsızdır**; frontend dönemi zaten mockup satır 44-46'daki `‹ Oc
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import http
 from app.core.access import AccessLevel
 from app.core.db import get_db
 from app.core.deps import get_current_user
@@ -47,6 +48,7 @@ from app.core.permissions import require_permission
 from app.modules.accounting import (
     balance_sheet,
     cash_flow_statement,
+    export,
     guards,
     income_statement,
     trial_balance,
@@ -107,6 +109,49 @@ async def trial_balance_endpoint(
     """
     return await trial_balance.build_trial_balance(
         session, year=year, month=month, include_empty=include_empty
+    )
+
+
+@router.get(
+    "/trial-balance/export.xlsx",
+    dependencies=[_VIEW],
+    response_class=Response,
+    responses={200: {"content": {export.XLSX_MEDIA_TYPE: {}}, "description": "Excel dosyasi"}},
+)
+async def trial_balance_export_endpoint(
+    user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    year: _YEAR,
+    month: _MONTH,
+    include_empty: bool = False,
+) -> Response:
+    """Mizanın Excel çıktısı (mockup satır 48 `Excel`).
+
+    🔴 Zarf **`build_trial_balance` ile — EKRANIN UCUYLA AYNI ÇAĞRIDAN** gelir:
+    parametreler, bantlar, `include_empty` varsayılanı ve satır sırası birebir
+    aynıdır. İkinci bir sorgu/süzgeç yolu AÇILMAZ (`units`/`payroll` emsali:
+    bir kere kur, iki kere bas) — ayrışsalardı ekran ile dosya aynı dönem için
+    farklı bir mizan gösterir ve hangisinin doğru olduğu tartışılırdı.
+
+    Sayfalama YOKTUR ve BURADA DA yoktur: `build_trial_balance` zaten kümenin
+    tamamını döner, dolayısıyla sessiz kırpma yapısal olarak imkânsızdır.
+
+    `year`/`month` burada da ZORUNLUDUR (sunucunun "bugün"ü hiç okunmaz) —
+    aksi hâlde dosya adı, kullanıcının hangi dönemi indirdiğini yalan söylerdi.
+
+    Okuma ucudur: `record_audit` ÇAĞIRMAZ ve `Request` parametresi bile ALMAZ.
+    """
+    report = await trial_balance.build_trial_balance(
+        session, year=year, month=month, include_empty=include_empty
+    )
+    return Response(
+        content=export.build_trial_balance_workbook(report).getvalue(),
+        media_type=export.XLSX_MEDIA_TYPE,
+        headers={
+            "Content-Disposition": http.content_disposition(
+                export.trial_balance_filename(year, month)
+            )
+        },
     )
 
 

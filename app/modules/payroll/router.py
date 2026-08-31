@@ -51,7 +51,7 @@ from app.core.ratelimit import client_ip
 from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
-from app.modules.payroll import export, service, tax_brackets_service
+from app.modules.payroll import export, history_export, service, tax_brackets_service
 from app.modules.payroll.models import IncomeKind
 from app.modules.payroll.schemas import (
     MAX_PAYROLL_YEAR,
@@ -125,6 +125,37 @@ async def list_payroll_periods_endpoint(
     48 = 12+29+5+2); BY 71'in kart sayısı ise yalnız ÖDENEBİLİR satırlardır.
     """
     return await service.list_periods(session, limit=limit, offset=offset)
+
+
+@router.get(
+    "/payroll/periods/export.xlsx",
+    dependencies=[_VIEW],
+    response_class=Response,
+    responses={
+        200: {"content": {history_export.XLSX_MEDIA_TYPE: {}}, "description": "Excel dosyasi"}
+    },
+)
+async def export_payroll_periods_endpoint(
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> Response:
+    """BG "Excel İndir": bordro GEÇMİŞİNİN Excel çıktısı — EKRANLA AYNI KÜME.
+
+    Satırlar liste ucuyla AYNI çağrıdan (`service.period_rows`) gelir: aynı
+    sıralama (yıl/ay DESC), aynı toplam kaynağı (`summary.build_period_summary`),
+    aynı kapı (`_VIEW`). İkinci bir sorgu/hesap yolu AÇILMAZ.
+
+    `limit`/`offset` YOKTUR — TÜM dönemler yazılır (sessiz kırpma yok). Liste
+    ucunun 200'lük tavanı yerinde KALIR.
+
+    Okuma ucudur — `_audit` ÇAĞIRMAZ ve `Request` parametresi bile ALMAZ
+    (`units/router.py` P4 T7 kuralı).
+    """
+    rows, _total = await service.period_rows(session, limit=None)
+    return Response(
+        content=history_export.build_period_history_workbook(rows).getvalue(),
+        media_type=history_export.XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": http.content_disposition(history_export.filename())},
+    )
 
 
 @router.post(

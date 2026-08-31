@@ -149,7 +149,25 @@ async def get_period_detail(
 async def list_periods(
     session: AsyncSession, *, limit: int, offset: int
 ) -> schemas.PayrollPeriodListResponse:
-    """BG listesi — en YENİ dönem başta (BG tbody: Temmuz · Haziran · Mayıs).
+    """BG listesinin ZARFI — satırları `period_rows` üretir.
+
+    Zarf ile satır üretimi AYRILDI (EXPORT-XLSX): `export.xlsx` ucu sayfasız
+    okur ama zarfın `limit`/`offset` alanları sayfalama kavramına aittir ve
+    `int`tir. Bölünme olmasaydı ya export ikinci bir sorgu yolu açardı ya da
+    zarfın sözleşmesi `int | None`a gevşetilirdi (istemci tarafında kırıcı).
+    """
+    items, total = await period_rows(session, limit=limit, offset=offset)
+    return schemas.PayrollPeriodListResponse(items=items, total=total, limit=limit, offset=offset)
+
+
+async def period_rows(
+    session: AsyncSession, *, limit: int | None, offset: int = 0
+) -> tuple[list[schemas.PayrollPeriodListRow], int]:
+    """BG satırları + toplam sayı — en YENİ dönem başta (BG tbody: Temmuz · Haziran · Mayıs).
+
+    🔴 **`limit=None` TÜM dönemleri döner** (`audit/repository.py` emsali):
+    dışa aktarma ekranın 200'lük tavanıyla SESSİZCE kırpılmaz. Tavan LİSTE
+    ucunun imzasındadır (`_LIMIT = Query(le=200)`) ve orada DEĞİŞMEZ.
 
     Toplamlar SQL'de değil `summary.py`de hesaplanır ve bu bilinçlidir: BG'nin
     "Toplam Maliyet" sütunu ile BY'nin 4. kartı AYNI fonksiyondan geçmelidir
@@ -159,18 +177,14 @@ async def list_periods(
     getirir — N+1 yoktur.
     """
     total = (await session.execute(select(func.count()).select_from(PayrollPeriod))).scalar_one()
-    periods = list(
-        (
-            await session.execute(
-                select(PayrollPeriod)
-                .order_by(PayrollPeriod.year.desc(), PayrollPeriod.month.desc())
-                .limit(limit)
-                .offset(offset)
-            )
-        )
-        .scalars()
-        .all()
+    stmt = (
+        select(PayrollPeriod)
+        .order_by(PayrollPeriod.year.desc(), PayrollPeriod.month.desc())
+        .offset(offset)
     )
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    periods = list((await session.execute(stmt)).scalars().all())
 
     lines = await _lines_with_names(session, [p.id for p in periods])
     rates_by_year: dict[int, dict[WorkerSource, PayrollRate]] = {}
@@ -199,4 +213,4 @@ async def list_periods(
                 total_cost=ozet.total_employer_cost,
             )
         )
-    return schemas.PayrollPeriodListResponse(items=items, total=total, limit=limit, offset=offset)
+    return items, total

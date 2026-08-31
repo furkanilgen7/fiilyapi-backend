@@ -203,6 +203,9 @@ from app.modules.payroll.service.periods import (
     list_periods as list_periods,
 )
 from app.modules.payroll.service.periods import (
+    period_rows as period_rows,
+)
+from app.modules.payroll.service.periods import (
     update_period as update_period,
 )
 from app.modules.payroll.service.rates import (
