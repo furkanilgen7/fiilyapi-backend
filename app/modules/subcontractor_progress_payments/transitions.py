@@ -229,9 +229,15 @@ async def _assert_para_gercek(session: AsyncSession, payment: SubcontractorProgr
 
     Eşik bağlayıcı FATURANIN `total`idir (hakediş neti DEĞİL) ve gerekçesi
     kardeş modül `treasury.realized`dedir.
+
+    🔴 FAT-HAK — brüt de verilir; `chain_amount` ile AYNI tek kopyadan
+    (`calculations.gross_total`) gelir ve gerekçesi işveren ikizindedir.
     """
     await realized.assert_realized_covers(
-        session, Invoice.subcontractor_progress_payment_id, payment.id
+        session,
+        Invoice.subcontractor_progress_payment_id,
+        payment.id,
+        source_gross=calculations.gross_total(payment.lines),
     )
 
 

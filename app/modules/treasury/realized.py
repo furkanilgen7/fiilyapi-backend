@@ -38,20 +38,32 @@ ULAŞILABİLİR DEĞİLDİR — kapı, ürünü kilitleyen bir duvara dönüşü
 4. **ANLATILABİLİRLİK.** Kural kullanıcıya tek cümleyle söylenir: *hakediş,
    faturası tamamen tahsil edildiğinde ödenmiş sayılır.*
 
-⚠️ **AÇIK ÜRÜN BOŞLUĞU (bu dilimde KAPATILMADI, ölçüldü):** faturanın tutarının
-kaynak hakedişle uyuştuğunu doğrulayan HİÇBİR kural yoktur
-(`command grep -rn "progress_payment" app/modules/invoicing/validation.py`
-→ **EXIT=1**). Yani 1.000.000'lık bir hakedişe 1 ₺'lik fatura kesilip
-ödenebilir. Bu, kapıdan ÖNCE de var olan bir boşluktur ve kapatılması iki
-formülün hangisinin "doğru tutar" olduğuna dair bir ÜRÜN KARARI gerektirir.
+✅ **O AÇIK ÜRÜN BOŞLUĞU KAPANDI (FAT-HAK, 2026-09-03).** Bu metin daha önce
+şöyle diyordu: *"faturanın tutarının kaynak hakedişle uyuştuğunu doğrulayan
+HİÇBİR kural yoktur; 1.000.000'lık bir hakedişe 1 ₺'lik fatura kesilip
+ödenebilir; kapatılması bir ÜRÜN KARARI gerektirir."* Karar geldi:
 
-## 🔴 BAĞLAYICI FATURANIN ÜÇ ŞARTI
+    Bir hakedişe bağlanan ASIL faturanın brütü (`invoices.subtotal`),
+    hakedişin brüt tutarına (`calculations.gross_total`) eşit olmalıdır;
+    tolerans ±0,01 ₺.
+
+Gerekçesi kullanıcınındır: avans mahsubu ve teminat kesintisi ÖDEME anında
+düşülür, faturaya değil. Karşılaştırılan alanın neden `total` ya da `tax_base`
+DEĞİL de `subtotal` olduğu `invoicing.validation.source_amount_matches`ta tek
+kopya olarak ölçülmüştür.
+
+🔴 Bu, `total` eşiğini DEĞİŞTİRMEZ. İki soru ayrıdır ve ayrı kalır:
+*"ne kadar para geldi"* eşiği `total`dir (ödemenin tavanı), *"bu fatura doğru
+işin faturası mı"* sorusu `subtotal`e bakar (hakediş brütünün yapısal ikizi).
+
+## 🔴 BAĞLAYICI FATURANIN DÖRT ŞARTI
 
 Faturanın kaynağa BAĞLI OLMASI yetmez; "bağlayıcı" sayılması için:
 
     1. `document_type <> 'refund'`   (asıl belge, iade değil)
     2. `total > 0`                   🔴 kusur 1 — sıfır tutarda `0 < 0` False'tur
     3. yön kaynağın para akışına uygun  🔴 kusur 2 — `SOURCE_DIRECTION`
+    4. `|subtotal − hakediş brütü| <= 0,01`  🔴 FAT-HAK — 1 ₺'lik sahte fatura
 
 2 ve 3 bağımsız bir denetim turunda bulundu ve ikisi de CANLIDA AÇIKTI.
 Gerekçeleri `assert_realized_covers` ve `SOURCE_DIRECTION`dadır.
@@ -71,11 +83,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import InstrumentedAttribute
 
 from app.core.errors import ConflictError
+from app.modules.invoicing import validation
 from app.modules.invoicing.models import Invoice, InvoiceDirection, InvoiceDocumentType
 from app.modules.treasury import balance
 from app.modules.treasury.models import Payment, PaymentMethodKind
 
 __all__ = [
+    "BINDING_INVOICE_AMOUNT_MISMATCH",
     "BINDING_INVOICE_INVALID",
     "NEGOTIABLE_METHODS",
     "PAYMENT_NOT_REALIZED",
@@ -126,6 +140,17 @@ SOURCE_DIRECTION: dict[str, InvoiceDirection] = {
     "progress_payment_id": InvoiceDirection.outgoing,
     "subcontractor_progress_payment_id": InvoiceDirection.incoming,
 }
+
+#: 🔴 409 — FAT-HAK: bağlayıcı fatura VAR, tutarı sıfır DEĞİL, yönü DOĞRU — ama
+#: hakedişin brütünü TAŞIMIYOR. `BINDING_INVOICE_INVALID`ten AYRI bir metindir
+#: çünkü kullanıcının göreceği şey farklıdır: orada belge yapısal olarak
+#: bozuktur (sıfır ya da ters yön), burada belge KUSURSUZ görünür ve tek sorun
+#: RAKAMDIR — mesaj o yüzden İKİ SAYIYI DA yazar, yoksa kullanıcı kusursuz
+#: görünen bir faturaya bakıp neyi düzelteceğini bilemezdi.
+BINDING_INVOICE_AMOUNT_MISMATCH = (
+    "Hakediş ödendi işaretlenemez: hakedişe bağlı faturanın ara toplamı ({subtotal}) "
+    "hakedişin brüt tutarını ({gross}) karşılamıyor. Faturayı düzeltin."
+)
 
 #: 🔴 409 — evrağın GÖVDESİ kusurlu değildir (422 olurdu); engel kaydın
 #: ARKASINDAKİ para durumudur.
@@ -184,8 +209,13 @@ async def binding_invoice_for_source(
     session: AsyncSession,
     source_column: InstrumentedAttribute[uuid.UUID | None],
     source_id: uuid.UUID,
-) -> tuple[uuid.UUID, Decimal, InvoiceDirection] | None:
-    """Kaynağın BAĞLAYICI faturası: `(id, total, direction)` ya da `None`.
+) -> tuple[uuid.UUID, Decimal, Decimal, InvoiceDirection] | None:
+    """Kaynağın BAĞLAYICI faturası: `(id, total, subtotal, direction)` ya da `None`.
+
+    🔴 FAT-HAK — `subtotal` de OKUNUR ve `total`in yanında durur çünkü kapı İKİ
+    AYRI soru sorar: *"ne kadar para geldi"* (`total` — ödemenin tavanı) ve
+    *"bu fatura doğru işin faturası mı"* (`subtotal` — hakediş brütünün ikizi).
+    Aynı satırdan okundukları için ikinci bir sorgu AÇILMAZ.
 
     `document_type <> 'refund'` süzgeci sayesinde sonuç EN FAZLA BİR SATIRDIR ve
     bu bir varsayım değil ŞEMA GARANTİSİDİR: `invoicing.models.
@@ -198,7 +228,7 @@ async def binding_invoice_for_source(
     "fatura kes" mesajı alırdı — üstelik kısmi UNIQUE indeks yüzünden ikinci bir
     asıl fatura KESEMEZDİ. Üç hâl üç ayrı 409'dur.
     """
-    stmt = select(Invoice.id, Invoice.total, Invoice.direction).where(
+    stmt = select(Invoice.id, Invoice.total, Invoice.subtotal, Invoice.direction).where(
         source_column == source_id,
         Invoice.document_type != InvoiceDocumentType.refund,
     )
@@ -246,8 +276,37 @@ async def assert_realized_covers(
     session: AsyncSession,
     source_column: InstrumentedAttribute[uuid.UUID | None],
     source_id: uuid.UUID,
+    *,
+    source_gross: Decimal,
 ) -> None:
-    """`mark-paid` kapısı. ÜÇ ayrı engel, ÜÇ ayrı 409 metni.
+    """`mark-paid` kapısı. DÖRT ayrı engel, DÖRT ayrı 409 metni.
+
+    ## 🔴 FAT-HAK — TUTAR ŞARTI (kullanıcı kararı 2026-09-03) ARTIK BURADA DA
+
+    Bu modülün eski metni boşluğu YAZILI OLARAK biliyordu ve *"kapatılması bir
+    ÜRÜN KARARI gerektirir"* diye bırakmıştı. Karar geldi: **bir hakedişe
+    bağlanan asıl faturanın brütü, hakedişin brütüne ±0,01 ₺ içinde eşittir.**
+
+    🔴 **`invoicing`in 422 kapıları YETMEZ ve bu ÖLÇÜLDÜ** — bu üçüncü katman
+    süs değildir:
+
+    * `binding_invoice_for_source` faturanın DURUMUNA HİÇ BAKMAZ (kendi
+      docstring'i bunu gerekçelendirir). Yani `draft` bir giden fatura da
+      bağlayıcıdır ve `payments_service` `draft` faturaya ödeme yazılmasına
+      İZİN VERİR (*"`draft` bir giden fatura tam ödense bile durumu
+      DEĞİŞMEZ"*). `send` kapısına hiç uğramayan bir taslak, yalnız 422
+      kapılarıyla korunan bir üründe hakedişi ödetirdi.
+    * `approve` GİDEN faturada ULAŞILAMAZ bir geçiştir (`OUTGOING_TRANSITIONS`
+      yalnız `draft → sent → collected` taşır) — yani *"kapıyı `approve`a
+      koyduk"* demek, **işveren hakedişi ailesinde hiçbir kapı yok** demektir.
+    * Kural doğmadan ÖNCE yazılmış CANLI kayıtlar hiçbir 422'den geçmedi.
+      Bu kapı onları da tutar (fail-closed).
+
+    `source_gross` ZORUNLU bir anahtar kelimedir: çağıranın hakediş nesnesi
+    zaten elindedir (`payment.lines` `lazy="selectin"`) ve brütü ürünün TEK
+    toplama kopyasından (`calculations.gross_total`) verir. Burada ikinci bir
+    sorgu açılsaydı toplama SQL'de tekrar yazılır ve çift yuvarlama
+    (`quantize2(quantize2(bf × katsayı) × miktar)`) sessizce ayrışırdı.
 
     ## 🔴 BAĞLAYICI FATURA "VAR" DEMEK YETMEZ (denetim kusuru 1)
 
@@ -307,10 +366,15 @@ async def assert_realized_covers(
     if binding is None:
         raise ConflictError(SOURCE_NOT_INVOICED)
 
-    _, total, direction = binding
+    _, total, subtotal, direction = binding
     beklenen_yon = SOURCE_DIRECTION.get(source_column.key)
     if total <= 0 or direction is not beklenen_yon:
         raise ConflictError(BINDING_INVOICE_INVALID)
+
+    if not validation.source_amount_matches(subtotal, source_gross):
+        raise ConflictError(
+            BINDING_INVOICE_AMOUNT_MISMATCH.format(subtotal=subtotal, gross=source_gross)
+        )
 
     realized = await realized_total_for_source(session, source_column, source_id)
     if realized < total:
