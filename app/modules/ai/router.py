@@ -7,6 +7,7 @@ YOKTUR: yazma kapısı seviyede değil `SYSTEM_ADMIN_KEY` rol anahtarındadır
 (spec §6.1 / T4), bu yüzden anlamlı seviye kümesi `{none, view}`tir.
 """
 
+import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -50,6 +51,8 @@ from app.modules.ai.schemas import (
 from app.modules.ai.stream import SSE_BASLIKLARI, sse_akisi
 from app.modules.ai.tools.catalog import REGISTRY
 from app.modules.users.models import User
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ai", tags=["ai"], responses=COMMON_ERROR_RESPONSES)
 
@@ -185,12 +188,43 @@ async def ai_chat_endpoint(
     bearer = _bearer(request)
     ai_session_id = uuid.uuid4()
     istemci_ip = request.client.host if request.client else None
-    # 🔴 ORM nesnesi DEĞİL, düz UUID kapatılır. Akış gövdesi `get_db` bağımlılığı
-    # sökülDÜKTEN sonra koşar; `SessionLocal` bugün `expire_on_commit=False`
-    # olduğu için `user.id` şu an güvenli, ama bu bir YAPILANDIRMA ayrıntısıdır
-    # ve bir gün değişirse hata ancak canlıda, denetim satırı sessizce
-    # düşerken görünürdü. Bağı burada kesiyoruz.
+    # 🔴 ORM nesnesi DEĞİL, düz UUID kapatılır. `SessionLocal` bugün
+    # `expire_on_commit=False` olduğu için `user.id` güvenlidir, ama bu bir
+    # YAPILANDIRMA ayrıntısıdır: ayar değişirse öznitelik erişimi async bir
+    # lazy-load'a düşer ve hata ancak canlıda görünürdü. Bağı burada kesiyoruz.
+    #
+    # ⚠️ Eski yorum bunu *"akış gövdesi `get_db` bağımlılığı sökülDÜKTEN sonra
+    # koşar"* diye gerekçelendiriyordu; o cümle ÖLÇÜLDÜ ve YANLIŞ (aşağı bak).
+    # Gerekçe yanlıştı, önlem doğru: düz UUID kapatmak yine de doğrudur.
     kullanici_id = user.id
+
+    # 🔴 SOHBET, AKIŞ BAŞLAMADAN KALICI OLMAK ZORUNDADIR (AI-SOHBET-FIX).
+    #
+    # `turu_baslat` yalnız `flush()` eder: sohbet ve kullanıcı mesajı bu isteğin
+    # AÇIK ama COMMIT EDİLMEMİŞ transaction'ında durur. Aşağıdaki akış gövdesi
+    # ise `cevabi_sakla`yı **ayrı bir session'da** koşturur ve ayrı bir session
+    # commit edilmemiş bir satırı GÖREMEZ.
+    #
+    # 🔴 SIRA ÖLÇÜLDÜ ve bu dosyanın eski varsayımının TERSİ çıktı: FastAPI'nin
+    # `yield` bağımlılıkları akış gövdesi BİTTİKTEN SONRA sökülür. Yani
+    # `get_db`nin commit'i `cevabi_sakla`dan SONRA gelir — çok geç. Canlıda her
+    # turda olan tam olarak buydu:
+    #     ForeignKeyViolationError: ai_messages_conversation_id_fkey
+    #     → istisna `get_db`ye kaçtı → ROLLBACK → sohbet VE kullanıcı mesajı
+    #       birlikte kayboldu (canlı sayım: ai_conversations 0 · ai_messages 0,
+    #       oysa ai_tool_calls 16 — çünkü o zaten kendi session'ında commit eder).
+    #
+    # 🔴 `get_db`nin GENEL DAVRANIŞI DEĞİŞMEZ: commit burada, bu uçta, akış
+    # sınırının geçildiği noktada çağrılır. `get_db` temiz çıkışta yine commit
+    # eder (boş transaction üzerinde zararsız), istisnada yine rollback eder.
+    #
+    # 🔴 YERİ ÜÇ KISITLA ÇAKILIDIR, tercih değildir:
+    #   · sahiplik kapısından SONRA → 404 yolu geride hiçbir iz bırakmaz;
+    #   · sağlayıcı kurulumundan SONRA → 503 yolu kullanıcının geçmişine
+    #     cevapsız, boş bir sohbet YAZMAZ;
+    #   · `user.id` okunDUKTAN sonra → yukarıdaki `expire_on_commit` bağı
+    #     bugün teorik kalır, commit ondan önce gelseydi YÜK TAŞIRDI.
+    await session.commit()
 
     basladi = time.monotonic()
 
@@ -229,14 +263,38 @@ async def ai_chat_endpoint(
             #    Saklanmayan: araç sonuç GÖVDELERİ ve yapısal bloklar (A3).
             araclar = [o for o in gorulen if isinstance(o, AracSonuclandi)]
             bitis = next((o for o in reversed(gorulen) if isinstance(o, TurBitti)), None)
-            await conversations.cevabi_sakla(
-                conversation_id=conversation_id,
-                metin="".join(o.metin for o in gorulen if isinstance(o, MetinParcasi)),
-                tool_names=[o.arac_adi for o in araclar],
-                tool_states=[o.hal for o in araclar],
-                finish_reason=bitis.sebep.value if bitis else None,
-                duration_ms=int((time.monotonic() - basladi) * 1000),
-            )
+            # 🔴 SAKLAMA BİR YAN ETKİDİR — YANIT YOLUNU ÇÖKERTEMEZ.
+            #
+            # Burası bir `StreamingResponse` gövdesinin `finally`sidir: yanıt
+            # BAŞLIKLARI ÇOKTAN GİTMİŞTİR. Buradan kaçan bir istisna kullanıcıya
+            # bir hata sayfası göstermez, iki ayrı hasar üretir:
+            #   1. Starlette `RuntimeError: Caught handled exception, but
+            #      response already started.` fırlatır — bağlantı yarıda kopar,
+            #      kullanıcı akan cevabını KAYBEDER;
+            #   2. istisna `get_db`ye ulaşır ve onu ROLLBACK'e sürükler — yani
+            #      saklanamayan asistan cevabı, saklanabilmiş SORUYU da yanında
+            #      götürür. Canlıda ölçülen zincir buydu.
+            #
+            # 🔴 SESSİZCE YUTULMAZ: `logger.exception` tam traceback'i yazar ve
+            # `conversation_id` + oturum kimliği ile iz sürülebilir kalır. Turun
+            # denetim satırı (`record_ai_turn`) zaten yukarıda yazıldı; yani
+            # "hiç olmamış gibi" bir hâl mümkün değildir.
+            try:
+                await conversations.cevabi_sakla(
+                    conversation_id=conversation_id,
+                    metin="".join(o.metin for o in gorulen if isinstance(o, MetinParcasi)),
+                    tool_names=[o.arac_adi for o in araclar],
+                    tool_states=[o.hal for o in araclar],
+                    finish_reason=bitis.sebep.value if bitis else None,
+                    duration_ms=int((time.monotonic() - basladi) * 1000),
+                )
+            except Exception:  # noqa: BLE001 — gerekçe yukarıdaki iki maddedir
+                logger.exception(
+                    "AI asistan cevabı saklanamadı (conversation_id=%s · oturum=%s). "
+                    "Kullanıcının cevabı akmaya devam etti; kayıp YALNIZ geçmiştedir.",
+                    conversation_id,
+                    ai_session_id,
+                )
 
     return StreamingResponse(
         sse_akisi(_olaylar()),
