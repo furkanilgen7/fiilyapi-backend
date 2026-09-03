@@ -10,7 +10,7 @@ YOKTUR: yazma kapısı seviyede değil `SYSTEM_ADMIN_KEY` rol anahtarındadır
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Annotated
 
 import httpx
@@ -124,6 +124,43 @@ def okuma_duzlemi() -> FastAPI:
     return _okuma_duzlemi
 
 
+async def _akis_sonu_yan_etkisi(
+    ad: str,
+    is_: Callable[[], Awaitable[object]],
+    *,
+    conversation_id: uuid.UUID,
+    ai_session_id: uuid.UUID,
+) -> None:
+    """Yanıt BAŞLADIKTAN sonra koşan bir yan etkiyi **izole eder** (AI-SOHBET-FIX).
+
+    🔴 Buradan hiçbir istisna kaçmaz, çünkü kaçarsa iki ayrı hasar üretir:
+      1. Starlette `RuntimeError: Caught handled exception, but response already
+         started.` fırlatır → bağlantı yarıda kopar, kullanıcı akan cevabını
+         KAYBEDER;
+      2. istisna `get_db`ye ulaşıp onu ROLLBACK'e sürükler → akış boyunca
+         saklanmış olan SORU da silinir. Canlıda ölçülen zincir buydu.
+
+    🔴 **`is_` bir ÇAĞRILABİLİRDİR, hazır bir coroutine DEĞİL.** Sebep ölçülmüş
+    bir açıktır: hazır coroutine geçilseydi ARGÜMANLARI bu fonksiyonun DIŞINDA
+    değerlendirilirdi (örn. `tur_ozeti(gorulen)`) ve orada oluşan bir istisna
+    korumanın üstünden atlardı. Çağrılabilir biçim argüman değerlendirmesini de
+    kapsar.
+
+    🔴 SESSİZCE YUTULMAZ: `logger.exception` tam traceback'i, sohbet kimliğini
+    ve tur kimliğini yazar.
+    """
+    try:
+        await is_()
+    except Exception:  # noqa: BLE001 — gerekçe yukarıdaki iki madde
+        logger.exception(
+            "AI turu tamamlandı ama '%s' yazılamadı (conversation_id=%s · oturum=%s). "
+            "Kullanıcının cevabı bundan ETKİLENMEDİ; kayıp yalnız bu yan etkidedir.",
+            ad,
+            conversation_id,
+            ai_session_id,
+        )
+
+
 def _bearer(request: Request) -> str:
     """İsteğin **kendi** access token'ı (T1: AI'ın kendi kimliği YOKTUR).
 
@@ -229,8 +266,36 @@ async def ai_chat_endpoint(
     basladi = time.monotonic()
 
     async def _olaylar() -> AsyncIterator[AiOlay]:
-        """Turu koşar ve **her hâlde** özet denetim satırını yazar."""
+        """Turu koşar; bitince ÜÇ yan etkiyi de **birbirinden bağımsız** dener.
+
+        🔴 "Her hâlde" artık gerçekten her hâlde: biri patlarsa öbürleri yine
+        koşar ve hiçbiri yanıtı çökertmez (bkz. `_akis_sonu_yan_etkisi`).
+        """
         gorulen: list[AiOlay] = []
+
+        async def _cevabi_yaz() -> None:
+            """`cevabi_sakla` çağrısı — argümanlarıyla birlikte TEK yerde.
+
+            🔴 `_olaylar`ın İÇİNDE tanımlıdır: `gorulen` listesini kapatması
+            gerekir. Kardeş bir fonksiyon olarak yazılsaydı `gorulen` kapsamda
+            olmaz ve akışın sonunda `NameError` verirdi.
+
+            🔴 `araclar` TEK bir listeden türetilir: `tool_names` ile
+            `tool_states` aynı sırada ve aynı uzunlukta bir ÇİFTTİR (bekçisi
+            var). İki ayrı kavrayışa bölünseydi bu bağ yorumla korunur hâle
+            gelirdi.
+            """
+            araclar = [o for o in gorulen if isinstance(o, AracSonuclandi)]
+            bitis = next((o for o in reversed(gorulen) if isinstance(o, TurBitti)), None)
+            await conversations.cevabi_sakla(
+                conversation_id=conversation_id,
+                metin="".join(o.metin for o in gorulen if isinstance(o, MetinParcasi)),
+                tool_names=[o.arac_adi for o in araclar],
+                tool_states=[o.hal for o in araclar],
+                finish_reason=bitis.sebep.value if bitis else None,
+                duration_ms=int((time.monotonic() - basladi) * 1000),
+            )
+
         istemci = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=okuma_duzlemi(), raise_app_exceptions=True),
             base_url="http://ai-okuma",
@@ -247,54 +312,55 @@ async def ai_chat_endpoint(
                 gorulen.append(olay)
                 yield olay
         finally:
-            await istemci.aclose()
-            # 🔴 `finally`: akış istemci tarafından koparılsa bile tur bir iz
-            # bırakır. İz bırakmayan bir AI turu, atfedilemez bir turdur.
-            await record_ai_turn(
-                user_id=kullanici_id,
-                detail=f"{tur_ozeti(gorulen)} · oturum: {ai_session_id}",
-                ip_address=istemci_ip,
-            )
-            # 🔴 §5-33: gövde `get_db` SÖKÜLDÜKTEN sonra koşar; cevap kendi
-            # yazılabilir session'ında saklanır. `conversation_id` istemciden
-            # DEĞİL, sahiplik kapısından geçmiş dönüşten gelir.
+            # 🔴 ÜÇ YAN ETKİ — ÜÇÜ DE İZOLE, HİÇBİRİ DİĞERİNİ DÜŞÜREMEZ.
             #
+            # Burası yanıt BAŞLADIKTAN sonra koşar. Eskiden üçü de çıplaktı:
+            # ilkinde oluşan bir arıza sonrakileri hiç koşturmadan yanıtı
+            # çökertiyordu. Yani `record_ai_turn` patlasaydı sohbet geçmişi
+            # yine boş kalırdı — düzeltilen kusurun kullanıcıya görünen
+            # semptomu AYNEN geri gelirdi.
+            #
+            # 🔴 BAĞIMSIZLIK KODDAN ÖLÇÜLDÜ, varsayılmadı:
+            #   · `record_ai_turn` → kendi `SessionLocal()`ı → `audit_log`
+            #     (`audit/service.py::record_audit`, FK: `actor_user_id`→users)
+            #   · `cevabi_sakla`   → kendi `SessionLocal()`ı → `ai_messages`
+            #     (FK: →`ai_conversations`) + `ai_conversations` UPDATE
+            #   Tablolar AYRIK, session'lar AYRI, transaction'lar AYRI ve ikisi
+            #   de yalnız düz değer alır (uuid/str/int) — paylaşılan hiçbir
+            #   durum yoktur. Dolayısıyla ARALARINDA SIRA ZORUNLULUĞU YOKTUR
+            #   ve birinin arızası diğerini düşürmemelidir.
+            #
+            # Sıra yine de rastgele değildir: denetim satırı önce yazılır,
+            # çünkü `audit.py`nin doktrini *"iz bırakmayan bir AI turu,
+            # atfedilemez bir turdur"* der ve akış istemci tarafından koparılsa
+            # bile o satır düşmemelidir. Ama artık bu bir TERCİHTİR, bir
+            # bağımlılık değil: ikisinden biri patlarsa öbürü YİNE koşar.
+            await _akis_sonu_yan_etkisi(
+                "okuma düzlemi istemcisinin kapatılması",
+                istemci.aclose,
+                conversation_id=conversation_id,
+                ai_session_id=ai_session_id,
+            )
+            await _akis_sonu_yan_etkisi(
+                "tur denetim satırı",
+                lambda: record_ai_turn(
+                    user_id=kullanici_id,
+                    detail=f"{tur_ozeti(gorulen)} · oturum: {ai_session_id}",
+                    ip_address=istemci_ip,
+                ),
+                conversation_id=conversation_id,
+                ai_session_id=ai_session_id,
+            )
             # 🔴 Saklanan: cevap METNİ + araç ADLARI + zarf HÂLLERİ.
             #    Saklanmayan: araç sonuç GÖVDELERİ ve yapısal bloklar (A3).
-            araclar = [o for o in gorulen if isinstance(o, AracSonuclandi)]
-            bitis = next((o for o in reversed(gorulen) if isinstance(o, TurBitti)), None)
-            # 🔴 SAKLAMA BİR YAN ETKİDİR — YANIT YOLUNU ÇÖKERTEMEZ.
-            #
-            # Burası bir `StreamingResponse` gövdesinin `finally`sidir: yanıt
-            # BAŞLIKLARI ÇOKTAN GİTMİŞTİR. Buradan kaçan bir istisna kullanıcıya
-            # bir hata sayfası göstermez, iki ayrı hasar üretir:
-            #   1. Starlette `RuntimeError: Caught handled exception, but
-            #      response already started.` fırlatır — bağlantı yarıda kopar,
-            #      kullanıcı akan cevabını KAYBEDER;
-            #   2. istisna `get_db`ye ulaşır ve onu ROLLBACK'e sürükler — yani
-            #      saklanamayan asistan cevabı, saklanabilmiş SORUYU da yanında
-            #      götürür. Canlıda ölçülen zincir buydu.
-            #
-            # 🔴 SESSİZCE YUTULMAZ: `logger.exception` tam traceback'i yazar ve
-            # `conversation_id` + oturum kimliği ile iz sürülebilir kalır. Turun
-            # denetim satırı (`record_ai_turn`) zaten yukarıda yazıldı; yani
-            # "hiç olmamış gibi" bir hâl mümkün değildir.
-            try:
-                await conversations.cevabi_sakla(
-                    conversation_id=conversation_id,
-                    metin="".join(o.metin for o in gorulen if isinstance(o, MetinParcasi)),
-                    tool_names=[o.arac_adi for o in araclar],
-                    tool_states=[o.hal for o in araclar],
-                    finish_reason=bitis.sebep.value if bitis else None,
-                    duration_ms=int((time.monotonic() - basladi) * 1000),
-                )
-            except Exception:  # noqa: BLE001 — gerekçe yukarıdaki iki maddedir
-                logger.exception(
-                    "AI asistan cevabı saklanamadı (conversation_id=%s · oturum=%s). "
-                    "Kullanıcının cevabı akmaya devam etti; kayıp YALNIZ geçmiştedir.",
-                    conversation_id,
-                    ai_session_id,
-                )
+            # `conversation_id` istemciden DEĞİL, sahiplik kapısından geçmiş
+            # dönüşten gelir.
+            await _akis_sonu_yan_etkisi(
+                "asistan cevabı",
+                _cevabi_yaz,
+                conversation_id=conversation_id,
+                ai_session_id=ai_session_id,
+            )
 
     return StreamingResponse(
         sse_akisi(_olaylar()),

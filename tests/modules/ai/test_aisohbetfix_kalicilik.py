@@ -82,6 +82,7 @@ from app.modules.ai.providers.base import (
     TurSebebi,
 )
 from app.modules.ai.registry import ToolSpec
+from app.modules.audit.models import AuditAction, AuditLog
 from app.modules.roles.models import Role
 from app.modules.roles.seed_data import seed_reference_data
 from app.modules.users.models import User
@@ -223,6 +224,15 @@ async def _sayim(ortam: _Ortam) -> tuple[int, list[tuple[str, str]]]:
         return int(sohbet_adedi or 0), [(r.value, c) for r, c in satirlar.all()]
 
 
+async def _denetim_satirlari(ortam: _Ortam) -> list[str]:
+    """`audit_log`daki `ai_turn` satırları — TAZE bağlantıdan."""
+    async with ortam.Session() as taze:
+        satirlar = await taze.scalars(
+            select(AuditLog.detail).where(AuditLog.action == AuditAction.ai_turn)
+        )
+        return list(satirlar)
+
+
 # --------------------------------------------------------------------------- #
 # BEKÇİ 1 — sohbet + İKİ mesaj akıştan sonra KALICIDIR
 # --------------------------------------------------------------------------- #
@@ -265,6 +275,14 @@ async def test_POST_ai_chat_SOHBETI_ve_IKI_MESAJI_KALICI_yazar(monkeypatch, capl
             "çalışmıştır (ai_messages_conversation_id_fkey)."
         )
         assert not caplog.records, f"Saklama sessizce patladı: {caplog.text}"
+
+        # 🔴 §5-19 POZİTİF KONTROL: yan etkiler artık izole; izolasyon BOZUK bir
+        # denetim yolunu SESSİZCE gizliyor olabilirdi. Denetim satırının
+        # GERÇEKTEN yazıldığı burada ölçülür — yoksa `record_ai_turn`ün her
+        # zaman patlıyor olması da testi yeşil bırakırdı.
+        denetim = await _denetim_satirlari(ortam)
+        assert len(denetim) == 1, f"Tur denetim satırı yazılmadı: {denetim}"
+        assert "AI turu" in denetim[0]
 
 
 async def test_SAHIPLIK_KAPISI_hala_kapali_ve_404_iz_BIRAKMAZ(monkeypatch) -> None:
@@ -329,4 +347,94 @@ async def test_cevabi_sakla_PATLARSA_yanit_COKMEZ_soru_KALIR_hata_GORUNUR(
         assert caplog.records, "Saklama arızası hiçbir yere yazılmadı — sessiz yutma."
         kayit = caplog.records[-1]
         assert kayit.exc_info is not None, "`logger.error` değil `logger.exception` olmalı"
-        assert "saklanamadı" in kayit.getMessage()
+        assert "asistan cevabı" in kayit.getMessage()
+
+
+# --------------------------------------------------------------------------- #
+# BEKÇİ 3 — YAN ETKİLER BİRBİRİNİ DÜŞÜREMEZ (kusur sınıfının ikinci yarısı)
+# --------------------------------------------------------------------------- #
+
+
+async def test_record_ai_turn_PATLARSA_cevap_YINE_SAKLANIR(monkeypatch, caplog) -> None:
+    """🔴 Kusur sınıfının İKİNCİ YARISI.
+
+    `record_ai_turn` aynı `finally`de ve `cevabi_sakla`dan **ÖNCE** koşar.
+    İzole edilmeseydi arızası iki şeyi birden yapardı: yanıtı çökertir **ve**
+    `cevabi_sakla`yı hiç koşturmazdı — yani sohbet geçmişi yine boş kalır,
+    düzeltilen kusurun kullanıcıya görünen semptomu AYNEN geri gelirdi.
+
+    🔴 Bağımsızlık koddan ölçüldü: `record_ai_turn` → `audit_log`,
+    `cevabi_sakla` → `ai_messages`/`ai_conversations`. Ayrık tablolar, ayrı
+    session'lar, paylaşılan durum YOK. Bu test o bağımsızlığın **davranışta**
+    da tuttuğunu çakar.
+
+    Mutasyon: `record_ai_turn` çağrısının izolasyonu kaldırılınca bu test
+    KIRMIZI olur — hem 200 iddiası hem de asistan satırı iddiası düşer.
+    """
+    async with _gercek_ortam(monkeypatch) as ortam:
+
+        async def _patla(**_: object) -> None:
+            raise RuntimeError("denetim katmanı simüle edilmiş arıza")
+
+        monkeypatch.setattr(ai_router, "record_ai_turn", _patla)
+
+        with caplog.at_level(logging.ERROR, logger="app.modules.ai.router"):
+            yanit = await _chat(ortam)
+
+        # (a) Kullanıcı cevabını EKSİKSİZ aldı.
+        assert yanit.status_code == 200, yanit.text
+        assert "event: tur_bitti" in yanit.text
+        for parca in CEVAP_PARCALARI:
+            assert f'"metin": "{parca}"' in yanit.text, parca
+
+        # (b) 🔴 ASIL İDDİA: denetim patlasa da SOHBET GEÇMİŞİ YAZILDI.
+        sohbet_adedi, mesajlar = await _sayim(ortam)
+        assert sohbet_adedi == 1
+        assert mesajlar == [
+            (AiMessageRole.kullanici.value, SORU),
+            (AiMessageRole.asistan.value, CEVAP),
+        ], (
+            "Denetim satırının arızası sohbet saklamayı DÜŞÜRDÜ. İki yan etki "
+            f"birbirinden bağımsız olmalıydı. Bulunan: {mesajlar}"
+        )
+
+        # (c) Hata SESSİZCE YUTULMADI.
+        assert caplog.records, "Denetim arızası hiçbir yere yazılmadı — sessiz yutma."
+        kayit = caplog.records[-1]
+        assert kayit.exc_info is not None, "`logger.error` değil `logger.exception` olmalı"
+        assert "tur denetim satırı" in kayit.getMessage()
+
+        # Ve denetim satırı gerçekten YAZILAMADI (test bir arızayı ölçüyor,
+        # kendi kurduğu bir yolu değil).
+        assert await _denetim_satirlari(ortam) == []
+
+
+async def test_istemci_kapatma_PATLARSA_iki_yazi_da_KOSAR(monkeypatch, caplog) -> None:
+    """🔴 `finally`nin İLK adımı da bir yan etkidir.
+
+    Okuma düzlemi istemcisinin `aclose()`u çıplak bırakılsaydı, oradaki bir
+    arıza HEM denetim satırını HEM sohbet geçmişini düşürürdü — üstelik ikisi
+    de tamamen sağlamken. Bu test o ilk adımın da izole olduğunu çakar.
+    """
+    async with _gercek_ortam(monkeypatch) as ortam:
+        gercek_kur = httpx.AsyncClient.aclose
+
+        async def _patla(self) -> None:
+            raise RuntimeError("istemci kapatma simüle edilmiş arıza")
+
+        monkeypatch.setattr(httpx.AsyncClient, "aclose", _patla)
+        assert httpx.AsyncClient.aclose is not gercek_kur
+
+        with caplog.at_level(logging.ERROR, logger="app.modules.ai.router"):
+            yanit = await _chat(ortam)
+
+        assert yanit.status_code == 200, yanit.text
+        sohbet_adedi, mesajlar = await _sayim(ortam)
+        assert sohbet_adedi == 1
+        assert [r for r, _ in mesajlar] == [
+            AiMessageRole.kullanici.value,
+            AiMessageRole.asistan.value,
+        ], f"Kapatma arızası yazıları düşürdü: {mesajlar}"
+        assert len(await _denetim_satirlari(ortam)) == 1
+        assert caplog.records, "Kapatma arızası sessizce yutuldu."
+        assert "kapatılması" in caplog.records[0].getMessage()
