@@ -208,8 +208,20 @@ def test_baslik_ILK_SORUDAN_turetilir_ve_KIRPILIR() -> None:
 async def test_cevap_METIN_ADLAR_ve_HALLER_saklar_GOVDE_saklamaz(
     seeded_db, user_factory, monkeypatch
 ) -> None:
-    """🔴 §5-33: cevap kendi session'ında yazılır. Testte o session, test
-    transaction'ına bağlanır — aksi hâlde yazı testin dışına kaçardı."""
+    """Saklanan **ALAN ŞEKLİ**: metin birleşir, adlar ve hâller ÇİFT kalır.
+
+    🔴 **BU TEST KALICILIĞI ÖLÇMEZ — ölçmediği kanıtlandı (AI-SOHBET-FIX).**
+    Aşağıdaki `monkeypatch` `cevabi_sakla`nın "ayrı session"ını testin KENDİ
+    session'ına bağlar ve `commit`i `flush`a çevirir. Yani kusurun tek sebebi —
+    *ayrı bir transaction, commit edilmemiş sohbeti göremez* — burada hiç
+    gerçekleşmez ve FK asla ihlal edilmez (§5-19: bekçi ölçtüğü yolu kendisi
+    kuruyorsa hiçbir şey ölçmüyordur). Üstüne `cevabi_sakla` DOĞRUDAN çağrılır,
+    `POST /ai/chat`e uğranmaz (§5-20: çağrı yeri de mutanttır).
+
+    Bu yüzden sohbet geçmişi canlıda AYLARCA hiç kaydedilmedi ve dört kapı da
+    yeşil kaldı. Kalıcılığın gerçek bekçisi `test_aisohbetfix_kalicilik.py`dir;
+    bu test yalnız **alan eşlemesini** korur ve o işi yapmaya devam eder.
+    """
     a = await user_factory("a7@fiil.test", "Parola123!", "patron")
     kimlik = await _sohbet_ac(seeded_db, a, "soru")
 

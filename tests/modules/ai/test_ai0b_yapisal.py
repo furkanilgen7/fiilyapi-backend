@@ -353,9 +353,16 @@ def test_S15_ai_altinda_SessionLocal_YALNIZ_audit_ve_conversations_pyde() -> Non
     """🔴 AI-CHAT-2'de küme İKİ üyeye çıktı — sessizce değil, **ADIYLA**.
 
     `conversations.py` asistan cevabını saklar ve bu yazı §5-33 gereği akış
-    gövdesinde, yani `get_db` SÖKÜLDÜKTEN sonra koşar: istek session'ı kapalı,
-    `AiSessionLocal` salt-okunur. Geriye tek doğru seçenek kendi yazılabilir
-    session'ıdır. Üçüncü bir dosya eklenirse bu test yine kırmızı olur.
+    gövdesinde koşar; `AiSessionLocal` salt-okunur olduğu için geriye tek doğru
+    seçenek kendi yazılabilir session'ıdır. Üçüncü bir dosya eklenirse bu test
+    yine kırmızı olur.
+
+    🔴 **DÜZELTİLDİ (AI-SOHBET-FIX).** Bu docstring eskiden gerekçeyi *"`get_db`
+    SÖKÜLDÜKTEN sonra koşar: istek session'ı kapalı"* diye yazıyordu. Sıra
+    ÖLÇÜLDÜ ve tersi çıktı: `yield` bağımlılıkları akış gövdesi BİTTİKTEN sonra
+    sökülür, yani istek session'ı o sırada hâlâ AÇIK ama COMMIT EDİLMEMİŞTİR.
+    Ayrı session'ın satırı görememesinin sebebi budur ve canlıda her tur bu
+    yüzden FK ihlaline düştü (bkz. `test_aisohbetfix_kalicilik.py`).
     """
     kullananlar = {
         yol.name

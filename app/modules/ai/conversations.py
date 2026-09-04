@@ -17,10 +17,23 @@ dosyanın `audit.py` olmasını bekçiliyordu. Bu dosya o kümeye **ikinci** üy
 girer ve bekçi bunu ADIYLA tanıyacak şekilde güncellenir — sessizce gevşetilmez.
 
 Gerekçe ölçüldü ve §5-33'ün ta kendisidir: asistan cevabı ancak akış **bittikten**
-sonra bilinir, akış gövdesi ise `get_db` bağımlılığı **söküldükten** sonra koşar.
-İstek session'ı o anda kapalıdır. `AiSessionLocal` ise salt-okunurdur ve INSERT'i
-PostgreSQL düzeyinde reddeder. Geriye tek doğru seçenek kalır: **kendi yazılabilir
-session'ı**, tıpkı `audit.py` gibi.
+sonra bilinir. `AiSessionLocal` salt-okunurdur ve INSERT'i PostgreSQL düzeyinde
+reddeder. Geriye tek doğru seçenek kalır: **kendi yazılabilir session'ı**, tıpkı
+`audit.py` gibi.
+
+🔴 **DÜZELTİLDİ (AI-SOHBET-FIX).** Bu paragraf eskiden *"akış gövdesi `get_db`
+bağımlılığı söküldükten sonra koşar; istek session'ı o anda kapalıdır"* diyordu.
+**Sıra ölçüldü ve TERSİ çıktı**: FastAPI'nin `yield` bağımlılıkları akış gövdesi
+BİTTİKTEN SONRA sökülür, yani `cevabi_sakla` koşarken istek session'ı hâlâ AÇIK
+ve COMMIT EDİLMEMİŞTİR. Ayrı session'ın bu satırları görememesinin sebebi
+"kapalılık" değil **commit edilmemişlik**tir ve canlıyı öldüren de buydu:
+
+    ForeignKeyViolationError: ai_messages_conversation_id_fkey
+    (conversation_id) is not present in table "ai_conversations"
+
+Sonuç doğru, gerekçe yanlıştı (kanon #40: bir kanona uymadan önce gerekçesini
+yeniden ÖLÇ). Ayrı session doğru çözümdür; eksik olan şey `turu_baslat`ın
+yazısının akış başlamadan **COMMIT EDİLMESİYDİ** — bkz. `turu_baslat`.
 """
 
 from __future__ import annotations
@@ -121,8 +134,22 @@ async def turu_baslat(
 ) -> uuid.UUID | None:
     """Soruyu saklar; gerekiyorsa sohbeti açar. Sahibi değilse `None`.
 
-    🔴 Bu, **istek yolunda** koşar (akış başlamadan). `get_db` temiz çıkışta
-    commit eder; akış gövdesinin session'ı ise o sırada zaten kapalıdır.
+    🔴 **ÇAĞIRAN, AKIŞ BAŞLAMADAN ÖNCE COMMIT ETMEK ZORUNDADIR.** Bu fonksiyon
+    yalnız `flush()` eder: satır çağıranın transaction'ında, henüz **görünmez**
+    durur. Bir sonraki adım ayrı bir session açıyorsa (`cevabi_sakla`, `audit.py`
+    ya da bir `StreamingResponse` gövdesi) o session bu satırı GÖREMEZ ve FK
+    ihlaline düşer.
+
+    🔴 Eski yorum burada *"`get_db` temiz çıkışta commit eder; akış gövdesinin
+    session'ı ise o sırada zaten kapalıdır"* diyordu. **Sıra ölçüldü, TERSİ**:
+    FastAPI `yield` bağımlılıklarını akış gövdesi BİTTİKTEN sonra söker, yani
+    `get_db`nin commit'i çok geç gelir. Canlıda her tur bu yüzden patladı; iz
+    `app/modules/ai/router.py::ai_chat_endpoint` içindeki commit yorumundadır.
+
+    Commit burada YAPILMAZ, çağıranda yapılır — sebebi de ölçülmüştür: sahiplik
+    kapısı (404) ve sağlayıcı kurulumu (503) bu satırın ARDINDAN koşar; burada
+    commit edilseydi her başarısız sağlayıcı denemesi cevapsız bir sohbeti
+    kullanıcının geçmişine kalıcı olarak yazardı.
     """
     if conversation_id is None:
         sohbet = AiConversation(user_id=user_id, title=baslik_uret(soru))
