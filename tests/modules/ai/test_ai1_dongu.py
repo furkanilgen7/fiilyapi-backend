@@ -139,6 +139,7 @@ def _sahte_spec(
         kume=ToolKumesi.KAPSAMSIZ,
         kapilar=kapilar,
         ucler=(),
+        veri_modulleri=frozenset(kapilar and {m for m, _ in kapilar}),
         yol_parametreleri={},
         girdi=_Bos,
         yanit_modeli=_Bos,

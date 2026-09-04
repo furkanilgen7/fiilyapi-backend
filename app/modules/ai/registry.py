@@ -97,6 +97,20 @@ class ToolSpec:
     kapilar: frozenset[tuple[str, AccessLevel]]
     #: `("/projects",)` — `ReadOnlyTransport` bunun DIŞINA çağrı yaptırmaz.
     ucler: tuple[str, ...]
+    #: 🔴 **VARSAYILANI YOK** (A1/K1). Bu aracın YANITININ hangi izin
+    #: modüllerinin verisini taşıdığı — `kapilar`dan AYRI bir eksendir ve
+    #: türetilemez; ikisi de ölçümle çürütüldü:
+    #:
+    #: * `GET /dashboard/summary` **tek** kapı taşır (`dashboard:view`) ama
+    #:   gövdesinde `progress_payments` (portföy) + `inventory` + `sites` (risk
+    #:   kartı) verisi vardır. Kapıdan türeten bir sistem bunu göremezdi.
+    #: * `onay_kutum`un `kapilar`ı **boştur** (`GET /approvals` bilinçli
+    #:   kapısız). `kapilar`dan türeten bir sistem için `personnel`i saran ve
+    #:   `kapilar=∅` yazan bir araç "hiçbir modülün verisi" sayılırdı.
+    #:
+    #: `exposure.dogrula_spec` bu alanı okur ve KAPALI bir modül görürse aracı
+    #: **kaydettirmez**.
+    veri_modulleri: frozenset[str]
     #: TİPLİ (`{"site_id": uuid.UUID}`) — S27'nin ikinci kilidi.
     yol_parametreleri: Mapping[str, type]
     girdi: type[BaseModel]
@@ -151,6 +165,17 @@ class ToolRegistry:
         okuma_araclari: tuple[ToolSpec, ...],
         propose_araclari: tuple[ToolSpec, ...] = (),
     ) -> None:
+        # 🔴 KVKK KAPISI **KAYIT ANINDADIR** (A1/K1, `exposure.py`). Katalog bir
+        # LİSTELEME, dispatch bir KARARDIR; ama sağlayıcıya kapalı bir modülün
+        # verisini taşıyan aracın **hiç var olmaması** gerekir. İhlalde
+        # `IfsaIhlali` atılır → uygulama açılmaz (fail-closed). Bir liste ya da
+        # bir test dosyasına bırakılsaydı, `Scope` enum'unun ve
+        # `YONETISIM_DENYLIST`in düştüğü yere düşerdi: **dekoratif** olurdu.
+        from app.modules.ai import exposure
+
+        for spec in (*okuma_araclari, *propose_araclari):
+            exposure.dogrula_spec(spec)
+
         self._okuma = okuma_araclari
         self._propose = propose_araclari
         # 🔴 KATI SÖZLÜK (B20). `difflib.get_close_matches` gibi bir yedek
@@ -303,6 +328,22 @@ class ToolRegistry:
         except httpx.HTTPError as exc:
             sonuc = ToolError("ust_kaynak_hatasi")
             hata = type(exc).__name__
+        # --- 6b. ALAN MASKESİ, ÇALIŞMA ANINDA (S5-c / A1) --------------
+        # 🔴 Kayıt anındaki şema taraması **YETMEZ** ve bu eşdeğer bir mutant
+        # DEĞİLDİR: ölçüldü, `AiPuantajHaftasi.totals` `dict[str, Any]` ve
+        # `AiYetkilerim.permissions` `dict[str, str]`tir — bu iki alanın
+        # ANAHTARLARI şemada YOKTUR, yalnız gövdede vardır. Ucun gövdesine bir
+        # gün `wage_amount` eklenirse şema kapısı sessiz kalır, bu kapı konuşur.
+        #
+        # 🔴 Gövde KISMEN temizlenmez, TAMAMEN düşürülür: anahtarları ayıklamak
+        # sızıntıyı yok etmez, yalnız fark edilmesini zorlaştırır.
+        if not isinstance(sonuc, ToolError):
+            from app.modules.ai import exposure
+
+            sizan = exposure.yasak_anahtarlar(getattr(sonuc, "data", None))
+            if sizan:
+                sonuc = ToolError("alan_maskesi_ihlali")
+                hata = f"alan_maskesi_ihlali:{','.join(sizan)}"
         if isinstance(sonuc, ToolError):
             hata = hata or sonuc.kod
 
@@ -318,6 +359,26 @@ class ToolRegistry:
             error=hata,
         )
         return sonuc
+
+    def mesaj_govdesi(self, arac_adi: str, sonuc: AracSonucu) -> dict[str, Any]:
+        """Modele giden **tam** gövde: zarf + **KAPSAM NOTU** (S10).
+
+        🔴 Bu, `SIRKET_GENELI` beyanının kullanıcıya ulaşan tek yoludur. Beyan
+        bir enum alanında kalsaydı `Scope` enum'unun kaderini paylaşırdı: kod
+        onu hiçbir yerde okumazdı ve `GET /ai/tools` çıktısındaki etiket
+        **dekoratif** olurdu.
+
+        🔴 Bilinmeyen araç adı SESSİZCE atlanmaz — üçüncü bir not basılır. "Not
+        yok" ile "kapsam iddiası yok" farklı iki şeydir.
+        """
+        govde = sonuc.govde()
+        spec = self._sozluk.get(arac_adi)
+        govde["kapsam_notu"] = (
+            guards.KAPSAM_NOTU_BILINMEYEN
+            if spec is None
+            else guards.KAPSAM_NOTLARI[spec.kume.value]
+        )
+        return govde
 
     @staticmethod
     def _cozulmus_yol(spec: ToolSpec, girdi: BaseModel) -> str:

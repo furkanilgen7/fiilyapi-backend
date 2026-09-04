@@ -54,6 +54,8 @@ PROJELERI_LISTELE = ToolSpec(
     kume=ToolKumesi.PROJE_KAPSAMLI,
     kapilar=frozenset({("projects", AccessLevel.view)}),
     ucler=("/projects",),
+    #: `ProjectListItem` alanları — kişisel veri YOK, hepsi `projects`.
+    veri_modulleri=frozenset({"projects"}),
     yol_parametreleri={},
     girdi=schemas.BosGirdi,
     yanit_modeli=schemas.AiProjeListesi,
@@ -73,6 +75,11 @@ ONAY_KUTUM = ToolSpec(
     kume=ToolKumesi.PROJE_KAPSAMLI,
     kapilar=frozenset(),
     ucler=("/approvals",),
+    #: 🔴 `kapilar` BOŞ ama veri BOŞ DEĞİL. Kutu üç evrak ailesinin künyesini
+    #: taşır (`progress_payments` + `procurement`) ve evrağı YARATANIN adını
+    #: (`created_by_name`) basar. `kapilar`dan türeten bir sistem burada
+    #: "hiçbir modülün verisi" derdi — ölçülmüş deliğin ta kendisi.
+    veri_modulleri=frozenset({"approvals", "progress_payments", "procurement"}),
     yol_parametreleri={},
     girdi=schemas.BosGirdi,
     yanit_modeli=schemas.AiOnayKutusu,
@@ -91,6 +98,9 @@ PUANTAJ_HAFTASI = ToolSpec(
     kume=ToolKumesi.PROJE_KAPSAMLI,
     kapilar=frozenset({("timesheet", AccessLevel.view)}),
     ucler=("/sites/{site_id}/timesheet/week",),
+    #: Haftalık özet şantiye + proje adını da basar; `personnel` **taşımaz**
+    #: (kişi bazlı gün kodu araç şemasında YOK — `aciklama` bunu söyler).
+    veri_modulleri=frozenset({"timesheet", "sites", "projects"}),
     yol_parametreleri={"site_id": uuid.UUID},
     girdi=schemas.PuantajHaftasiGirdi,
     yanit_modeli=schemas.AiPuantajHaftasi,
@@ -106,9 +116,38 @@ GOSTERGE_OZETI = ToolSpec(
         "ve toplam sayı BİLDİRMEZ."
     ),
     kapsam=ToolKapsami.MODUL_KAPISI,
-    kume=ToolKumesi.PROJE_KAPSAMLI,
+    # 🔴 `SIRKET_GENELI`nin İLK GERÇEK KULLANIMI — ve bir DÜZELTMEdir.
+    #
+    # Bu araç `PROJE_KAPSAMLI` beyan ediyordu; ölçüm bunu çürüttü. Zincir:
+    # `dashboard/service.py::_risks` → `dashboard/risks.py::build_risks` →
+    # `_stock_alerts` → `inventory/repository.py::visible_warehouse_ids` →
+    # `_warehouse_scope`, ve o süzgeç **İKİ DALLI ve OR**'ludur:
+    #
+    #     Warehouse.site_id.is_(None) | Warehouse.site_id.in_(gorunen_santiyeler)
+    #
+    # Yani MERKEZ DEPO (`site_id IS NULL`) kapsam süzgecine **TABİ DEĞİLDİR** —
+    # `_warehouse_scope` docstring'i bunu bilinçli bir karar olarak yazar
+    # ("Merkez dalı OR'dan çıkarılsaydı şirketin ana ambarı hiç kimseye
+    # görünmezdi"). Sonuç: `risk_notu`daki sayı, aktörün HİÇBİR projesine bağlı
+    # olmayan satırları içerebilir. `equipment/repository.py::scope` de birebir
+    # aynı OR'u taşır — desen tek değil, ikizdir.
+    #
+    # Kartın öbür yarısı (`portfoy`, `gorunur_proje_sayisi`) gerçekten proje
+    # kapsamlıdır; yani araç KARIŞIKTIR. Fail-closed okuma `SIRKET_GENELI`dir:
+    # kapsam notunun işi modelin "senin kapsamında" demesini engellemektir ve
+    # yanıtın **bir bölümü** bile kapsam dışıysa o cümle yalan olur.
+    #
+    # ⚠️ Ve not TERSİNE ÇEVRİLEMEZ: dolu bir küme kapsam iznini KANITLAMAZ.
+    # `guards.KAPSAM_NOTLARI["sirket_geneli"]` bunu açıkça söyler.
+    kume=ToolKumesi.SIRKET_GENELI,
     kapilar=frozenset({("dashboard", AccessLevel.view)}),
     ucler=("/dashboard/summary",),
+    #: 🔴 TEK KAPI, BEŞ MODÜL — kapıdan türetmenin çürütüldüğü vaka.
+    #: `_portfolio` → `progress_payments`; `_risks` → `inventory` + `sites` +
+    #: `progress_payments`; `projects` dizisi ve iki sayaç → `projects`.
+    veri_modulleri=frozenset(
+        {"dashboard", "projects", "progress_payments", "inventory", "sites"}
+    ),
     yol_parametreleri={},
     girdi=schemas.BosGirdi,
     yanit_modeli=schemas.AiGostergeOzeti,
@@ -127,6 +166,9 @@ YETKILERIM = ToolSpec(
     kume=ToolKumesi.KAPSAMSIZ,
     kapilar=frozenset(),
     ucler=("/auth/me",),
+    #: Yalnız aktörün KENDİ izin haritası. `users` bir izin modülü değildir;
+    #: taşıdığı tek şey `ai` modülünün kendi meta verisidir.
+    veri_modulleri=frozenset({"ai"}),
     yol_parametreleri={},
     girdi=schemas.BosGirdi,
     yanit_modeli=schemas.AiYetkilerim,
@@ -147,6 +189,9 @@ NAVIGATE_TO = ToolSpec(
     #: Hiçbir uca gitmez. Boş demet, `ReadOnlyTransport`un HER yolu reddetmesi
     #: demektir — yani bu araç bir GET denese fail-closed patlar.
     ucler=(),
+    #: Hiçbir kayıt okumaz — beyan da boştur ve `dogrula_spec` bunu yalnız
+    #: `ucler` boş olduğu için kabul eder.
+    veri_modulleri=frozenset(),
     yol_parametreleri={},
     girdi=schemas.YonlendirGirdi,
     yanit_modeli=schemas.AiYonlendirme,

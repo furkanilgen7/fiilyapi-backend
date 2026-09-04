@@ -127,18 +127,22 @@ def _sonuc_olayi(cagri: AracCagrisiHazir, sonuc: AracSonucu) -> AracSonuclandi:
     )
 
 
-def _arac_mesaji(cagri: AracCagrisiHazir, sonuc: AracSonucu) -> Mesaj:
+def _arac_mesaji(kayit: ToolRegistry, cagri: AracCagrisiHazir, sonuc: AracSonucu) -> Mesaj:
     """Zarfı `tool` rolünde modele verir.
 
     🔴 Araç sonucu **asla** sistem ya da kullanıcı rolüne yazılmaz (B7). Zehirli
     bir günlük notu ancak `tool` rolünde görünebilir ve sistem promptunun 6.
     kuralı modele bunu açıkça söyler.
+
+    🔴 Gövde `kayit.mesaj_govdesi` ile kurulur, `sonuc.govde()` ile DEĞİL:
+    kapsam notu (S10) zarfın değil **kaydın** bilgisidir (`ToolSpec.kume`) ve
+    zarf onu taşıyamaz.
     """
     import json
 
     return Mesaj(
         rol="arac",
-        icerik=json.dumps(sonuc.govde(), ensure_ascii=False),
+        icerik=json.dumps(kayit.mesaj_govdesi(cagri.arac_adi, sonuc), ensure_ascii=False),
         cagri_id=cagri.cagri_id,
         arac_adi=cagri.arac_adi,
     )
@@ -240,7 +244,7 @@ async def ajan_turu(
                 yield YapisalBloklar(
                     cagri_id=cagri.cagri_id, arac_adi=cagri.arac_adi, bloklar=bloklar
                 )
-            gecmis.append(_arac_mesaji(cagri, sonuc))
+            gecmis.append(_arac_mesaji(kayit, cagri, sonuc))
 
     yield TurBitti(sebep=sebep, kullanim=kullanim)
 

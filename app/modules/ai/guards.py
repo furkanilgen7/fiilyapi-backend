@@ -45,6 +45,51 @@ KIRPILDI = (
 )
 
 # --------------------------------------------------------------------------- #
+# S10 — KAPSAM NOTU. Her araç sonucu bir kapsam iddiası taşır.
+# --------------------------------------------------------------------------- #
+#
+# 🔴 NİYE CÜMLE, NİYE SAYI DEĞİL. S10 ideal hâlde iki SAYI ister
+# (`görünür_proje`, `şirket_geneli_satır`). Ölçüldü: bu depodaki şirket-geneli
+# yüzey o iki sayıyı **üretemiyor** — `gosterge_ozeti`nin risk kartı kaynak
+# başına `LIMIT 3` uygular ve zarfında **`total` ALANI YOKTUR**
+# (`dashboard/risks.py::MAX_ALERTS_PER_SOURCE`; `tools/schemas.py` bunu birebir
+# yazar: "toplam sayıyı HİÇ bildirmez"). Olmayan bir toplamı uydurmak, B19'un
+# önlemeye çalıştığı yalanın ta kendisidir. Bu yüzden not **epistemiktir**:
+# modele neyi BİLMEDİĞİNİ söyler.
+#
+# 🔴 VE NOT TERSİNE ÇEVRİLEMEZ. Ölçüldü: `inventory/repository.py::
+# _warehouse_scope` ve `equipment/repository.py::scope` İKİ DALLI ve **OR**'ludur
+# — `site_id IS NULL` (merkez depo / depodaki makine) kapsam süzgecine TABİ
+# DEĞİLDİR. Yani "küme doluysa kapsamındadır" çıkarımı YANLIŞTIR ve `SIRKET_GENELI`
+# notu bunu **açıkça** söyler; söylemeseydi model sessizce yanlış vaat ederdi.
+
+#: `ToolKumesi` üyesinin **değerine** göre. (Anahtar tip değil `str`: bu modül
+#: `registry`yi import EDEMEZ — `registry` bu modülü import ediyor. Küme
+#: eşitliği bekçisi `test_ai2a_kapsam_notu.py`dedir.)
+KAPSAM_NOTLARI: dict[str, str] = {
+    "proje_kapsamli": (
+        "KAPSAM: Bu sonuç, erişebildiğiniz projelerle SINIRLI bir kümeden gelir. "
+        "Boş ya da küçük olması şirkette daha fazla kayıt OLMADIĞI anlamına gelmez."
+    ),
+    "sirket_geneli": (
+        "KAPSAM: 🔴 Bu sonuç ŞİRKET GENELİ satır içerebilir — proje kapsamı "
+        "süzgeci bu yanıtın tamamına uygulanmaz. Bu yüzden (a) 'sizin "
+        "kapsamınızdaki toplam' diye SUNMAYIN, (b) buradaki bir kaydın "
+        "görünüyor olması onun sizin projenize ait olduğunu KANITLAMAZ."
+    ),
+    "kapsamsiz": (
+        "KAPSAM: Bu araç kapsamlı veri OKUMAZ (yalnız kendi kimliğiniz ya da bir "
+        "ekran önerisi). Buradan proje/şirket kapsamı hakkında çıkarım YAPMAYIN."
+    ),
+}
+
+#: Katı sözlük araması başarısız olduğunda (`bilinmeyen_arac`) basılan not.
+#: 🔴 Anahtarı sessizce ATLAMAK yerine üçüncü bir hâl yazılır: "not yok" ile
+#: "kapsam iddiası yok" farklı iki şeydir ve sessiz atlama bu depoda defalarca
+#: sahte-yeşil üretti.
+KAPSAM_NOTU_BILINMEYEN = "KAPSAM: Bu ad bir araç değil; kapsam iddiası yok."
+
+# --------------------------------------------------------------------------- #
 # Hata kodları — `ToolError(kod)`. Kod bir enum değil kapalı bir sözlüktür;
 # metin modele, kod denetime gider.
 # --------------------------------------------------------------------------- #
@@ -61,6 +106,15 @@ HATA_METINLERI: dict[str, str] = {
         "yeniden giriş yapıldığında aynı sorgu çalışır."
     ),
     "denetim_yazilamadi": ("Erişim izi kaydedilemediği için araç ÇALIŞTIRILMADI (fail-closed)."),
+    # 🔴 S5-c / A1. Zarf, maskelenmesi gereken bir anahtar taşıyordu ve
+    # **TAMAMEN** düşürüldü. Kısmi bir gövde döndürmek yanlış olurdu: hangi
+    # alanın hangi satırda olduğu bilinmeden "temizlenmiş" bir gövde, sızıntının
+    # yalnızca daha zor fark edilen hâlidir.
+    "alan_maskesi_ihlali": (
+        "Bu aracın sonucu kişisel veri alanı taşıdığı için TAMAMEN düşürüldü. "
+        "Bu 'kayıt yok' DEMEK DEĞİLDİR; sonucu tahmin etme, kullanıcıya ilgili "
+        "ekrandan bakmasını söyle."
+    ),
     "ust_kaynak_hatasi": "İstek sırasında bir hata oluştu; sonuç getirilemedi.",
     # --- AI-1 (döngü) ------------------------------------------------------
     # 🔴 "kayıt yok" DEĞİL. Model bu cümleyi DÜRÜSTÇE basmak zorundadır: tur
