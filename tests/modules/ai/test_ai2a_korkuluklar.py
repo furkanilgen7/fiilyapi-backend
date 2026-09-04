@@ -1,16 +1,16 @@
 """AI-2a — ÜÇ KORKULUK + BİR KALIP. Hepsi mutasyonla + pozitif kontrolle.
 
-| # | Bekçi | Mutasyon (KIRMIZI olmalı) | Pozitif kontrol (YEŞİL kalmalı) |
+| # | Bekçi | Mutasyon (KIRMIZI) | Pozitif kontrol (YEŞİL) |
 |---|---|---|---|
-| ① | `ai_exposed` modül bazlı ifşa | `AI_IFSA["customers"] = ACIK` → aynı araç KAYDEDİLİR | `projects` aracı kaydedilir |
-| ① | `AGREGA` kişi adı koşulu | `payroll` aracına `full_name` ekle | Adsız bordro TOPLAMI aracı GEÇER |
-| ① | `veri_modulleri` ayrı eksen | `kapilar=∅` + `personnel` sarmak | `onay_kutum` (`kapilar=∅`) GEÇER |
-| ② | Alan maskesi (şema) | Yanıt şemasına `tc_no` ekle | Maskesiz şema geçer |
-| ② | Alan maskesi (ÇALIŞMA ANI) | `dict[str, Any]` içine `wage_amount` koy | Temiz `totals` `Ok` döner |
-| ③ | `scope_note` (S10) | `_arac_mesaji`den `mesaj_govdesi` çağrısını sil | Üç `kume` üç AYRI cümle |
-| ③ | `SIRKET_GENELI` beyanı | `_warehouse_scope`un OR dalını sil | `gosterge_ozeti` beyanı ölçümle örtüşür |
-| ④ | Sayfalamasız `Truncated` | Handler bildirilmemiş `params` gönderir | Bugünkü üç handler GEÇER |
-| ④ | FastAPI yutması | — (kanıt ölçümdür) | `limit` bildiren uçta tavan İŞLER |
+| ① | `ai_exposed` ifşa seviyesi | Bayrağı `ACIK` çevir | `projects` aracı kaydedilir |
+| ① | `AGREGA` kişi adı koşulu | Araca `full_name` ekle | Adsız bordro TOPLAMI GEÇER |
+| ① | `veri_modulleri` ayrı eksen | `kapilar=∅` + `personnel` sar | `onay_kutum` GEÇER |
+| ② | Alan maskesi (şema) | Şemaya `tc_no` ekle | Maskesiz şema geçer |
+| ② | Alan maskesi (ÇALIŞMA ANI) | Zarf taramasını sil | Temiz `totals` `Ok` döner |
+| ③ | `scope_note` (S10) | Çağrı yerini sil | Üç `kume` üç AYRI cümle |
+| ③ | `SIRKET_GENELI` beyanı | OR dalını sil | Beyan ölçümle örtüşür |
+| ④ | Sayfalamasız `Truncated` | Bildirilmemiş `params` | Bugünkü üç handler GEÇER |
+| ④ | FastAPI yutması | (kanıt ölçümdür) | `limit` bildiren uçta tavan İŞLER |
 
 🔴 **Bekçi ölçtüğü yolu KENDİSİ KURMAZ.** Bu dosyada kurulan tek şey sahte
 `ToolSpec`lerdir (mutantlar); rota tablosu `app.main:app`ın, süzgeçler
@@ -41,13 +41,13 @@ from app.modules.ai import exposure, guards
 from app.modules.ai import loop as ai_loop
 from app.modules.ai.exposure import (
     AI_IFSA,
-    IfsaIhlali,
-    IfsaSeviyesi,
     KASTEN_DISARIDA,
-    NAIF_MASKE_KOKLERI,
     KISI_ADI_ANAHTARLARI,
+    NAIF_MASKE_KOKLERI,
     S5C_ANAHTARLARI,
     YASAK_ALAN_ANAHTARLARI,
+    IfsaIhlali,
+    IfsaSeviyesi,
 )
 from app.modules.ai.loop import ajan_turu
 from app.modules.ai.providers.base import (
@@ -280,7 +280,9 @@ class _MaaslıBordro(BaseModel):
 
 
 def test_AGREGA_modul_araci_KISI_ADI_tasiyamaz() -> None:
-    mutant = _spec("bordro_ozeti", veri_modulleri=frozenset({"payroll"}), yanit_modeli=_KisiliBordro)
+    mutant = _spec(
+        "bordro_ozeti", veri_modulleri=frozenset({"payroll"}), yanit_modeli=_KisiliBordro
+    )
     with pytest.raises(IfsaIhlali, match="KİŞİ ADI"):
         ToolRegistry((mutant,))
 
@@ -294,7 +296,13 @@ def test_POZITIF_KONTROL_AGREGA_modulun_ADSIZ_araci_GECER() -> None:
     sessizce geri alınmış olur.
     """
     kayit = ToolRegistry(
-        (_spec("bordro_ozeti", veri_modulleri=frozenset({"payroll"}), yanit_modeli=_AdsizBordroDonemi),)
+        (
+            _spec(
+                "bordro_ozeti",
+                veri_modulleri=frozenset({"payroll"}),
+                yanit_modeli=_AdsizBordroDonemi,
+            ),
+        )
     )
     assert kayit.tum_araclar[0].ad == "bordro_ozeti"
 
@@ -309,7 +317,11 @@ def test_KISI_ADI_yasagi_YALNIZ_AGREGA_modullerde_kosar() -> None:
     assert "created_by_name" in KISI_ADI_ANAHTARLARI
     assert "created_by_name" in exposure.sema_anahtarlari(schemas.AiOnayKutusu)
     kayit = ToolRegistry(
-        (_spec("onay_benzeri", veri_modulleri=frozenset({"approvals"}), yanit_modeli=_KisiliBordro),)
+        (
+            _spec(
+                "onay_benzeri", veri_modulleri=frozenset({"approvals"}), yanit_modeli=_KisiliBordro
+            ),
+        )
     )
     assert kayit.tum_araclar[0].ad == "onay_benzeri"
     # Ve gerçek `onay_kutum` katalogda ayakta:
@@ -415,7 +427,11 @@ def test_sema_taramasi_IC_ICE_MODELLERI_de_gorur() -> None:
 
 def test_POZITIF_KONTROL_temiz_ic_ice_sema_GECER() -> None:
     kayit = ToolRegistry(
-        (_spec("ic_ice_temiz", veri_modulleri=frozenset({"projects"}), yanit_modeli=_TemizDisSeviye),)
+        (
+            _spec(
+                "ic_ice_temiz", veri_modulleri=frozenset({"projects"}), yanit_modeli=_TemizDisSeviye
+            ),
+        )
     )
     assert kayit.tum_araclar[0].ad == "ic_ice_temiz"
 
@@ -499,7 +515,9 @@ async def test_POZITIF_KONTROL_temiz_serbest_sozluk_NORMAL_gecer(
     async def _temiz(ctx: AracBaglami, girdi: Any) -> AracSonucu:
         return Ok(data={"totals": [{"kisi": {"gun": 22, "wage_type": "monthly"}}]}, row_count=1)
 
-    kayit = ToolRegistry((_spec("temiz", veri_modulleri=frozenset({"timesheet"}), calistir=_temiz),))
+    kayit = ToolRegistry(
+        (_spec("temiz", veri_modulleri=frozenset({"timesheet"}), calistir=_temiz),)
+    )
     sonuc = await _kos_arac(kayit, "temiz", transport_factory(bearer="x"))
 
     assert isinstance(sonuc, Ok)
@@ -790,9 +808,7 @@ async def test_FASTAPI_BILINMEYEN_SORGU_PARAMETRESINI_SESSIZCE_YUTAR(
     """
     from app.modules.contracts.models import Subcontractor
 
-    seeded_db.add_all(
-        [Subcontractor(name="AI2A Taşeron 1"), Subcontractor(name="AI2A Taşeron 2")]
-    )
+    seeded_db.add_all([Subcontractor(name="AI2A Taşeron 1"), Subcontractor(name="AI2A Taşeron 2")])
     await seeded_db.flush()
 
     # `contracts:view` taşıyan tohumlu rol: `accounting` (ölçüldü, MATRIX).
@@ -996,9 +1012,7 @@ def test_YAPTIRIM_URETIM_KODUNDA_kosuyor_TESTTE_DEGIL() -> None:
     kaynak = (AI_KOK / "registry.py").read_text(encoding="utf-8")
     agac = ast.parse(kaynak)
     init = next(
-        d
-        for d in ast.walk(agac)
-        if isinstance(d, ast.FunctionDef) and d.name == "__init__"
+        d for d in ast.walk(agac) if isinstance(d, ast.FunctionDef) and d.name == "__init__"
     )
     assert "dogrula_spec" in ast.unparse(init), (
         "`ToolRegistry.__init__` artık `exposure.dogrula_spec` çağırmıyor — "

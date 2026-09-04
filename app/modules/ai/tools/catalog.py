@@ -145,9 +145,7 @@ GOSTERGE_OZETI = ToolSpec(
     #: 🔴 TEK KAPI, BEŞ MODÜL — kapıdan türetmenin çürütüldüğü vaka.
     #: `_portfolio` → `progress_payments`; `_risks` → `inventory` + `sites` +
     #: `progress_payments`; `projects` dizisi ve iki sayaç → `projects`.
-    veri_modulleri=frozenset(
-        {"dashboard", "projects", "progress_payments", "inventory", "sites"}
-    ),
+    veri_modulleri=frozenset({"dashboard", "projects", "progress_payments", "inventory", "sites"}),
     yol_parametreleri={},
     girdi=schemas.BosGirdi,
     yanit_modeli=schemas.AiGostergeOzeti,

@@ -21,9 +21,9 @@ açtığı kapı kapanırdı) ya da tümüyle açılır (dolayısıyla `wage_amo
 
 | Seviye | Ne demek | Yaptırım NEREDE |
 |---|---|---|
-| `KAPALI` | Bu modülün verisi sağlayıcıya **hiç** gitmez | `ToolRegistry.__init__` — araç **KAYDEDİLEMEZ** |
-| `AGREGA` | Yalnız toplam/KPI; satır ve kimlik YOK | kayıt anında **şema** + dispatch'te **zarf** taraması |
-| `ACIK` | Kısıt yok (S5(c) alan yasağı yine geçerli) | — |
+| `KAPALI` | Verisi sağlayıcıya **hiç** gitmez | kayıt: araç **KAYDEDİLEMEZ** |
+| `AGREGA` | Yalnız toplam/KPI; satır ve kimlik YOK | kayıt: **şema** + dispatch: **zarf** |
+| `ACIK` | Kısıt yok (S5(c) yasağı yine geçerli) | — |
 
 ## 🔴 `Scope` HATASINI TEKRARLAMA — bayrak GERÇEKTEN OKUNUR
 
