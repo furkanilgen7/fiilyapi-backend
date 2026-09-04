@@ -331,8 +331,20 @@ async def _assert_para_gercek(session: AsyncSession, payment: ProgressPayment) -
     formülün KDV matrahı farklıdır ve net eşik ULAŞILAMAZDIR) `treasury.realized`
     modülünün docstring'inde TEK KOPYA olarak durur. Sözleşme bu yolda
     OKUNMAZ — eşik artık sözleşme bedeline hiç bağlı değildir.
+
+    🔴 FAT-HAK — brüt AYRICA verilir ve bu bir tekrar DEĞİLDİR: kapı iki AYRI
+    soru sorar (*"ne kadar para geldi"* → `total`, *"bu fatura doğru işin
+    faturası mı"* → `subtotal` ↔ brüt). Brüt BURADAN geçirilir çünkü hakediş
+    nesnesi ZATEN elimizdedir (`lines` `lazy="selectin"`) ve ürünün tek toplama
+    kopyası `calculations.gross_total`tır — `realized` içinde SQL'e yeniden
+    yazılsaydı çift yuvarlama sessizce ayrışırdı.
     """
-    await realized.assert_realized_covers(session, Invoice.progress_payment_id, payment.id)
+    await realized.assert_realized_covers(
+        session,
+        Invoice.progress_payment_id,
+        payment.id,
+        source_gross=calculations.gross_total(payment.lines),
+    )
 
 
 async def _apply_action_rules(

@@ -53,11 +53,35 @@ async def _gelen_fatura(
     kaynak_id,
     tutar: str,
     vat_rate: str = "20",
+    advance_rate: str | None = None,
+    retention_rate: str | None = None,
 ):
     """Kaynağa BAĞLI bir GELEN fatura — ÜRÜN yolundan (`create_invoice`).
 
     ORM ile yazılsaydı `_assert_references` ve tekillik indeksi hiç koşmaz ve
     test, ürünün bağlama yolunu değil kendi kurulumunu ölçerdi.
+
+    ## 🔴 FAT-HAK — FATURANIN ŞEKLİ DEĞİŞTİ, ARİTMETİĞİ DEĞİŞMEDİ
+
+    Bu yardımcı eskiden faturayı `unit_price = posting_base` ile kuruyordu
+    (taşeronda 8.500 = brüt 10.000 − avans 1.000 − teminat 500) ve faturaya
+    HİÇBİR kesinti oranı yazmıyordu. O şekil kullanıcı kararıyla (2026-09-03)
+    ARTIK GEÇERSİZDİR: bir hakedişe bağlanan faturanın ara toplamı hakedişin
+    BRÜTÜNE eşit olmalıdır.
+
+    🔴 Yeni şekil İKİ kuralı BİRDEN sağlar ve bu bir tesadüf değildir:
+
+        subtotal   = brüt                          → FAT-HAK kuralı
+        tax_base   = brüt − avans − teminat        → `posting_base` ile AYNI
+                     (oranlar hakedişin KENDİ oranlarıdır)
+
+    Yani `740`/`600`/`191` hesaplarının NETLERİ DEĞİŞMEZ ve bu dosyadaki
+    aritmetik iddiaların HİÇBİRİ gevşetilmedi (8.500 · 45.000 · 1.700 aynen
+    duruyor). Değişen tek şey faturanın hangi kolonlarda o sayıya ULAŞTIĞIDIR.
+
+    ⚠️ Kesinti oranları faturaya taşınmasaydı `tax_base` brüte eşit olur ve
+    takas `avans + teminat` kadar KAYARDI — `posting_base` docstring'inin
+    yazılı olarak uyardığı hâlin ta kendisi.
     """
     data = InvoiceCreate(
         direction=InvoiceDirection.incoming,
@@ -65,6 +89,8 @@ async def _gelen_fatura(
         document_type=InvoiceDocumentType.einvoice,
         issue_date=TARIH,
         party_name="Çelik Kalıp Ltd.",
+        advance_rate=None if advance_rate is None else Decimal(advance_rate),
+        retention_rate=None if retention_rate is None else Decimal(retention_rate),
         lines=[
             InvoiceLineCreate(
                 description="Hakediş bedeli",
@@ -108,7 +134,9 @@ async def test_TASLAK_fatura_hakedis_fisine_DOKUNMAZ(seeded_db, user_factory):
         kullanici,
         kaynak_alani="subcontractor_progress_payment_id",
         kaynak_id=payment.id,
-        tutar="8500.00",
+        tutar="10000.00",  # FAT-HAK: hakedişin BRÜTÜ (10 × 1.000)
+        advance_rate="10",
+        retention_rate="5",
     )
 
     assert invoice.status is InvoiceStatus.pending, "gelen fatura `pending` DOĞMALIYDI"
@@ -143,7 +171,9 @@ async def test_FATURA_ONAYLANINCA_hakedis_fisi_STORNO_edilir_ve_GIDER_TEK_KEZ_sa
         kullanici,
         kaynak_alani="subcontractor_progress_payment_id",
         kaynak_id=payment.id,
-        tutar="8500.00",
+        tutar="10000.00",  # FAT-HAK: hakedişin BRÜTÜ (10 × 1.000)
+        advance_rate="10",
+        retention_rate="5",
     )
     await invoicing_state.perform_transition(
         seeded_db, kullanici, invoice.id, InvoiceAction.approve
@@ -185,12 +215,16 @@ async def test_ISVEREN_hakedisinde_de_TAKAS_calisir_ve_HASILAT_TEK_KEZ_sayilir(
         issue_date=TARIH,
         party_name="Güneşkent İnşaat A.Ş.",
         progress_payment_id=payment.id,
+        # FAT-HAK: ara toplam hakedişin BRÜTÜ (600 × 100), kesintiler hakedişin
+        # KENDİ oranları → `tax_base` yine 45.000, yani `600`ün neti DEĞİŞMEZ.
+        advance_rate=Decimal("20"),
+        retention_rate=Decimal("5"),
         lines=[
             InvoiceLineCreate(
                 description="Hakediş bedeli",
                 quantity=Decimal("1"),
                 unit="Ad",
-                unit_price=Decimal("45000.00"),
+                unit_price=Decimal("60000.00"),
                 vat_rate=Decimal("20"),
             )
         ],
@@ -221,7 +255,9 @@ async def test_ITIRAZ_EDILEN_fatura_hakedis_fisine_DOKUNMAZ(seeded_db, user_fact
         kullanici,
         kaynak_alani="subcontractor_progress_payment_id",
         kaynak_id=payment.id,
-        tutar="8500.00",
+        tutar="10000.00",  # FAT-HAK: hakedişin BRÜTÜ (10 × 1.000)
+        advance_rate="10",
+        retention_rate="5",
     )
     await invoicing_state.perform_transition(
         seeded_db, kullanici, invoice.id, InvoiceAction.dispute
@@ -303,12 +339,16 @@ async def test_TAKASTAN_SONRA_unapprove_YENIDEN_approve_HASILATI_IKI_KEZ_YAZMAZ(
         issue_date=TARIH,
         party_name="Güneşkent İnşaat A.Ş.",
         progress_payment_id=payment.id,
+        # FAT-HAK: ara toplam hakedişin BRÜTÜ (600 × 100), kesintiler hakedişin
+        # KENDİ oranları → `tax_base` yine 45.000, yani `600`ün neti DEĞİŞMEZ.
+        advance_rate=Decimal("20"),
+        retention_rate=Decimal("5"),
         lines=[
             InvoiceLineCreate(
                 description="Hakediş bedeli",
                 quantity=Decimal("1"),
                 unit="Ad",
-                unit_price=Decimal("45000.00"),
+                unit_price=Decimal("60000.00"),
                 vat_rate=Decimal("20"),
             )
         ],
@@ -352,7 +392,9 @@ async def test_TASERON_ikizinde_de_TAKAS_GERI_DONUSU_GIDERI_IKI_KEZ_YAZMAZ(seede
         kullanici,
         kaynak_alani="subcontractor_progress_payment_id",
         kaynak_id=payment.id,
-        tutar="8500.00",
+        tutar="10000.00",  # FAT-HAK: hakedişin BRÜTÜ (10 × 1.000)
+        advance_rate="10",
+        retention_rate="5",
     )
     await invoicing_state.perform_transition(
         seeded_db, kullanici, invoice.id, InvoiceAction.approve
@@ -423,7 +465,9 @@ async def test_FATURASI_SILINMIS_hakedis_yeniden_onaylandiginda_FIS_YAZAR(seeded
         kullanici,
         kaynak_alani="subcontractor_progress_payment_id",
         kaynak_id=payment.id,
-        tutar="8500.00",
+        tutar="10000.00",  # FAT-HAK: hakedişin BRÜTÜ (10 × 1.000)
+        advance_rate="10",
+        retention_rate="5",
     )
 
     await taseron_transitions.perform(seeded_db, kullanici, payment.id, PaymentAction.unapprove)

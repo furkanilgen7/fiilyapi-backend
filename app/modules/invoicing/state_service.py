@@ -75,6 +75,7 @@ from app.modules.invoicing import (
     posting,
     repository,
     service,
+    source_amounts,
     source_posting,
     transitions,
     validation,
@@ -152,6 +153,28 @@ async def _tahsil_edilen(session: AsyncSession, invoice: Invoice, action: Invoic
     return await treasury_repository.paid_total_for_invoice(session, invoice.id)
 
 
+async def _kaynak_bruttu(
+    session: AsyncSession, invoice: Invoice, action: InvoiceAction
+) -> Decimal | None:
+    """FAT-HAK — kaynak hakedişin brütü; YALNIZ `GATE_ACTIONS` yolunda okunur.
+
+    🔴 Sorgu KOŞULA BAĞLIDIR, `_tahsil_edilen`in aynı gerekçesiyle:
+    `mark-collected` ve `dispute` faturanın tutarını DEĞİŞTİRMEZ ve onlara bir
+    hakediş taraması eklemek, kuralın hangi geçişe ait olduğunu koddan
+    okunamaz hâle getirirdi.
+
+    🔴 Okuma `visible_invoice(for_update=True)`in aldığı satır kilidinin
+    İÇİNDEDİR. Hakediş satırı ayrıca kilitlenmez ve gerekmez: hakedişin
+    kalemleri `approved`/`paid` iken zaten değişmez (`lines` yazma yolu
+    `draft`/`rejected` ile sınırlıdır) ve bu kural bir eşiği TÜKETMEZ — İK-2
+    "EŞİK = KİLİT" kanonunun sınırı, `realized.assert_realized_covers`ın
+    docstring'inde ölçülmüş olanla aynıdır.
+    """
+    if action not in validation.GATE_ACTIONS:
+        return None
+    return await source_amounts.source_gross_for_invoice(session, invoice)
+
+
 async def perform_transition(
     session: AsyncSession, actor: User, invoice_id: uuid.UUID, action: InvoiceAction
 ) -> TransitionOutcome:
@@ -168,6 +191,13 @@ async def perform_transition(
     engeller = validation.gate_blockers(action, await repository.load_lines(session, invoice.id))
     engeller += validation.collection_blockers(
         action, invoice.total, await _tahsil_edilen(session, invoice, action)
+    )
+    # 🔴 FAT-HAK — 4c. TUTAR: hakedişe bağlı faturanın brütü hakedişin brütüne
+    #     ±0,01 ₺ içinde eşit olmalıdır (kullanıcı kararı 2026-09-03).
+    #     K6 ile AYNI 422'de toplanır: ikisi de "bu belge bu geçişe hazır değil"
+    #     der ve kullanıcı formu bir kez düzeltir.
+    engeller += validation.source_amount_blockers(
+        invoice.subtotal, await _kaynak_bruttu(session, invoice, action)
     )
     if engeller:
         raise InvoicingValidationError(" · ".join(engeller))

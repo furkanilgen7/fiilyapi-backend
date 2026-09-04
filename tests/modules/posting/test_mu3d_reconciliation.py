@@ -95,8 +95,10 @@ from tests.modules.posting._mu3d import (
 
 #: Taşeron: brüt 10×1.000 = 10.000 · avans %10 = 1.000 · teminat %5 = 500
 TASERON_TABAN = Decimal("8500.00")
+TASERON_BRUT = Decimal("10000.00")
 #: İşveren: brüt 600×100 = 60.000 · avans %20 = 12.000 · teminat %5 = 3.000
 ISVEREN_TABAN = Decimal("45000.00")
+ISVEREN_BRUT = Decimal("60000.00")
 #: Kira: `invoice_amount` DOĞRUDAN (avans/teminat YOK)
 KIRA_TABAN = Decimal("100000.00")
 
@@ -105,14 +107,34 @@ TASERON_KDV = Decimal("1700.00")  # 8.500 × %20
 ISVEREN_KDV = Decimal("9000.00")  # 45.000 × %20
 
 
-async def _fatura_kes(session, kullanici, *, yon, kaynak_alani, kaynak_id, matrah, no=None):
-    """Kaynağa BAĞLI fatura — ÜRÜN yolundan, **BUGÜNE** kesilir (pencere gereği)."""
+async def _fatura_kes(
+    session,
+    kullanici,
+    *,
+    yon,
+    kaynak_alani,
+    kaynak_id,
+    matrah,
+    no=None,
+    advance_rate=None,
+    retention_rate=None,
+):
+    """Kaynağa BAĞLI fatura — ÜRÜN yolundan, **BUGÜNE** kesilir (pencere gereği).
+
+    🔴 FAT-HAK (2026-09-03): hakedişe bağlı faturada `matrah` artık BRÜTTÜR ve
+    kesinti oranları hakedişin KENDİ oranlarıdır. `tax_base` yine
+    `brüt − avans − teminat`a iner, yani aşağıdaki BEKLENEN ARİTMETİK sabitleri
+    (`TASERON_TABAN` · `ISVEREN_TABAN`) DEĞİŞMEDİ — mutabakat aynı sayılarla
+    tutar. Kira kaynağı kuralın DIŞINDADIR ve oransız kalır.
+    """
     data = InvoiceCreate(
         direction=yon,
         invoice_no=no,
         document_type=InvoiceDocumentType.einvoice,
         issue_date=bugun(),
         party_name="Mutabakat Karşı Tarafı",
+        advance_rate=advance_rate,
+        retention_rate=retention_rate,
         lines=[
             InvoiceLineCreate(
                 description="Hakediş bedeli",
@@ -151,7 +173,9 @@ async def _kumeyi_kur(seeded_db, user_factory):
         yon=InvoiceDirection.incoming,
         kaynak_alani="subcontractor_progress_payment_id",
         kaynak_id=b.id,
-        matrah=TASERON_TABAN,
+        matrah=TASERON_BRUT,  # FAT-HAK: fatura ara toplamı hakedişin BRÜTÜ
+        advance_rate=Decimal("10"),
+        retention_rate=Decimal("5"),
         no="MTB-AL-B",
     )
     await invoicing_state.perform_transition(
@@ -175,7 +199,9 @@ async def _kumeyi_kur(seeded_db, user_factory):
         yon=InvoiceDirection.outgoing,
         kaynak_alani="progress_payment_id",
         kaynak_id=e.id,
-        matrah=ISVEREN_TABAN,
+        matrah=ISVEREN_BRUT,  # FAT-HAK: fatura ara toplamı hakedişin BRÜTÜ
+        advance_rate=Decimal("20"),
+        retention_rate=Decimal("5"),
     )
     await invoicing_state.perform_transition(seeded_db, kullanici, e_fatura.id, InvoiceAction.send)
     return kullanici

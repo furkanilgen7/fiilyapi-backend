@@ -38,6 +38,23 @@ işlemde nakit fişi de yazılır — yani `120` de kapanır. Damgayı ödemesiz
 basmak, o faturayı defterde SONSUZA DEK açık bırakırdı; asıl kilitlenen
 kayıt oydu.
 
+## 🔴 FAT-HAK — FATURA ↔ HAKEDİŞ TUTAR KAPISI (kullanıcı kararı 2026-09-03)
+
+**Ölçülmüş kusur:** 1.000.000 ₺'lik bir hakedişe 1 ₺'lik fatura kesilebiliyor,
+hakediş `paid` oluyor ve kalan 999.999 ₺ iki yüzeyden birden sessizce
+siliniyordu. Üstelik `models.SOURCE_UNIQUE_INDEXES` kaynak başına TEK asıl
+faturaya izin verdiği için sahte fatura slotu KALICI olarak işgal ediyor,
+gerçek fatura o hakedişe bir daha hiç bağlanamıyordu — ve `paid` TERMİNAL.
+`treasury/realized.py` bu boşluğu yazılı olarak biliyor ve ürün kararı
+bekliyordu.
+
+Kural ve karşılaştırılan alanın seçimi `source_amount_matches`ta TEK KOPYA
+olarak durur. Kapının HANGİ geçişlerde koştuğu üç yerde ölçülerek
+kararlaştırıldı ve gerekçeleri o üç yerde yazılıdır:
+`service.create_invoice` (yalnız GELEN — kayıt orada KALICILAŞIR),
+`state_service.perform_transition` (`GATE_ACTIONS`) ve
+`treasury.realized.assert_realized_covers` (para kapısı, fail-closed).
+
 ## Fonksiyonlar İSTİSNA ATMAZ
 
 Engel LİSTESİ döndürürler; T3/T4 hepsini TEK 422'de gösterir. Kullanıcıya
@@ -64,10 +81,14 @@ __all__ = [
     "INCOMING_NUMBER_REQUIRED",
     "LINES_REQUIRED",
     "OUTGOING_NUMBER_IS_SERVER_ASSIGNED",
+    "SOURCE_AMOUNT_TOLERANCE",
     "body_blockers",
     "collection_blockers",
     "gate_blockers",
     "invoice_no_blockers",
+    "source_amount_blockers",
+    "source_amount_matches",
+    "source_amount_mismatch",
 ]
 
 #: K6 — kalemsiz fatura gönderilemez/onaylanamaz.
@@ -97,8 +118,27 @@ COLLECTION_REQUIRES_PAYMENT = (
     "önce tahsilatı ödeme olarak girin"
 )
 
+#: 🔴 FAT-HAK — fatura brütü ile hakediş brütü arasında TOLERE EDİLEN fark
+#: (kullanıcı kararı 2026-09-03: ±0,01 ₺). Sayı İKİ yerde okunur (422 kapısı ve
+#: `treasury.realized`in 409 kapısı) ve TEK KOPYADIR: iki yerde yazılsaydı biri
+#: gevşetildiğinde ötekinin hâlâ sıkı olduğu hiçbir yerde görünmezdi.
+SOURCE_AMOUNT_TOLERANCE = Decimal("0.01")
+
 _TAM_ORAN = Decimal("100")
 _SIFIR_ORAN = Decimal("0")
+
+
+def source_amount_mismatch(invoice_subtotal: Decimal, source_gross: Decimal) -> str:
+    """FAT-HAK 422 metni — İKİ SAYIYI DA yazar.
+
+    Sayısız bir cümle ("tutarlar uyuşmuyor") kullanıcıyı hangi tarafı
+    düzelteceğini bilmeden bırakırdı: fark kuruşluk bir yuvarlama mı, yoksa
+    sıfır mı unutulmuş — cevabı yalnız iki sayıyı yan yana görmek verir.
+    """
+    return (
+        f"Faturanın ara toplamı ({invoice_subtotal}) bağlı olduğu hakedişin brüt "
+        f"tutarına ({source_gross}) eşit olmalıdır"
+    )
 
 
 def gate_blockers(action: InvoiceAction, lines: Sequence[object]) -> list[str]:
@@ -150,6 +190,67 @@ def body_blockers(*, advance_rate: Decimal | None, retention_rate: Decimal | Non
     if toplam > _TAM_ORAN:
         return [DEDUCTION_RATES_EXCEED_TOTAL]
     return []
+
+
+def source_amount_matches(invoice_subtotal: Decimal, source_gross: Decimal) -> bool:
+    """🔴 FAT-HAK — *"bu fatura kaynak hakedişin tutarını mı taşıyor"* sorusunun
+    **TEK** karşılaştırma kopyası.
+
+    Kural (kullanıcı kararı 2026-09-03, BAĞLAYICI): bir hakedişe bağlanan ASIL
+    faturanın brütü, hakedişin BRÜT tutarına eşit olmalıdır; tolerans ±0,01 ₺.
+    Gerekçe kullanıcının kendi cümlesidir: *avans mahsubu ve teminat kesintisi
+    ÖDEME anında düşülür, faturaya değil.*
+
+    ## 🔴 KARŞILAŞTIRILAN ALAN `subtotal`DİR — `total` DEĞİL, `tax_base` DEĞİL
+
+    Bu bir üslup tercihi değil, İKİ FORMÜLÜN ÖLÇÜLMÜŞ ŞEKLİDİR:
+
+        hakediş brütü : `calculations.gross_total` = Σ satır tutarı
+                        → KDV HARİÇ (KDV `net_amount`ta brütün ÜSTÜNE eklenir:
+                          `net = gross + vat − advance − retention`),
+                          kesinti ÖNCESİ (kesintiler `gross`tan sonra düşülür)
+        fatura        : `amounts.compute` 1. adım `subtotal` = Σ satır tutarı
+                        → KDV HARİÇ, kesinti ÖNCESİ  ⇒ **YAPISAL İKİZ**
+
+    Öteki iki aday ÖLÇÜLEREK elendi:
+
+    * **`total`** (= `tax_base + vat − withholding`) KDV İÇERİR. Eşit tutulsaydı
+      KDV'siz bir hakediş brütü, KDV'li bir fatura toplamıyla kıyaslanırdı ve
+      %20 KDV'li HER geçerli fatura reddedilirdi.
+    * **`tax_base`** (= `subtotal − advance_amount − retention_amount`)
+      kesintileri DÜŞMÜŞTÜR. Eşit tutulsaydı kullanıcının kararının gerekçesi
+      TERSİNE çevrilirdi: kesintiyi faturaya taşıyan bir kullanıcı, kesinti
+      kadar ŞİŞİRİLMİŞ bir `subtotal` yazmaya ZORLANIRDI.
+
+    ## Tolerans NEDEN ±0,01
+
+    İki taraf da `Decimal` + `ROUND_HALF_UP` ile 2 haneye yuvarlanır ama
+    yuvarlama NOKTALARI farklıdır: hakedişte `quantize2(quantize2(bf × katsayı)
+    × miktar)` (İKİ kez), faturada `round_money(miktar × birim fiyat)` (BİR
+    kez). Aynı iş için iki taraf tek kuruş ayrışabilir; kullanıcı kararı bu
+    kuruşu AÇIKÇA tolere eder. `>` ile kıyaslanır: tam 0,01 fark GEÇER.
+    """
+    return abs(invoice_subtotal - source_gross) <= SOURCE_AMOUNT_TOLERANCE
+
+
+def source_amount_blockers(invoice_subtotal: Decimal, source_gross: Decimal | None) -> list[str]:
+    """FAT-HAK'ın 422 sarmalayıcısı — `source_gross is None` "hakediş kaynağı
+    YOK" demektir ve kural KOŞMAZ.
+
+    `None` sessizce geçilir çünkü kural YALNIZ iki hakediş ailesi içindir:
+    makine kira hakedişi ve sipariş kaynaklarının kıyaslanabilir bir "brüt"ü
+    yoktur (`source_amounts.SOURCE_GROSS` tablosu bunu tek yerde söyler) ve
+    onlara uydurma bir eşitlik dayatmak, bugün çalışan meşru faturaları
+    reddederdi.
+
+    🔴 ORM'e DOKUNMAZ (modül docstring'i): brütü ÇAĞIRAN okur. Buradan sorgu
+    açılsaydı kural, faturanın satır kilidinin DIŞINDA ölçülürdü.
+    """
+    if source_gross is None:
+        return []
+    if source_amount_matches(invoice_subtotal, source_gross):
+        return []
+    return [source_amount_mismatch(invoice_subtotal, source_gross)]
 
 
 def invoice_no_blockers(direction: InvoiceDirection, invoice_no: str | None) -> list[str]:

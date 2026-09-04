@@ -42,7 +42,15 @@ from app.modules.audit import messages
 from app.modules.contracts.models import Subcontractor
 from app.modules.customers.models import Customer
 from app.modules.equipment.models import EquipmentRentalInvoice
-from app.modules.invoicing import amounts, guards, numbering, repository, transitions, validation
+from app.modules.invoicing import (
+    amounts,
+    guards,
+    numbering,
+    repository,
+    source_amounts,
+    transitions,
+    validation,
+)
 from app.modules.invoicing.models import (
     Invoice,
     InvoiceDirection,
@@ -386,6 +394,32 @@ async def create_invoice(
         created_by_id=actor.id,
     )
     hesap = _apply_amounts(invoice, data.lines)
+    # 🔴 FAT-HAK — GELEN faturada tutar kapısı OLUŞTURMA ANINDADIR. Gerekçe
+    #    ÖLÇÜLDÜ ve `send`/`approve` kapısıyla çelişmez, onu TAMAMLAR:
+    #
+    #    Gelen fatura `pending` DOĞAR (`INITIAL_STATUS`) ve o andan sonra
+    #    tutarı DÜZELTİLEMEZ:
+    #      · `DELETABLE_STATUS = {draft}`            → silinemez,
+    #      · `LINES_EDITABLE_STATUS = {draft}`       → kalemleri değiştirilemez
+    #        (ve `draft` YALNIZ giden taraftadır, K2),
+    #      · `INCOMING_PATCHABLE_FIELDS` yalnız not/vade/ödeme şeklini taşır
+    #        → oranları ve dolayısıyla tutarı değiştirilemez.
+    #
+    #    Yani yanlış tutarlı bir gelen fatura KALICIDIR ve kısmi UNIQUE indeks
+    #    (`SOURCE_UNIQUE_INDEXES`) yüzünden hakedişin fatura slotunu SONSUZA DEK
+    #    işgal eder: doğrusu bir daha hiç bağlanamaz, hakediş bir daha hiç
+    #    ödenemez. Kapı `approve`a bırakılsaydı kayıt çoktan doğmuş olurdu.
+    #
+    #    GİDEN faturada kapı BURADA YOKTUR ve olmamalıdır: `draft` yarım formu
+    #    saklayabilmelidir (K6'nın taslak-farkındalığı, FK:24 "Taslak Kaydet"),
+    #    kalemler `PUT lines` ile sonradan gelir ve taslak SİLİNEBİLİR — yani
+    #    kalıcı bir kilit doğmaz. Orada kapı `send` geçişindedir.
+    if data.direction is InvoiceDirection.incoming:
+        _raise_blockers(
+            validation.source_amount_blockers(
+                hesap.subtotal, await source_amounts.source_gross_for_invoice(session, invoice)
+            )
+        )
     session.add(invoice)
     await session.flush()
 
