@@ -90,6 +90,7 @@ def test_B8_MUTASYON_kataloga_arac_eklenip_uretici_degismezse_KIRMIZI() -> None:
         kume=ToolKumesi.KAPSAMSIZ,
         kapilar=frozenset(),
         ucler=(),
+        veri_modulleri=frozenset(),
         yol_parametreleri={},
         girdi=schemas.BosGirdi,
         yanit_modeli=schemas.AiYonlendirme,

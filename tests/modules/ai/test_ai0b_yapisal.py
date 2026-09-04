@@ -604,6 +604,7 @@ def test_B26_MUTASYON_propose_approval_threshold_eklenirse_KIRMIZI() -> None:
         kume=ToolKumesi.SIRKET_GENELI,
         kapilar=frozenset({("approvals", AccessLevel.admin)}),
         ucler=("/approvals/settings",),
+        veri_modulleri=frozenset({"approvals"}),
         yol_parametreleri={},
         girdi=schemas.BosGirdi,
         yanit_modeli=schemas.AiYonlendirme,

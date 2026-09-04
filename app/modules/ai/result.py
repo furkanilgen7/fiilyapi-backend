@@ -126,3 +126,47 @@ def liste_sonucu(
     if total is not None and total > len(data):
         return Truncated(data=data, total=total, returned=len(data))
     return Ok(data=data, row_count=len(data))
+
+
+def sayfalamasiz_liste_sonucu(
+    tum_satirlar: list[Any],
+    *,
+    tavan: int,
+    kapsam_modulu: str | None = None,
+) -> AracSonucu:
+    """🔴 SAYFALAMASIZ uçlar için **DÜRÜST** `Truncated` kalıbı.
+
+    ## Niye ayrı bir fonksiyon var — ÖLÇÜLMÜŞ TUZAK
+
+    `ai/tools/reads/handlers.py`in mevcut kalıbı ucun `limit` sorgu
+    parametresini **onurlandırdığını varsayar**:
+
+        await ctx.get(params={"limit": ctx.spec.satir_tavani, "offset": 0})
+
+    Bu varsayım `GET /projects` ve `GET /approvals` için DOĞRUDUR (ölçüldü:
+    ikisi de `limit`/`offset` bildirir). Ama AI-2'nin saracağı üç uç için
+    **YANLIŞTIR** — `GET /progress-payments`, `GET /contracts` ve
+    `GET /subcontractors` `limit` diye bir sorgu parametresi **BİLDİRMEZ**
+    (ölçüldü: rota tablosu). Ve FastAPI bilinmeyen bir sorgu parametresini
+    **422 ile reddetmez, SESSİZCE YOK SAYAR**. Yani handler tavan uyguladığını
+    *sanır*, uç bütün satırları döner, `Truncated` hiç kurulmaz ve model kısmi
+    olduğunu bilmediği bir kümeden toplam hesaplar. Tam olarak B19'un önlemeye
+    çalıştığı yalan — ama bu sefer handler'ın kendisi kandırılmış olur.
+
+    ## Dürüst çözüm
+
+    Gövdenin **tamamı** okunur → `total` **ÖLÇÜLÜR** (`len`, uydurulmaz) →
+    sonra dilimlenir. `Truncated.total` böylece gerçekten *"kaç kayıt vardı"*
+    sorusunun cevabıdır. Uydurulmuş bir toplam, `liste_sonucu`nun docstring'i
+    gereği zaten yasaktır ve burada da yasaktır: bu fonksiyon `total`ı
+    **parametre olarak ALMAZ**.
+
+    ⚠️ Bedeli bilinçlidir: sayfalamasız uçta tavan **ağdan** değil bellekten
+    uygulanır. Alternatifi (var olmayan bir `limit` göndermek) tavanı hiç
+    uygulamamak ve üstelik uyguladığını sanmaktır.
+    """
+    if tavan < 0:
+        raise ValueError("satır tavanı negatif olamaz")
+    olculen_toplam = len(tum_satirlar)
+    dilim = tum_satirlar[:tavan]
+    return liste_sonucu(data=dilim, total=olculen_toplam, kapsam_modulu=kapsam_modulu)
