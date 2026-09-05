@@ -192,3 +192,66 @@ async def allocate_slug(
     )
     taken = (await session.execute(stmt)).scalars().all()
     return unique_slug(base, taken)
+
+
+def matches_ref(entity_id: uuid.UUID, entity_slug: str | None, ref: uuid.UUID | str) -> bool:
+    """URL-4: bir kayit YA kimligiyle YA slug'iyla eslesir.
+
+    `projects/service.py::project_matches_ref`in TURDEN BAGIMSIZ ikizidir ve
+    URL-4'un dokuz rotasinin HEPSI bunu kullanir — dokuz modulde dokuz kez
+    kopyalanan bir kosul, birinde `is not None` unutuldugunda SESSIZCE
+    "slug'siz her kayit bos referansla acilir" kusuru dogururdu.
+
+    `project_matches_ref` BILEREK YERINDE BIRAKILDI: `Project` tipine bagli
+    imzasi ve mutasyon olcumunu anlatan docstring'i URL-2'nin kaydidir; onu
+    silmek bu dilimin isi degildir (kapsam disi).
+
+    Slug'i NULL olan kayit HICBIR slug'la eslesmez — yalniz UUID'siyle
+    erisilebilir (URL-2 karar 5).
+    """
+    if isinstance(ref, uuid.UUID):
+        return entity_id == ref
+    return entity_slug is not None and entity_slug == ref
+
+
+# Yol segmentine GUVENLE girebilen dogal anahtar. `/` EN TEHLIKELISIDIR:
+# `invoice_no` GELEN faturada SERBEST METINDIR (kullanici girer) ve `2026/0001`
+# gibi bir numara `/faturalar/2026/0001` uretirdi — Next.js dinamik segmenti
+# bunu ESLESTIREMEZ, kullanici 404 gorurdu. Yuzde-kodlama (`%2F`) BFF ile
+# FastAPI arasindaki iki katmanda guvenilir DEGILDIR (proxy'ler cozer/yeniden
+# kodlar), bu yuzden kodlama DEGIL ELEME secildi.
+_URL_SAFE_KEY = re.compile(r"[A-Za-z0-9._~-]+")
+
+
+def url_safe_key(value: str | None) -> str | None:
+    """Dogal anahtari URL'ye KOYULABILIYORSA dondurur, aksi hâlde `None`.
+
+    URL-4: `purchase_requests.request_no` ve `invoices.invoice_no` KENDI
+    degerleriyle cozulur (slug kolonu YOKTUR) — yani sozlesmede yayinlanan
+    anahtar ile cozumleyicinin aradigi deger BIREBIR AYNI OLMAK ZORUNDADIR.
+    Bu yuzden anahtar SLUG'LANMAZ: `slugify("2026/0001")` -> `2026-0001` olurdu
+    ve o deger veritabaninda HIC YOKTUR; uc kendi yayinladigi bagi acamazdi.
+
+    Guvenli olmayan numara tasiyan kayit `None` doner ve URL'i UUID olarak
+    yasar — URL-2 karar 5'in (`slug ?? id`) tam olarak ongordugu dusus.
+    """
+    if value is None:
+        return None
+    return value if _URL_SAFE_KEY.fullmatch(value) else None
+
+
+def ref_filter(
+    id_column: InstrumentedAttribute[uuid.UUID],
+    key_column: InstrumentedAttribute[str | None],
+    ref: uuid.UUID | str,
+) -> ColumnElement[bool]:
+    """`parse_ref` ciktisini SQL suzgecine cevirir (UUID -> kimlik, metin -> anahtar).
+
+    🔴 `or_` DEGIL, SECIM: iki kolonu `OR` ile birlestirmek UUID metnini anahtar
+    kolonuyla da karsilastirirdi; anahtar `String` oldugu icin Postgres bunu
+    kabul eder ve indeks kullanilamaz hale gelirdi. Iki uzay kesismedigi icin
+    (URL-2 karar 2) TEK kolon secmek hem dogru hem indekslenebilirdir.
+    """
+    if isinstance(ref, uuid.UUID):
+        return id_column == ref
+    return key_column == ref

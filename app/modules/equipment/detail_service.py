@@ -112,7 +112,7 @@ async def _rental_totals(
 async def equipment_detail(
     session: AsyncSession,
     actor: User,
-    equipment_id: uuid.UUID,
+    equipment_ref: uuid.UUID | str,
     *,
     as_of: date | None = None,
 ) -> EquipmentDetailResponse:
@@ -123,19 +123,23 @@ async def equipment_detail(
     kira toplamını okurdu.
     """
     gun = as_of or today()
-    equipment = await service.visible_equipment(session, actor, equipment_id)
+    equipment = await service.visible_equipment(session, actor, equipment_ref)
+    # 🔴 Bundan SONRAKİ her türev `equipment.id` ile hesaplanır, `equipment_ref`
+    # ile DEĞİL: `ref` bir slug olabilir ve `equipment_id=` bekleyen sorgulara
+    # verilseydi Postgres `uuid = text` karşılaştırmasında patlardı. Kapıdan
+    # geçen kaydın KİMLİĞİ tek meşru anahtardır.
     project_ids = await service._visible_project_ids(session, actor)
     # Pencere `gun` DÂHİL geriye doğru tam `ESTIMATE_WINDOW_DAYS` takvim günüdür.
     pencere_saati = await repository.worked_hours_in_window(
         session,
         project_ids,
-        equipment_id=equipment_id,
+        equipment_id=equipment.id,
         date_from=gun - timedelta(days=maintenance.ESTIMATE_WINDOW_DAYS - 1),
         date_to=gun,
     )
     return EquipmentDetailResponse(
         equipment=EquipmentResponse.model_validate(equipment),
         maintenance=_maintenance_block(equipment, window_hours=pencere_saati, as_of=gun),
-        rental=await _rental_totals(session, project_ids, equipment_id=equipment_id),
+        rental=await _rental_totals(session, project_ids, equipment_id=equipment.id),
         as_of=gun,
     )

@@ -107,8 +107,16 @@ async def count_personnel(
     return (await session.execute(stmt)).scalar_one()
 
 
-async def get_personnel(session: AsyncSession, personnel_id: uuid.UUID) -> Personnel | None:
-    return await session.get(Personnel, personnel_id)
+async def get_personnel(session: AsyncSession, personnel_ref: uuid.UUID | str) -> Personnel | None:
+    """URL-4: kimlik YA DA slug ile okur. Slug GLOBAL tekildir (`uq_personnel_slug`).
+
+    🔴 KVKK: slug YALNIZ `full_name`den türer. `tc_no` bu tablonun tek tekil
+    anahtarıdır (`uq_personnel_tc_no`) ve URL'ye ASLA girmez — bu uç TCKN ile
+    ARAMA YAPMAZ ve yapmamalıdır (kullanıcı kararı 2026-09-05).
+    """
+    if isinstance(personnel_ref, uuid.UUID):
+        return await session.get(Personnel, personnel_ref)
+    return await session.scalar(select(Personnel).where(Personnel.slug == personnel_ref))
 
 
 async def list_personnel_by_user(session: AsyncSession, user_id: uuid.UUID) -> list[Personnel]:

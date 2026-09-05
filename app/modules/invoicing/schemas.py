@@ -38,8 +38,9 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
+from app.core.slug import url_safe_key
 from app.core.text import FREE_TEXT_MAX_LENGTH
 from app.modules.invoicing.models import (
     InvoiceDirection,
@@ -270,6 +271,24 @@ class InvoiceResponse(BaseModel):
     due_date: date | None
     payment_method: InvoicePaymentMethod | None
     note: str | None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def slug(self) -> str | None:
+        """URL-4 — URL'de taşınacak okunabilir anahtar; `invoice_no`nun kendisi.
+
+        AYRI BİR `slug` KOLONU AÇILMADI: `invoice_no` NOT NULL'dır ve zaten
+        yön başına tekildir; ikinci bir kolon aynı bilgiyi iki yerde tutar ve
+        migration doğururdu. Türev olduğu için LİSTE ve DETAY otomatik olarak
+        AYNI değeri taşır — `InvoiceResponse` ikisinin de şemasıdır, yani
+        URL-2'nin "liste şemasına slug eklenmedi" tuzağı burada YAPISAL olarak
+        imkânsızdır.
+
+        `None` olabilir: numara yol segmentine giremeyecek bir karakter
+        taşıyorsa (GELEN faturada `invoice_no` SERBEST METİNDİR — `2026/0001`
+        yazılabilir) istemci `slug ?? id` ile UUID'ye düşer.
+        """
+        return url_safe_key(self.invoice_no)
 
     party_name: str
     party_tax_number: str | None

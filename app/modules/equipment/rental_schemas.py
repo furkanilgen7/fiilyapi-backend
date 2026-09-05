@@ -193,6 +193,9 @@ class RentalInvoiceResponse(BaseModel):
     """
 
     id: uuid.UUID
+    # URL-4: URL'de taşınacak okunabilir anahtar. `None` olabilir (adı
+    # slug'lanamayan kayıt) — istemci `slug ?? id` kullanır (`routes.ts`).
+    slug: str | None = None
     supplier_id: uuid.UUID
     supplier_name: str | None
     invoice_no: str | None

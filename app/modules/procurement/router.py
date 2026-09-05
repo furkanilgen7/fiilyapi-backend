@@ -59,6 +59,7 @@ from app.core.deps import get_current_user
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
+from app.core.slug import parse_ref
 from app.modules.approvals.gate import require_permission_or_chain_step
 from app.modules.approvals.models import ApprovalDocumentType
 from app.modules.audit.models import AuditAction
@@ -282,13 +283,19 @@ async def create_purchase_request_endpoint(
     dependencies=[_VIEW],
 )
 async def get_purchase_request_endpoint(
-    request_id: uuid.UUID,
+    request_id: str,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> PurchaseRequestResponse:
     """FST detayı: başlık + kalemler + TÜREVLER (satır tutarı · tahmini toplam ·
-    "Mevcut Stok"). Görünmeyen talep var olmayanla AYNI 404'ü alır."""
-    purchase_request = await service.visible_request(session, user, request_id)
+    "Mevcut Stok"). Görünmeyen talep var olmayanla AYNI 404'ü alır.
+
+    URL-4 — yol parametresi UUID **ya da** `request_no` kabul eder.
+    🔴 YOL ADI `request_id` OLARAK KALIR (URL-2 kararı 1): şablon değişmezse
+    üretilmiş istemcinin yol anahtarı da değişmez; değişen yalnız TİPTİR
+    (`uuid` -> `string`). PATCH/DELETE ve durum geçişleri `uuid.UUID` KALIR
+    (URL-2 kararı 3 — yazmanın kimliği okumanın döndürdüğü `id`den gelir)."""
+    purchase_request = await service.visible_request(session, user, parse_ref(request_id))
     return await service.build_request_detail(session, user, purchase_request)
 
 

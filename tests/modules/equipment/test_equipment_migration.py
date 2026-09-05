@@ -203,6 +203,8 @@ def test_equipment_columns_match_spec():
     assert set(columns.keys()) == {
         "id",
         "name",
+        # URL-4: okunabilir URL kimliği (`/makine/beko-loder`).
+        "slug",
         "category",
         "brand",
         "model",

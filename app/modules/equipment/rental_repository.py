@@ -22,6 +22,7 @@ from decimal import Decimal
 from sqlalchemy import Row, Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.slug import ref_filter
 from app.modules.equipment.models import (
     Equipment,
     EquipmentOwnership,
@@ -58,11 +59,20 @@ def invoice_scope(stmt: Select, project_ids: list[uuid.UUID]) -> Select:
 
 
 async def get_invoice(
-    session: AsyncSession, invoice_id: uuid.UUID
+    session: AsyncSession, invoice_ref: uuid.UUID | str
 ) -> EquipmentRentalInvoice | None:
-    """OKUMA yolu — kilitsiz. Yazma yolları `lock_invoice` kullanır."""
+    """OKUMA yolu — kilitsiz. Yazma yolları `lock_invoice` kullanır.
+
+    URL-4: kimlik YA DA slug. Slug `invoice_no`dan üretilir ve GLOBAL tekildir
+    (`uq_equipment_rental_invoices_slug`) — tablonun kendi UQ'su
+    (`supplier_id`, `invoice_no`) olduğu için `invoice_no` şirket geneli tekil
+    DEĞİLDİR ve doğrudan anahtar olarak KULLANILAMAZDI; slug kolonu tam olarak
+    bu boşluğu kapatır (çakışan numara `-2` eki alır).
+    """
     return await session.scalar(
-        select(EquipmentRentalInvoice).where(EquipmentRentalInvoice.id == invoice_id)
+        select(EquipmentRentalInvoice).where(
+            ref_filter(EquipmentRentalInvoice.id, EquipmentRentalInvoice.slug, invoice_ref)
+        )
     )
 
 

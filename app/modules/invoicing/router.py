@@ -52,6 +52,7 @@ from app.core.deps import get_current_user
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
+from app.core.slug import parse_ref
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
 from app.modules.invoicing import service, state_service, summary
@@ -213,11 +214,14 @@ async def invoices_summary_endpoint(
 @router.get(
     "/invoices/{invoice_id}",
     response_model=InvoiceDetailResponse,
-    responses={404: {"description": "Fatura bulunamadı"}},
+    responses={
+        404: {"description": "Fatura bulunamadı"},
+        409: {"description": "Fatura numarası hem gelen hem giden faturada kayıtlı"},
+    },
     dependencies=[_VIEW],
 )
 async def get_invoice_endpoint(
-    invoice_id: uuid.UUID,
+    invoice_id: str,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> InvoiceDetailResponse:
@@ -225,8 +229,12 @@ async def get_invoice_endpoint(
 
     Görünmeyen fatura var olmayanla AYNI 404'ü alır. Toplamlar okuma anında
     yeniden HESAPLANMAZ (K7): fatura donmuş bir belgedir.
+
+    URL-4 — yol parametresi UUID **ya da** `invoice_no` kabul eder (yol adı
+    `invoice_id` KALIR, URL-2 kararı 1). Numara iki yönde de kayıtlıysa ve
+    ikisi de KULLANICIYA GÖRÜNÜYORSA **409** döner: sessizce biri seçilmez.
     """
-    invoice = await service.visible_invoice(session, user, invoice_id)
+    invoice = await service.visible_invoice(session, user, parse_ref(invoice_id))
     return await service.build_detail(session, invoice)
 
 

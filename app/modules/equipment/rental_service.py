@@ -40,6 +40,7 @@ from app.core.errors import (
     EquipmentValidationError,
     NotFoundError,
 )
+from app.core.slug import allocate_slug
 from app.modules.equipment import (
     rental_posting,
     rental_repository,
@@ -120,14 +121,14 @@ _ZERO = Decimal("0")
 
 
 async def visible_invoice(
-    session: AsyncSession, actor: User, invoice_id: uuid.UUID
+    session: AsyncSession, actor: User, invoice_ref: uuid.UUID | str
 ) -> EquipmentRentalInvoice:
     """OKUMA yolunun TEK kapısı — kilitsiz.
 
     Yetki seviyesi bu kararın ÖNÜNE GEÇMEZ: `equipment:admin` taşıyan ama projeyi
     görmeyen kullanıcı da 404 alır (ST IDOR dersi).
     """
-    invoice = await rental_repository.get_invoice(session, invoice_id)
+    invoice = await rental_repository.get_invoice(session, invoice_ref)
     if invoice is None:
         raise NotFoundError(INVOICE_MISSING)
     if not await service._is_visible_site(session, actor, invoice.site_id):
@@ -378,6 +379,10 @@ async def _header(session: AsyncSession, invoice: EquipmentRentalInvoice) -> Ren
     kdv = compute_vat_amount(invoice_amount=invoice.invoice_amount, vat_rate=invoice.vat_rate)
     return RentalInvoiceResponse(
         id=invoice.id,
+        # 🔴 LİSTEYE DE GİRER: `RentalInvoiceResponse` hem liste satırı hem
+        # detay başlığıdır, yani `makine/kira/[invoiceId]` bağlantısını üreten
+        # şema budur.
+        slug=invoice.slug,
         supplier_id=invoice.supplier_id,
         supplier_name=None if supplier is None else supplier.name,
         invoice_no=invoice.invoice_no,
@@ -568,6 +573,12 @@ async def create_invoice(
     await _assert_references(session, actor, supplier_id=data.supplier_id, site_id=data.site_id)
     await _assert_invoice_no(session, supplier_id=data.supplier_id, invoice_no=data.invoice_no)
     invoice = EquipmentRentalInvoice(**data.model_dump())
+    # URL-4: taban `invoice_no`dur. Mockup ÖLÇÜLDÜ (`Makine - Kira Hakedişi
+    # Liste`): listede tanımlayıcı olarak YALNIZ `Fatura No` vardır ve faturası
+    # girilmemiş taslak satır ekranda `— (kayıt no yok)` basar — yani numarasız
+    # taslağın İNSAN ADI YOKTUR. Bu yüzden slug de NULL kalır ve kayıt
+    # UUID'siyle yaşar; uydurulmuş bir taban EKRANDAKİ gerçeği bozardı.
+    invoice.slug = await allocate_slug(session, invoice.invoice_no, EquipmentRentalInvoice.slug)
     session.add(invoice)
     await session.flush()
     await _build_lines(session, actor, invoice)

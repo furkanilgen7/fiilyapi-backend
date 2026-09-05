@@ -29,9 +29,19 @@ OPEN_STATUSES = (ProgressPaymentStatus.draft, ProgressPaymentStatus.pending_appr
 COMPLETED_STATUSES = (ProgressPaymentStatus.approved, ProgressPaymentStatus.paid)
 
 
-async def get_payment(session: AsyncSession, payment_id: uuid.UUID) -> ProgressPayment | None:
-    """`lines` `lazy="selectin"` olduğu için ek sorgu YOK."""
-    return await session.get(ProgressPayment, payment_id)
+async def get_payment(
+    session: AsyncSession, payment_ref: uuid.UUID | str
+) -> ProgressPayment | None:
+    """`lines` `lazy="selectin"` olduğu için ek sorgu YOK.
+
+    URL-4: kimlik YA DA slug (`<proje-slug>-<sıra>`). Slug GLOBAL tekildir
+    (`uq_progress_payments_slug`) — bileşik anahtar AYRIŞTIRILMAZ, ÜRETİLİP
+    SAKLANDIĞI için tek eşitlik karşılaştırmasına iner. Ayrıştırma denemesi
+    (`son tireden böl`) `kopru-a-2-5` gibi bir slug'da YANLIŞ cevap verirdi.
+    """
+    if isinstance(payment_ref, uuid.UUID):
+        return await session.get(ProgressPayment, payment_ref)
+    return await session.scalar(select(ProgressPayment).where(ProgressPayment.slug == payment_ref))
 
 
 async def get_payment_locked(

@@ -176,6 +176,14 @@ class SubcontractorContract(Base):
             unique=True,
             postgresql_where=text("contract_no IS NOT NULL"),
         ),
+        # URL-4: slug GLOBAL tekildir ve indeks KISMIDIR (`WHERE slug IS NOT NULL`)
+        # — kolon nullable oldugu icin coklu NULL serbest kalmak ZORUNDA.
+        Index(
+            "uq_subcontractor_contracts_slug",
+            "slug",
+            unique=True,
+            postgresql_where=text("slug IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -203,6 +211,17 @@ class SubcontractorContract(Base):
     subcontractor_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     work_category: Mapped[str | None] = mapped_column(String(100), nullable=True)
     contract_no: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # URL-4: kaynak ONCE `contract_no`dur (`tsz-2026-004`), yoksa
+    # `subcontractor_name` + `work_category`.
+    # 🔴 EMIR PREMISE'I OLCULEREK DUZELTILDI: emir `contract_no`yu "unique
+    # DEGIL" sayiyordu; GERCEKTE `uq_subcontractor_contracts_contract_no`
+    # KISMI BENZERSIZ INDEKSI vardir (bu dosyada, `WHERE contract_no IS NOT
+    # NULL`) — doldurulmussa SIRKET GENELI TEKILDIR. Mockup da olculdu
+    # (`Form - Sözleşme Oluştur.dc.html:90`: `Sözleşme No <span class="req">*</span>`,
+    # ornek deger `TSZ-2026-004`) → alan ZORUNLU.
+    # Kolon yine de nullable KALIR (taslak destegi, K-taslak): NULL satirlar ad+
+    # kategori tabanina duser, ikisi de bossa slug NULL kalir.
+    slug: Mapped[str | None] = mapped_column(String(160), nullable=True)
     signature_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     is_notarized: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")

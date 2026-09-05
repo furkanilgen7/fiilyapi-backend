@@ -82,6 +82,7 @@ async def build_detail(
     calculation = await amounts.calculation_for(session, payment)
     return SubcontractorProgressPaymentDetail(
         id=payment.id,
+        slug=payment.slug,
         contract_id=payment.contract_id,
         project_id=payment.project_id,
         project_name=project.name,
@@ -114,9 +115,9 @@ async def build_detail(
 
 
 async def get_detail(
-    session: AsyncSession, actor: User, payment_id: uuid.UUID
+    session: AsyncSession, actor: User, payment_ref: uuid.UUID | str
 ) -> SubcontractorProgressPaymentDetail:
-    return await build_detail(session, await visible_payment(session, actor, payment_id))
+    return await build_detail(session, await visible_payment(session, actor, payment_ref))
 
 
 async def list_payments(
@@ -154,6 +155,9 @@ async def list_payments(
         items=[
             SubcontractorProgressPaymentListItem(
                 id=payment.id,
+                # 🔴 LİSTEYE DE GİRER — `hakedisler/taseron/[paymentId]`
+                # bağlantısını üreten şema budur.
+                slug=payment.slug,
                 contract_id=payment.contract_id,
                 project_id=payment.project_id,
                 project_name=project.name,

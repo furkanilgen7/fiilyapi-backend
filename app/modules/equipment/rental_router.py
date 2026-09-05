@@ -34,6 +34,7 @@ from app.core.deps import get_current_user
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
+from app.core.slug import parse_ref
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
 from app.modules.equipment import rental_service
@@ -142,7 +143,7 @@ async def create_rental_invoice_endpoint(
     dependencies=[_VIEW],
 )
 async def get_rental_invoice_endpoint(
-    invoice_id: uuid.UUID,
+    invoice_id: str,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> RentalInvoiceDetailResponse:
@@ -150,8 +151,11 @@ async def get_rental_invoice_endpoint(
 
     🔴 K2: hiçbir sayı çalışma kaydından CANLI okunmaz — satırların KENDİ
     kolonlarından türer.
+
+    URL-4 — yol parametresi UUID **ya da** fatura no slug'ı kabul eder
+    (`/makine/kira/lt2026080211`). Yazma uçları `uuid.UUID` KALIR.
     """
-    invoice = await rental_service.visible_invoice(session, user, invoice_id)
+    invoice = await rental_service.visible_invoice(session, user, parse_ref(invoice_id))
     return await rental_service.invoice_detail(session, invoice)
 
 
