@@ -65,7 +65,7 @@ async def delete_section(session: AsyncSession, actor: User, section_id: uuid.UU
     """Spec §7.1. Bolum silme KOSULSUZDUR — uydurma bir engel yazilmaz.
 
     🔴 ESKI METIN YANLISTI (BOQ-SEC'te olculdu): "sections.id'yi hedefleyen
-    HICBIR FK yoktur" cumlesi yazildigi gunden beri bayattir — BUGUN DOKUZ FK
+    HICBIR FK yoktur" cumlesi yazildigi gunden beri bayattir — BUGUN ON BIR FK
     vardir (`personnel`, `timesheet`, `site_diary`, `site_planning`,
     `procurement`, `subcontractor_progress_payments`, `sections.depends_on_
     section_id` = SET NULL; `section_milestones` ve `boq_item_section_

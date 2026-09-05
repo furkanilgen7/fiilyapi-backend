@@ -5487,6 +5487,309 @@
         "title": "EmployerResponse",
         "type": "object"
       },
+      "EntityDocumentLinkCreate": {
+        "description": "`POST /<sahip>/{owner_id}/documents` gövdesi — İKİ ADIMLI akışın 2. adımı.\n\nDosya ÖNCE `POST /documents`a yüklenir (`project_id` orada zorunlu), dönen\nkünye kimliği burada `document_id` olarak bağlanır (`LeaveRequestFormModal`\nemsali; taslak/staging tablosu AÇILMAZ). `document_id` bu uçta ZORUNLUDUR:\nucun adı \"bağla\"dır — dosyasız slot satırı yalnız arşiv kaydı sonradan\nsilinince (SET NULL) oluşur, elle açılmaz.\n\n`project_id`/`site_id` GÖVDEDE YOKTUR: sahipten türetilir; gövdeden alınsaydı\ngörünürlük süzgeci bağ üzerinden delinirdi.",
+        "properties": {
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "issued_at": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issued At"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "type_id": {
+            "format": "uuid",
+            "title": "Type Id",
+            "type": "string"
+          },
+          "valid_until": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid Until"
+          }
+        },
+        "required": [
+          "type_id",
+          "document_id"
+        ],
+        "title": "EntityDocumentLinkCreate",
+        "type": "object"
+      },
+      "EntityDocumentLinkListResponse": {
+        "description": "Düz liste, slot sırasıyla (`sort_order`, sonra `created_at`). Boş slotlar\nLİSTEDE DEĞİLDİR — katalog `GET /documents/slot-types`tan çizilir.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EntityDocumentLinkRead"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "EntityDocumentLinkListResponse",
+        "type": "object"
+      },
+      "EntityDocumentLinkRead": {
+        "description": "Bağ satırı + slot künyesi + (varsa) arşiv künyesi.\n\n`document` NULL ise arşiv kaydı silinmiş demektir (SET NULL); satır bir\n\"belge vardı\" kaydı olarak kalır ve ekran onu \"dosya yok\" rozetiyle basar.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "document": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocumentRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "document_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_required": {
+            "title": "Is Required",
+            "type": "boolean"
+          },
+          "issued_at": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issued At"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "owner_id": {
+            "format": "uuid",
+            "title": "Owner Id",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/EntityDocumentScope"
+          },
+          "type_code": {
+            "title": "Type Code",
+            "type": "string"
+          },
+          "type_id": {
+            "format": "uuid",
+            "title": "Type Id",
+            "type": "string"
+          },
+          "type_name": {
+            "title": "Type Name",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "valid_until": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid Until"
+          }
+        },
+        "required": [
+          "id",
+          "owner_id",
+          "scope",
+          "type_id",
+          "type_code",
+          "type_name",
+          "is_required",
+          "document_id",
+          "document",
+          "issued_at",
+          "valid_until",
+          "note",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "EntityDocumentLinkRead",
+        "type": "object"
+      },
+      "EntityDocumentLinkUpdate": {
+        "description": "`PATCH /<sahip>/documents/{link_id}` — KAPSAM DAR: üç künye alanı.\n\n`type_id` ve `document_id` bu uçtan DEĞİŞTİRİLEMEZ; yanlış slot ya da yanlış\ndosya bağı silinip yeniden bağlanır (`EquipmentDocumentUpdate` emsali).\nGövdeye gönderilse bile Pydantic yok sayar.\n\n`exclude_unset`: gönderilmeyen alana DOKUNULMAZ, açıkça `null` gönderilen\nalan TEMİZLENİR (`DocumentUpdate` deseni).",
+        "properties": {
+          "issued_at": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issued At"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "valid_until": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid Until"
+          }
+        },
+        "title": "EntityDocumentLinkUpdate",
+        "type": "object"
+      },
+      "EntityDocumentScope": {
+        "description": "Slot kataloğunun bölmesi = bağ tablosunun sahibi (BC-3 emri §2, ölçülmüş).\n\n`project_contract` (işveren sözleşmesi) BİLEREK YOKTUR: `Ekran 14` bir\n\"Belgeler\" sekmesi çizer ama slot listesi çizilmemiştir; ölçülemeyen slot\nuydurulmaz. Geldiğinde additive bir üye + bir bağ tablosuyla eklenir\n(enum genişletmesi tip TAKASIYLA yapılır, `UnitKind` notu).",
+        "enum": [
+          "section",
+          "unit",
+          "unit_sale",
+          "subcontractor_contract"
+        ],
+        "title": "EntityDocumentScope",
+        "type": "string"
+      },
+      "EntityDocumentTypeListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EntityDocumentTypeRead"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "EntityDocumentTypeListResponse",
+        "type": "object"
+      },
+      "EntityDocumentTypeRead": {
+        "description": "`GET /documents/slot-types` satırı — sabit slot (CRUD ucu YOK).",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_required": {
+            "title": "Is Required",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/EntityDocumentScope"
+          },
+          "sort_order": {
+            "title": "Sort Order",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "scope",
+          "code",
+          "name",
+          "is_required",
+          "sort_order"
+        ],
+        "title": "EntityDocumentTypeRead",
+        "type": "object"
+      },
       "EquipmentCategory": {
         "description": "M2:85 — altı kategori.\n\nKategori İKONU (M1 emojileri) DB'de tutulmaz: kategoriden türer, frontend\nharitasıdır (spec §5).",
         "enum": [
@@ -38646,6 +38949,67 @@
         ]
       }
     },
+    "/documents/slot-types": {
+      "get": {
+        "description": "18 sabit slot (3+3+6+6), `scope` ile süzülür. CRUD ucu YOK.",
+        "operationId": "list_slot_types_endpoint_documents_slot_types_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/EntityDocumentScope"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Scope"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityDocumentTypeListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Slot Types Endpoint",
+        "tags": [
+          "entity-documents"
+        ]
+      }
+    },
     "/documents/{document_id}": {
       "delete": {
         "description": "Künye + baytlar silinir (`admin`; `full` silmeyi KAPSAMAZ).\n\n⚠️ BU UÇ EKRANDA BASILMAZ (modül docstring'i): mockup'ta belge silme\naksiyonu yoktur; uç yalnız yanlış yüklenen dosyayı temizlemek içindir.\n\nYanıt `204 No Content`, gövdesizdir.",
@@ -51022,6 +51386,115 @@
         ]
       }
     },
+    "/sales/documents/{link_id}": {
+      "delete": {
+        "operationId": "detach_unit_sale_document",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "link_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Link Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Belge bağı bulunamadı (görünmeyen kaydın bağı dahil)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Satış belgesi bağını kaldır",
+        "tags": [
+          "entity-documents"
+        ]
+      },
+      "patch": {
+        "operationId": "update_unit_sale_document",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "link_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Link Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EntityDocumentLinkUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityDocumentLinkRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Belge bağı bulunamadı (görünmeyen kaydın bağı dahil)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Satış belgesi künyesi",
+        "tags": [
+          "entity-documents"
+        ]
+      }
+    },
     "/sales/installments/{installment_id}/pay": {
       "post": {
         "description": "§8 S2 tahsilatı — kısmi ödeme destekli; aşırı ödeme 422.\n\n## Kapı neden `sales:full` (karar + gerekçe)\n\nTahsilat bir YAZMA işlemidir ve `AccessLevel` merdiveninde yazmanın karşılığı\n`full`tür; `draft`/`request`/`approve` ara seviyeleri BELGE İŞ AKIŞLARI\niçindir (hakediş taslak→onay zinciri) ve tahsilatın böyle bir akışı YOKTUR.\nAyrı bir \"tahsilat\" seviyesi AÇILMADI: `sales` izin modülü T1'de matrise\n(19.) tek satır olarak girdi, ikinci bir satır matrisin seed'i + migration'ı\n+ testini birlikte değiştirmeyi gerektirirdi ve spec §4 böyle bir ayrım\ntarif etmiyor. `accounting` rolü bugün `sales=(view, finance)` olduğundan\ntahsilat İŞLEYEMEZ — bu bilinçli sonuçtur; değişmesi gerekiyorsa doğru yer\nizin matrisi seed'idir, uç kapısı değil.\n\nKimlik YUKARI çözümlenir (taksit → satış → proje): görünmeyen taksit 404\ndöner ve var olmayanla AYNI gövdeyi verir.",
@@ -51084,6 +51557,115 @@
         "summary": "Pay Sale Installment Endpoint",
         "tags": [
           "sales"
+        ]
+      }
+    },
+    "/sales/{owner_id}/documents": {
+      "get": {
+        "operationId": "list_unit_sale_documents",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "owner_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Owner Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityDocumentLinkListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı (görünmeyen dahil)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Satış belgeleri",
+        "tags": [
+          "entity-documents"
+        ]
+      },
+      "post": {
+        "operationId": "attach_unit_sale_document",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "owner_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Owner Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EntityDocumentLinkCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityDocumentLinkRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı (görünmeyen dahil)"
+          },
+          "422": {
+            "description": "Slot bu kayıt için geçersiz ya da belge bu projede değil"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Satış belgesi bağla",
+        "tags": [
+          "entity-documents"
         ]
       }
     },
@@ -51599,9 +52181,227 @@
         ]
       }
     },
+    "/sections/documents/{link_id}": {
+      "delete": {
+        "operationId": "detach_section_document",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "link_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Link Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Belge bağı bulunamadı (görünmeyen kaydın bağı dahil)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Bölüm belgesi bağını kaldır",
+        "tags": [
+          "entity-documents"
+        ]
+      },
+      "patch": {
+        "operationId": "update_section_document",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "link_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Link Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EntityDocumentLinkUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityDocumentLinkRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Belge bağı bulunamadı (görünmeyen kaydın bağı dahil)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Bölüm belgesi künyesi",
+        "tags": [
+          "entity-documents"
+        ]
+      }
+    },
+    "/sections/{owner_id}/documents": {
+      "get": {
+        "operationId": "list_section_documents",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "owner_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Owner Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityDocumentLinkListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı (görünmeyen dahil)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Bölüm belgeleri",
+        "tags": [
+          "entity-documents"
+        ]
+      },
+      "post": {
+        "operationId": "attach_section_document",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "owner_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Owner Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EntityDocumentLinkCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityDocumentLinkRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı (görünmeyen dahil)"
+          },
+          "422": {
+            "description": "Slot bu kayıt için geçersiz ya da belge bu projede değil"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Bölüm belgesi bağla",
+        "tags": [
+          "entity-documents"
+        ]
+      }
+    },
     "/sections/{section_id}": {
       "delete": {
-        "description": "Spec §7.1. Bolum silme KOSULSUZDUR: `sections.id`'yi hedefleyen FK yok.\n\nKapi `_ADMIN`'dir — bolum santiyenin ic kirilimi oldugu icin `sites`\nmodulunun seviyeleri kullanilir, AYRI izin modulu acilmaz.\n\nYanit `204 No Content`, GOVDESIZ. Denetim metni servis icinde, satir yok\nolmadan ONCE kurulur.",
+        "description": "Spec §7.1. 🔴 **BU CUMLE BAYATTI VE DUZELTILDI (BC-3, 2026-09-05).**\n\nEski metin *\"`sections.id`'yi hedefleyen FK yok\"* diyordu; `deletes.py`nin\nservis docstring'i bunu zaten curutmustu ama router'daki kopya duruyordu.\nÖLÇÜLDÜ (`Base.metadata` uzerinden, kelime aramasiyla DEGIL): `sections.id`yi\n**ON BIR** FK hedefliyor — ikisi CASCADE (`boq_item_section_allocations`,\n`section_milestones` ve BC-3'un `section_documents`i), kalani SET NULL\n(`personnel`, `purchase_requests`, `sections.depends_on_section_id`,\n`site_diary_entries`, `site_plan_rows`, `stock_entry_lines`,\n`subcontractor_progress_payments`, `timesheet_entries`).\nSilme yine de kosulsuzdur cunku hicbiri RESTRICT DEGIL; kosulsuzlugun\ngerekcesi \"FK yok\" DEGIL, \"engelleyen FK yok\"tur.\n\nKapi `_ADMIN`'dir — bolum santiyenin ic kirilimi oldugu icin `sites`\nmodulunun seviyeleri kullanilir, AYRI izin modulu acilmaz.\n\nYanit `204 No Content`, GOVDESIZ. Denetim metni servis icinde, satir yok\nolmadan ONCE kurulur.",
         "operationId": "delete_section_endpoint_sections__section_id__delete",
         "parameters": [
           {
@@ -54496,6 +55296,115 @@
         ]
       }
     },
+    "/subcontractor-contracts/documents/{link_id}": {
+      "delete": {
+        "operationId": "detach_subcontractor_contract_document",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "link_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Link Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Belge bağı bulunamadı (görünmeyen kaydın bağı dahil)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Taşeron sözleşmesi belgesi bağını kaldır",
+        "tags": [
+          "entity-documents"
+        ]
+      },
+      "patch": {
+        "operationId": "update_subcontractor_contract_document",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "link_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Link Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EntityDocumentLinkUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityDocumentLinkRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Belge bağı bulunamadı (görünmeyen kaydın bağı dahil)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Taşeron sözleşmesi belgesi künyesi",
+        "tags": [
+          "entity-documents"
+        ]
+      }
+    },
     "/subcontractor-contracts/items/{item_id}": {
       "delete": {
         "description": "Spec §7. Engel YOK. Kapı `_ADMIN` — `can_delete` istisnası burada YOK,\n\nyalnız `DELETE /subcontractor-contracts/{contract_id}` ucunda geçerlidir\n(task brief kararı).",
@@ -55038,6 +55947,115 @@
         "tags": [
           "site-diary",
           "site-diary"
+        ]
+      }
+    },
+    "/subcontractor-contracts/{owner_id}/documents": {
+      "get": {
+        "operationId": "list_subcontractor_contract_documents",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "owner_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Owner Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityDocumentLinkListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı (görünmeyen dahil)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Taşeron sözleşmesi belgeleri",
+        "tags": [
+          "entity-documents"
+        ]
+      },
+      "post": {
+        "operationId": "attach_subcontractor_contract_document",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "owner_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Owner Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EntityDocumentLinkCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityDocumentLinkRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı (görünmeyen dahil)"
+          },
+          "422": {
+            "description": "Slot bu kayıt için geçersiz ya da belge bu projede değil"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Taşeron sözleşmesi belgesi bağla",
+        "tags": [
+          "entity-documents"
         ]
       }
     },
@@ -56735,6 +57753,224 @@
         "summary": "Trial Balance Export Endpoint",
         "tags": [
           "accounting"
+        ]
+      }
+    },
+    "/units/documents/{link_id}": {
+      "delete": {
+        "operationId": "detach_unit_document",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "link_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Link Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Belge bağı bulunamadı (görünmeyen kaydın bağı dahil)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Ünite belgesi bağını kaldır",
+        "tags": [
+          "entity-documents"
+        ]
+      },
+      "patch": {
+        "operationId": "update_unit_document",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "link_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Link Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EntityDocumentLinkUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityDocumentLinkRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Belge bağı bulunamadı (görünmeyen kaydın bağı dahil)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Ünite belgesi künyesi",
+        "tags": [
+          "entity-documents"
+        ]
+      }
+    },
+    "/units/{owner_id}/documents": {
+      "get": {
+        "operationId": "list_unit_documents",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "owner_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Owner Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityDocumentLinkListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı (görünmeyen dahil)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Ünite belgeleri",
+        "tags": [
+          "entity-documents"
+        ]
+      },
+      "post": {
+        "operationId": "attach_unit_document",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "owner_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Owner Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EntityDocumentLinkCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityDocumentLinkRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı (görünmeyen dahil)"
+          },
+          "422": {
+            "description": "Slot bu kayıt için geçersiz ya da belge bu projede değil"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Ünite belgesi bağla",
+        "tags": [
+          "entity-documents"
         ]
       }
     },
