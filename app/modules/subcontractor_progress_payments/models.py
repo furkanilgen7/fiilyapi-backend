@@ -84,6 +84,14 @@ class SubcontractorProgressPayment(Base):
             "default_coefficient > 0",
             name="ck_subcontractor_progress_payments_coefficient_positive",
         ),
+        # URL-4: slug GLOBAL tekildir ve indeks KISMIDIR (`WHERE slug IS NOT NULL`)
+        # — kolon nullable oldugu icin coklu NULL serbest kalmak ZORUNDA.
+        Index(
+            "uq_subcontractor_progress_payments_slug",
+            "slug",
+            unique=True,
+            postgresql_where=text("slug IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -103,6 +111,11 @@ class SubcontractorProgressPayment(Base):
     )
     # Servis uretir: SOZLESME ici maks+1 (isverendeki proje ici sayacin karsiligi).
     sequence_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    # URL-4: `<sozlesme-slug>-<sira>` (`tsz-2025-001-48`). Bilesik anahtarin
+    # (`contract_id`, `sequence_no`) saklanan karsiligi — mockup olculdu
+    # (`Taşeron Hakediş Oluştur`: breadcrumb `Akın İnşaat TSZ-2025-001` /
+    # `Hakediş #48`). Sozlesmenin slug'i NULL ise bu da NULL kalir.
+    slug: Mapped[str | None] = mapped_column(String(160), nullable=True)
     # Kullanicinin doldurdugu alan — taslakta bos.
     period_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     period_month: Mapped[int | None] = mapped_column(Integer, nullable=True)

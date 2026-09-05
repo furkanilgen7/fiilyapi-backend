@@ -111,6 +111,10 @@ class PersonnelResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    # URL-4 · 🔴 KVKK: bu slug YALNIZ `full_name`den üretilir. `tc_no` tablonun
+    # tek tekil anahtarıdır ve URL'ye ASLA girmez; telefon/e-posta/TCKN'nin
+    # hiçbir parçası slug'a girmez (kullanıcı kararı 2026-09-05).
+    slug: str | None = None
     full_name: str
     trade: str | None
     source: WorkerSource

@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel, can_delete
 from app.core.errors import ConflictError, DeleteNotAllowedError, NotFoundError, SiteValidationError
+from app.core.slug import allocate_slug
 from app.modules.contracts import guards as contract_guards
 from app.modules.contracts import repository as contracts_repository
 from app.modules.contracts.models import SubcontractorContract, SubcontractorContractItem
@@ -103,10 +104,15 @@ async def visible_contract(
 
 
 async def visible_payment(
-    session: AsyncSession, actor: User, payment_id: uuid.UUID
+    session: AsyncSession, actor: User, payment_ref: uuid.UUID | str
 ) -> PaymentContext:
-    """Kapsam süzgeci — `read.py` de bu TEK kapıdan geçer (public olmasının nedeni)."""
-    payment = await repository.get_payment(session, payment_id)
+    """Kapsam süzgeci — `read.py` de bu TEK kapıdan geçer (public olmasının nedeni).
+
+    URL-4: `payment_ref` UUID **ya da** slug olabilir. Kapsam süzgeci çözümden
+    SONRA ama HER ZAMAN koşar; slug TAHMİN EDİLEBİLİR olduğu için görünmeyen
+    projedeki hakediş, var olmayanla BİREBİR AYNI 404'ü alır.
+    """
+    payment = await repository.get_payment(session, payment_ref)
     if payment is None:
         raise NotFoundError(guards.PAYMENT_MISSING)
     project = await _visible_project(session, actor, payment.project_id, guards.PAYMENT_MISSING)
@@ -119,14 +125,17 @@ async def visible_payment(
 
 
 async def visible_payment_locked(
-    session: AsyncSession, actor: User, payment_id: uuid.UUID
+    session: AsyncSession, actor: User, payment_ref: uuid.UUID | str
 ) -> PaymentContext:
     """Kapsam kararı (404) kilitten ÖNCE verilir — görünmeyen kaydın satırı
     boşuna kilitlenmez. Kilit sırası `create` ile AYNIDIR: önce SÖZLEŞME, sonra
     hakediş; ters sırada kilitleyen bir yol karşılıklı kilitlenme doğurur."""
-    context = await visible_payment(session, actor, payment_id)
+    context = await visible_payment(session, actor, payment_ref)
     await repository.get_contract_locked(session, context.contract.id)
-    locked = await repository.get_payment_locked(session, payment_id)
+    # 🔴 `context.payment.id` — `payment_ref` DEĞİL: ref bir slug olabilir ve
+    # `get_payment_locked` PK bekler. Ref'i doğrudan geçirmek, slug'la gelen
+    # her yazma yolunda kilidi SESSİZCE alınamaz kılardı.
+    locked = await repository.get_payment_locked(session, context.payment.id)
     if locked is None:
         raise NotFoundError(guards.PAYMENT_MISSING)
     return context._replace(payment=locked)
@@ -240,6 +249,14 @@ async def create(
         default_coefficient=default_coefficient,
         section_id=data.section_id,
         created_by=actor.id,
+    )
+    # URL-4: bileşik anahtarın (`contract_id`, `sequence_no`) SAKLANAN karşılığı
+    # (`tsz-2025-001-48`). Sözleşmenin slug'ı NULL ise hakediş de UUID'siyle
+    # yaşar — uydurma taban YAZILMAZ.
+    payment.slug = await allocate_slug(
+        session,
+        f"{contract.slug}-{payment.sequence_no}" if contract.slug else None,
+        SubcontractorProgressPayment.slug,
     )
     payment.lines = lines
     session.add(payment)

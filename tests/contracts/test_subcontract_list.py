@@ -123,6 +123,10 @@ async def test_liste_secim_alanlarini_doner(
     satir = next(k for k in items if k["id"] == str(kayitlar["santiyeli"].id))
     assert satir == {
         "id": str(kayitlar["santiyeli"].id),
+        # URL-4: liste satırı `sozlesmeler/taseron/[contractId]` bağlantısını
+        # üretir, bu yüzden slug LİSTEDE de bulunur. Bu kayıtlar fabrikadan
+        # (servisten DEĞİL) geldiği için slug ayrılmamıştır -> None.
+        "slug": None,
         "contract_no": "TSD-2026-001",
         "subcontractor_name": "Alfa Kalıp Ltd.",
         "work_category": "Kalıp",
@@ -348,6 +352,10 @@ async def test_parametresiz_cagri_oge_alanlari_degismedi(
     satir = next(k for k in yanit.json()["items"] if k["id"] == str(kayitlar["santiyeli"].id))
     assert set(satir) == {
         "id",
+        # URL-4 ADDITIVE: alan EKLENDİ, hiçbiri kaldırılmadı — geriye uyum
+        # iddiası "alanlar BİREBİR aynı"dan "eski alanların hepsi DURUYOR"a
+        # daralmaz, küme yine TAM karşılaştırılır.
+        "slug",
         "contract_no",
         "subcontractor_name",
         "work_category",

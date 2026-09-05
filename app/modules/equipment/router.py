@@ -49,6 +49,7 @@ from app.core.deps import get_current_user
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
+from app.core.slug import parse_ref
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
 from app.modules.equipment import detail_service, service, work_summary_export
@@ -447,13 +448,18 @@ async def delete_fuel_log_endpoint(
 
 @router.get("/{equipment_id}", response_model=EquipmentResponse, dependencies=[_VIEW])
 async def get_equipment_endpoint(
-    equipment_id: uuid.UUID,
+    equipment_id: str,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> EquipmentResponse:
-    """Görünmeyen kayıt var olmayanla AYNI 404'ü döner (spec §4)."""
+    """Görünmeyen kayıt var olmayanla AYNI 404'ü döner (spec §4).
+
+    URL-4 — yol parametresi UUID **ya da** ad slug'ı kabul eder
+    (`/makine/beko-loder`). Yol adı `equipment_id` KALIR (URL-2 kararı 1);
+    PATCH ucu `uuid.UUID` KALIR (kararı 3).
+    """
     return EquipmentResponse.model_validate(
-        await service.visible_equipment(session, user, equipment_id)
+        await service.visible_equipment(session, user, parse_ref(equipment_id))
     )
 
 
@@ -463,7 +469,7 @@ async def get_equipment_endpoint(
     dependencies=[_VIEW],
 )
 async def get_equipment_detail_endpoint(
-    equipment_id: uuid.UUID,
+    equipment_id: str,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
     as_of: date | None = None,
@@ -482,7 +488,9 @@ async def get_equipment_detail_endpoint(
 
     Görünmeyen kayıt var olmayanla AYNI 404'ü döner (K20).
     """
-    return await detail_service.equipment_detail(session, user, equipment_id, as_of=as_of)
+    return await detail_service.equipment_detail(
+        session, user, parse_ref(equipment_id), as_of=as_of
+    )
 
 
 @router.patch(
