@@ -28,14 +28,31 @@ hafızadır), bu yüzden "okumada 403" senaryosu YOKTUR — izin ayrımı ancak
 `full` (POST/PATCH) ve `admin` (DELETE) kapılarında sınanabilir.
 """
 
+import importlib.util
+import uuid
+from decimal import Decimal
+from pathlib import Path
+from typing import NamedTuple
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.documents.models import Document, DocumentBlob, DocumentFolder
+from app.modules.contracts.models import SubcontractorContract
+from app.modules.customers.models import Customer, CustomerType
+from app.modules.documents import link_owners
+from app.modules.documents.models import (
+    Document,
+    DocumentBlob,
+    DocumentFolder,
+    EntityDocumentScope,
+    EntityDocumentType,
+)
 from app.modules.projects.models import Project
-from app.modules.sites.models import Site
+from app.modules.sales.models import SaleType, UnitSale, UnitSaleStatus
+from app.modules.sites.models import Section, Site
+from app.modules.units.models import Block, Unit, UnitKind
 from app.modules.users.models import User, UserProjectAccess
 
 # Beyaz listeye göre tipik bir künye (spec §4): PDF, 48 MB'ın çok altında.
@@ -187,4 +204,218 @@ async def pm_headers(
     """`project_manager` (`documents=_V`), aynı kapsam — okur, YAZAMAZ."""
     return await _scoped_headers(
         client, seeded_db, user_factory, "project_manager", "pm@bc-t2.co", proje
+    )
+
+
+# ===========================================================================
+# BC-3 — belge ↔ varlık bağı fixture'ları
+# ===========================================================================
+#
+# Slot kataloğu `create_all` ile GELMEZ (seed migration'dadır); testler seed'i
+# migration dosyasının KENDİSİNDEN okur (`SLOT_SEED`), ikinci bir liste
+# yazılmaz — böylece migration ile test aynı 18 satırı görür, ayrışamaz.
+#
+# Sahip kayıtları (`bolum` · `unite` · `satis` · `taseron_sozlesmesi`) `proje`de,
+# `gorunmeyen_*` karşılıkları `ikinci_proje`de açılır (IDOR yüzeyi).
+#
+# Başlıklar: `admin_headers` (system_admin) · `pm_headers` (project_manager,
+# kapsamı `proje` ile SINIRLI; dört sahip modülünde de `full`) ·
+# `muhasebe_headers` (accounting; dört sahip modülünde de `view`, yazamaz).
+
+BC3_MIGRATION_PATH = (
+    Path(__file__).parents[2] / "alembic" / "versions" / "c5d8e2f1a4b7_bc3_belge_varlik_bagi.py"
+)
+
+
+def load_bc3_migration():
+    """Migration modülünü DOSYA YOLUNDAN yükler (paket değildir)."""
+    spec = importlib.util.spec_from_file_location("bc3_migration", BC3_MIGRATION_PATH)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+class SahipDurumu(NamedTuple):
+    """Parametrik sahip: spec + görünen kayıt + görünmeyen (ikinci proje) kayıt."""
+
+    spec: link_owners.OwnerSpec
+    owner_id: uuid.UUID
+    yabanci_owner_id: uuid.UUID
+
+
+@pytest.fixture
+async def slot_katalogu(seeded_db: AsyncSession) -> dict[tuple[str, str], EntityDocumentType]:
+    """18 slot, migration'ın `SLOT_SEED`inden birebir. Anahtar `(scope, code)`."""
+    migration = load_bc3_migration()
+    rows: dict[tuple[str, str], EntityDocumentType] = {}
+    for scope, code, name, is_required, sort_order in migration.SLOT_SEED:
+        row = EntityDocumentType(
+            scope=EntityDocumentScope(scope),
+            code=code,
+            name=name,
+            is_required=is_required,
+            sort_order=sort_order,
+        )
+        seeded_db.add(row)
+        rows[(scope, code)] = row
+    await seeded_db.flush()
+    return rows
+
+
+@pytest.fixture
+async def kayit_sahibi(user_factory) -> User:
+    """`created_by` isteyen sahipler (satış, taşeron sözleşmesi) için kullanıcı."""
+    return await user_factory(email="sahip@bc3.co", password="parola1234", role_key="patron")
+
+
+# --- görünen sahipler (proje) ---
+
+
+@pytest.fixture
+async def bolum(seeded_db: AsyncSession, santiye: Site) -> Section:
+    section = Section(site_id=santiye.id, name="Kaba İnşaat")
+    seeded_db.add(section)
+    await seeded_db.flush()
+    return section
+
+
+@pytest.fixture
+async def unite(seeded_db: AsyncSession, proje: Project, santiye: Site) -> Unit:
+    block = Block(project_id=proje.id, site_id=santiye.id, name="A Blok")
+    seeded_db.add(block)
+    await seeded_db.flush()
+    unit = Unit(project_id=proje.id, block_id=block.id, unit_no="12", unit_kind=UnitKind.apartment)
+    seeded_db.add(unit)
+    await seeded_db.flush()
+    return unit
+
+
+@pytest.fixture
+async def satis(
+    seeded_db: AsyncSession, proje: Project, unite: Unit, kayit_sahibi: User
+) -> UnitSale:
+    customer = Customer(customer_type=CustomerType.person, name="Mehmet Aydın")
+    seeded_db.add(customer)
+    await seeded_db.flush()
+    sale = UnitSale(
+        unit_id=unite.id,
+        project_id=proje.id,
+        customer_id=customer.id,
+        sale_type=SaleType.sale,
+        status=UnitSaleStatus.active,
+        sale_price=Decimal("1480000.00"),
+        created_by=kayit_sahibi.id,
+    )
+    seeded_db.add(sale)
+    await seeded_db.flush()
+    return sale
+
+
+@pytest.fixture
+async def taseron_sozlesmesi(
+    seeded_db: AsyncSession, proje: Project, kayit_sahibi: User
+) -> SubcontractorContract:
+    contract = SubcontractorContract(
+        project_id=proje.id, contract_no="TS-2026-001", created_by=kayit_sahibi.id
+    )
+    seeded_db.add(contract)
+    await seeded_db.flush()
+    return contract
+
+
+# --- görünmeyen sahipler (ikinci proje) ---
+
+
+@pytest.fixture
+async def gorunmeyen_bolum(seeded_db: AsyncSession, gorunmeyen_santiye: Site) -> Section:
+    section = Section(site_id=gorunmeyen_santiye.id, name="Görünmeyen Bölüm")
+    seeded_db.add(section)
+    await seeded_db.flush()
+    return section
+
+
+@pytest.fixture
+async def gorunmeyen_unite(
+    seeded_db: AsyncSession, ikinci_proje: Project, gorunmeyen_santiye: Site
+) -> Unit:
+    block = Block(project_id=ikinci_proje.id, site_id=gorunmeyen_santiye.id, name="Z Blok")
+    seeded_db.add(block)
+    await seeded_db.flush()
+    unit = Unit(
+        project_id=ikinci_proje.id, block_id=block.id, unit_no="1", unit_kind=UnitKind.apartment
+    )
+    seeded_db.add(unit)
+    await seeded_db.flush()
+    return unit
+
+
+@pytest.fixture
+async def gorunmeyen_satis(
+    seeded_db: AsyncSession, ikinci_proje: Project, gorunmeyen_unite: Unit, kayit_sahibi: User
+) -> UnitSale:
+    customer = Customer(customer_type=CustomerType.company, name="Uzak Ltd.")
+    seeded_db.add(customer)
+    await seeded_db.flush()
+    sale = UnitSale(
+        unit_id=gorunmeyen_unite.id,
+        project_id=ikinci_proje.id,
+        customer_id=customer.id,
+        sale_type=SaleType.sale,
+        status=UnitSaleStatus.active,
+        sale_price=Decimal("990000.00"),
+        created_by=kayit_sahibi.id,
+    )
+    seeded_db.add(sale)
+    await seeded_db.flush()
+    return sale
+
+
+@pytest.fixture
+async def gorunmeyen_taseron_sozlesmesi(
+    seeded_db: AsyncSession, ikinci_proje: Project, kayit_sahibi: User
+) -> SubcontractorContract:
+    contract = SubcontractorContract(project_id=ikinci_proje.id, created_by=kayit_sahibi.id)
+    seeded_db.add(contract)
+    await seeded_db.flush()
+    return contract
+
+
+_SAHIP_FIXTURE = {
+    "section": ("bolum", "gorunmeyen_bolum", link_owners.SECTION),
+    "unit": ("unite", "gorunmeyen_unite", link_owners.UNIT),
+    "unit_sale": ("satis", "gorunmeyen_satis", link_owners.UNIT_SALE),
+    "subcontractor_contract": (
+        "taseron_sozlesmesi",
+        "gorunmeyen_taseron_sozlesmesi",
+        link_owners.SUBCONTRACTOR_CONTRACT,
+    ),
+}
+
+
+@pytest.fixture(params=tuple(_SAHIP_FIXTURE))
+def sahip(request) -> SahipDurumu:
+    """Dört sahibi TEK test gövdesinden geçirir — dört kopya test yazılmaz.
+
+    SENKRON fixture'dır (bilinçli): `request.getfixturevalue` ile ASYNC bir
+    fixture'ı çözmek yalnız senkron bağlamdan çalışır; async fixture içinden
+    çağrılınca pytest-asyncio setup'ta patlar (ölçüldü: 48 ERROR).
+    """
+    gorunen_ad, gorunmeyen_ad, spec = _SAHIP_FIXTURE[request.param]
+    gorunen = request.getfixturevalue(gorunen_ad)
+    gorunmeyen = request.getfixturevalue(gorunmeyen_ad)
+    return SahipDurumu(spec=spec, owner_id=gorunen.id, yabanci_owner_id=gorunmeyen.id)
+
+
+@pytest.fixture
+async def muhasebe_headers(
+    client: AsyncClient, seeded_db: AsyncSession, user_factory, proje: Project
+) -> dict[str, str]:
+    """`accounting` — dört sahip modülünde de `view` (_FIN): okur, YAZAMAZ.
+
+    Kapsamı `proje` ile verilir: erişim satırı olmayan kullanıcı HİÇBİR projeyi
+    görmez ve 403 yerine 404 alırdı (ölçüldü) — yetki testi kapsam testine dönüşürdü.
+    """
+    return await _scoped_headers(
+        client, seeded_db, user_factory, "accounting", "muhasebe@bc3.co", proje
     )

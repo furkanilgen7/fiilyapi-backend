@@ -9,7 +9,8 @@ kusur sınıfıdır.
 🔴 **SIRA ANLAMLIDIR — alfabetik değildir, davranıştır.**
 FastAPI rotaları KAYIT SIRASINA göre eşler. Aynı metotta aynı şekli taşıyan bir
 literal yol ile parametreli bir yol çakışırsa **önce kaydedilen kazanır**. Bu
-demette üç router-arası çakışma vardır ve üçünün de bekçisi
+demette üç router-arası çakışma vardır (dördüncü aday ölçüldü, bugün çakışmıyor —
+aşağıda); üçünün de bekçisi
 `tests/modules/ai/test_ai0a_router_registry.py::test_router_arasi_golgeleme_*`
 testleridir:
 
@@ -18,6 +19,13 @@ testleridir:
   2. `/equipment/document-types`  ← `equipment_document_router`, aynı gerekçe.
   3. `/personnel/document-types`  ← `personnel_document_type_router`,
      `personnel_router` (`/personnel/{personnel_id}`) ÖNCESİNDE olmalı.
+  4. `/documents/slot-types`      ← `documents_link_router` (BC-3) — 🔴 ÖLÇÜLDÜ,
+     BUGÜN ÇAKIŞMA YOK: `documents_router`ın `/documents/{document_id}` yolu yalnız
+     PATCH/DELETE taşır (GET detay ucu YOKTUR, `/download` üç segmentlidir), sıra
+     kısıtı ise yalnız AYNI metotta doğar. Yine de önce kaydedilir (ucuz sigorta)
+     ve ön koşul bir tripwire ile kilitlidir: biri `GET /documents/{document_id}`
+     açarsa `tests/documents/test_bc3_links_api.py::test_TRIPWIRE_*` kırmızıya
+     döner ve sıra o gün gerçekten zorunlu olur.
 
 ⚠️ ÖLÇÜLMÜŞ İNCELİK (fastapi 0.141.1): sıra kısıtı yalnız **aynı metotta** doğar.
 Yol tutup metot tutmayan bir aday `Match.PARTIAL` olarak saklanır ve döngü FULL
@@ -87,6 +95,7 @@ from app.modules.company.router import router as company_router
 from app.modules.contracts.router import router as contracts_router
 from app.modules.customers.router import router as customers_router
 from app.modules.dashboard.router import router as dashboard_router
+from app.modules.documents.link_router import router as documents_link_router
 from app.modules.documents.router import router as documents_router
 from app.modules.equipment.document_router import router as equipment_document_router
 from app.modules.equipment.rental_router import router as equipment_rental_router
@@ -145,6 +154,12 @@ ROUTERS: tuple[APIRouter, ...] = (
     contracts_router,
     customers_router,
     dashboard_router,
+    # BC-3 `GET /documents/slot-types` (literal, 2 segment): `documents_router`da
+    # `GET /documents/{document_id}` YOK (yalnız PATCH/DELETE) → bugün gölgeleme
+    # yapısal olarak imkânsız (ölçüldü; sıra ters çevrilince de literal kazanır).
+    # Önce kaydedilir: sıfır maliyetli sigorta. Ön koşulun tripwire'ı:
+    # `tests/documents/test_bc3_links_api.py::test_TRIPWIRE_documents_routerda_GET_detay_YOK`.
+    documents_link_router,
     documents_router,
     employers_router,
     # 🔴 SIRA ZORUNLU (1): kira hakedişi router'ı `equipment_router`dan ÖNCE.
