@@ -298,8 +298,21 @@ async def count_requests(
     return (await session.execute(stmt)).scalar_one()
 
 
-async def get_request(session: AsyncSession, request_id: uuid.UUID) -> PurchaseRequest | None:
-    return await session.get(PurchaseRequest, request_id)
+async def get_request(
+    session: AsyncSession, request_ref: uuid.UUID | str
+) -> PurchaseRequest | None:
+    """URL-4: kimlik YA DA `request_no` ile okur.
+
+    `request_no` GLOBAL tekildir (`unique=True`, `models.py:201`), bu yuzden
+    cozum SIRKET GENELINDE tek bir satir dondurur ve gorunurluk suzgeci
+    cozumden SONRA uygulanabilir (`visible_request`) — anahtar kapsam ici
+    tekil olsaydi tersi gerekirdi.
+    """
+    if isinstance(request_ref, uuid.UUID):
+        return await session.get(PurchaseRequest, request_ref)
+    return await session.scalar(
+        select(PurchaseRequest).where(PurchaseRequest.request_no == request_ref)
+    )
 
 
 async def get_request_locked(

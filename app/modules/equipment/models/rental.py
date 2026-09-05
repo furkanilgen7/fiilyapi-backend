@@ -96,6 +96,14 @@ class EquipmentRentalInvoice(Base):
         # birisi autogenerate çıktısına güvenip dönem indeksini düşürürdü).
         # ŞEMA DEĞİŞMEZ, migration GEREKMEZ — yalnız beyan hizalanır.
         Index("ix_equipment_rental_invoices_period", "period_year", "period_month"),
+        # URL-4: slug GLOBAL tekildir ve indeks KISMIDIR (`WHERE slug IS NOT NULL`)
+        # — kolon nullable oldugu icin coklu NULL serbest kalmak ZORUNDA.
+        Index(
+            "uq_equipment_rental_invoices_slug",
+            "slug",
+            unique=True,
+            postgresql_where=text("slug IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -109,6 +117,16 @@ class EquipmentRentalInvoice(Base):
     )
     # M5:59 — taslakta henüz bilinmeyebilir.
     invoice_no: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # URL-4: kaynak `invoice_no`dur. Mockup ÖLÇÜLDÜ (`Makine - Kira Hakedişi
+    # Liste`): listede tanımlayıcı olarak YALNIZ `Fatura No` sütunu vardır,
+    # hakediş sıra numarası sütunu HİÇ YOKTUR; faturası girilmemiş taslak satır
+    # ekranda birebir `— (kayıt no yok)` basar. Bu yüzden `invoice_no` NULL iken
+    # slug de NULL'dır ve o kayıt UUID'siyle yaşar — ekranın söylediği şeyin
+    # birebir karşılığı, uydurulmuş bir taban DEĞİL.
+    # UQ `(supplier_id, invoice_no)` olduğu için `invoice_no` şirket geneli
+    # tekil DEĞİLDİR; iki tedarikçinin aynı numarası `unique_slug` ile `-2` eki
+    # alır (tedarikçi adı slug'a KATILMAZ: kullanıcı listede numarayı okur).
+    slug: Mapped[str | None] = mapped_column(String(160), nullable=True)
     # M5:63 — firmanın kestiği tutar, KDV HARİÇ (K1).
     invoice_amount: Mapped[Decimal | None] = mapped_column(
         Numeric(MONEY_PRECISION, MONEY_SCALE), nullable=True

@@ -17,6 +17,7 @@ from app.core.errors import (
     RelatedRecordsExistError,
     SiteValidationError,
 )
+from app.core.slug import matches_ref
 from app.core.timezone import today
 from app.modules.company.service import get_company
 from app.modules.contracts import distribution_quantity, repository
@@ -309,10 +310,22 @@ async def list_contracts(
 
 
 async def _visible_project(
-    session: AsyncSession, actor: User, project_id: uuid.UUID, missing: str = CONTRACT_MISSING
+    session: AsyncSession,
+    actor: User,
+    project_ref: uuid.UUID | str,
+    missing: str = CONTRACT_MISSING,
 ) -> Project:
+    """URL-4: `project_ref` UUID **ya da** proje slug'ı olabilir.
+
+    🔴 Çözümleme AYRI BİR SORGU DEĞİL, GÖRÜNÜR KÜMENİN İÇİNDE yapılır —
+    `projects/service.py::_visible_project` ile BİREBİR aynı kanon. Önce çözüp
+    sonra süzmek, kapıyı bir satırlık dikkatsizlikle atlanabilir kılardı;
+    küme içinde eşleştirmek onu YAPISAL olarak atlanamaz yapar. Görmediği
+    projenin slug'ıyla gelen istek, var olmayan slug'la BİREBİR AYNI 404'ü alır
+    (slug TAHMİN EDİLEBİLİR, UUID değil).
+    """
     visible = await visible_projects(session, actor)
-    project = next((p for p in visible if p.id == project_id), None)
+    project = next((p for p in visible if matches_ref(p.id, p.slug, project_ref)), None)
     if project is None:
         raise NotFoundError(missing)
     return project
@@ -404,7 +417,7 @@ async def to_item_response_single(
 
 
 async def get_employer_contract_detail(
-    session: AsyncSession, actor: User, project_id: uuid.UUID
+    session: AsyncSession, actor: User, project_ref: uuid.UUID | str
 ) -> EmployerContractDetail:
     """`E14` başlığı (spec §6.2): sözleşme + `items_total` + `advance_amount` +
 
@@ -414,12 +427,15 @@ async def get_employer_contract_detail(
     """
     from app.modules.progress_payments import summary as progress_payments_summary
 
-    project = await _visible_project(session, actor, project_id)
+    project = await _visible_project(session, actor, project_ref)
     contract = project.contract
     if contract is None:
         raise NotFoundError(CONTRACT_MISSING)
 
-    groups = await repository.list_employer_groups(session, project_id)
+    # 🔴 `project.id` — `project_ref` DEĞİL: ref bir slug olabilir ve `uuid`
+    # bekleyen sorguya verilseydi patlardı. Kapıdan geçen kaydın KİMLİĞİ tek
+    # meşru anahtardır (aynı kural aşağıdaki iki uçta da geçerli).
+    groups = await repository.list_employer_groups(session, project.id)
     items_total = _quantize_money(
         sum(
             (item.quantity * item.unit_price for group in groups for item in group.items),
@@ -456,19 +472,19 @@ async def get_employer_contract_detail(
 
 
 async def get_employer_contract_items(
-    session: AsyncSession, actor: User, project_id: uuid.UUID
+    session: AsyncSession, actor: User, project_ref: uuid.UUID | str
 ) -> EmployerContractItemsResponse:
     """Spec §6.2: gruplar + kalemler, her kalemde `distributed_quantity`/
 
     `remaining_quantity`. Toplamlar TEK KAYNAKTAN gelir (TB4/B2,
     `distribution_quantity`) ve sabit sayıda sorgu ile — N+1 üretmez.
     """
-    project = await _visible_project(session, actor, project_id)
+    project = await _visible_project(session, actor, project_ref)
     if project.contract is None:
         raise NotFoundError(CONTRACT_MISSING)
 
-    groups = await repository.list_employer_groups(session, project_id)
-    distributed = await distribution_quantity.load_distributed_totals(session, project_id)
+    groups = await repository.list_employer_groups(session, project.id)
+    distributed = await distribution_quantity.load_distributed_totals(session, project.id)
 
     return EmployerContractItemsResponse(
         groups=[

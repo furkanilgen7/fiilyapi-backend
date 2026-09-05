@@ -37,7 +37,12 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import DuplicateError, InvoicingValidationError, NotFoundError
+from app.core.errors import (
+    ConflictError,
+    DuplicateError,
+    InvoicingValidationError,
+    NotFoundError,
+)
 from app.modules.audit import messages
 from app.modules.contracts.models import Subcontractor
 from app.modules.customers.models import Customer
@@ -126,8 +131,13 @@ def _raise_blockers(*bloklar: list[str]) -> None:
 # --- Kapsam ve gövde referansları ---
 
 
+def _invoice_visible(invoice: Invoice, gorunen: list[uuid.UUID]) -> bool:
+    """`project_id` NULL fatura (şirket geneli) modül izniyle GÖRÜNÜR (§6)."""
+    return invoice.project_id is None or invoice.project_id in gorunen
+
+
 async def visible_invoice(
-    session: AsyncSession, actor: User, invoice_id: uuid.UUID, *, for_update: bool = False
+    session: AsyncSession, actor: User, invoice_ref: uuid.UUID | str, *, for_update: bool = False
 ) -> Invoice:
     """Tekil erişimin TEK kapısı — okuma da yazma da buradan geçer.
 
@@ -136,16 +146,49 @@ async def visible_invoice(
     bir işlem giremez.
 
     Projesi görünür kümede değilse **404** döner ve gövde var OLMAYAN
-    kimliğinkiyle BİREBİR AYNIDIR. `project_id` NULL fatura (şirket geneli)
-    modül izniyle GÖRÜNÜR (§6).
+    kimliğinkiyle BİREBİR AYNIDIR.
+
+    ## URL-4 — `invoice_no` ile açılış ve BELİRSİZLİK (yönetim kararı)
+
+    `invoice_no` şirket geneli tekil DEĞİLDİR (`uq_invoices_no_direction` yön
+    başına tekil). Numarayla gelen istekte:
+    **0 isabet -> 404 · 1 isabet -> döner · 2 isabet -> 409.**
+    Sessizce biri SEÇİLMEZ.
+
+    🔴 GÖRÜNÜRLÜK SÜZGECİ SAYMADAN ÖNCE UYGULANIR ve bu SIRA GÜVENLİK
+    GEREĞİDİR, üslup değil: önce sayılsaydı, kullanıcının GÖREMEDİĞİ bir
+    faturanın varlığı 409'un kendisiyle sızardı (görünen tek faturası olan
+    kullanıcı, "demek ki bir tane daha var" bilgisini alırdı). Süzgeçten sonra
+    sayınca, göremediği fatura onun için HİÇ YOKTUR ve tek isabetini normal
+    şekilde açar.
     """
-    invoice = await repository.get_invoice(session, invoice_id, for_update=for_update)
-    if invoice is None:
-        raise NotFoundError(guards.INVOICE_MISSING)
-    if invoice.project_id is not None:
-        if invoice.project_id not in await _visible_project_ids(session, actor):
+    if isinstance(invoice_ref, uuid.UUID):
+        invoice = await repository.get_invoice(session, invoice_ref, for_update=for_update)
+        if invoice is None:
             raise NotFoundError(guards.INVOICE_MISSING)
-    return invoice
+        if not _invoice_visible(invoice, await _visible_project_ids(session, actor)):
+            raise NotFoundError(guards.INVOICE_MISSING)
+        return invoice
+
+    adaylar = await repository.list_invoices_by_no(session, invoice_ref)
+    gorunen = await _visible_project_ids(session, actor)
+    gorunur = [fatura for fatura in adaylar if _invoice_visible(fatura, gorunen)]
+    if not gorunur:
+        raise NotFoundError(guards.INVOICE_MISSING)
+    if len(gorunur) > 1:
+        raise ConflictError(guards.INVOICE_NO_AMBIGUOUS)
+    if not for_update:
+        return gorunur[0]
+    # Belirsizlik ÇÖZÜLDÜKTEN sonra kilit KİMLİKLE alınır: numara üzerinden
+    # kilitlemek, tek satır seçilmeden birden çok satırı kilitlerdi.
+    # (Bugün bu dal ÜRETİMDE ateşlenmez — `for_update` yalnız yazma yollarından
+    # gelir ve onlar URL-2 kararı 3 gereği `uuid.UUID` taşır. Yine de yazılıdır:
+    # eksik bırakılsaydı, ileride bir yazma yolu anahtar kabul ettiği gün
+    # SESSİZCE KİLİTSİZ koşardı.)
+    locked = await repository.get_invoice(session, gorunur[0].id, for_update=True)
+    if locked is None:
+        raise NotFoundError(guards.INVOICE_MISSING)
+    return locked
 
 
 async def _assert_references(

@@ -17,6 +17,7 @@ from app.core.deps import get_current_user
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
+from app.core.slug import parse_ref
 from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
@@ -91,11 +92,19 @@ async def list_contracts_endpoint(
     dependencies=[_VIEW],
 )
 async def get_employer_contract_endpoint(
-    project_id: uuid.UUID,
+    project_id: str,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> EmployerContractDetail:
-    return await service.get_employer_contract_detail(session, user, project_id)
+    """URL-4 — proje anahtarı UUID **ya da** PROJE SLUG'ı olabilir
+    (`/sozlesmeler/isveren/kopru-guclendirme`).
+
+    🔴 Ayrı bir sözleşme slug'ı AÇILMADI ve `project_contracts` tablosuna kolon
+    EKLENMEDİ: bu ucun kimliği zaten PROJEDİR (`project_contracts` PK'sı
+    `project_id`) ve projenin slug'ı URL-2'de zaten üretilmiştir. İkinci bir
+    slug aynı kaydı iki adla anılır kılardı.
+    """
+    return await service.get_employer_contract_detail(session, user, parse_ref(project_id))
 
 
 @router.get(
@@ -104,11 +113,12 @@ async def get_employer_contract_endpoint(
     dependencies=[_VIEW],
 )
 async def get_employer_contract_items_endpoint(
-    project_id: uuid.UUID,
+    project_id: str,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> EmployerContractItemsResponse:
-    return await service.get_employer_contract_items(session, user, project_id)
+    """URL-4 — proje anahtarı UUID ya da proje slug'ı (ekranın ikinci isteği)."""
+    return await service.get_employer_contract_items(session, user, parse_ref(project_id))
 
 
 @router.get(
@@ -117,11 +127,16 @@ async def get_employer_contract_items_endpoint(
     dependencies=[_VIEW],
 )
 async def get_contract_distribution_endpoint(
-    project_id: uuid.UUID,
+    project_id: str,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> ContractDistributionResponse:
-    return await distribution.build_distribution(session, user, project_id)
+    """URL-4 — proje anahtarı UUID ya da proje slug'ı (ekranın üçüncü isteği).
+
+    🔴 PUT ikizi (`save_contract_distribution`) `uuid.UUID` KALIR — URL-2
+    kararı 3: yalnız OKUMA uçları anahtar kabul eder.
+    """
+    return await distribution.build_distribution(session, user, parse_ref(project_id))
 
 
 @router.put(
@@ -480,11 +495,18 @@ async def list_subcontractor_contracts_endpoint(
     dependencies=[_VIEW],
 )
 async def get_subcontractor_contract_endpoint(
-    contract_id: uuid.UUID,
+    contract_id: str,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> SubcontractorContractDetail:
-    contract = await subcontracts.get_subcontractor_contract(session, user, contract_id)
+    """URL-4 — yol parametresi UUID **ya da** sözleşme slug'ı kabul eder
+    (`/sozlesmeler/taseron/tsz-2026-004`). Yol adı `contract_id` KALIR.
+
+    Görünmeyen projedeki sözleşmenin slug'ı da **404** alır: `_visible_contract`
+    çözümden SONRA `_visible_project`e uğrar ve gövde var olmayan kaydınkiyle
+    BİREBİR aynıdır (IDOR — slug TAHMİN EDİLEBİLİR, UUID değil).
+    """
+    contract = await subcontracts.get_subcontractor_contract(session, user, parse_ref(contract_id))
     return await subcontracts.to_subcontract_detail(session, contract)
 
 

@@ -32,6 +32,13 @@ hiçliğe çevirir; yüzeyi bilerek değiştiren bir dilim referansı
 2. **Saf yardımcıların ÇIKTILARI:** DB'ye dokunmayan her yardımcı, sınır
    değerleriyle fiilen KOŞTURULUR ve sonucu (ya da hata metni) donar. Yalnız
    imza dondurulsaydı `<` -> `<=` gibi bir mutasyon GÖRÜNMEZ olurdu.
+## 🔴 URL-4 (2026-09-05) — IKI satir ELLE guncellendi
+
+`get_equipment_or_404` ve `visible_equipment`in ucuncu parametresi
+`equipment_id: uuid.UUID`ten `equipment_ref: uuid.UUID | str`e GENISLETILDI:
+okuma ucu artik ad slug'i ile de cozuluyor. Tip DARALMADI, GENISLEDI — UUID
+geciren her mevcut cagiran aynen calisir. Bekci degisimi DOGRU YAKALADI ve
+dosya yeniden uretilmedi, iki satir elle degistirildi.
 """
 
 from __future__ import annotations

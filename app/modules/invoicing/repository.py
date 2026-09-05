@@ -201,6 +201,26 @@ async def get_invoice(
     return await session.get(Invoice, invoice_id, with_for_update=True, populate_existing=True)
 
 
+async def list_invoices_by_no(session: AsyncSession, invoice_no: str) -> list[Invoice]:
+    """URL-4: numaraya UYAN TUM faturalar — `direction` SUZULMEZ.
+
+    🔴 Suzmek belirsizligi GORUNMEZ kilardi: `uq_invoices_no_direction` yon
+    basina tekildir, yani ayni numara iki yonde birden bulunabilir. Cagiran
+    (`visible_invoice`) once GORUNURLUK suzgecini uygular, SONRA kalan sayiya
+    bakar (0 -> 404, 1 -> doner, 2 -> 409).
+
+    Sira `direction, id` ile DETERMINISTIKTIR: 409 firlatilmadan once liste
+    uzunlugu okunur, yani sira bir SECIME donusmez — ama testin ve gunlugun
+    tekrarlanabilir olmasi icin yine de sabitlenir.
+    """
+    stmt = (
+        select(Invoice)
+        .where(Invoice.invoice_no == invoice_no)
+        .order_by(Invoice.direction, Invoice.id)
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
 async def load_lines(session: AsyncSession, invoice_id: uuid.UUID) -> list[InvoiceLine]:
     """Kalemler HER ZAMAN `sort_order` sırasında okunur.
 

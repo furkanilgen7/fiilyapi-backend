@@ -168,6 +168,9 @@ class SubcontractorProgressPaymentListItem(BaseModel):
     """L112-180 liste satırı."""
 
     id: uuid.UUID
+    # URL-4: URL'de taşınacak okunabilir anahtar. `None` olabilir (adı
+    # slug'lanamayan kayıt) — istemci `slug ?? id` kullanır (`routes.ts`).
+    slug: str | None = None
     contract_id: uuid.UUID
     project_id: uuid.UUID
     project_name: str
@@ -243,6 +246,9 @@ class SubcontractorProgressPaymentDetail(BaseModel):
     """`GET /subcontractor-progress-payments/{id}` — O ekranının başlığı + satırları."""
 
     id: uuid.UUID
+    # URL-4: URL'de taşınacak okunabilir anahtar. `None` olabilir (adı
+    # slug'lanamayan kayıt) — istemci `slug ?? id` kullanır (`routes.ts`).
+    slug: str | None = None
     contract_id: uuid.UUID
     project_id: uuid.UUID
     project_name: str

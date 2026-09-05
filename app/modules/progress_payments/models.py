@@ -67,6 +67,14 @@ class ProgressPayment(Base):
         CheckConstraint(
             "default_coefficient > 0", name="ck_progress_payments_coefficient_positive"
         ),
+        # URL-4: slug GLOBAL tekildir ve indeks KISMIDIR (`WHERE slug IS NOT NULL`)
+        # — kolon nullable oldugu icin coklu NULL serbest kalmak ZORUNDA.
+        Index(
+            "uq_progress_payments_slug",
+            "slug",
+            unique=True,
+            postgresql_where=text("slug IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -78,6 +86,14 @@ class ProgressPayment(Base):
     )
     # Servis uretir: proje ici maks+1 (proje kodu deseni, kalici karar 9).
     sequence_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    # URL-4: okunabilir URL kimligi. Anahtar BILESIKTIR (`uq_progress_payments_
+    # project_sequence` = proje + sira) — bu yuzden URL-2 karar 1'i korumak icin
+    # bilesen AYRISTIRILMAZ, `<proje-slug>-<sira>` olarak URETILIP SAKLANIR
+    # (`kopru-guclendirme-5`). Mockup olculdu (`Ekran 15 - İşveren Hakedişi`:
+    # h1 `İşveren Hakedişi #5`, alt satir `Güneşkent A-Blok · …`) — insan adi
+    # tam olarak PROJE + SIRA'dir.
+    # Projesinin slug'i NULL ise bu da NULL kalir: uydurma taban yazilmaz.
+    slug: Mapped[str | None] = mapped_column(String(160), nullable=True)
     # Kullanicinin doldurdugu alan — taslakta bos (kalici karar 4).
     period_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     period_month: Mapped[int | None] = mapped_column(Integer, nullable=True)

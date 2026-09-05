@@ -20,6 +20,7 @@ from app.core.deps import get_current_user
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
+from app.core.slug import parse_ref
 from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
@@ -146,11 +147,16 @@ async def subcontractor_progress_payment_summary_endpoint(
     dependencies=[_VIEW],
 )
 async def get_subcontractor_progress_payment_endpoint(
-    payment_id: uuid.UUID,
+    payment_id: str,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> SubcontractorProgressPaymentDetail:
-    return await read.get_detail(session, user, payment_id)
+    """URL-4 — yol parametresi UUID **ya da** `<sözleşme-slug>-<sıra>` slug'ı
+    kabul eder (`/hakedisler/taseron/tsz-2025-001-48`). Mockup ölçüldü:
+    `Taşeron Hakediş Oluştur` breadcrumb'ı `Akın İnşaat TSZ-2025-001 / Hakediş #48`.
+    Yazma uçları `uuid.UUID` KALIR (URL-2 kararı 3).
+    """
+    return await read.get_detail(session, user, parse_ref(payment_id))
 
 
 @router.post(

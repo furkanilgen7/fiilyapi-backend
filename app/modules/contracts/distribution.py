@@ -138,14 +138,15 @@ def _site_summaries(
 
 
 async def build_distribution(
-    session: AsyncSession, actor: User, project_id: uuid.UUID
+    session: AsyncSession, actor: User, project_ref: uuid.UUID | str
 ) -> ContractDistributionResponse:
-    project = await _visible_project(session, actor, project_id)
+    project = await _visible_project(session, actor, project_ref)
     if project.contract is None:
         raise NotFoundError(CONTRACT_MISSING)
 
-    sites = await sites_repository.list_sites_for_project(session, project_id)
-    groups = await repository.list_employer_groups(session, project_id)
+    # `project.id` — `project_ref` slug olabilir (URL-4).
+    sites = await sites_repository.list_sites_for_project(session, project.id)
+    groups = await repository.list_employer_groups(session, project.id)
     all_items = [item for group in groups for item in group.items]
 
     boq_rows = await repository.list_boq_items_for_sites(session, [site.id for site in sites])

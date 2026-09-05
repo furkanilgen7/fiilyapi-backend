@@ -25,6 +25,12 @@ kolon eklerse referans `python -m tests.test_tbequip_sema_anlik_goruntu` ile
 tazelenir ve **fark incelemede görünür** — sessizce değil. Şemayı değiştiren
 dilim zaten bir migration yazıyordur; bu dosyayı da tazelemek o migration'ın
 kapsamının parçasıdır.
+## 🔴 URL-4 (2026-09-05) — anlik goruntu YALNIZ EKLEME ile guncellendi
+
+`equipment.slug` ve `equipment_rental_invoices.slug` kolonlari + iki kismi
+benzersiz indeks eklendi (okunabilir URL, `f3a7c9e1d5b2`). Fark ALINDI ve
+YALNIZ DORT SATIRIN EKLENDIGI, HICBIR SATIRIN KAYBOLMADIGI dogrulandiktan
+SONRA referans yeniden uretildi — korukorune "yesillenene kadar uret" YAPILMADI.
 """
 
 from __future__ import annotations

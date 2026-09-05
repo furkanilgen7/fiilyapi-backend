@@ -35,6 +35,7 @@ from typing import NamedTuple
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import EquipmentValidationError, NotFoundError
+from app.core.slug import allocate_slug
 from app.core.timezone import today
 from app.modules.equipment import cost, repository
 from app.modules.equipment.models import (
@@ -77,13 +78,13 @@ yoktur ve şemaya konsaydı hiç kaydedilemezdi; CHECK'e konsaydı kullanıcı T
 bir mesaj yerine anlaşılmaz bir bütünlük hatası alırdı (İK-3 S3 emsali)."""
 
 
-async def get_equipment_or_404(session: AsyncSession, equipment_id: uuid.UUID) -> Equipment:
+async def get_equipment_or_404(session: AsyncSession, equipment_ref: uuid.UUID | str) -> Equipment:
     """Kapsam dışı ya da olmayan kayıt AYNI cevabı verir: 404 (spec §4).
 
     Kapsam denetimi (K20) çağıran uçtadır ve 403 DEĞİL 404 üretir — "görmediğin
     kaydın varlığını da öğrenme" kuralı (IDOR deseni, P2).
     """
-    equipment = await repository.get_equipment(session, equipment_id)
+    equipment = await repository.get_equipment(session, equipment_ref)
     if equipment is None:
         raise NotFoundError(EQUIPMENT_MISSING)
     return equipment
@@ -103,7 +104,7 @@ async def _is_visible_site(session: AsyncSession, actor: User, site_id: uuid.UUI
 
 
 async def visible_equipment(
-    session: AsyncSession, actor: User, equipment_id: uuid.UUID
+    session: AsyncSession, actor: User, equipment_ref: uuid.UUID | str
 ) -> Equipment:
     """🔴 Görünürlüğün TEK kapısı — liste dışındaki HER uç (detay, PATCH ve
     ileride çalışma/yakıt kayıtları) buradan geçer.
@@ -112,7 +113,7 @@ async def visible_equipment(
     projeyi görmeyen kullanıcı da 404 alır, yoksa yetkili hesap bir keşif
     aracına dönerdi (ST IDOR dersi).
     """
-    equipment = await get_equipment_or_404(session, equipment_id)
+    equipment = await get_equipment_or_404(session, equipment_ref)
     if not await _is_visible_site(session, actor, equipment.site_id):
         raise NotFoundError(EQUIPMENT_MISSING)
     return equipment
@@ -212,6 +213,10 @@ async def create_equipment(
     _assert_purchase_amount(data.ownership, data.purchase_amount)
     _assert_rental_period(data.rental_start_date, data.rental_end_date)
     equipment = Equipment(**data.model_dump())
+    # URL-4: slug OLUŞTURULURKEN üretilir ve ad değişince DEĞİŞMEZ (URL-2
+    # kararı 4) — paylaşılmış bir bağlantı makine yeniden adlandırıldı diye
+    # ölmez. Bu yüzden `update_equipment` slug'a DOKUNMAZ.
+    equipment.slug = await allocate_slug(session, data.name, Equipment.slug)
     session.add(equipment)
     await session.flush()
     return equipment, f"Ekipman eklendi: {equipment.name}"

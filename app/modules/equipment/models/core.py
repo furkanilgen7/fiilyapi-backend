@@ -16,6 +16,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -126,10 +127,22 @@ class Equipment(Base):
             "OR rental_end_date >= rental_start_date",
             name="ck_equipment_rental_period_order",
         ),
+        # URL-4: slug GLOBAL tekildir ve indeks KISMIDIR (`WHERE slug IS NOT NULL`)
+        # — kolon nullable oldugu icin coklu NULL serbest kalmak ZORUNDA.
+        Index(
+            "uq_equipment_slug",
+            "slug",
+            unique=True,
+            postgresql_where=text("slug IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
+    # URL-4: okunabilir URL kimligi (`/makine/beko-loder-1`). Kaynak `name`dir —
+    # `plate_no` NULLABLE oldugu icin anahtar OLAMAZ (olculdu: `plate_no:140`).
+    # NULLABLE: adi slug'lanamayan makine (`"???"`) UUID'siyle yasar (URL-2 karar 5).
+    slug: Mapped[str | None] = mapped_column(String(160), nullable=True)
     category: Mapped[EquipmentCategory] = mapped_column(
         Enum(EquipmentCategory, name="equipment_category"), nullable=False, index=True
     )

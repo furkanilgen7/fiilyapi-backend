@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel, can_delete
 from app.core.errors import ConflictError, DeleteNotAllowedError, NotFoundError, SiteValidationError
+from app.core.slug import allocate_slug, composite_slug
 from app.core.timezone import today
 from app.modules.contracts.models import EmployerContractItem
 from app.modules.progress_payments import calculations, guards, lines, repository
@@ -84,14 +85,17 @@ async def _visible_project(session: AsyncSession, actor: User, project_id: uuid.
 
 
 async def _visible_payment(
-    session: AsyncSession, actor: User, payment_id: uuid.UUID
+    session: AsyncSession, actor: User, payment_ref: uuid.UUID | str
 ) -> tuple[ProgressPayment, Project]:
     """Dolaylı kimlikle erişim de görünürlük süzgecinden geçmek ZORUNDA — kayıt
     var ama projesi görünmüyorsa da `_visible_project` AYNI `PAYMENT_MISSING`
     404'ünü fırlatır (403 sızdırmaz, spec §9.0)."""
-    payment = await repository.get_payment(session, payment_id)
+    payment = await repository.get_payment(session, payment_ref)
     if payment is None:
         raise NotFoundError(guards.PAYMENT_MISSING)
+    # 🔴 Kapsam süzgeci ÇÖZÜMDEN SONRA ama HER ZAMAN koşar: slug TAHMİN
+    # EDİLEBİLİR (`kopru-guclendirme-5`), UUID değil. Görünmeyen projedeki
+    # hakedişin slug'ı, var olmayan slug'la BİREBİR AYNI 404'ü alır.
     project = await _visible_project(session, actor, payment.project_id)
     return payment, project
 
@@ -239,6 +243,17 @@ async def create(
         retainage_pct=contract.retainage_pct,
         default_coefficient=default_coefficient,
         created_by=actor.id,
+    )
+    # URL-4: bileşik anahtarın (`project_id`, `sequence_no`) SAKLANAN karşılığı.
+    # Proje slug'ı NULL ise (adı slug'lanamayan proje) `allocate_slug` `None`
+    # döner ve hakediş UUID'siyle yaşar — uydurma taban YAZILMAZ.
+    # Proje sonradan yeniden adlandırılsa bile bu slug DEĞİŞMEZ (URL-2 kararı 4).
+    # `composite_slug`: SIRA NUMARASI kirpmada KAYBOLMAZ (K2). Naif
+    # `f"{slug}-{seq}"` uzun proje adinda `-{seq}`i sessizce dusururdu.
+    payment.slug = await allocate_slug(
+        session,
+        composite_slug(project.slug, sequence_no),
+        ProgressPayment.slug,
     )
     if data.lines:
         payment.lines = await lines.build_lines(
@@ -434,6 +449,9 @@ async def list_payments(
         items.append(
             ProgressPaymentListItem(
                 id=payment.id,
+                # 🔴 LİSTEYE DE GİRER: `hakedisler/[paymentId]` bağlantısını
+                # üreten şema budur (URL-2'nin "seçici slug üretemedi" tuzağı).
+                slug=payment.slug,
                 project_id=payment.project_id,
                 project_name=project.name,
                 sequence_no=payment.sequence_no,
@@ -587,7 +605,7 @@ async def _progress_block(
 
 
 async def get_detail(
-    session: AsyncSession, actor: User, payment_id: uuid.UUID
+    session: AsyncSession, actor: User, payment_ref: uuid.UUID | str
 ) -> ProgressPaymentDetail:
     """Kapsam süzgeci + detay inşası (spec §9.0, §9.1).
 
@@ -596,7 +614,7 @@ async def get_detail(
     çağırır — aksi hâlde `visible_projects` kapsam sorgusu istek başına İKİ KEZ
     koşardı.
     """
-    payment, project = await _visible_payment(session, actor, payment_id)
+    payment, project = await _visible_payment(session, actor, payment_ref)
     return await build_detail(session, payment, project)
 
 
@@ -627,6 +645,7 @@ async def build_detail(
 
     return ProgressPaymentDetail(
         id=payment.id,
+        slug=payment.slug,
         project_id=payment.project_id,
         project_name=project.name,
         sequence_no=payment.sequence_no,

@@ -7247,6 +7247,17 @@
             ],
             "title": "Site Id"
           },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
+          },
           "status": {
             "$ref": "#/components/schemas/EquipmentStatus"
           },
@@ -9939,6 +9950,19 @@
             ],
             "title": "Site Id"
           },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "URL-4 — URL'de taşınacak okunabilir anahtar; `invoice_no`nun kendisi.\n\nAYRI BİR `slug` KOLONU AÇILMADI: `invoice_no` NOT NULL'dır ve zaten\nyön başına tekildir; ikinci bir kolon aynı bilgiyi iki yerde tutar ve\nmigration doğururdu. Türev olduğu için LİSTE ve DETAY otomatik olarak\nAYNI değeri taşır — `InvoiceResponse` ikisinin de şemasıdır, yani\nURL-2'nin \"liste şemasına slug eklenmedi\" tuzağı burada YAPISAL olarak\nimkânsızdır.\n\n`None` olabilir: numara yol segmentine giremeyecek bir karakter\ntaşıyorsa (GELEN faturada `invoice_no` SERBEST METİNDİR — `2026/0001`\nyazılabilir) istemci `slug ?? id` ile UUID'ye düşer.",
+            "readOnly": true,
+            "title": "Slug"
+          },
           "status": {
             "$ref": "#/components/schemas/InvoiceStatus"
           },
@@ -10058,7 +10082,8 @@
           "created_by_id",
           "created_at",
           "updated_at",
-          "lines"
+          "lines",
+          "slug"
         ],
         "title": "InvoiceDetailResponse",
         "type": "object"
@@ -10523,6 +10548,19 @@
             ],
             "title": "Site Id"
           },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "URL-4 — URL'de taşınacak okunabilir anahtar; `invoice_no`nun kendisi.\n\nAYRI BİR `slug` KOLONU AÇILMADI: `invoice_no` NOT NULL'dır ve zaten\nyön başına tekildir; ikinci bir kolon aynı bilgiyi iki yerde tutar ve\nmigration doğururdu. Türev olduğu için LİSTE ve DETAY otomatik olarak\nAYNI değeri taşır — `InvoiceResponse` ikisinin de şemasıdır, yani\nURL-2'nin \"liste şemasına slug eklenmedi\" tuzağı burada YAPISAL olarak\nimkânsızdır.\n\n`None` olabilir: numara yol segmentine giremeyecek bir karakter\ntaşıyorsa (GELEN faturada `invoice_no` SERBEST METİNDİR — `2026/0001`\nyazılabilir) istemci `slug ?? id` ile UUID'ye düşer.",
+            "readOnly": true,
+            "title": "Slug"
+          },
           "status": {
             "$ref": "#/components/schemas/InvoiceStatus"
           },
@@ -10641,7 +10679,8 @@
           "total",
           "created_by_id",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "slug"
         ],
         "title": "InvoiceResponse",
         "type": "object"
@@ -15748,6 +15787,17 @@
             ],
             "title": "Sgk No"
           },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
+          },
           "source": {
             "$ref": "#/components/schemas/WorkerSource"
           },
@@ -16545,6 +16595,17 @@
             "title": "Sequence No",
             "type": "integer"
           },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
+          },
           "status": {
             "$ref": "#/components/schemas/ProgressPaymentStatus"
           },
@@ -16950,6 +17011,17 @@
           "sequence_no": {
             "title": "Sequence No",
             "type": "integer"
+          },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
           },
           "status": {
             "$ref": "#/components/schemas/ProgressPaymentStatus"
@@ -19919,6 +19991,17 @@
             ],
             "title": "Site Id"
           },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
+          },
           "status": {
             "$ref": "#/components/schemas/PurchaseRequestStatus"
           }
@@ -20120,6 +20203,17 @@
               }
             ],
             "title": "Site Id"
+          },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
           },
           "status": {
             "$ref": "#/components/schemas/PurchaseRequestStatus"
@@ -20593,6 +20687,17 @@
             ],
             "title": "Site Name"
           },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
+          },
           "status": {
             "$ref": "#/components/schemas/RentalInvoiceStatus"
           },
@@ -21021,6 +21126,17 @@
               }
             ],
             "title": "Site Name"
+          },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
           },
           "status": {
             "$ref": "#/components/schemas/RentalInvoiceStatus"
@@ -27692,6 +27808,17 @@
             ],
             "title": "Site Id"
           },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
+          },
           "start_date": {
             "anyOf": [
               {
@@ -28140,6 +28267,17 @@
               }
             ],
             "title": "Site Name"
+          },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
           },
           "status": {
             "$ref": "#/components/schemas/ContractStatus"
@@ -29058,6 +29196,17 @@
             "title": "Sequence No",
             "type": "integer"
           },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
+          },
           "status": {
             "$ref": "#/components/schemas/SubcontractorPaymentStatus"
           },
@@ -29464,6 +29613,17 @@
           "sequence_no": {
             "title": "Sequence No",
             "type": "integer"
+          },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
           },
           "status": {
             "$ref": "#/components/schemas/SubcontractorPaymentStatus"
@@ -40530,7 +40690,7 @@
     },
     "/equipment/rental-invoices/{invoice_id}": {
       "get": {
-        "description": "M5'in TAMAMI: tablo + tfoot + proje dağılımı (spec §4).\n\n🔴 K2: hiçbir sayı çalışma kaydından CANLI okunmaz — satırların KENDİ\nkolonlarından türer.",
+        "description": "M5'in TAMAMI: tablo + tfoot + proje dağılımı (spec §4).\n\n🔴 K2: hiçbir sayı çalışma kaydından CANLI okunmaz — satırların KENDİ\nkolonlarından türer.\n\nURL-4 — yol parametresi UUID **ya da** fatura no slug'ı kabul eder\n(`/makine/kira/lt2026080211`). Yazma uçları `uuid.UUID` KALIR.",
         "operationId": "get_rental_invoice_endpoint_equipment_rental_invoices__invoice_id__get",
         "parameters": [
           {
@@ -40538,7 +40698,6 @@
             "name": "invoice_id",
             "required": true,
             "schema": {
-              "format": "uuid",
               "title": "Invoice Id",
               "type": "string"
             }
@@ -41426,7 +41585,7 @@
     },
     "/equipment/{equipment_id}": {
       "get": {
-        "description": "Görünmeyen kayıt var olmayanla AYNI 404'ü döner (spec §4).",
+        "description": "Görünmeyen kayıt var olmayanla AYNI 404'ü döner (spec §4).\n\nURL-4 — yol parametresi UUID **ya da** ad slug'ı kabul eder\n(`/makine/beko-loder`). Yol adı `equipment_id` KALIR (URL-2 kararı 1);\nPATCH ucu `uuid.UUID` KALIR (kararı 3).",
         "operationId": "get_equipment_endpoint_equipment__equipment_id__get",
         "parameters": [
           {
@@ -41434,7 +41593,6 @@
             "name": "equipment_id",
             "required": true,
             "schema": {
-              "format": "uuid",
               "title": "Equipment Id",
               "type": "string"
             }
@@ -41545,7 +41703,6 @@
             "name": "equipment_id",
             "required": true,
             "schema": {
-              "format": "uuid",
               "title": "Equipment Id",
               "type": "string"
             }
@@ -42715,7 +42872,7 @@
         ]
       },
       "get": {
-        "description": "FGI/FGE detayı: başlık + kalemler + SAKLANAN toplamlar.\n\nGörünmeyen fatura var olmayanla AYNI 404'ü alır. Toplamlar okuma anında\nyeniden HESAPLANMAZ (K7): fatura donmuş bir belgedir.",
+        "description": "FGI/FGE detayı: başlık + kalemler + SAKLANAN toplamlar.\n\nGörünmeyen fatura var olmayanla AYNI 404'ü alır. Toplamlar okuma anında\nyeniden HESAPLANMAZ (K7): fatura donmuş bir belgedir.\n\nURL-4 — yol parametresi UUID **ya da** `invoice_no` kabul eder (yol adı\n`invoice_id` KALIR, URL-2 kararı 1). Numara iki yönde de kayıtlıysa ve\nikisi de KULLANICIYA GÖRÜNÜYORSA **409** döner: sessizce biri seçilmez.\n\n🔴 **KARDEŞ UÇLAR `uuid` KALIR** — sözleşme bu yol parametresi adı altında\nBİLEREK ASİMETRİKTİR: `GET /invoices/{invoice_id}` `string`, ama\n`…/{invoice_id}/payments` · `/approve` · `/send` · `/dispute` ·\n`/mark-collected` `uuid` bekler. Anahtar YALNIZCA **link üretimi ve detay\nokuması** içindir; istemci kardeş çağrılarda gövdeden dönen `id`yi\nkullanır (URL-2 kararı 3). Detay yanıtındaki `slug`ı bir eylem ucuna\ngeçirmek 422 verir — bu bir kusur değil, yazma yüzeyini tahmin edilebilir\nbir anahtara açmama kararının görünen yüzüdür.",
         "operationId": "get_invoice_endpoint_invoices__invoice_id__get",
         "parameters": [
           {
@@ -42723,7 +42880,6 @@
             "name": "invoice_id",
             "required": true,
             "schema": {
-              "format": "uuid",
               "title": "Invoice Id",
               "type": "string"
             }
@@ -42745,6 +42901,9 @@
           },
           "404": {
             "description": "Fatura bulunamadı"
+          },
+          "409": {
+            "description": "Fatura numarası hem gelen hem giden faturada kayıtlı"
           },
           "422": {
             "content": {
@@ -46562,6 +46721,7 @@
     },
     "/personnel/{personnel_id}": {
       "get": {
+        "description": "URL-4 — yol parametresi UUID **ya da** ad slug'ı kabul eder.\n\n🔴 Bu modülde PROJE KAPSAMLI bir görünürlük süzgeci YOKTUR (ölçüldü:\n`service/core.py`de `visible_*` kapısı yok) — personel kartı şirket\ngenelinde `personnel:view` iznine bağlıdır. Slug bu yüzden var olmayan bir\nsüzgeci DELMEZ; izinsiz kullanıcı slug'la da UUID'yle de aynı 403'ü alır.",
         "operationId": "get_personnel_endpoint_personnel__personnel_id__get",
         "parameters": [
           {
@@ -46569,7 +46729,6 @@
             "name": "personnel_id",
             "required": true,
             "schema": {
-              "format": "uuid",
               "title": "Personnel Id",
               "type": "string"
             }
@@ -46941,6 +47100,7 @@
         ]
       },
       "get": {
+        "description": "URL-4 — yol parametresi UUID **ya da** `<proje-slug>-<sıra>` slug'ı\nkabul eder (`/hakedisler/kopru-guclendirme-5`).\n\nBileşik anahtar (`project_id`, `sequence_no`) AYRIŞTIRILMAZ: slug\noluşturulurken ÜRETİLİP SAKLANIR, böylece yol şablonu `/{payment_id}`\nDEĞİŞMEZ (URL-2 kararı 1) ve `parse_ref` de değişmez.\nDurum geçişleri ve PATCH/DELETE `uuid.UUID` KALIR (kararı 3).",
         "operationId": "get_progress_payment_endpoint_progress_payments__payment_id__get",
         "parameters": [
           {
@@ -46948,7 +47108,6 @@
             "name": "payment_id",
             "required": true,
             "schema": {
-              "format": "uuid",
               "title": "Payment Id",
               "type": "string"
             }
@@ -47880,6 +48039,7 @@
     },
     "/projects/{project_id}/contract": {
       "get": {
+        "description": "URL-4 — proje anahtarı UUID **ya da** PROJE SLUG'ı olabilir\n(`/sozlesmeler/isveren/kopru-guclendirme`).\n\n🔴 Ayrı bir sözleşme slug'ı AÇILMADI ve `project_contracts` tablosuna kolon\nEKLENMEDİ: bu ucun kimliği zaten PROJEDİR (`project_contracts` PK'sı\n`project_id`) ve projenin slug'ı URL-2'de zaten üretilmiştir. İkinci bir\nslug aynı kaydı iki adla anılır kılardı.",
         "operationId": "get_employer_contract_endpoint_projects__project_id__contract_get",
         "parameters": [
           {
@@ -47887,7 +48047,6 @@
             "name": "project_id",
             "required": true,
             "schema": {
-              "format": "uuid",
               "title": "Project Id",
               "type": "string"
             }
@@ -47934,6 +48093,7 @@
     },
     "/projects/{project_id}/contract/distribution": {
       "get": {
+        "description": "URL-4 — proje anahtarı UUID ya da proje slug'ı (ekranın üçüncü isteği).\n\n🔴 PUT ikizi (`save_contract_distribution`) `uuid.UUID` KALIR — URL-2\nkararı 3: yalnız OKUMA uçları anahtar kabul eder.",
         "operationId": "get_contract_distribution_endpoint_projects__project_id__contract_distribution_get",
         "parameters": [
           {
@@ -47941,7 +48101,6 @@
             "name": "project_id",
             "required": true,
             "schema": {
-              "format": "uuid",
               "title": "Project Id",
               "type": "string"
             }
@@ -48115,6 +48274,7 @@
     },
     "/projects/{project_id}/contract/items": {
       "get": {
+        "description": "URL-4 — proje anahtarı UUID ya da proje slug'ı (ekranın ikinci isteği).",
         "operationId": "get_employer_contract_items_endpoint_projects__project_id__contract_items_get",
         "parameters": [
           {
@@ -48122,7 +48282,6 @@
             "name": "project_id",
             "required": true,
             "schema": {
-              "format": "uuid",
               "title": "Project Id",
               "type": "string"
             }
@@ -50349,7 +50508,7 @@
         ]
       },
       "get": {
-        "description": "FST detayı: başlık + kalemler + TÜREVLER (satır tutarı · tahmini toplam ·\n\"Mevcut Stok\"). Görünmeyen talep var olmayanla AYNI 404'ü alır.",
+        "description": "FST detayı: başlık + kalemler + TÜREVLER (satır tutarı · tahmini toplam ·\n\"Mevcut Stok\"). Görünmeyen talep var olmayanla AYNI 404'ü alır.\n\nURL-4 — yol parametresi UUID **ya da** `request_no` kabul eder.\n🔴 YOL ADI `request_id` OLARAK KALIR (URL-2 kararı 1): şablon değişmezse\nüretilmiş istemcinin yol anahtarı da değişmez; değişen yalnız TİPTİR\n(`uuid` -> `string`).\n\n🔴 **KARDEŞ UÇLAR `uuid` KALIR** — sözleşme bu yol parametresi adı altında\nBİLEREK ASİMETRİKTİR: bu uç `string`, ama `…/{request_id}/quotes` ·\n`/select-and-order` ve tüm PATCH/DELETE/durum geçişleri `uuid` bekler.\nAnahtar YALNIZCA **link üretimi ve detay okuması** içindir; istemci kardeş\nçağrılarda gövdeden dönen `id`yi kullanır (URL-2 kararı 3).",
         "operationId": "get_purchase_request_endpoint_purchase_requests__request_id__get",
         "parameters": [
           {
@@ -50357,7 +50516,6 @@
             "name": "request_id",
             "required": true,
             "schema": {
-              "format": "uuid",
               "title": "Request Id",
               "type": "string"
             }
@@ -55587,6 +55745,7 @@
         ]
       },
       "get": {
+        "description": "URL-4 — yol parametresi UUID **ya da** sözleşme slug'ı kabul eder\n(`/sozlesmeler/taseron/tsz-2026-004`). Yol adı `contract_id` KALIR.\n\nGörünmeyen projedeki sözleşmenin slug'ı da **404** alır: `_visible_contract`\nçözümden SONRA `_visible_project`e uğrar ve gövde var olmayan kaydınkiyle\nBİREBİR aynıdır (IDOR — slug TAHMİN EDİLEBİLİR, UUID değil).",
         "operationId": "get_subcontractor_contract_endpoint_subcontractor_contracts__contract_id__get",
         "parameters": [
           {
@@ -55594,7 +55753,6 @@
             "name": "contract_id",
             "required": true,
             "schema": {
-              "format": "uuid",
               "title": "Contract Id",
               "type": "string"
             }
@@ -56452,6 +56610,7 @@
         ]
       },
       "get": {
+        "description": "URL-4 — yol parametresi UUID **ya da** `<sözleşme-slug>-<sıra>` slug'ı\nkabul eder (`/hakedisler/taseron/tsz-2025-001-48`). Mockup ölçüldü:\n`Taşeron Hakediş Oluştur` breadcrumb'ı `Akın İnşaat TSZ-2025-001 / Hakediş #48`.\nYazma uçları `uuid.UUID` KALIR (URL-2 kararı 3).",
         "operationId": "get_subcontractor_progress_payment_endpoint_subcontractor_progress_payments__payment_id__get",
         "parameters": [
           {
@@ -56459,7 +56618,6 @@
             "name": "payment_id",
             "required": true,
             "schema": {
-              "format": "uuid",
               "title": "Payment Id",
               "type": "string"
             }

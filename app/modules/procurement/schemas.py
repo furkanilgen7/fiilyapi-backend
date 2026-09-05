@@ -296,6 +296,13 @@ class PurchaseRequestBase(BaseModel):
 
     id: uuid.UUID
     request_no: str
+    # URL-4: URL'de tasinacak okunabilir anahtar (`/satinalma/talepler/FST-2026-001`).
+    # `request_no`nun KENDISIDIR — ayri bir slug kolonu ACILMADI cunku bu kolon
+    # ZATEN `unique=True` ve NOT NULL'dur (`models.py:201`), yani migration
+    # gerektirmeden sirket geneli tekil bir anahtar sunar.
+    # `None` olabilir: numara URL'e giremeyecek bir karakter tasirsa (`url_safe_key`)
+    # istemci `slug ?? id` ile UUID'ye duser.
+    slug: str | None = None
     request_date: date
     priority: PurchasePriority
     project_id: uuid.UUID

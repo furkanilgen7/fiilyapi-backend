@@ -23,6 +23,7 @@ from app.core.errors import (
     NotFoundError,
     SiteValidationError,
 )
+from app.core.slug import allocate_slug
 from app.modules.contracts import guards, repository
 from app.modules.contracts.models import (
     ContractStatus,
@@ -158,6 +159,16 @@ async def create_subcontractor_contract(
         is_draft=data.is_draft,
         created_by=actor.id,
     )
+    # URL-4: slug tabanı ÖNCE `contract_no`dur (mockup ÖLÇÜLDÜ — `Form -
+    # Sözleşme Oluştur.dc.html:90`de `Sözleşme No` ZORUNLU alandır ve kolon
+    # `uq_subcontractor_contracts_contract_no` kısmi indeksiyle doldurulduğunda
+    # ŞİRKET GENELİ TEKİLDİR). Kolon yine de nullable'dır (taslak desteği), bu
+    # yüzden boş numarada taban ad + iş kategorisine düşer; ikisi de boşsa slug
+    # NULL kalır ve kayıt UUID'siyle yaşar.
+    # Slug OLUŞTURULURKEN üretilir ve numara/ad değişince DEĞİŞMEZ (URL-2 kararı 4).
+    contract.slug = await allocate_slug(
+        session, _contract_slug_base(contract), SubcontractorContract.slug
+    )
     session.add(contract)
     await session.flush()
     for index, item in enumerate(data.items):
@@ -178,8 +189,21 @@ async def create_subcontractor_contract(
     return contract, project
 
 
+def _contract_slug_base(contract: SubcontractorContract) -> str | None:
+    """Taşeron sözleşmesinin slug TABANI: `contract_no`, yoksa ad + iş kategorisi.
+
+    İkisi de boşsa `None` döner ve `allocate_slug` slug ÜRETMEZ — uydurulmuş bir
+    taban (`sozlesme`) yazmak her taslakta çakışır ve hiçbir okunabilirlik
+    kazandırmazdı (URL-2 `slug.py` docstring'i, "Boş slug").
+    """
+    if contract.contract_no and contract.contract_no.strip():
+        return contract.contract_no
+    parcalar = [p for p in (contract.subcontractor_name, contract.work_category) if p and p.strip()]
+    return " ".join(parcalar) if parcalar else None
+
+
 async def _visible_contract(
-    session: AsyncSession, actor: User, contract_id: uuid.UUID
+    session: AsyncSession, actor: User, contract_ref: uuid.UUID | str
 ) -> tuple[SubcontractorContract, Project]:
     """Sözleşme -> proje. Dolaylı kimlikle erişim de görünürlük süzgecinden
 
@@ -187,7 +211,7 @@ async def _visible_contract(
     Görünmeyen projedeki gerçek kayıt ile var olmayan kayıt AYNI 404 gövdesini
     döner (spec §6, IDOR).
     """
-    contract = await repository.get_subcontractor_contract(session, contract_id)
+    contract = await repository.get_subcontractor_contract(session, contract_ref)
     if contract is None:
         raise NotFoundError(guards.CONTRACT_MISSING)
     project = await _visible_project(session, actor, contract.project_id, guards.CONTRACT_MISSING)
@@ -195,9 +219,9 @@ async def _visible_contract(
 
 
 async def get_subcontractor_contract(
-    session: AsyncSession, actor: User, contract_id: uuid.UUID
+    session: AsyncSession, actor: User, contract_ref: uuid.UUID | str
 ) -> SubcontractorContract:
-    contract, _ = await _visible_contract(session, actor, contract_id)
+    contract, _ = await _visible_contract(session, actor, contract_ref)
     return contract
 
 
@@ -242,6 +266,11 @@ async def list_subcontractor_contracts(
         items=[
             SubcontractorContractListItem(
                 id=contract.id,
+                # 🔴 LİSTEYE DE GİRER: bu uç `sozlesmeler/taseron/[contractId]`
+                # bağlantısını üreten şemadır. URL-2'de `SiteOptionListResponse`e
+                # slug EKLENMEDİĞİ için seçici slug üretememişti (`routes.ts:34-45`
+                # kuralı) — aynı yarım göç tekrarlanmaz.
+                slug=contract.slug,
                 contract_no=contract.contract_no,
                 subcontractor_name=contract.subcontractor_name,
                 work_category=contract.work_category,
@@ -515,6 +544,14 @@ async def update_subcontractor_contract(
 
     for field, value in changes.items():
         setattr(contract, field, value)
+    # 🔴 URL-4 K1 — SLUG'IN GEÇ DOĞUMU (kira faturasındakiyle AYNI sınıf).
+    # Taşeron sözleşmesi taslakta numarasız/adsız açılabilir; slug yalnız
+    # `create`te ayrılsaydı o kayıt okunabilir URL'ini HİÇ almazdı ve özellik
+    # "verinin yaşının fonksiyonu" olurdu.
+    if contract.slug is None:
+        contract.slug = await allocate_slug(
+            session, _contract_slug_base(contract), SubcontractorContract.slug
+        )
     await session.flush()
     await session.refresh(contract)
     return contract, project, is_publishing, site_changed
@@ -562,6 +599,7 @@ async def to_subcontract_detail(
     ]
     return SubcontractorContractDetail(
         id=contract.id,
+        slug=contract.slug,
         project_id=contract.project_id,
         site_id=contract.site_id,
         subcontractor_id=contract.subcontractor_id,

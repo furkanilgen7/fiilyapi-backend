@@ -140,6 +140,9 @@ class ProgressPaymentListItem(BaseModel):
     """`GET /progress-payments` satırı (SHK 93-113)."""
 
     id: uuid.UUID
+    # URL-4: URL'de taşınacak okunabilir anahtar. `None` olabilir (adı
+    # slug'lanamayan kayıt) — istemci `slug ?? id` kullanır (`routes.ts`).
+    slug: str | None = None
     project_id: uuid.UUID
     project_name: str
     sequence_no: int
@@ -225,6 +228,9 @@ class ProgressPaymentDetail(BaseModel):
     """`GET /progress-payments/{id}` yanıtı — E15 ekranının tamamı (spec §9.1)."""
 
     id: uuid.UUID
+    # URL-4: URL'de taşınacak okunabilir anahtar. `None` olabilir (adı
+    # slug'lanamayan kayıt) — istemci `slug ?? id` kullanır (`routes.ts`).
+    slug: str | None = None
     project_id: uuid.UUID
     project_name: str
     sequence_no: int

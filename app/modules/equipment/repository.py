@@ -15,6 +15,7 @@ from decimal import Decimal
 from sqlalchemy import Row, Select, and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.slug import ref_filter
 from app.modules.equipment.models import (
     Equipment,
     EquipmentCategory,
@@ -37,15 +38,22 @@ def _like_escape(deger: str) -> str:
     return deger.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-async def get_equipment(session: AsyncSession, equipment_id: uuid.UUID) -> Equipment | None:
+async def get_equipment(session: AsyncSession, equipment_ref: uuid.UUID | str) -> Equipment | None:
     """Tekil ekipman — pasifleri DE getirir.
 
     `is_active=false` süzgeci BURADA UYGULANMAZ: pasif bir ekipmanın kartı
     okunabilmelidir (geçmiş maliyeti hâlâ ona bağlıdır), aksi halde kayıtları
     olan pasif bir makine sistemde erişilemez hale gelirdi. Listenin varsayılan
     süzgeci uç katmanının kararıdır.
+
+    URL-4: kimlik YA DA slug ile okur (`ref_filter`). Slug GLOBAL tekildir
+    (`uq_equipment_slug`), bu yüzden çözüm tek satır döndürür ve görünürlük
+    süzgeci çözümden SONRA uygulanır (`visible_equipment`) — süzgeç yine de
+    ATLANAMAZ, çünkü tekil erişimin TEK kapısı odur.
     """
-    return await session.scalar(select(Equipment).where(Equipment.id == equipment_id))
+    return await session.scalar(
+        select(Equipment).where(ref_filter(Equipment.id, Equipment.slug, equipment_ref))
+    )
 
 
 async def get_equipment_for_update(
