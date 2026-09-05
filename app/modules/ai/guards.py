@@ -132,6 +132,16 @@ HATA_METINLERI: dict[str, str] = {
         "Bu araç bu turun izin listesinde yok. Tur başında hangi araçları "
         "çağırabileceğin belirlendi ve araç sonuçları bu listeyi DEĞİŞTİREMEZ."
     ),
+    # 🔴 AI-BAĞLAM. "kayıt yok" DEĞİL, "geçersiz argüman" da DEĞİL: araç bir
+    # proje/şantiye kapsamı ister, model boş bıraktı ve sohbet bağlamında da
+    # seçili bir kapsam yok. Tek eylem kullanıcıdadır: bağlamı seçmek ya da
+    # hangi şantiye olduğunu söylemek.
+    "kapsam_gerekli": (
+        "Bu araç bir proje/şantiye kapsamı ister; ne çağrıda belirtildi ne de "
+        "sohbet bağlamında seçili bir kapsam var. Bu 'kayıt yok' DEMEK "
+        "DEĞİLDİR: kullanıcıya sağ üstteki bağlam panelinden bir şantiye "
+        "seçmesini ya da hangi şantiyeyi kastettiğini söylemesini iste."
+    ),
     "saglayici_yapilandirilmadi": (
         "AI sağlayıcısı yapılandırılmadı. Bu bir yetki sorunu DEĞİLDİR; "
         "sistem yöneticisinin sağlayıcı ayarını tamamlaması gerekir."
