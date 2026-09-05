@@ -22,7 +22,7 @@ from app.core.db import get_db
 from app.core.deps import get_current_user
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
-from app.modules.ai import conversations, guards
+from app.modules.ai import context, conversations, guards
 from app.modules.ai.actor import aktor_baglami
 from app.modules.ai.audit import record_ai_turn
 from app.modules.ai.loop import ajan_turu, tur_ozeti
@@ -198,7 +198,31 @@ async def ai_chat_endpoint(
     DEĞİL: "sistem hatası" cümlesi operatörü yanlış yerde arattırır. Hata akış
     BAŞLAMADAN verilir; yarısı akmış bir yanıtın içine hata gömmek, istemciye
     "cevap geldi ama eksik" hissi verirdi.
+
+    🔴 KAPI SIRASI (AI-BAĞLAM): görünürlük → sahiplik → sağlayıcı. Üçü de akış
+    başlamadan koşar ve ilk ikisi **aynı** 404 gövdesini üretir.
     """
+    # 🔴 GÖRÜNÜRLÜK KAPISI **EN ÖNDE** (AI-BAĞLAM). Görünmeyen bir proje/şantiye
+    # kimliği geride HİÇBİR iz bırakmamalıdır: `turu_baslat`tan sonra koşsaydı
+    # kullanıcının geçmişine cevapsız, boş bir sohbet yazılırdı (sağlayıcı
+    # kurulumunun aşağıdaki gerekçesinin birebiri).
+    #
+    # 🔴 404, 403 DEĞİL ve gövde `guards.BULUNAMADI` ile **bayt bayt aynıdır**:
+    # görünmeyen-var-olan ile var-olmayan ayırt edilemez (S14). Süzgeç
+    # kopyalanmaz, `context.cozumle` → `sites.service._visible_*` →
+    # `projects.service.visible_projects` zinciriyle ÇAĞRILIR.
+    try:
+        sohbet_baglami = await context.cozumle(
+            session,
+            user,
+            project_id=govde.project_id,
+            site_id=govde.site_id,
+        )
+    except context.BaglamGorunmuyor as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=guards.BULUNAMADI
+        ) from exc
+
     # 🔴 SAHİPLİK KAPISI **SAĞLAYICIDAN ÖNCE**. Sıra bir tercih değil bir
     # KISITTIR ve bekçisi kapıya çarparak bulundu: kapı `saglayici_kur()`dan
     # SONRA koşarken, sağlayıcı yapılandırılmamış bir sistemde başkasının
@@ -308,6 +332,7 @@ async def ai_chat_endpoint(
                 bearer=bearer,
                 kullanici_mesaji=govde.mesaj,
                 ai_session_id=ai_session_id,
+                baglam=sohbet_baglami,
             ):
                 gorulen.append(olay)
                 yield olay

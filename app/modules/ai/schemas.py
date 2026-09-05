@@ -65,10 +65,25 @@ class AiChatRequest(BaseModel):
     🔴 `model` / `provider` / `temperature` alanları YOKTUR: sağlayıcı ve model
     **sunucu** yapılandırmasıdır. İstemcinin model seçebilmesi, maliyeti ve veri
     işleyicisini istemciye devretmek olurdu.
+
+    🔴 `project_id` / `site_id` AI-BAĞLAM'da AÇILDI — **ikisi de İSTEĞE
+    BAĞLIDIR** (additive, kırıcı değil). Ekranın sağ üstündeki "Sohbet Bağlamı"
+    paneli bu iki alanla gerçek olur: seçilen kapsam modele bir bağlam bloğu
+    olarak gider ve araçlara **varsayılan kapsam** olur. Görünmeyen bir kimlik
+    verilirse **404** döner — `conversation_id` ile birebir aynı duruş (S14).
+
+    🔴 Bağlam **saklanmaz**: her mesajla gövdede taşınır (v1 sınırı,
+    `context.py` modül notu). Takip dilimi AI-BAĞLAM-2.
     """
 
     mesaj: str = Field(min_length=1, max_length=4000)
     conversation_id: uuid.UUID | None = None
+    #: Ekranda seçili proje. `site_id` de verilirse **o şantiyenin projesi**
+    #: olmak zorundadır (uyumsuzsa 404).
+    project_id: uuid.UUID | None = None
+    #: Ekranda seçili şantiye. Mockup'ın bağlam paneli proje + şantiye çizer;
+    #: üç sayısı (dönem · ilerleme · aktif işçi) şantiyeden gelir.
+    site_id: uuid.UUID | None = None
 
 
 # --------------------------------------------------------------------------- #

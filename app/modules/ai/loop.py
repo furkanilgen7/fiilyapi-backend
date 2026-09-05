@@ -38,14 +38,14 @@ yoktur; bu satır o kararın **yapısal** hâlidir, yorum hâli değil.
 from __future__ import annotations
 
 import uuid
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 
 import httpx
 
 from app.core.config import Settings
 from app.core.config import settings as varsayilan_ayarlar
 from app.core.security import TokenError, decode_token
-from app.modules.ai import guards
+from app.modules.ai import context, guards
 from app.modules.ai.actor import aktor_baglami
 from app.modules.ai.db import AiSessionLocal
 from app.modules.ai.presenters import bloklari_uret
@@ -157,12 +157,18 @@ async def ajan_turu(
     kullanici_mesaji: str,
     ai_session_id: uuid.UUID | None = None,
     ayarlar: Settings | None = None,
+    baglam: context.SohbetBaglami = context.BOS_BAGLAM,
 ) -> AsyncIterator[AiOlay]:
     """Tek bir kullanıcı mesajı için tam ajan turunu akıtır.
 
     🔴 **Durumsuz** (§9-A3 kararı beklediği için): `gecmis` yalnız bu turun
     içinde yaşar, hiçbir yere yazılmaz. `ai_conversations`/`ai_messages` tabloları
     AÇILMAMIŞTIR ve `AiToolCall.conversation_id` bu turda hep NULL kalır.
+
+    🔴 `baglam` **çözülmüş ve görünürlüğü doğrulanmış** gelir (`router` çağırır);
+    bu fonksiyon onu bir daha doğrulamaz ve DOĞRULAMAMALIDIR: iki kopya süzgeç
+    zamanla ayrışır. Varsayılanı `BOS_BAGLAM`dır, yani bağlam vermeyen bir çağrı
+    yeri bu dilimden ÖNCEKİ davranışı bayt bayt korur.
     """
     ayarlar = ayarlar or varsayilan_ayarlar
     kullanim = Kullanim()
@@ -181,7 +187,23 @@ async def ajan_turu(
     izin_listesi = tur_niyet_izni(kayit, actor)
     sistem = sistem_promptu(kayit, actor)
     araclar = kayit.katalog(actor)
-    gecmis: list[Mesaj] = [Mesaj(rol="kullanici", icerik=kullanici_mesaji)]
+
+    # 🔴 BAĞLAM BLOĞU **SİSTEM PROMPTUNA GİRMEZ** — B7'nin altın dosya kuralı.
+    # Blok proje/şantiye ADI taşır, yani DB içeriğidir ve o adı BAŞKA bir
+    # kullanıcı yazmıştır (depolanmış enjeksiyon yüzeyi, S6). Sistem promptuna
+    # konsaydı `sistem_promptu`nun "zehirli ve boş DB'de bayt bayt aynı"
+    # iddiası çökerdi ve enjekte edilen metin **sistem** yetkisiyle okunurdu.
+    # Bu yüzden blok `kullanici` rolünde, AYRI bir mesaj olarak ve `<baglam>`
+    # zarfında girer; sistem promptunun 9. kuralı (STATİK metin) modele o
+    # bloğun VERİ olduğunu söyler.
+    gecmis: list[Mesaj] = []
+    if (blok := context.baglam_mesaji(baglam)) is not None:
+        gecmis.append(Mesaj(rol="kullanici", icerik=blok))
+    gecmis.append(Mesaj(rol="kullanici", icerik=kullanici_mesaji))
+
+    # `invoke`a geçecek varsayılan kapsam. TEK yerde hesaplanır ve TEK yerde
+    # uygulanır (`ToolRegistry._kapsamla`).
+    kapsam = context.varsayilan_kapsam(baglam)
 
     transport = ReadOnlyTransport(okuma_duzlemi_istemcisi, bearer=bearer)
     harcanan = 0
@@ -234,6 +256,7 @@ async def ajan_turu(
                 ai_session_id=ai_session_id,
                 saglayici_adi=saglayici.ad,
                 model=ayarlar.ai_model,
+                varsayilan_kapsam=kapsam,
             )
             harcanan += 1
             yield _sonuc_olayi(cagri, sonuc)
@@ -261,8 +284,14 @@ async def _cagriyi_kosur(
     ai_session_id: uuid.UUID | None,
     saglayici_adi: str,
     model: str,
+    varsayilan_kapsam: Mapping[str, uuid.UUID],
 ) -> AracSonucu:
-    """Tek bir araç çağrısı: bütçe → niyet → **taze kimlik** → huni."""
+    """Tek bir araç çağrısı: bütçe → niyet → **taze kimlik** → huni.
+
+    🔴 `varsayilan_kapsam` burada UYGULANMAZ, yalnız **taşınır**: doldurma
+    `ToolRegistry.invoke`un ağzındadır (tek yer). Burada da doldurulsaydı iki
+    kopya olurdu ve biri diğerinden sessizce ayrışabilirdi.
+    """
     # --- Bütçe: aşımda DÜRÜST hata, "kayıt yok" DEĞİL --------------------
     if harcanan >= tavan:
         return ToolError("butce_asildi")
@@ -286,6 +315,7 @@ async def _cagriyi_kosur(
         ai_session_id=ai_session_id,
         provider=saglayici_adi,
         model=model,
+        varsayilan_kapsam=varsayilan_kapsam,
     )
 
 
