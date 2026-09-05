@@ -77,7 +77,8 @@ class ActorContext:
     """Dispatch anında **taze** çözülen aktör bağlamı (S19).
 
     🔴 `scope` ALANI YOKTUR ve eklenmemelidir (S1). Bekçisi
-    `test_ai0b_registry.py::test_S1_ActorContext_scope_ALANI_TASIMAZ`.
+    `test_ai0b_yapisal.py::test_S1_ActorContext_scope_ALANI_TASIMAZ`
+    (🔴 eskiden VAR OLMAYAN bir `test_ai0b_registry.py`yi gösteriyordu).
     """
 
     user_id: uuid.UUID
@@ -391,7 +392,8 @@ class ToolRegistry:
         from app.modules.ai.transport import kacisla
 
         # `ucler[0]` = BİRİNCİL uç. AI-0b'nin altı aracının hepsi tek uçludur
-        # ve bunu `test_ai0b_catalog.py` yapısal olarak kilitler; çok uçlu bir
+        # ve bunu `test_ai0b_yapisal.py::test_katalog_her_arac_TEK_UCLUDUR` yapısal
+        # olarak kilitler (🔴 eskiden VAR OLMAYAN `test_ai0b_catalog.py`); çok uçlu bir
         # araç eklendiğinde bu satır yeniden düşünülmek zorunda kalır.
         if not spec.ucler:
             # Veri okumayan araç (`navigate_to`). Denetime yazılacak bir yol

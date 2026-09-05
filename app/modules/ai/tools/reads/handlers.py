@@ -12,7 +12,8 @@ Bu yüzden araçlar **UCU** sarar: her çağrı okuma düzlemine gerçek bir HTT
 olarak gider ve ucun `require_permission` + `visible_*` zinciri **aynen** koşar.
 
 🔴 **Handler'lar doğrudan çağrılamaz** (Kapı E). Tek giriş `ToolRegistry.invoke`
-ve bekçisi `test_ai0b_import_siniri.py`dir.
+ve bekçileri `test_ai0b_yapisal.py::test_B14_*` + `::test_B15_*`tir.
+(🔴 Bu satır eskiden VAR OLMAYAN bir `test_ai0b_import_siniri.py`yi gösteriyordu.)
 """
 
 from __future__ import annotations
@@ -22,38 +23,15 @@ from typing import Any
 from app.modules.ai import guards
 from app.modules.ai.navigation import EKRAN_ADLARI
 from app.modules.ai.registry import AracBaglami
-from app.modules.ai.result import (
-    AracSonucu,
-    NotFound,
-    Ok,
-    Restricted,
-    ToolError,
-    liste_sonucu,
-)
+from app.modules.ai.result import AracSonucu, Ok, liste_sonucu
 from app.modules.ai.tools import schemas
-
-
-def _kod_hali(durum: int, modul: str) -> AracSonucu | None:
-    """HTTP kodunu zarfa çevirir. 🔴 401 ÜÇÜNCÜ HÂLDİR (B28/S19).
-
-    `401` = oturum süresi doldu · `403` = yetkin yok · `404` = kayıt yok.
-    Üçünü tek dala indiren bir handler ekranı ve modeli yalancı yapar.
-    """
-    if durum == 401:
-        return ToolError("oturum_suresi_doldu")
-    if durum == 403:
-        return Restricted(modul)
-    if durum == 404:
-        return NotFound()
-    if durum >= 400:
-        return ToolError("ust_kaynak_hatasi")
-    return None
+from app.modules.ai.tools.zarf import kod_hali
 
 
 async def projeleri_listele(ctx: AracBaglami, girdi: Any) -> AracSonucu:
     """`GET /projects` — `visible_projects` kapsam süzgecinin araçtan geçtiğinin kanıtı."""
     yanit = await ctx.get(params={"limit": ctx.spec.satir_tavani, "offset": 0})
-    if (hal := _kod_hali(yanit.status_code, "projects")) is not None:
+    if (hal := kod_hali(yanit.status_code, "projects")) is not None:
         return hal
     govde = yanit.json()
     items = [
@@ -89,7 +67,7 @@ async def onay_kutum(ctx: AracBaglami, girdi: Any) -> AracSonucu:
     değil ucu sarar, ama yanlış eşleme kayda geçsin diye burada duruyor.
     """
     yanit = await ctx.get(params={"limit": ctx.spec.satir_tavani, "offset": 0})
-    if (hal := _kod_hali(yanit.status_code, "approvals")) is not None:
+    if (hal := kod_hali(yanit.status_code, "approvals")) is not None:
         return hal
     govde = yanit.json()
     items = [
@@ -131,7 +109,7 @@ async def puantaj_haftasi(ctx: AracBaglami, girdi: Any) -> AracSonucu:
     var-olmayan BAYT BAYT AYNI" kuralı böyle sağlanır.
     """
     yanit = await ctx.get(params={"iso_year": girdi.iso_year, "iso_week": girdi.iso_week})
-    if (hal := _kod_hali(yanit.status_code, "timesheet")) is not None:
+    if (hal := kod_hali(yanit.status_code, "timesheet")) is not None:
         return hal
     g = yanit.json()
     veri = schemas.AiPuantajHaftasi(
@@ -157,7 +135,7 @@ async def gosterge_ozeti(ctx: AracBaglami, girdi: Any) -> AracSonucu:
     `active_project_count` (taslakları DIŞLAR) ve portföyün saydığı küme.
     """
     yanit = await ctx.get()
-    if (hal := _kod_hali(yanit.status_code, "dashboard")) is not None:
+    if (hal := kod_hali(yanit.status_code, "dashboard")) is not None:
         return hal
     g = yanit.json()
     riskler = g.get("risks") or {}
@@ -185,7 +163,7 @@ async def yetkilerim(ctx: AracBaglami, girdi: Any) -> AracSonucu:
     yetkisini görmek için ek bir yetkiye ihtiyaç duymaz.
     """
     yanit = await ctx.get()
-    if (hal := _kod_hali(yanit.status_code, guards.PERMISSION_MODULE)) is not None:
+    if (hal := kod_hali(yanit.status_code, guards.PERMISSION_MODULE)) is not None:
         return hal
     g = yanit.json()
     veri = schemas.AiYetkilerim(

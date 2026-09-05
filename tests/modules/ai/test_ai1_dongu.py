@@ -767,7 +767,12 @@ def test_chat_govdesi_MODEL_alani_TASIMAZ() -> None:
 
 
 def test_YETKILERIM_ve_NAVIGATE_TO_hala_kayitli() -> None:
-    """Pozitif kontrol: gerçek katalog bu dilimde bozulmadı."""
+    """Pozitif kontrol: gerçek katalog bu dilimde bozulmadı.
+
+    🔴 AI-2b/2d: sayı **6 → 22** oldu (AI-0b'nin altısı + bu dilimin on altısı).
+    Bu bilinçli bir KANARYA'dır, türetilmiş bir iddia değil: `len(CATALOG)`
+    yazsaydı bir araç sessizce düştüğünde de yeşil kalırdı.
+    """
     adlar = {s.ad for s in REGISTRY.tum_araclar}
     assert {YETKILERIM.ad, NAVIGATE_TO.ad} <= adlar
-    assert len(adlar) == 6
+    assert len(adlar) == 22
