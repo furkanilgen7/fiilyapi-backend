@@ -146,6 +146,15 @@ class BilinmeyenArac(KeyError):
     """Katı sözlük araması başarısız (B20). Bulanık eşleşme **YOKTUR**."""
 
 
+class KapsamGerekli(ValueError):
+    """Zorunlu bir yol parametresi `None` kaldı: ne model verdi ne bağlam.
+
+    🔴 `YolReddedildi`nin bir alt hâli DEĞİL, AYRI bir hâl (AI-BAĞLAM). İkisi
+    aynı cümleye düşerse kullanıcı yanlış şeyi düzeltmeye çalışır: biri
+    "argümanın biçimi bozuk", öteki "hangi şantiye olduğu belli değil"dir.
+    """
+
+
 def kapilar_gecti(spec: ToolSpec, permissions: Mapping[str, AccessLevel]) -> bool:
     """`kapilar` demetinin **HER** üyesi ayrı ayrı sağlanmalı.
 
@@ -229,12 +238,14 @@ class ToolRegistry:
         ai_session_id: uuid.UUID | None = None,
         provider: str | None = None,
         model: str | None = None,
+        varsayilan_kapsam: Mapping[str, Any] | None = None,
     ) -> AracSonucu:
         """Araç çağrısının **tek** giriş noktası.
 
         🔴 `actor` ZORUNLU, `Optional` DEĞİL, varsayılanı YOK (S15/T1).
 
         Sıra bağlayıcıdır:
+          0. **Bağlam kapsamı** eksik argümanlara doldurulur (AI-BAĞLAM).
           1. Katı sözlük araması (B20).
           2. Katalog **yeniden hesaplanır** — yaptırım dispatch'tedir (§6.1-2).
           3. Şema doğrulama.
@@ -242,11 +253,25 @@ class ToolRegistry:
           5. **Denetim** (`started`), fail-closed (B6b).
           6. Handler.
           7. **Denetim** (`finished`).
+
+        🔴 `varsayilan_kapsam` sohbet bağlamının araçlara ulaşan **TEK** yoludur
+        (`context.varsayilan_kapsam`). Doldurma burada, huninin ağzında yapılır;
+        handler'lara kopyalanmaz. Kopyalansaydı bir handler'ı yazan kişi satırı
+        unutabilir ve o araç sessizce bağlamsız kalırdı — kapının handler'da
+        tekrarlanmasının bu dosyanın açılış paragrafında reddedilen hâlinin
+        aynısı.
         """
         from app.modules.ai.audit import record_tool_call
 
         call_id = uuid.uuid4()
         spec = self._sozluk.get(arac_adi)
+        # --- 0. BAĞLAM KAPSAMI, denetim satırından ÖNCE ------------------
+        # 🔴 Sıra bağlayıcıdır: `ai_tool_calls`e **fiilen koşan** argümanlar
+        # yazılmalıdır. Doldurma denetimden sonra yapılsaydı iz, aracın hangi
+        # şantiyeyi okuduğunu YANLIŞ gösterirdi ve bu hattın tüm meselesi
+        # atfedilebilirlikti.
+        if spec is not None:
+            argumanlar = self._kapsamla(spec, argumanlar, varsayilan_kapsam)
 
         async def _iz(
             phase: AiToolCallPhase,
@@ -299,6 +324,14 @@ class ToolRegistry:
         # --- 4. Yol parametreleri (S27) -------------------------------
         try:
             cozulmus = self._cozulmus_yol(spec, girdi)
+        except KapsamGerekli:
+            # 🔴 `gecersiz_yol`dan AYRI bir hâl. Model kapsamı boş bıraktı ve
+            # dolduracak bir bağlam da yoktu; "yol parametresi reddedildi"
+            # demek operatörü yanlış yerde arattırırdı ve model onu "kayıt yok"
+            # diye özetlerdi. Cümle kullanıcıya EYLEM verir: kapsam seç.
+            await _iz(AiToolCallPhase.started, AiToolDecision.denied_permission)
+            await _iz(AiToolCallPhase.finished, AiToolDecision.denied_permission)
+            return ToolError("kapsam_gerekli")
         except YolReddedildi:
             await _iz(AiToolCallPhase.started, AiToolDecision.denied_permission)
             await _iz(AiToolCallPhase.finished, AiToolDecision.denied_permission)
@@ -382,12 +415,46 @@ class ToolRegistry:
         return govde
 
     @staticmethod
+    def _kapsamla(
+        spec: ToolSpec,
+        argumanlar: Mapping[str, Any],
+        varsayilan_kapsam: Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Sohbet bağlamının kapsamını **eksik** argümanlara doldurur — TEK YER.
+
+        🔴 **MODELİN AÇIKÇA VERDİĞİ DEĞER BAĞLAMI EZER.** Koşul `is None`dır,
+        `not in`dir DEĞİL: sağlayıcı şeması `strict`tir ve `girdi_semasi` HER
+        alanı `required` yapar, yani model bir alanı atlayamaz — ancak `null`
+        gönderebilir. Yalnız `not in` bakan bir doldurma bu yüzden **hiçbir
+        zaman ateşlenmezdi** ve bu dilim dekoratif kalırdı.
+
+        🔴 Yalnız `spec.girdi`nin **beyan ettiği** alanlar doldurulur. Girdi
+        modelleri `extra="forbid"`dir; bilmediği bir alanı eklemek her çağrıyı
+        `gecersiz_argüman`a düşürürdü.
+        """
+        birlesik = dict(argumanlar)
+        if not varsayilan_kapsam:
+            return birlesik
+        for ad, deger in varsayilan_kapsam.items():
+            if deger is None or ad not in spec.girdi.model_fields:
+                continue
+            if birlesik.get(ad) is None:
+                birlesik[ad] = deger
+        return birlesik
+
+    @staticmethod
     def _cozulmus_yol(spec: ToolSpec, girdi: BaseModel) -> str:
         """Şablonu **çözülmüş** yola çevirir.
 
         🔴 Denetime ŞABLON yazılırsa `ai_tool_calls` yalan söyler ve bu dilimin
         tüm meselesi atfedilebilirlikti. Bu yüzden çözüm burada, denetimden
         ÖNCE yapılır.
+
+        🔴 `None` bir yol parametresi **`KapsamGerekli`dir**, `kacisla`ya
+        bırakılmaz: `str(None)` == `"None"` ve `"None"` yasak segment değildir —
+        yani sessizce `/sites/None` istenir, uç 422 verir ve araç
+        `ust_kaynak_hatasi` döner. Kullanıcı "bir hata oldu" görürdü; doğrusu
+        "kapsam seçilmedi"dir.
         """
         from app.modules.ai.transport import kacisla
 
@@ -401,7 +468,10 @@ class ToolRegistry:
             return ""
         desen = spec.ucler[0]
         for ad in spec.yol_parametreleri:
-            desen = desen.replace("{" + ad + "}", kacisla(getattr(girdi, ad)))
+            deger = getattr(girdi, ad)
+            if deger is None:
+                raise KapsamGerekli(ad)
+            desen = desen.replace("{" + ad + "}", kacisla(deger))
         return desen
 
 
@@ -409,6 +479,7 @@ __all__ = [
     "ActorContext",
     "AracBaglami",
     "BilinmeyenArac",
+    "KapsamGerekli",
     "ToolKapsami",
     "ToolKumesi",
     "ToolRegistry",

@@ -73,7 +73,13 @@ class PuantajHaftasiGirdi(BaseModel):
 
     #: 🔴 TİPLİ (S27). `str` olsaydı `..` argümanı tip katmanından geçerdi ve
     #: yalnız nokta-segment reddi kalırdı; iki kilit birden istiyoruz.
-    site_id: uuid.UUID
+    #: 🔴 AI-BAĞLAM: **İSTEĞE BAĞLI**. Boş bırakılırsa `ToolRegistry.invoke`
+    #: sohbet bağlamındaki kapsamı doldurur; model açıkça verirse bağlamı EZER.
+    #: Zorunlu bırakılsaydı bu doldurma HİÇ ateşlenemezdi: sağlayıcı şeması
+    #: `strict`tir ve `girdi_semasi` her alanı `required` yapar, yani model alanı
+    #: atlayamaz — yalnız `null` gönderebilir. İkisi de yoksa huni dürüst bir
+    #: `kapsam_gerekli` döner ("kayıt yok" DEMEZ).
+    site_id: uuid.UUID | None = None
     iso_year: int = Field(ge=2000, le=2100)
     iso_week: int = Field(ge=1, le=53)
 
@@ -184,13 +190,25 @@ class ProjeKimligiGirdi(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    project_id: uuid.UUID
+    #: 🔴 AI-BAĞLAM: **İSTEĞE BAĞLI**. Boş bırakılırsa `ToolRegistry.invoke`
+    #: sohbet bağlamındaki kapsamı doldurur; model açıkça verirse bağlamı EZER.
+    #: Zorunlu bırakılsaydı bu doldurma HİÇ ateşlenemezdi: sağlayıcı şeması
+    #: `strict`tir ve `girdi_semasi` her alanı `required` yapar, yani model alanı
+    #: atlayamaz — yalnız `null` gönderebilir. İkisi de yoksa huni dürüst bir
+    #: `kapsam_gerekli` döner ("kayıt yok" DEMEZ).
+    project_id: uuid.UUID | None = None
 
 
 class SantiyeKimligiGirdi(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    site_id: uuid.UUID
+    #: 🔴 AI-BAĞLAM: **İSTEĞE BAĞLI**. Boş bırakılırsa `ToolRegistry.invoke`
+    #: sohbet bağlamındaki kapsamı doldurur; model açıkça verirse bağlamı EZER.
+    #: Zorunlu bırakılsaydı bu doldurma HİÇ ateşlenemezdi: sağlayıcı şeması
+    #: `strict`tir ve `girdi_semasi` her alanı `required` yapar, yani model alanı
+    #: atlayamaz — yalnız `null` gönderebilir. İkisi de yoksa huni dürüst bir
+    #: `kapsam_gerekli` döner ("kayıt yok" DEMEZ).
+    site_id: uuid.UUID | None = None
 
 
 class PuantajAyiGirdi(BaseModel):
@@ -200,7 +218,13 @@ class PuantajAyiGirdi(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    site_id: uuid.UUID
+    #: 🔴 AI-BAĞLAM: **İSTEĞE BAĞLI**. Boş bırakılırsa `ToolRegistry.invoke`
+    #: sohbet bağlamındaki kapsamı doldurur; model açıkça verirse bağlamı EZER.
+    #: Zorunlu bırakılsaydı bu doldurma HİÇ ateşlenemezdi: sağlayıcı şeması
+    #: `strict`tir ve `girdi_semasi` her alanı `required` yapar, yani model alanı
+    #: atlayamaz — yalnız `null` gönderebilir. İkisi de yoksa huni dürüst bir
+    #: `kapsam_gerekli` döner ("kayıt yok" DEMEZ).
+    site_id: uuid.UUID | None = None
     year: int = Field(ge=2000, le=2100)
     month: int = Field(ge=1, le=12)
 
@@ -211,7 +235,13 @@ class GunPlaniGirdi(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    site_id: uuid.UUID
+    #: 🔴 AI-BAĞLAM: **İSTEĞE BAĞLI**. Boş bırakılırsa `ToolRegistry.invoke`
+    #: sohbet bağlamındaki kapsamı doldurur; model açıkça verirse bağlamı EZER.
+    #: Zorunlu bırakılsaydı bu doldurma HİÇ ateşlenemezdi: sağlayıcı şeması
+    #: `strict`tir ve `girdi_semasi` her alanı `required` yapar, yani model alanı
+    #: atlayamaz — yalnız `null` gönderebilir. İkisi de yoksa huni dürüst bir
+    #: `kapsam_gerekli` döner ("kayıt yok" DEMEZ).
+    site_id: uuid.UUID | None = None
     start: datetime.date
 
 

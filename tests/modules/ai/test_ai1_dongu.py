@@ -758,10 +758,21 @@ def test_chat_govdesi_MODEL_alani_TASIMAZ() -> None:
     kapandı (soru + özet saklanır) ve alan açıldı. Bekçinin ASIL invaryantı
     korunur ve GÜÇLENDİRİLİR: model/sağlayıcı/örnekleme seçimi istemciye
     devredilemez — maliyeti ve veri işleyicisini istemciye devretmek olurdu.
+
+    AI-BAĞLAM GÜNCELLEMESİ: `project_id` + `site_id` açıldı — ekranın "Sohbet
+    Bağlamı" paneli bunlarsız bir SÜSTÜ. Küme eşitliği bilerek korunur: üçüncü
+    bir alan eklemek isteyen kişi bu satırı görüp **bilinçli** karar vermek
+    zorunda kalsın. Alanların İSTEĞE BAĞLI olduğu ve görünmeyen kimliğin 404
+    aldığı `test_aibaglam_baglam.py`de ölçülür.
     """
     from app.modules.ai.schemas import AiChatRequest
 
-    assert set(AiChatRequest.model_fields) == {"mesaj", "conversation_id"}
+    assert set(AiChatRequest.model_fields) == {
+        "mesaj",
+        "conversation_id",
+        "project_id",
+        "site_id",
+    }
     for yasak in ("model", "provider", "saglayici", "temperature", "top_p", "top_k", "sistem"):
         assert yasak not in AiChatRequest.model_fields, yasak
 
