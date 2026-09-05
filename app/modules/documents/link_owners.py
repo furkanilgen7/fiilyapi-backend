@@ -15,8 +15,11 @@ yatağıdır"*.
 | `unit_sales` | `unit_sales.project_id` |
 | `subcontractor_contracts` | `subcontractor_contracts.project_id` |
 
-`site_id` yalnız bilgi amaçlıdır ve NULL olabilir (taşeron sözleşmesi K4
-"proje geneli") — uydurma şantiye ATANMAZ. Türetme SUNUCUDADIR; hiçbir uç
+🔴 **`site_id` TAŞINMAZ.** İlk hâlde `OwnerContext` bir `site_id` alanı taşıyordu;
+ölçüldü (PR #116 incelemesi): **tek yazma, sıfır okuma** — ölü alandı ve uğruna
+`units`/`unit_sales` sorgularına gereksiz bir `Block` JOIN'i giriyordu (satışta
+İKİ JOIN). Kaldırıldı. Bağlanan belgenin şantiyesi zaten arşiv künyesinde
+(`documents.site_id`) durur ve oradan okunur. Türetme SUNUCUDADIR; hiçbir uç
 gövdeden `project_id` almaz (`documents.project_id` NOT NULL kalır).
 
 ## İzin anahtarı — YENİ MODÜL AÇILMADI
@@ -46,22 +49,24 @@ from app.modules.documents.models.links import (
 )
 from app.modules.sales.models import UnitSale
 from app.modules.sites.models import Section, Site
-from app.modules.units.models import Block, Unit
+from app.modules.units.models import Unit
 
 
 class OwnerContext(NamedTuple):
-    """Sahipten türetilen kapsam: proje (NOT NULL) + şantiye (NULL olabilir) +
-    denetim satırı için görünen ad."""
+    """Sahipten türetilen kapsam: proje (NOT NULL) + denetim satırı için görünen ad.
+
+    `site_id` BİLİNÇLİ OLARAK YOKTUR (modül docstring'i): okunmuyordu ve iki
+    sorguya gereksiz JOIN taşıyordu.
+    """
 
     project_id: uuid.UUID
-    site_id: uuid.UUID | None
     display: str
 
 
 @dataclass(frozen=True)
 class OwnerSpec:
-    """Bir sahibin bağ tanımı. `context_stmt(owner_id)` üç kolon döndüren bir
-    SELECT üretir: `(project_id, site_id, display)`; satır yoksa sahip YOKTUR."""
+    """Bir sahibin bağ tanımı. `context_stmt(owner_id)` İKİ kolon döndüren bir
+    SELECT üretir: `(project_id, display)`; satır yoksa sahip YOKTUR."""
 
     key: str
     scope: EntityDocumentScope
@@ -76,25 +81,24 @@ class OwnerSpec:
 
 def _section_context(owner_id: uuid.UUID) -> Select:
     return (
-        select(Site.project_id, Section.site_id, Section.name)
+        select(Site.project_id, Section.name)
         .join(Site, Site.id == Section.site_id)
         .where(Section.id == owner_id)
     )
 
 
 def _unit_context(owner_id: uuid.UUID) -> Select:
-    return (
-        select(Unit.project_id, Block.site_id, Unit.unit_no)
-        .join(Block, Block.id == Unit.block_id)
-        .where(Unit.id == owner_id)
-    )
+    # `units.project_id` NOT NULL (bileşik FK ile bloğa bağlı) → `Block` JOIN'i
+    # GEREKMEZ (`site_id` kaldırıldıktan sonra).
+    return select(Unit.project_id, Unit.unit_no).where(Unit.id == owner_id)
 
 
 def _unit_sale_context(owner_id: uuid.UUID) -> Select:
+    # `unit_sales.project_id` NOT NULL; `Unit` JOIN'i YALNIZ denetim satırındaki
+    # daire no için, `Block` JOIN'i tamamen kalktı.
     return (
-        select(UnitSale.project_id, Block.site_id, Unit.unit_no)
+        select(UnitSale.project_id, Unit.unit_no)
         .join(Unit, Unit.id == UnitSale.unit_id)
-        .join(Block, Block.id == Unit.block_id)
         .where(UnitSale.id == owner_id)
     )
 
@@ -104,7 +108,6 @@ def _subcontractor_contract_context(owner_id: uuid.UUID) -> Select:
     # kalmasın diye ikisi de yoksa "-" basılır.
     return select(
         SubcontractorContract.project_id,
-        SubcontractorContract.site_id,
         func.coalesce(
             SubcontractorContract.contract_no, SubcontractorContract.subcontractor_name, "-"
         ),

@@ -33,6 +33,36 @@ AÇIKÇA verilir — yoksa FastAPI dört özdeş fonksiyon adından çakışan
 operasyon kimliği üretir.
 
 `GET` uçları `record_audit` ÇAĞIRMAZ (WORKFLOW kuralı — okumalar denetlenmez).
+
+## 🔴 İZİN SEVİYELERİ — üç uç `view`, SİLME `full` (kullanıcı kararı 2026-09-05)
+
+Kullanıcı birebir: *"sen şimdilik açık yap, bu izin matrisi işi daha sonra
+ayarlanacak."* Uygulanan:
+
+| uç | kapı | gerekçe |
+|---|---|---|
+| `GET /<kök>/{owner_id}/documents` | `<sahip>:view` | okuma |
+| `POST /<kök>/{owner_id}/documents` | `<sahip>:view` | **bağlama** (aşağıya bak) |
+| `PATCH /<kök>/documents/{link_id}` | `<sahip>:view` | üç künye alanı |
+| `DELETE /<kök>/documents/{link_id}` | **`<sahip>:full`** | aşağıya bak |
+
+`POST` `view`dedir çünkü dosya zaten `POST /documents`e (`documents:full`)
+yüklenmiştir; bu uç yalnız var olan künyeyi kayda İLİŞTİRİR.
+
+🔴 **SİLME BİLİNÇLİ OLARAK İNDİRİLMEDİ.** `app/core/access.py` doktrini
+*"`full` silmeyi KAPSAMAZ, silme yalnızca `admin`"* der; en yakın emsal (BC-2'nin
+`DELETE /personnel/documents/{id}`) `_ADMIN`, karşı emsal `equipment` `_FULL`
+kullanır. `full` zaten doktrinden BİR basamak sapmadır ve gerekçesi şudur: bu uç
+**dosyayı SİLMEZ**, yalnız BAĞI kaldırır — arşiv kaydı ve baytları yerinde kalır
+(bekçisi `test_detach_204_dosyayi_SILMEZ_ikinci_silme_404`). `view`e indirmek
+İKİ basamak sapma olurdu: okuma yetkisi olan herkes bağları söküp geçmişi
+sessizce boşaltabilirdi. Kullanıcının *"açık yap"*ı bağlamayı kastediyordu;
+silme ayrı bir sınıftır.
+
+🔴 **GÖRÜNÜRLÜK SÜZGECİ DEĞİŞMEDİ.** Karar İZİN SEVİYESİ hakkındadır;
+`visible_projects` + sahip kapsam süzgeci aynen durur. Kapı indiği için artık
+çok daha fazla rol bu uçlara çarpıyor — sahip süzgeci **tek koruma** hâline
+geldi ve bekçisi `test_liste_YALNIZ_o_sahibin_baglarini_dondurur`dur.
 """
 
 import uuid
@@ -123,6 +153,10 @@ async def list_slot_types_endpoint(
 
 
 def _register(spec: OwnerSpec) -> None:
+    # 🔴 KULLANICI KARARI 2026-09-05 ("şimdilik açık yap, izin matrisi sonra
+    # ayarlanacak"): BAĞLAMA/GÜNCELLEME kapısı `<sahip>:full` DEĞİL `<sahip>:view`.
+    # Kural: "gördüğün kayda, yüklemeye yetkin varsa bağlayabilirsin."
+    # SİLME bunun DIŞINDADIR (aşağıda) ve GÖRÜNÜRLÜK süzgeci DEĞİŞMEDİ.
     view = require_permission(spec.permission_module, AccessLevel.view)
     full = require_permission(spec.permission_module, AccessLevel.full)
     owner_path = f"{spec.route_root}/{{owner_id}}/documents"
@@ -152,7 +186,7 @@ def _register(spec: OwnerSpec) -> None:
             **_OWNER_404,
             422: {"description": "Slot bu kayıt için geçersiz ya da belge bu projede değil"},
         },
-        dependencies=[full],
+        dependencies=[view],
         operation_id=f"attach_{spec.key}_document",
         summary=f"{spec.label} belgesi bağla",
     )
@@ -171,7 +205,7 @@ def _register(spec: OwnerSpec) -> None:
         link_path,
         response_model=EntityDocumentLinkRead,
         responses=_LINK_404,
-        dependencies=[full],
+        dependencies=[view],
         operation_id=f"update_{spec.key}_document",
         summary=f"{spec.label} belgesi künyesi",
     )
@@ -183,7 +217,9 @@ def _register(spec: OwnerSpec) -> None:
         session: Annotated[AsyncSession, Depends(get_db)],
     ) -> EntityDocumentLinkRead:
         row, detail = await service.update(session, user, spec, link_id, data)
-        await _audit(request, session, user, AuditAction.update, detail)
+        # `detail is None` = boş gövde, hiçbir alan değişmedi → denetim satırı YOK.
+        if detail is not None:
+            await _audit(request, session, user, AuditAction.update, detail)
         return _to_read(spec, row)
 
     @router.delete(

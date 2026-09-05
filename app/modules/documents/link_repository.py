@@ -52,7 +52,7 @@ async def get_owner_context(
     row = (await session.execute(spec.context_stmt(owner_id))).one_or_none()
     if row is None:
         return None
-    return OwnerContext(project_id=row[0], site_id=row[1], display=str(row[2]))
+    return OwnerContext(project_id=row[0], display=str(row[1]))
 
 
 def _rows_stmt(spec: OwnerSpec):

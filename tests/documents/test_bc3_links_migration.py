@@ -36,6 +36,20 @@ LINK_TABLES = (
 )
 TABLES = ("entity_document_types", *LINK_TABLES)
 
+#: tablo -> (scope sabiti, sahip kolonu) — gövde denetiminin beklentisi.
+LINK_SCOPE = {
+    "section_documents": "section",
+    "unit_documents": "unit",
+    "unit_sale_documents": "unit_sale",
+    "subcontractor_contract_documents": "subcontractor_contract",
+}
+LINK_OWNER = {
+    "section_documents": "section_id",
+    "unit_documents": "unit_id",
+    "unit_sale_documents": "unit_sale_id",
+    "subcontractor_contract_documents": "subcontractor_contract_id",
+}
+
 
 def _asyncpg_dsn(database: str) -> str:
     base = settings.test_database_url.replace("postgresql+asyncpg://", "postgresql://")
@@ -76,6 +90,28 @@ async def _constraint_type(conn: asyncpg.Connection, name: str) -> str | None:
     return await conn.fetchval("SELECT contype::text FROM pg_constraint WHERE conname = $1", name)
 
 
+async def _constraint_def(conn: asyncpg.Connection, name: str) -> str | None:
+    """🔴 Kısıtın GÖVDESİ. Yalnız ada + `contype`a bakan bir bekçi, adı doğru
+    ama gövdesi yanlış (örn. `scope = 'unit'` yazan bir `ck_section_documents_scope`
+    ya da yalnız `id`ye bakan bir bileşik FK) bir migration'ı YEŞİL geçirirdi —
+    migration↔model ayrışması bugün başka HİÇBİR kapıda konuşmuyor
+    (`alembic-cycle` metadata karşılaştırmaz)."""
+    return await conn.fetchval(
+        "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = $1", name
+    )
+
+
+async def _sahip_fk_def(conn: asyncpg.Connection, table: str, column: str) -> str | None:
+    """Adı migration'da verilmeyen FK'ler (sahip + arşiv) — kolonundan bulunur."""
+    return await conn.fetchval(
+        "SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c "
+        "JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey) "
+        "WHERE c.conrelid = $1::regclass AND c.contype = 'f' AND a.attname = $2",
+        f"public.{table}",
+        column,
+    )
+
+
 async def _create_scratch_database() -> str:
     database = f"bc3_links_{uuid.uuid4().hex[:8]}"
     admin = await asyncpg.connect(_asyncpg_dsn("postgres"))
@@ -113,7 +149,28 @@ async def _assert_bc3_schema(conn: asyncpg.Connection) -> None:
             assert await _index_exists(conn, f"ix_{table}_{suffix}"), (table, suffix)
         assert await _constraint_type(conn, f"fk_{table}_type_scope") == "f", table
         assert await _constraint_type(conn, f"ck_{table}_scope") == "c", table
+
+        # 🔴 GÖVDE denetimi (ad + contype YETMEZ):
+        scope = LINK_SCOPE[table]
+        ck = await _constraint_def(conn, f"ck_{table}_scope")
+        assert ck is not None and f"'{scope}'" in ck, (table, ck)
+        assert "scope" in ck, (table, ck)
+
+        fk = await _constraint_def(conn, f"fk_{table}_type_scope")
+        assert fk is not None, table
+        # Bileşik: İKİ kolon da adıyla geçmeli ve hedef katalogun (id, scope) çifti olmalı.
+        assert "type_id" in fk and "scope" in fk, (table, fk)
+        assert "entity_document_types" in fk, (table, fk)
+        assert "id" in fk and "ON DELETE RESTRICT" in fk, (table, fk)
+
+        sahip_fk = await _sahip_fk_def(conn, table, LINK_OWNER[table])
+        assert sahip_fk is not None and "ON DELETE CASCADE" in sahip_fk, (table, sahip_fk)
+        belge_fk = await _sahip_fk_def(conn, table, "document_id")
+        assert belge_fk is not None and "ON DELETE SET NULL" in belge_fk, (table, belge_fk)
+
     assert await _constraint_type(conn, "uq_entity_document_types_id_scope") == "u"
+    uq = await _constraint_def(conn, "uq_entity_document_types_id_scope")
+    assert uq is not None and "id" in uq and "scope" in uq, uq
 
 
 async def test_migration_tur_donusu_upgrade_downgrade_upgrade() -> None:

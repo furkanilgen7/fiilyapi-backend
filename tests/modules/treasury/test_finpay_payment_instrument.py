@@ -762,7 +762,20 @@ async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
     `GET /documents/slot-types` (1 yol) + dört sahip × (`GET/POST
     /<kök>/{owner_id}/documents` · `PATCH/DELETE /<kök>/documents/{link_id}`)
     = 8 yol / 16 operasyon. Kökler `/sections` · `/units` · `/sales` ·
-    `/subcontractor-contracts` (yeni BFF kökü YOK). 245→**254** · 354→**371**.
+    `/subcontractor-contracts`. 245→**254** · 354→**371**.
+
+    🔴 **BFF İZİN LİSTESİ — `units` KÖKÜ EKSİK (ölçüldü 2026-09-05).** Dört kökten
+    ÜÇÜ frontend'in `ALLOWED_ROOTS`unda VAR (`sections` · `sales` ·
+    `subcontractor-contracts`), **`units` YOK**. Ölçüm yöntemi kayda geçirilir —
+    *kelime saymak ≠ olgu saymak*: `src/app/api/backend/[...path]/route.ts`
+    içindeki `ALLOWED_ROOTS` **dengeli-parantez** ile çıkarılır, **yorumlar
+    SİLİNİR**, sonra tırnaklı dizgeler sayılır → **51 eleman**, `units` bunlardan
+    biri DEĞİL. (Aynı dosyada naif regex **40**, yorumlar dâhil sayım **111**
+    verir; ikisi de yanlış. `command grep -c '"units"'` → **0**.)
+    👉 Sonucu: `/units/{owner_id}/documents` ve `/units/documents/{link_id}`
+    **YALNIZ CANLIDA 404** döner — jsdom görmez, backend CI yeşil kalır (bu
+    deponun kanonik BFF tuzağı). `units` kökünü izin listesine eklemek
+    FRONTEND diliminin işidir; backend tarafında yapılacak bir şey yoktur.
     """
     from app.main import app
 

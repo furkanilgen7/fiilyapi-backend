@@ -254,7 +254,18 @@ async def delete_section_endpoint(
     current_user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> None:
-    """Spec §7.1. Bolum silme KOSULSUZDUR: `sections.id`'yi hedefleyen FK yok.
+    """Spec §7.1. 🔴 **BU CUMLE BAYATTI VE DUZELTILDI (BC-3, 2026-09-05).**
+
+    Eski metin *"`sections.id`'yi hedefleyen FK yok"* diyordu; `deletes.py`nin
+    servis docstring'i bunu zaten curutmustu ama router'daki kopya duruyordu.
+    ÖLÇÜLDÜ (`Base.metadata` uzerinden, kelime aramasiyla DEGIL): `sections.id`yi
+    **ON BIR** FK hedefliyor — ikisi CASCADE (`boq_item_section_allocations`,
+    `section_milestones` ve BC-3'un `section_documents`i), kalani SET NULL
+    (`personnel`, `purchase_requests`, `sections.depends_on_section_id`,
+    `site_diary_entries`, `site_plan_rows`, `stock_entry_lines`,
+    `subcontractor_progress_payments`, `timesheet_entries`).
+    Silme yine de kosulsuzdur cunku hicbiri RESTRICT DEGIL; kosulsuzlugun
+    gerekcesi "FK yok" DEGIL, "engelleyen FK yok"tur.
 
     Kapi `_ADMIN`'dir — bolum santiyenin ic kirilimi oldugu icin `sites`
     modulunun seviyeleri kullanilir, AYRI izin modulu acilmaz.

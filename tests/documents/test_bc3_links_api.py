@@ -26,6 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.routing import Match
 
+from app.core.access import AccessLevel
 from app.core.router_registry import ROUTERS
 from app.main import app
 from app.modules.audit.models import AuditLog
@@ -294,33 +295,92 @@ async def test_gorunmeyen_sahip_404_sahibin_cumlesi_admin_icin_VAR(
     assert hic_yok.json()["detail"] == sahip.spec.owner_missing
 
 
-async def test_view_rolu_okur_YAZAMAZ_403(
+async def test_view_rolu_OKUR_BAGLAR_GUNCELLER_ama_SILEMEZ(
     client: AsyncClient,
     muhasebe_headers,
-    pm_headers,
     sahip: SahipDurumu,
     slot_katalogu,
     proje,
     belge_fabrikasi,
 ) -> None:
+    """🔴 KULLANICI KARARI 2026-09-05 ("şimdilik açık yap"): bağlama kapısı
+    `<sahip>:view`. `accounting` rolü dört sahip modülünde de `_FIN` (view) —
+    OKUR, BAĞLAR, GÜNCELLER; ama SİLEMEZ (`DELETE` bilinçli olarak `full`da
+    kaldı, gerekçe `link_router` docstring'inde).
+
+    Bu test kapıyı GEVŞETMEZ, KARŞIT KANITLA ölçer: aynı rol üç uçtan GEÇER,
+    dördüncüden 403 ALIR. Üçü de geçseydi `DELETE`in ayrı kapıda olduğu
+    iddiası ölçülmemiş kalırdı.
+    """
     belge = await belge_fabrikasi(proje, "a.pdf")
     slot = _ilk_slot(slot_katalogu, sahip)
-    govde = await _bagla(client, pm_headers, sahip, slot, belge)
 
+    # GET — view yeter
     assert (
         await client.get(_owner_path(sahip, sahip.owner_id), headers=muhasebe_headers)
     ).status_code == 200
-    body = {"type_id": str(slot.id), "document_id": str(belge.id)}
+
+    # POST — ARTIK view yeter (eskiden 403'tu)
+    olustur = await client.post(
+        _owner_path(sahip, sahip.owner_id),
+        json={"type_id": str(slot.id), "document_id": str(belge.id)},
+        headers=muhasebe_headers,
+    )
+    assert olustur.status_code == 201, olustur.text
+    link = _link_path(sahip, olustur.json()["id"])
+
+    # PATCH — view yeter
     assert (
-        await client.post(_owner_path(sahip, sahip.owner_id), json=body, headers=muhasebe_headers)
-    ).status_code == 403
-    assert (
-        await client.patch(
-            _link_path(sahip, govde["id"]), json={"note": "x"}, headers=muhasebe_headers
+        await client.patch(link, json={"note": "muhasebe"}, headers=muhasebe_headers)
+    ).status_code == 200
+
+    # DELETE — KARŞIT KANIT: view YETMEZ
+    silme = await client.delete(link, headers=muhasebe_headers)
+    assert silme.status_code == 403, (
+        f"DELETE view rolune ACILMIS: {silme.status_code}. Silme bilincli olarak "
+        "`full` kapisindadir (link_router docstring'i)."
+    )
+
+
+async def test_yetkisiz_rol_403_ve_BOLUMDE_boyle_bir_rol_YOK(
+    client: AsyncClient,
+    yetkisiz_headers,
+    sahip: SahipDurumu,
+    slot_katalogu,
+    proje,
+    belge_fabrikasi,
+) -> None:
+    """Karşıt kanıt: sahip modülünde `none` olan rol hiçbir uca giremez (403).
+
+    🔴 `sections` için böyle bir rol YOKTUR (`sites` satırında hiçbir rol `_N`
+    değil) — bu ölçülmüş bir olgudur ve burada ADIYLA iddia edilir; sessizce
+    atlanmaz. Matris değişip `sites`e bir `_N` girerse bu dal kırmızıya döner.
+    """
+    from tests.documents.conftest import NONE_ROLU
+
+    rol = NONE_ROLU[sahip.spec.key]
+    if rol is None:
+        assert sahip.spec.permission_module == "sites"
+        from app.modules.roles.seed_data import MATRIX
+
+        seviyeler = MATRIX["sites"]
+        assert all(s[0] is not AccessLevel.none for s in seviyeler), (
+            "`sites` satirina NONE girmis — bolum ucu icin yetkisiz-rol testi "
+            "artik KURULABILIR, bu dal gerceklenmelidir."
         )
+        return
+
+    belge = await belge_fabrikasi(proje, "a.pdf")
+    slot = _ilk_slot(slot_katalogu, sahip)
+    assert (
+        await client.get(_owner_path(sahip, sahip.owner_id), headers=yetkisiz_headers)
     ).status_code == 403
     assert (
-        await client.delete(_link_path(sahip, govde["id"]), headers=muhasebe_headers)
+        await client.post(
+            _owner_path(sahip, sahip.owner_id),
+            json={"type_id": str(slot.id), "document_id": str(belge.id)},
+            headers=yetkisiz_headers,
+        )
     ).status_code == 403
 
 
@@ -441,6 +501,85 @@ async def test_gorunmeyen_sahibin_bagi_404_BAGIN_cumlesi(
         assert yanit.json()["detail"] == guards.LINK_MISSING
     # Pozitif kontrol: admin aynı bağı güncelleyebilir.
     assert (await client.patch(link, json={"note": "x"}, headers=admin_headers)).status_code == 200
+
+
+async def test_liste_YALNIZ_o_sahibin_baglarini_dondurur(
+    client: AsyncClient,
+    pm_headers,
+    admin_headers,
+    sahip: SahipDurumu,
+    slot_katalogu,
+    proje: Project,
+    ikinci_proje: Project,
+    belge_fabrikasi,
+) -> None:
+    """🔴 `list_links`in SAHİP SÜZGECİ bekçisi (PR #116 incelemesi: süzgeç
+    kaldırılınca dört test dosyası da yeşil kalıyordu — BC-3 bu IDOR yüzeyini
+    DÖRDE katlıyor).
+
+    Admin İKİNCİ projedeki sahibe bir bağ açar; sonra BİRİNCİ sahibin listesi
+    çekilir ve o bağın **görünmediği** iddia edilir. Süzgeç silinirse liste
+    başka sahibin (ve başka projenin) bağını sızdırır ve test kırmızıya döner.
+    """
+    slot = _ilk_slot(slot_katalogu, sahip)
+
+    # (a) BAŞKA sahibe (ikinci proje) ait bağ — admin açar.
+    yabanci_belge = await belge_fabrikasi(ikinci_proje, "yabanci.pdf")
+    yabanci = await client.post(
+        _owner_path(sahip, sahip.yabanci_owner_id),
+        json={"type_id": str(slot.id), "document_id": str(yabanci_belge.id)},
+        headers=admin_headers,
+    )
+    assert yabanci.status_code == 201, yabanci.text
+
+    # (b) BU sahibe ait bağ.
+    benim = await _bagla(client, pm_headers, sahip, slot, await belge_fabrikasi(proje, "benim.pdf"))
+
+    # (c) Bu sahibin listesi YALNIZ kendi bağını taşır.
+    liste = (await client.get(_owner_path(sahip, sahip.owner_id), headers=pm_headers)).json()
+    kimlikler = {i["id"] for i in liste["items"]}
+    assert kimlikler == {benim["id"]}, "liste başka sahibin bağını sızdırdı"
+    assert yabanci.json()["id"] not in kimlikler
+    assert {i["owner_id"] for i in liste["items"]} == {str(sahip.owner_id)}
+
+    # (d) Pozitif kontrol: yabancı bağ GERÇEKTEN var — admin onu kendi
+    #     sahibinin listesinde görür (yani (c) bir "hiçbir şey yok" testi değil).
+    oteki = (
+        await client.get(_owner_path(sahip, sahip.yabanci_owner_id), headers=admin_headers)
+    ).json()
+    assert {i["id"] for i in oteki["items"]} == {yabanci.json()["id"]}
+
+
+async def test_bos_govdeli_PATCH_denetim_satiri_YAZMAZ(
+    client: AsyncClient,
+    seeded_db: AsyncSession,
+    pm_headers,
+    sahip: SahipDurumu,
+    slot_katalogu,
+    proje,
+    belge_fabrikasi,
+) -> None:
+    """`PATCH {}` 200 döner ama hiçbir alan değişmez → denetim satırı YAZILMAZ.
+    Yazsaydı günlük no-op "güncellendi" satırlarıyla dolar, gerçek değişikliğin
+    izi kaybolurdu. Pozitif kontrol: dolu gövde satırı YAZAR."""
+    belge = await belge_fabrikasi(proje, "a.pdf")
+    govde = await _bagla(
+        client, pm_headers, sahip, _ilk_slot(slot_katalogu, sahip), belge, note="ilk"
+    )
+    link = _link_path(sahip, govde["id"])
+
+    async def _sayi() -> int:
+        return len((await seeded_db.execute(select(AuditLog.detail))).scalars().all())
+
+    onceki = await _sayi()
+    bos = await client.patch(link, json={}, headers=pm_headers)
+    assert bos.status_code == 200, bos.text
+    assert bos.json()["note"] == "ilk", "boş gövde hiçbir alanı değiştirmemeli"
+    assert await _sayi() == onceki, "boş PATCH denetim satırı yazdı"
+
+    dolu = await client.patch(link, json={"note": "ikinci"}, headers=pm_headers)
+    assert dolu.status_code == 200
+    assert await _sayi() == onceki + 1, "dolu PATCH denetim satırı YAZMALI"
 
 
 async def test_ayni_slota_ikinci_belge_IZINLI_unique_yok(

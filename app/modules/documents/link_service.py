@@ -17,6 +17,19 @@ döner. Bağ satırının görünürlüğü SAHİBİNİNKİYLE AYNIDIR — ayrı
 ile bağ tablosu arasında DB kısıtı yoktur (bağ tablosu `project_id` kopyalamaz),
 bu yüzden kapsam eşitliği servisin TEK sorumluluğudur ve bekçisi
 `tests/documents/test_bc3_links_api.py`dedir.
+
+## 🔴 BU DOSYANIN COVERAGE SAYISI YALAN SÖYLÜYOR — kod ÇALIŞIYOR
+
+Araç bu dosya için **%42** raporluyor ve fonksiyon gövdelerinin çoğunu
+"kapsanmamış" gösteriyor. ÖLÇÜLDÜ (2026-09-05): o satırlara `raise` enjekte
+edildiğinde **32 test kırmızıya döndü**, geri alınınca `54 passed`. Ayrıca
+mutasyonlar (proje eşitliği · slot bölmesi · IDOR kapısı) tam o satırları
+öldürüyor. Kök sebep: `[tool.coverage.run]` bölümünde **`concurrency` ayarı
+YOK**, SQLAlchemy asyncio ise greenlet kullanıyor — aynı körlük repo genelinde
+(`equipment/document_service` %48 · `contracts/service` %51 · `sales/service`
+%55 · `inventory/service` %50).
+🔴 **Bu satırlar ÖLÜ KOD DEĞİLDİR; coverage'a bakıp silmeyin.** Küresel
+`--cov-fail-under=80` bu dosya için KANIT DEĞİLDİR; kanıt mutasyondur.
 """
 
 import uuid
@@ -119,9 +132,16 @@ async def update(
     spec: OwnerSpec,
     link_id: uuid.UUID,
     data: EntityDocumentLinkUpdate,
-) -> tuple[LinkRow, str]:
+) -> tuple[LinkRow, str | None]:
     row, context = await _visible_link(session, actor, spec, link_id)
-    for field, value in data.model_dump(exclude_unset=True).items():
+    degisiklik = data.model_dump(exclude_unset=True)
+    if not degisiklik:
+        # 🔴 BOŞ GÖVDE (`PATCH {}`) DENETİM SATIRI YAZMAZ. Yazsaydı denetim
+        # günlüğü hiçbir alanın değişmediği "güncellendi" satırlarıyla dolar ve
+        # gerçek değişikliğin izi bu gürültüde kaybolurdu. 200 döner (istek
+        # geçerlidir, sonucu no-op'tur) ama `detail` NULL'dır.
+        return row, None
+    for field, value in degisiklik.items():
         setattr(row.link, field, value)
     await session.flush()
     await session.refresh(row.link)

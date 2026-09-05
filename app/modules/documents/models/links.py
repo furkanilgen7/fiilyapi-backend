@@ -124,6 +124,22 @@ class EntityDocumentType(Base):
     `UNIQUE(id, scope)` bileşik FK'nin hedefidir (modül docstring'i). CRUD ucu
     AÇILMAZ (İK-1/MK-2 emsali) — seed migration'da, yönetimi ayarlar dilimine
     ertelidir.
+
+    ## 🟡 KAYDA GEÇMİŞ İKİ SINIR (bugün zararsız, yarın ısırabilir)
+
+    **`is_required` DEKORATİFTİR.** Kolon mockup'ın `*` işaretini taşır ve
+    uçlardan okunur, ama SUNUCU hiçbir yerde ZORLAMAZ: zorunlu slotu boş olan
+    bir satış kaydı normal kaydedilir. En yakın emsal (`equipment`) en azından
+    bir `missing` sayacı üretir; burada o da yoktur — "eksik zorunlu belge"
+    sorusu bugün HİÇBİR uçta cevaplanmıyor. Zorlamak mı yoksa yalnız saymak mı
+    gerektiği bir ÜRÜN kararıdır ve kullanıcıya sorulmuştur.
+
+    **Slot kimlikleri ORTAMA GÖRE FARKLIDIR.** `id` seed sırasında
+    `uuid.uuid4()` ile migration KOŞMA ANINDA üretilir → CI, yerel ve Railway
+    aynı slot için FARKLI UUID taşır. Bugün zararsızdır çünkü her eşleme
+    `(scope, code)` üzerinden yapılır (`code` UNIQUE'tir). 🔴 Ama `type_id`
+    değeri GÖMÜLÜ bir fikstür/tohum/test verisi bu varsayımı SESSİZCE kırar;
+    kimlik gerektiğinde `code`dan çözülmelidir.
     """
 
     __tablename__ = "entity_document_types"

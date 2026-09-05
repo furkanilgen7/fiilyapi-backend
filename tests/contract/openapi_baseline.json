@@ -52401,7 +52401,7 @@
     },
     "/sections/{section_id}": {
       "delete": {
-        "description": "Spec §7.1. Bolum silme KOSULSUZDUR: `sections.id`'yi hedefleyen FK yok.\n\nKapi `_ADMIN`'dir — bolum santiyenin ic kirilimi oldugu icin `sites`\nmodulunun seviyeleri kullanilir, AYRI izin modulu acilmaz.\n\nYanit `204 No Content`, GOVDESIZ. Denetim metni servis icinde, satir yok\nolmadan ONCE kurulur.",
+        "description": "Spec §7.1. 🔴 **BU CUMLE BAYATTI VE DUZELTILDI (BC-3, 2026-09-05).**\n\nEski metin *\"`sections.id`'yi hedefleyen FK yok\"* diyordu; `deletes.py`nin\nservis docstring'i bunu zaten curutmustu ama router'daki kopya duruyordu.\nÖLÇÜLDÜ (`Base.metadata` uzerinden, kelime aramasiyla DEGIL): `sections.id`yi\n**ON BIR** FK hedefliyor — ikisi CASCADE (`boq_item_section_allocations`,\n`section_milestones` ve BC-3'un `section_documents`i), kalani SET NULL\n(`personnel`, `purchase_requests`, `sections.depends_on_section_id`,\n`site_diary_entries`, `site_plan_rows`, `stock_entry_lines`,\n`subcontractor_progress_payments`, `timesheet_entries`).\nSilme yine de kosulsuzdur cunku hicbiri RESTRICT DEGIL; kosulsuzlugun\ngerekcesi \"FK yok\" DEGIL, \"engelleyen FK yok\"tur.\n\nKapi `_ADMIN`'dir — bolum santiyenin ic kirilimi oldugu icin `sites`\nmodulunun seviyeleri kullanilir, AYRI izin modulu acilmaz.\n\nYanit `204 No Content`, GOVDESIZ. Denetim metni servis icinde, satir yok\nolmadan ONCE kurulur.",
         "operationId": "delete_section_endpoint_sections__section_id__delete",
         "parameters": [
           {

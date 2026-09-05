@@ -407,6 +407,33 @@ def sahip(request) -> SahipDurumu:
     return SahipDurumu(spec=spec, owner_id=gorunen.id, yabanci_owner_id=gorunmeyen.id)
 
 
+#: Sahip modulunde `none` (_N) seviyesindeki rol — KARSIT KANIT icin.
+#: Olculdu (`roles/seed_data.py`, rol sirasi: system_admin · patron · site_chief ·
+#: field_engineer · hr_manager · accounting · project_manager · procurement):
+#:   projects  = [_A,_F,_LIM,_LIM,_LIM,_FIN,_F,_N ] -> procurement NONE
+#:   sales     = [_A,_F,_N,  _N,  _N,  _FIN,_F,_N ] -> procurement NONE
+#:   contracts = [_A,_F,_N,  _N,  _N,  _FIN,_F,_N ] -> procurement NONE
+#: 🔴 `sites` = [_A,_F,_LIM,_LIM,_LIM,_FIN,_F,_LIM] -> HICBIR rol NONE DEGIL.
+#: Yani BOLUM ucu icin "yetkisiz rol" senaryosu YAPISAL OLARAK KURULAMAZ; bu bir
+#: eksiklik degil olculmus bir olgudur ve testte adiyla iddia edilir.
+NONE_ROLU = {
+    "section": None,
+    "unit": "procurement",
+    "unit_sale": "procurement",
+    "subcontractor_contract": "procurement",
+}
+
+
+@pytest.fixture
+async def yetkisiz_headers(
+    client: AsyncClient, seeded_db: AsyncSession, user_factory, proje: Project
+) -> dict[str, str]:
+    """`procurement` — `projects`/`sales`/`contracts`te NONE, `sites`te view."""
+    return await _scoped_headers(
+        client, seeded_db, user_factory, "procurement", "satinalma@bc3.co", proje
+    )
+
+
 @pytest.fixture
 async def muhasebe_headers(
     client: AsyncClient, seeded_db: AsyncSession, user_factory, proje: Project
