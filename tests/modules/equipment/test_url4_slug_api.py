@@ -302,3 +302,99 @@ async def test_slug_kolonlari_VERITABANINA_yazilir(client, admin_headers, db_ses
     ).scalar_one()
     assert kira.slug == "kolon2026001"
     assert Decimal("0") == Decimal("0")  # tip importunun kullanıldığı yer
+
+
+# =========================================================================== #
+# 4. 🔴 K1 — SLUG'IN GEÇ DOĞUMU (NULL -> dolu geçişi)
+# =========================================================================== #
+
+
+async def test_NUMARASIZ_taslaga_numara_girilince_slug_SONRADAN_dogar(
+    client, admin_headers, seeded_db
+) -> None:
+    """🔴 K1 — özellik "verinin yaşının fonksiyonu" OLMAMALI.
+
+    Kira faturası taslakta numarasız açılır (mockup: `— (kayıt no yok)`) ve
+    numara SONRADAN girilir. Slug yalnız `create`te ayrılsaydı bu kayıt
+    okunabilir URL'ini HİÇ almazdı — üstelik migration deploy anındaki aynı
+    şekilli satırları doldurduğu için "deploy'dan önce numarası girilen slug
+    alır, sonra girilen almaz" gibi keyfî bir ayrım doğardı.
+
+    Mutasyon: `update_invoice`taki `_slug_gec_dogum` çağrısını kaldır → bu test
+    kırmızı olur (slug `None` kalır).
+    """
+    supplier = await _tedarikci(seeded_db, "Geç Doğum Kiralama")
+    fatura = await _fatura_kur(client, admin_headers, supplier)
+    assert fatura["slug"] is None, "kurulum: numarasız taslak slug'sız olmalı"
+
+    guncel = await client.patch(
+        f"{_KIRA}/{fatura['id']}", json={"invoice_no": "GEC2026001"}, headers=admin_headers
+    )
+    assert guncel.status_code == 200, guncel.text
+    assert guncel.json()["slug"] == "gec2026001"
+
+    # Ve yeni slug GERÇEKTEN o kaydı açar (karşıt kanıt).
+    acilis = await client.get(f"{_KIRA}/gec2026001", headers=admin_headers)
+    assert acilis.status_code == 200, acilis.text
+    assert acilis.json()["id"] == fatura["id"]
+
+
+async def test_DOLU_numara_degisince_slug_DEGISMEZ_gec_dogum_TETIKLENMEZ(
+    client, admin_headers, seeded_db
+) -> None:
+    """🔴 K1'in TERS KAPISI — geç doğum yalnız `NULL -> dolu` geçişinde çalışır.
+
+    Dolu bir numaranın düzeltilmesi slug'ı YENİDEN üretmemeli: URL-2 kararı 4
+    (paylaşılmış bağlantı yeniden adlandırmayla ölmez). Bu iddia olmasaydı
+    `_slug_gec_dogum` "her PATCH'te yeniden üret" diye yazılabilir ve önceki
+    test yine yeşil kalırdı.
+    """
+    supplier = await _tedarikci(seeded_db, "Sabit Kalan Kiralama")
+    fatura = await _fatura_kur(client, admin_headers, supplier, invoice_no="ILK2026001")
+    assert fatura["slug"] == "ilk2026001"
+
+    guncel = await client.patch(
+        f"{_KIRA}/{fatura['id']}", json={"invoice_no": "IKINCI2026001"}, headers=admin_headers
+    )
+    assert guncel.status_code == 200, guncel.text
+    assert guncel.json()["invoice_no"] == "IKINCI2026001"
+    assert guncel.json()["slug"] == "ilk2026001", "dolu->dolu yeniden adlandırmada slug DEĞİŞMEZ"
+    assert (await client.get(f"{_KIRA}/ilk2026001", headers=admin_headers)).status_code == 200
+    assert (await client.get(f"{_KIRA}/ikinci2026001", headers=admin_headers)).status_code == 404
+
+
+# =========================================================================== #
+# 5. 🔴 K3 — kira faturasında GÖRÜNÜRLÜK BEKÇİSİ
+# =========================================================================== #
+
+
+async def test_gorunmeyen_santiyedeki_kira_faturasi_SLUGLA_da_404(
+    client, sef_headers, admin_headers, seeded_db, gorunmeyen_santiye
+) -> None:
+    """🔴 K3 — bu rota, kapısı `site_id IS NULL -> herkese görünür` olan TEK rota.
+
+    Yani süzgecin GERÇEKTEN bir şeyi kestiğini ölçmek için faturanın şantiyesi
+    DOLU olmalı; boş bırakılsaydı test hiçbir şeyi savunmazdı (`_is_visible_site`
+    NULL'da `True` döner).
+    """
+    supplier = await _tedarikci(seeded_db, "Gizli Kiralama")
+    fatura = await _fatura_kur(
+        client,
+        admin_headers,
+        supplier,
+        invoice_no="GIZLIKIRA2026001",
+        site_id=str(gorunmeyen_santiye.id),
+    )
+    assert fatura["slug"] == "gizlikira2026001"
+
+    slugla = await client.get(f"{_KIRA}/gizlikira2026001", headers=sef_headers)
+    uuid_ile = await client.get(f"{_KIRA}/{fatura['id']}", headers=sef_headers)
+    olmayan = await client.get(f"{_KIRA}/hic-boyle-bir-fatura", headers=sef_headers)
+
+    assert slugla.status_code == uuid_ile.status_code == olmayan.status_code == 404
+    assert slugla.json() == uuid_ile.json() == olmayan.json()
+
+    # 🔴 POZİTİF KONTROL (K-IKIZ1): GÖREN aktör AYNI slug'la 200 alır.
+    goren = await client.get(f"{_KIRA}/gizlikira2026001", headers=admin_headers)
+    assert goren.status_code == 200, goren.text
+    assert goren.json()["id"] == fatura["id"]

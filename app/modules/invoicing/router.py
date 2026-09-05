@@ -233,6 +233,15 @@ async def get_invoice_endpoint(
     URL-4 — yol parametresi UUID **ya da** `invoice_no` kabul eder (yol adı
     `invoice_id` KALIR, URL-2 kararı 1). Numara iki yönde de kayıtlıysa ve
     ikisi de KULLANICIYA GÖRÜNÜYORSA **409** döner: sessizce biri seçilmez.
+
+    🔴 **KARDEŞ UÇLAR `uuid` KALIR** — sözleşme bu yol parametresi adı altında
+    BİLEREK ASİMETRİKTİR: `GET /invoices/{invoice_id}` `string`, ama
+    `…/{invoice_id}/payments` · `/approve` · `/send` · `/dispute` ·
+    `/mark-collected` `uuid` bekler. Anahtar YALNIZCA **link üretimi ve detay
+    okuması** içindir; istemci kardeş çağrılarda gövdeden dönen `id`yi
+    kullanır (URL-2 kararı 3). Detay yanıtındaki `slug`ı bir eylem ucuna
+    geçirmek 422 verir — bu bir kusur değil, yazma yüzeyini tahmin edilebilir
+    bir anahtara açmama kararının görünen yüzüdür.
     """
     invoice = await service.visible_invoice(session, user, parse_ref(invoice_id))
     return await service.build_detail(session, invoice)

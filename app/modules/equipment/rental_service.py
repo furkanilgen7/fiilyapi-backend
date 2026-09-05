@@ -588,6 +588,26 @@ async def create_invoice(
     )
 
 
+async def _slug_gec_dogum(session: AsyncSession, invoice: EquipmentRentalInvoice) -> None:
+    """Slug NULL iken numara İLK KEZ dolarsa slug'ı ayırır; aksi hâlde DOKUNMAZ.
+
+    🔴 İKİ YÖNLÜ KAPI ve ikisi de bağlayıcı:
+
+    * `slug is None` DEĞİLSE hiçbir şey yapılmaz — URL-2 kararı 4: slug
+      oluşturulurken üretilir, **yeniden adlandırmayla DEĞİŞMEZ**. Numarası
+      düzeltilen bir faturanın paylaşılmış bağlantısı ölmez.
+    * `invoice_no` hâlâ boşsa da yapılmaz: uydurma taban yazılmaz.
+
+    Yani bu yol YALNIZCA `NULL -> dolu` geçişinde ateşlenir ve kaydın ömrü
+    boyunca EN FAZLA BİR KEZ çalışır.
+    """
+    if invoice.slug is not None:
+        return
+    if not (invoice.invoice_no or "").strip():
+        return
+    invoice.slug = await allocate_slug(session, invoice.invoice_no, EquipmentRentalInvoice.slug)
+
+
 async def update_invoice(
     session: AsyncSession, actor: User, invoice_id: uuid.UUID, data: RentalInvoiceUpdate
 ) -> tuple[RentalInvoiceDetailResponse, str]:
@@ -622,6 +642,13 @@ async def update_invoice(
 
     for alan, deger in degisiklikler.items():
         setattr(invoice, alan, deger)
+    # 🔴 URL-4 K1 — SLUG'IN GEÇ DOĞUMU. Kira faturası taslakta NUMARASIZ açılır
+    # (mockup: `— (kayıt no yok)`) ve numara SONRADAN girilir. Slug yalnız
+    # `create`te ayrılsaydı bu kayıt okunabilir URL'ini HİÇ ALMAZDI — ve
+    # migration deploy anındaki aynı şekilli satırları doldurduğu için özellik
+    # "verinin yaşının fonksiyonu" olurdu (deploy'dan önce numarası girilen
+    # slug alır, sonra girilen almaz). Kabul edilemez bir ayrım.
+    await _slug_gec_dogum(session, invoice)
     if "supplier_id" in degisiklikler:
         # 🔴 K8: tedarikçi değiştiyse mevcut `rented` satırlarla ÇELİŞMEMELİ.
         await _assert_supplier_match(session, invoice)

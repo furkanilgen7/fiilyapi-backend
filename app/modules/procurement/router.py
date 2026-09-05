@@ -293,8 +293,13 @@ async def get_purchase_request_endpoint(
     URL-4 — yol parametresi UUID **ya da** `request_no` kabul eder.
     🔴 YOL ADI `request_id` OLARAK KALIR (URL-2 kararı 1): şablon değişmezse
     üretilmiş istemcinin yol anahtarı da değişmez; değişen yalnız TİPTİR
-    (`uuid` -> `string`). PATCH/DELETE ve durum geçişleri `uuid.UUID` KALIR
-    (URL-2 kararı 3 — yazmanın kimliği okumanın döndürdüğü `id`den gelir)."""
+    (`uuid` -> `string`).
+
+    🔴 **KARDEŞ UÇLAR `uuid` KALIR** — sözleşme bu yol parametresi adı altında
+    BİLEREK ASİMETRİKTİR: bu uç `string`, ama `…/{request_id}/quotes` ·
+    `/select-and-order` ve tüm PATCH/DELETE/durum geçişleri `uuid` bekler.
+    Anahtar YALNIZCA **link üretimi ve detay okuması** içindir; istemci kardeş
+    çağrılarda gövdeden dönen `id`yi kullanır (URL-2 kararı 3)."""
     purchase_request = await service.visible_request(session, user, parse_ref(request_id))
     return await service.build_request_detail(session, user, purchase_request)
 

@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel, can_delete
 from app.core.errors import ConflictError, DeleteNotAllowedError, NotFoundError, SiteValidationError
-from app.core.slug import allocate_slug
+from app.core.slug import allocate_slug, composite_slug
 from app.modules.contracts import guards as contract_guards
 from app.modules.contracts import repository as contracts_repository
 from app.modules.contracts.models import SubcontractorContract, SubcontractorContractItem
@@ -253,9 +253,10 @@ async def create(
     # URL-4: bileşik anahtarın (`contract_id`, `sequence_no`) SAKLANAN karşılığı
     # (`tsz-2025-001-48`). Sözleşmenin slug'ı NULL ise hakediş de UUID'siyle
     # yaşar — uydurma taban YAZILMAZ.
+    # `composite_slug`: SIRA NUMARASI kirpmada KAYBOLMAZ (K2).
     payment.slug = await allocate_slug(
         session,
-        f"{contract.slug}-{payment.sequence_no}" if contract.slug else None,
+        composite_slug(contract.slug, payment.sequence_no),
         SubcontractorProgressPayment.slug,
     )
     payment.lines = lines

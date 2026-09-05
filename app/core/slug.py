@@ -93,7 +93,11 @@ _TURKISH_TO_ASCII = str.maketrans(
 _NON_SLUG = re.compile(r"[^a-z0-9]+")
 
 # Slug tabanı için tavan. Kolon `String(160)`tır: 100 taban + `-` + sayı eki
-# rahatça sığar ve `name` (`String(150)`) hiçbir uzunlukta taşıramaz.
+# rahatça sığar.
+# 🔴 GEREKÇE DÜZELTİLDİ (URL-4): eski yorum `name`i `String(150)` sanıyordu;
+# ÖLÇÜLDÜ — gerçek kolonlar `String(200)`dür (`projects.name`, `equipment.name`,
+# `personnel.full_name`). Yani tavanı sağlayan şey KOLON değil BU SABİTTİR:
+# 200 karakterlik bir ad burada 100'e KIRPILIR.
 MAX_SLUG_LENGTH = 100
 
 # `unique_slug` sayı ekini buradan başlatır: ilk çakışan `-2` alır (`-1` DEĞİL —
@@ -149,13 +153,42 @@ def parse_ref(ref: str) -> uuid.UUID | str:
     Eski UUID bağlantıları ÇALIŞMAYA DEVAM ETMELİDİR: kullanıcının yer imleri
     proje yeniden adlandırıldı diye de, slug açıldı diye de bozulmaz.
 
-    UUID gibi görünmeyen her şey slug sayılır. Slug'lar `[a-z0-9-]` olduğundan
-    hiçbir geçerli slug UUID olarak ayrıştırılamaz — iki uzay kesişmez.
+    ## 🔴 "İKİ UZAY KESİŞMEZ" İDDİASI YANLIŞTI — ÖLÇÜLDÜ VE DÜZELTİLDİ (URL-4)
+
+    URL-2 bu fonksiyonun docstring'ine *"slug'lar `[a-z0-9-]` olduğundan hiçbir
+    geçerli slug UUID olarak ayrıştırılamaz"* yazmıştı. **Yanlıştı.**
+    `uuid.UUID()` girdideki TİRELERİ TAMAMEN ATAR ve 32 hex hanesi olan HER
+    dizeyi kabul eder; `[a-z0-9-]` alfabesi `[0-9a-f-]`i KAPSAR:
+
+        slugify("Deadbeef Deadbeef Deadbeef Deadbeef")
+            -> "deadbeef-deadbeef-deadbeef-deadbeef"  -> uuid.UUID() KABUL EDER
+        "0123456789abcdef0123456789abcdef"            -> uuid.UUID() KABUL EDER
+
+    Yani `slugify`nin ÜRETEBİLDİĞİ bir slug, UUID uzayına düşüp kendi kaydını
+    açamaz hâle gelebiliyordu (istek var olmayan bir kimliğe gidip 404 alırdı).
+
+    ## Çözüm: YALNIZ KANONİK BİÇİM UUID sayılır
+
+    Kanonik biçim 8-4-4-4-12'dir ve `str(uuid)` HER ZAMAN onu üretir — yani
+    sistemin YAYINLADIĞI her UUID bağlantısı kanoniktir ve çalışmaya devam
+    eder. Kanonik olmayan ama `uuid.UUID()`nin kabul ettiği biçimler (tiresiz
+    32 hex, yanlış yerde tireli, `urn:uuid:` önekli) artık SLUG sayılır —
+    çünkü onları üreten şey kullanıcının adı, bizim bağlantımız değildir.
+
+    Bu ayrım ÖLÇÜLDÜ: `deadbeef-deadbeef-deadbeef-deadbeef` ve
+    `0123456789abcdef0123456789abcdef` kanonik DEĞİLDİR (slug'a düşer), gerçek
+    `uuid4()` çıktıları kanoniktir (UUID'ye düşer).
+
+    Bekçisi: `test_url4_parse_ref.py::test_32_HEX_SEKILLI_SLUG_kendi_bagini_ACAR`.
     """
     try:
-        return uuid.UUID(ref)
-    except (ValueError, AttributeError):
+        parsed = uuid.UUID(ref)
+    except (ValueError, AttributeError, TypeError):
         return ref
+    # 🔴 Kanoniklik SINAVI: `uuid.UUID()` kabul etti diye UUID DEĞİLDİR.
+    # `str(parsed)` her zaman kanonik 8-4-4-4-12 küçük harf üretir; girdi ona
+    # birebir eşit değilse bu bir UUID bağlantısı değil, slug'dır.
+    return parsed if str(parsed) == ref.lower() else ref
 
 
 async def allocate_slug(
@@ -182,6 +215,26 @@ async def allocate_slug(
     OTOMATIK YENIDEN DENEME YAPILMAZ. `_next_project_code` / `_next_site_code`
     ile BIREBIR ayni kanon (spec §8.3) — slug icin ayri bir yaris cozumu icat
     edilmez.
+
+    ## 🔴 KARAR (URL-4): GLOBAL TEKILLIK BIR SIZINTI TASIR — KABUL EDILDI
+
+    URL-4'un alti kolonu GLOBAL tekildir (`scope_filters` VERILMEZ). Sonuc:
+    goremedigi bir "Kopru Guclendirme" varken ikinci bir tane olusturan
+    kullanici `kopru-guclendirme-2` alir ve bundan **ayni adli baska bir
+    kaydin VAR OLDUGUNU** cikarabilir. Sizan sey adin KENDISI degildir
+    (kullanici onu zaten yazdi), yalnizca **varlik** bilgisidir.
+
+    Kapsam suzgeci gecmek (`allocate_slug`a `Model.project_id == …` vermek) bu
+    sizintiyi kapatirdi ama URL'i BOZARDI: kapsam ici tekil bir slug, kapsami
+    URL'de TASIMAYAN bir yolda (`/makine/beko-loder`) coklu esleme uretir ve
+    cozumleyici hangi kaydi acacagini bilemez — URL-2'nin `sites` icin
+    `?project=` parametresiyle cozdugu problem, burada cozecek bir segment
+    YOKTUR.
+
+    Bu yuzden GLOBAL TEKILLIK SECILDI ve sizinti KABUL EDILDI. Gerekce:
+    ad zaten kullanicinin YAZDIGI seydir, kayit govdesi/kimligi hicbir sekilde
+    sizmaz, ve alternatifi calismayan bir URL'dir. Karar burada YAZILIDIR ki
+    ileride "farkinda degildik" denmesin.
     """
     base = slugify(name)
     if base is None:
@@ -197,10 +250,19 @@ async def allocate_slug(
 def matches_ref(entity_id: uuid.UUID, entity_slug: str | None, ref: uuid.UUID | str) -> bool:
     """URL-4: bir kayit YA kimligiyle YA slug'iyla eslesir.
 
-    `projects/service.py::project_matches_ref`in TURDEN BAGIMSIZ ikizidir ve
-    URL-4'un dokuz rotasinin HEPSI bunu kullanir — dokuz modulde dokuz kez
-    kopyalanan bir kosul, birinde `is not None` unutuldugunda SESSIZCE
-    "slug'siz her kayit bos referansla acilir" kusuru dogururdu.
+    `projects/service.py::project_matches_ref`in TURDEN BAGIMSIZ ikizidir.
+
+    🔴 SAYIM DUZELTILDI: bu docstring once *"URL-4'un dokuz rotasinin HEPSI
+    bunu kullanir"* diyordu — YANLIS. Olculdu, GERCEK CAGIRAN TEKTIR:
+    `contracts/service.py:328` (`_visible_project`, isveren sozlesmesi ucu).
+    Kalan sekiz rota kaydi GORUNUR KUMEDE degil DOGRUDAN SORGUDA cozer
+    (`ref_filter` + repository) ve bu fonksiyona hic ugramaz.
+
+    Neden yine de burada duruyor: isveren sozlesmesi ucu kaydi gorunur kumenin
+    ICINDE eslestirmek ZORUNDA (kapsam suzgeci yapisal olarak atlanamaz olsun
+    diye), ve o esleştirme kosulunu `Project` tipine baglamadan ifade eden tek
+    yer burasi. Tek cagiranli olmasi onu olu kod YAPMAZ; ama "dokuz rota"
+    iddiasi bir sayim yalaniydi ve kaldirildi.
 
     `project_matches_ref` BILEREK YERINDE BIRAKILDI: `Project` tipine bagli
     imzasi ve mutasyon olcumunu anlatan docstring'i URL-2'nin kaydidir; onu
@@ -234,10 +296,41 @@ def url_safe_key(value: str | None) -> str | None:
 
     Guvenli olmayan numara tasiyan kayit `None` doner ve URL'i UUID olarak
     yasar — URL-2 karar 5'in (`slug ?? id`) tam olarak ongordugu dusus.
+
+    ## 🔴 KARAR (URL-4): BUYUK/KUCUK HARF ASIMETRISI — KABUL EDILDI
+
+    URL-4'te IKI anahtar ailesi var ve harf davranislari FARKLI:
+
+      * `slug` KOLONU olan alti tablo -> `slugify` ciktisi, HEP KUCUK HARF
+        (`/makine/beko-loder`).
+      * DOGAL ANAHTARLI iki uc (`request_no`, `invoice_no`) -> deger OLDUGU
+        GIBI yayinlanir (`/faturalar/FIL20260001`).
+
+    Sonuc olculdu: `/faturalar/fil20260001` **404**, `/faturalar/FIL20260001`
+    **200**. Bu bir tutarsizliktir ve BILEREK kabul edilmistir.
+
+    Gerekce: cozumleyici `invoice_no = :ref` ile EXACT arar ve o kolonun
+    benzersiz indeksi de exact'tir. Kucuk harfe indirgemek (`lower(invoice_no)
+    = lower(:ref)`) indeksi kullanilamaz hale getirir; slug'lamak ise
+    yayinlanan anahtar ile aranan degeri AYIRIR (`url_safe_key` docstring'inin
+    ust kismi) — yani uc kendi yayinladigi bagi acamaz olurdu.
+
+    Kullaniciya gorunen yuzde bu asimetri ZARARSIZDIR: iki uc de bagi KENDISI
+    uretir (`slug ?? id`), yani kullanici anahtari elle YAZMAZ; kopyaladigi
+    baglanti her zaman dogru harflerle gelir. Elle harf degistirerek gelen
+    istek 404 alir — var olmayan bir anahtarla ayni cevap.
+
+    🔴 NOKTA SEGMENTLERI DE ELENIR (`.` ve `..`). Alfabede `.` VAR (`A-2026.0001`
+    mesru bir fatura numarasidir), ama TAMAMI noktadan olusan bir segment yol
+    ANLAMI tasir: tarayici ve proxy'ler `..`yi istek GONDERILMEDEN normalize
+    eder, kullanici sessizce baska bir sayfaya duser ve sunucu bunu hicbir
+    zaman GORMEZ. `/` icin verilen ELEME kararinin birebir aynisi.
     """
     if value is None:
         return None
-    return value if _URL_SAFE_KEY.fullmatch(value) else None
+    if not _URL_SAFE_KEY.fullmatch(value):
+        return None
+    return None if set(value) == {"."} else value
 
 
 def ref_filter(
@@ -249,9 +342,45 @@ def ref_filter(
 
     🔴 `or_` DEGIL, SECIM: iki kolonu `OR` ile birlestirmek UUID metnini anahtar
     kolonuyla da karsilastirirdi; anahtar `String` oldugu icin Postgres bunu
-    kabul eder ve indeks kullanilamaz hale gelirdi. Iki uzay kesismedigi icin
-    (URL-2 karar 2) TEK kolon secmek hem dogru hem indekslenebilirdir.
+    kabul eder ve indeks kullanilamaz hale gelirdi.
+
+    🔴 Secimin MESRULUGU `parse_ref`in KANONIKLIK SINAVINDAN gelir, "iki uzay
+    kesismez"den DEGIL — o iddia olculerek CURUTULDU (bkz. `parse_ref`).
+    `parse_ref` yalnizca kanonik 8-4-4-4-12 biciminde UUID dondurdugu icin,
+    UUID dalina dusen bir deger ASLA bir slug olamaz; tersi de gecerlidir.
     """
     if isinstance(ref, uuid.UUID):
         return id_column == ref
     return key_column == ref
+
+
+def composite_slug(parent_slug: str | None, suffix: object) -> str | None:
+    """Bilesik slug tabani: `<ust-slug>-<ek>` — EK HER ZAMAN HAYATTA KALIR.
+
+    URL-4'un uc bilesik anahtarli rotasi (isveren hakedisi, taseron hakedisi)
+    slug'ini `<ust-slug>-<sira>` olarak URETIP SAKLAR. Naif kurulum
+    (`f"{parent}-{seq}"` -> `slugify`) bir tuzak tasir ve OLCULDU:
+
+        slugify("a"*120 + " 48")  ->  "aaa…a"  (100 karakter, `-48` YOK)
+
+    `MAX_SLUG_LENGTH` kirpmasi SONDAN kirptigi icin SIRA NUMARASI SESSIZCE
+    DUSER — ve o an ayni projenin 1., 2., 48. hakedisi AYNI tabana coker.
+    Cakisma `unique_slug` tarafindan `-2`/`-3` ile "cozulur", yani kullanici
+    `/hakedisler/aaa…a-2` gibi SIRAYI HIC TASIMAYAN bir URL gorur; kusur
+    hicbir yerde patlamaz, yalnizca adres anlamsizlasir.
+
+    Bu yuzden ek once ayrilir, UST SLUG ona gore kirpilir:
+    taban = ust[: MAX - len("-" + ek)] + "-" + ek.
+
+    Ust slug `None` ise (adi sluglanamayan proje/sozlesme) sonuc da `None`dur:
+    uydurma taban YAZILMAZ (URL-2 karar 5).
+    """
+    if parent_slug is None:
+        return None
+    ek = str(suffix)
+    tavan = MAX_SLUG_LENGTH - len(ek) - 1
+    if tavan <= 0:
+        # Ek tek basina tavani dolduruyorsa ust slug'a yer YOKTUR; sessizce
+        # ek'siz bir taban dondurmek sirayi kaybetmenin ta kendisi olurdu.
+        return slugify(ek)
+    return slugify(f"{parent_slug[:tavan].rstrip('-')}-{ek}")

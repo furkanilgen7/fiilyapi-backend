@@ -217,3 +217,40 @@ async def test_PATCH_ve_DELETE_slug_kabul_ETMEZ_422(
             f"{_YOL}/{olusan.json()['id']}", json={"description": "x"}, headers=admin_headers
         )
     ).status_code == 200
+
+
+# =========================================================================== #
+# 5. 🔴 K2 — UZUN ÜST SLUG'DA SIRA NUMARASI KAYBOLMAZ
+# =========================================================================== #
+
+
+async def test_UZUN_proje_slugunda_SIRA_NUMARASI_kirpilmaz(
+    client, admin_headers, sozlesmeli_proje, seeded_db
+) -> None:
+    """🔴 K2 — `MAX_SLUG_LENGTH` kırpması sırayı SESSİZCE düşürüyordu.
+
+    Ölçüldü: `slugify("a"*120 + " 48")` -> 100 karakter ve `-48` YOK. O hâlde
+    aynı projenin 1., 2., 48. hakedişi AYNI tabana çöker; `unique_slug` bunu
+    `-2`/`-3` ile "çözer" ve kullanıcı SIRAYI HİÇ TAŞIMAYAN bir adres görür.
+    Hiçbir yerde patlamaz — yalnızca adres anlamsızlaşır.
+
+    `composite_slug` eki ÖNCE ayırıp üst slug'ı ona göre kırpar.
+    Mutasyon: `composite_slug` yerine `f"{project.slug}-{seq}"` yaz → kırmızı.
+    """
+    uzun = "k" * 120
+    await _slugla(seeded_db, sozlesmeli_proje, uzun)
+
+    olusan = await client.post(
+        f"/projects/{sozlesmeli_proje}{_YOL}", json={}, headers=admin_headers
+    )
+    assert olusan.status_code == 201, olusan.text
+    slug = olusan.json()["slug"]
+
+    assert slug is not None
+    assert slug.endswith("-1"), f"SIRA NUMARASI KIRPMADA KAYBOLDU: {slug!r}"
+    assert len(slug) <= 100, f"tavan asildi: {len(slug)}"
+
+    # Ve o slug GERÇEKTEN kaydı açar (karşıt kanıt).
+    acilis = await client.get(f"{_YOL}/{slug}", headers=admin_headers)
+    assert acilis.status_code == 200, acilis.text
+    assert acilis.json()["id"] == olusan.json()["id"]

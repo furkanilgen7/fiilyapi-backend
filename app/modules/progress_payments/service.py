@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import AccessLevel, can_delete
 from app.core.errors import ConflictError, DeleteNotAllowedError, NotFoundError, SiteValidationError
-from app.core.slug import allocate_slug
+from app.core.slug import allocate_slug, composite_slug
 from app.core.timezone import today
 from app.modules.contracts.models import EmployerContractItem
 from app.modules.progress_payments import calculations, guards, lines, repository
@@ -248,9 +248,11 @@ async def create(
     # Proje slug'ı NULL ise (adı slug'lanamayan proje) `allocate_slug` `None`
     # döner ve hakediş UUID'siyle yaşar — uydurma taban YAZILMAZ.
     # Proje sonradan yeniden adlandırılsa bile bu slug DEĞİŞMEZ (URL-2 kararı 4).
+    # `composite_slug`: SIRA NUMARASI kirpmada KAYBOLMAZ (K2). Naif
+    # `f"{slug}-{seq}"` uzun proje adinda `-{seq}`i sessizce dusururdu.
     payment.slug = await allocate_slug(
         session,
-        f"{project.slug}-{sequence_no}" if project.slug else None,
+        composite_slug(project.slug, sequence_no),
         ProgressPayment.slug,
     )
     if data.lines:

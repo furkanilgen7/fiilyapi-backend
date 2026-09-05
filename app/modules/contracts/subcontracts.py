@@ -544,6 +544,14 @@ async def update_subcontractor_contract(
 
     for field, value in changes.items():
         setattr(contract, field, value)
+    # 🔴 URL-4 K1 — SLUG'IN GEÇ DOĞUMU (kira faturasındakiyle AYNI sınıf).
+    # Taşeron sözleşmesi taslakta numarasız/adsız açılabilir; slug yalnız
+    # `create`te ayrılsaydı o kayıt okunabilir URL'ini HİÇ almazdı ve özellik
+    # "verinin yaşının fonksiyonu" olurdu.
+    if contract.slug is None:
+        contract.slug = await allocate_slug(
+            session, _contract_slug_base(contract), SubcontractorContract.slug
+        )
     await session.flush()
     await session.refresh(contract)
     return contract, project, is_publishing, site_changed

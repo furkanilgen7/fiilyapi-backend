@@ -42872,7 +42872,7 @@
         ]
       },
       "get": {
-        "description": "FGI/FGE detayı: başlık + kalemler + SAKLANAN toplamlar.\n\nGörünmeyen fatura var olmayanla AYNI 404'ü alır. Toplamlar okuma anında\nyeniden HESAPLANMAZ (K7): fatura donmuş bir belgedir.\n\nURL-4 — yol parametresi UUID **ya da** `invoice_no` kabul eder (yol adı\n`invoice_id` KALIR, URL-2 kararı 1). Numara iki yönde de kayıtlıysa ve\nikisi de KULLANICIYA GÖRÜNÜYORSA **409** döner: sessizce biri seçilmez.",
+        "description": "FGI/FGE detayı: başlık + kalemler + SAKLANAN toplamlar.\n\nGörünmeyen fatura var olmayanla AYNI 404'ü alır. Toplamlar okuma anında\nyeniden HESAPLANMAZ (K7): fatura donmuş bir belgedir.\n\nURL-4 — yol parametresi UUID **ya da** `invoice_no` kabul eder (yol adı\n`invoice_id` KALIR, URL-2 kararı 1). Numara iki yönde de kayıtlıysa ve\nikisi de KULLANICIYA GÖRÜNÜYORSA **409** döner: sessizce biri seçilmez.\n\n🔴 **KARDEŞ UÇLAR `uuid` KALIR** — sözleşme bu yol parametresi adı altında\nBİLEREK ASİMETRİKTİR: `GET /invoices/{invoice_id}` `string`, ama\n`…/{invoice_id}/payments` · `/approve` · `/send` · `/dispute` ·\n`/mark-collected` `uuid` bekler. Anahtar YALNIZCA **link üretimi ve detay\nokuması** içindir; istemci kardeş çağrılarda gövdeden dönen `id`yi\nkullanır (URL-2 kararı 3). Detay yanıtındaki `slug`ı bir eylem ucuna\ngeçirmek 422 verir — bu bir kusur değil, yazma yüzeyini tahmin edilebilir\nbir anahtara açmama kararının görünen yüzüdür.",
         "operationId": "get_invoice_endpoint_invoices__invoice_id__get",
         "parameters": [
           {
@@ -50508,7 +50508,7 @@
         ]
       },
       "get": {
-        "description": "FST detayı: başlık + kalemler + TÜREVLER (satır tutarı · tahmini toplam ·\n\"Mevcut Stok\"). Görünmeyen talep var olmayanla AYNI 404'ü alır.\n\nURL-4 — yol parametresi UUID **ya da** `request_no` kabul eder.\n🔴 YOL ADI `request_id` OLARAK KALIR (URL-2 kararı 1): şablon değişmezse\nüretilmiş istemcinin yol anahtarı da değişmez; değişen yalnız TİPTİR\n(`uuid` -> `string`). PATCH/DELETE ve durum geçişleri `uuid.UUID` KALIR\n(URL-2 kararı 3 — yazmanın kimliği okumanın döndürdüğü `id`den gelir).",
+        "description": "FST detayı: başlık + kalemler + TÜREVLER (satır tutarı · tahmini toplam ·\n\"Mevcut Stok\"). Görünmeyen talep var olmayanla AYNI 404'ü alır.\n\nURL-4 — yol parametresi UUID **ya da** `request_no` kabul eder.\n🔴 YOL ADI `request_id` OLARAK KALIR (URL-2 kararı 1): şablon değişmezse\nüretilmiş istemcinin yol anahtarı da değişmez; değişen yalnız TİPTİR\n(`uuid` -> `string`).\n\n🔴 **KARDEŞ UÇLAR `uuid` KALIR** — sözleşme bu yol parametresi adı altında\nBİLEREK ASİMETRİKTİR: bu uç `string`, ama `…/{request_id}/quotes` ·\n`/select-and-order` ve tüm PATCH/DELETE/durum geçişleri `uuid` bekler.\nAnahtar YALNIZCA **link üretimi ve detay okuması** içindir; istemci kardeş\nçağrılarda gövdeden dönen `id`yi kullanır (URL-2 kararı 3).",
         "operationId": "get_purchase_request_endpoint_purchase_requests__request_id__get",
         "parameters": [
           {

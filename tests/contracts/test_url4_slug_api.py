@@ -266,3 +266,63 @@ async def test_dagitim_PUT_ikizi_slug_kabul_ETMEZ_422(
         headers=admin_headers,
     )
     assert resp.status_code == 422, resp.text
+
+
+# =========================================================================== #
+# 3. 🔴 K1 — SLUG'IN GEÇ DOĞUMU (kira faturasıyla AYNI sınıf)
+# =========================================================================== #
+
+
+async def test_TABANSIZ_taslaga_ad_girilince_slug_SONRADAN_dogar(
+    client, admin_headers, ornek_proje, taseron
+) -> None:
+    """🔴 K1 — taslakta ad/numara yoksa slug NULL'dır; sonradan girilince DOĞAR.
+
+    Slug yalnız `create`te ayrılsaydı bu kayıt okunabilir URL'ini HİÇ almazdı
+    ve özellik "verinin yaşının fonksiyonu" olurdu.
+    """
+    sozlesme = await _sozlesme_kur(
+        client,
+        admin_headers,
+        ornek_proje.id,
+        taseron,
+        is_draft=True,
+        contract_no=None,
+        subcontractor_id=None,
+        work_category=None,
+    )
+    assert sozlesme["slug"] is None, "kurulum: tabansız taslak slug'sız olmalı"
+
+    guncel = await client.patch(
+        f"{_TASERON}/{sozlesme['id']}",
+        json={"contract_no": "TSZ-GEC-001"},
+        headers=admin_headers,
+    )
+    assert guncel.status_code == 200, guncel.text
+    assert guncel.json()["slug"] == "tsz-gec-001"
+
+    acilis = await client.get(f"{_TASERON}/tsz-gec-001", headers=admin_headers)
+    assert acilis.status_code == 200, acilis.text
+    assert acilis.json()["id"] == sozlesme["id"]
+
+
+async def test_DOLU_slug_PATCHte_YENIDEN_URETILMEZ(
+    client, admin_headers, ornek_proje, taseron
+) -> None:
+    """🔴 K1'in TERS KAPISI — geç doğum yalnız `NULL -> dolu` geçişinde çalışır.
+
+    Bu iddia olmasaydı geç doğum "her PATCH'te yeniden üret" diye yazılabilir
+    ve önceki test yine yeşil kalırdı (URL-2 kararı 4 sessizce ihlal edilirdi).
+    """
+    sozlesme = await _sozlesme_kur(client, admin_headers, ornek_proje.id, taseron)
+    assert sozlesme["slug"] == "tsz-2026-004"
+
+    guncel = await client.patch(
+        f"{_TASERON}/{sozlesme['id']}",
+        json={"contract_no": "TSZ-2026-888"},
+        headers=admin_headers,
+    )
+    assert guncel.status_code == 200, guncel.text
+    assert guncel.json()["slug"] == "tsz-2026-004"
+    assert (await client.get(f"{_TASERON}/tsz-2026-004", headers=admin_headers)).status_code == 200
+    assert (await client.get(f"{_TASERON}/tsz-2026-888", headers=admin_headers)).status_code == 404
