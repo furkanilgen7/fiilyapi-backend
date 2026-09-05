@@ -391,12 +391,46 @@ def test_B15_POZITIF_KONTROL_catalog_handlerlari_GERCEKTEN_import_eder() -> None
     kaynak = (AI_KOK / "tools" / "catalog.py").read_text(encoding="utf-8")
     modulller = {y.stem for y in (AI_KOK / "tools" / "reads").glob("*.py") if y.stem != "__init__"}
     assert modulller == {"handlers", "ai2bd"}, modulller
-    for modul in modulller:
-        assert f"{modul}." in kaynak, (
-            f"`catalog.py` `{modul}` handler modülünü KULLANMIYOR — o modüldeki "
-            "araçlar huninin dışında kalmış olabilir."
-        )
-    assert "from app.modules.ai.tools.reads import" in kaynak
+
+    # 🔴 DİZE ARAMASI YETMEZ: `assert "ai2bd." in kaynak` bir DOCSTRING'le
+    # tatmin olur. İddia AST'den kurulur — hem gerçek import, hem gerçek
+    # kullanım (`ai2bd.puantaj` gibi bir `Attribute` erişimi).
+    agac = ast.parse(kaynak)
+    import_edilen: set[str] = set()
+    for dugum in ast.walk(agac):
+        if isinstance(dugum, ast.ImportFrom) and dugum.module == "app.modules.ai.tools.reads":
+            import_edilen |= {a.asname or a.name for a in dugum.names}
+    assert import_edilen == modulller, (
+        f"`catalog.py` `{sorted(modulller - import_edilen)}` handler modülünü "
+        "import ETMİYOR — o modüldeki araçlar huninin dışında kalmış olabilir."
+    )
+    kullanilan = {
+        d.value.id
+        for d in ast.walk(agac)
+        if isinstance(d, ast.Attribute) and isinstance(d.value, ast.Name)
+    }
+    assert modulller <= kullanilan, (
+        f"`catalog.py` `{sorted(modulller - kullanilan)}` modülünü import ediyor "
+        "ama HİÇ KULLANMIYOR — o dilimin araçları kataloğa girmemiş olabilir."
+    )
+
+
+def test_B15_MUTASYON_docstringdeki_ad_POZITIF_KONTROLU_TATMIN_ETMEZ() -> None:
+    """🔴 Dize aramasının niye yetmediğinin kanıtı.
+
+    Aşağıdaki kaynakta `ai2bd.` dizesi VAR ama ne import ne kullanım var.
+    Bekçinin eski (dize) hâli bunu YEŞİL geçirirdi.
+    """
+    mutant = '"""Bu modül ai2bd. modülünü ANLATIR ama import ETMEZ."""\nx = 1\n'
+    assert "ai2bd." in mutant  # ← eski bekçinin tatmin olduğu yer
+    agac = ast.parse(mutant)
+    import_edilen = {
+        a.asname or a.name
+        for d in ast.walk(agac)
+        if isinstance(d, ast.ImportFrom) and d.module == "app.modules.ai.tools.reads"
+        for a in d.names
+    }
+    assert import_edilen == set()  # ← yeni bekçi kırmızı olurdu
 
 
 # --------------------------------------------------------------------------- #

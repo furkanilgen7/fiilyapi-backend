@@ -1012,10 +1012,18 @@ def test_POZITIF_KONTROL_AST_cikaricisi_GERCEKTEN_params_BULUYOR() -> None:
     assert bulunan.get("puantaj_haftasi") == {"iso_year", "iso_week"}
     # AI-2b tarafı — ALIAS'lı ve ZORUNLU parametrenin ta kendisi.
     assert bulunan.get("sozlesmeler") == {"type"}
+    # 🔴 Zorunlu parametreli DÖRT aracın dördü de ADIYLA sayılır: biri sessizce
+    # `BosGirdi`ye düşerse (ya da parametresini göndermeyi bırakırsa) araç HER
+    # çağrıda 422 alırdı ve bu, çıkarıcı "boş küme" dönerken FARK EDİLMEZDİ.
+    assert bulunan.get("puantaj") == {"year", "month"}
+    assert bulunan.get("gun_plani") == {"start"}
     assert bulunan.get("makine_calisma") == {"year", "month"}
-    # 🔴 Sayfalamasız uçlar `params` HİÇ göndermez.
+    assert bulunan.get("makine_yakit") == {"year", "month"}
+    # 🔴 Sayfalamasız uç `limit` GÖNDERMEZ (FastAPI onu sessizce yutardı).
     assert bulunan.get("isveren_hakedisleri") == set()
-    assert bulunan.get("taseronlar") == set()
+    # 🔴 `taseronlar` params GÖNDERİR ama `limit` DEĞİL: ucun `active_only`
+    # varsayılanı `True`dur ve devralmak kümeyi sessizce süzerdi.
+    assert bulunan.get("taseronlar") == {"active_only"}
 
 
 @pytest.mark.parametrize("spec", CATALOG, ids=lambda s: s.ad)

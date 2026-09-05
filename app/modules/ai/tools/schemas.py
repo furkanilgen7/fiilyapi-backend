@@ -345,7 +345,23 @@ class AiIsKalemleri(BaseModel):
 
 
 class AiHissedar(BaseModel):
-    name: str
+    """🔴 Alan adı `name` DEĞİL `shareholder_name` — GÜVENLİK gerekçesiyle.
+
+    Üst kaynakta alan `LandShareShareholderRow.name`tir. Daraltma katmanında
+    onu `name`e çevirmek `dogrula_spec`in kişi-adı kapısını **yapısal olarak
+    körleştirirdi**: `shareholder_name` `KISI_ADI_ANAHTARLARI` üyesidir, `name`
+    değildir. `projects` bugün `ACIK` olduğu için kapı bu araçta zaten koşmuyor
+    — ama bir gün `AGREGA`ya çekilirse maske bu adı GÖRMEK ZORUNDADIR.
+    **Daraltma bir maskeyi devre dışı bırakmak için kullanılamaz.**
+
+    ⚠️ Bekçisi `test_ai2bd_araclar.py::test_HISSEDAR_ADI_MASKE_TARAFINDAN_
+    GORULUR`dur ve o test **yalıtılmış** bir modelle ölçer: `arsa_payi`ın
+    tamamıyla ölçmek işe yaramaz, çünkü `landowner_name` kapıyı zaten
+    tetikler ve rename'in etkisi görünmez olur (ölçüldü — ilk mutasyon
+    denemem tam bu yüzden EŞDEĞER çıktı).
+    """
+
+    shareholder_name: str
     share_pct: Decimal
     unit_count: int
 

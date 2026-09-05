@@ -34,7 +34,7 @@ import pytest
 
 from app.modules.ai import audit as ai_audit
 from app.modules.ai.registry import ToolRegistry
-from app.modules.ai.result import NotFound, Ok, ScopedEmpty, ToolError
+from app.modules.ai.result import Empty, NotFound, Ok, ScopedEmpty, ToolError
 from app.modules.ai.tools.catalog import CATALOG, READ_TOOLS
 from app.modules.users.models import UserProjectAccess
 
@@ -115,6 +115,9 @@ async def kapsam_kurulumu(seeded_db, user_factory, project_factory):
     await seeded_db.flush()
 
     taseron = Subcontractor(name="Kapsamsiz Taseron")
+    # 🔴 PASİF taşeron: ucun `active_only` VARSAYILANI `True`dur ve devralınsaydı
+    # bu satır hiçbir araç yanıtında görünmezdi.
+    pasif_taseron = Subcontractor(name="Pasif Taseron", is_active=False)
     # 🔴 DEPODAKİ makine: `site_id IS NULL` → `equipment.repository.scope`un
     # OR dalı gereği KAPSAM SÜZGECİNE TABİ DEĞİL, yani DIŞARIDAKİ de görür.
     # Bu satır `SIRKET_GENELI` beyanının pozitif kontrolüdür.
@@ -148,7 +151,15 @@ async def kapsam_kurulumu(seeded_db, user_factory, project_factory):
     # **`project_contracts`**e bakar (ölçüldü: `progress_payments_project_id_fkey`).
     # Aynı flush'a konursa SQLAlchemy sırayı çıkaramaz ve FK ihlali gelir.
     seeded_db.add_all(
-        [taseron, depo_makinesi, a_makinesi, land_share, isveren_sozlesmesi, taseron_sozlesmesi]
+        [
+            taseron,
+            pasif_taseron,
+            depo_makinesi,
+            a_makinesi,
+            land_share,
+            isveren_sozlesmesi,
+            taseron_sozlesmesi,
+        ]
     )
     await seeded_db.flush()
     seeded_db.add(isveren_hakedisi)
@@ -263,20 +274,30 @@ def _bekle_kapsamsiz(dis, ic) -> None:
     assert set(dis.data) == set(ic.data)
 
 
-def _bekle_notfound_vs_kapsam_disi_bos(dis, ic) -> None:
+def _bekle_notfound_vs_bos(dis, ic) -> None:
     """🔴 GÖRÜNMEYEN ŞANTİYE ile BOŞ LİSTE aynı cevap DEĞİLDİR.
 
-    Dışarıdaki 404 alır (`NotFound` — "erişebildiğin kapsamda böyle bir kayıt
-    yok"), içerideki 200+boş alır (`ScopedEmpty` — "bu şantiyede kayıt
-    girilmemiş olabilir"). İkisini tek dala indiren bir handler, kullanıcıya
-    "şantiye yok" ile "günlük girilmemiş"i aynı cümleyle söylerdi.
+    Dışarıdaki **404** alır (`NotFound` — "erişebildiğin kapsamda böyle bir
+    kayıt yok"); içerideki 200 + boş alır ve zarf **`Empty`** olur: *"bu
+    şantiyede günlük kaydı girilmemiş."*
+
+    🔴 **`ScopedEmpty` DEĞİL — ve bu bir DÜZELTMEDİR.** İlk hâlim
+    `ScopedEmpty` bekliyordu, yani handler'ın *"hiçbiri sizin kapsamınızda
+    değil"* demesini KANON yapıyordu. Ölçüldü ve YALAN çıktı: uç kapsam
+    kararını şantiye üzerinden verir (`site_diary/read.py::list_entries` →
+    `service.visible_site`) ve görünmeyen şantiye **404** alır — yani kapsam
+    dışılık 200+boş dalına HİÇ ULAŞAMAZ. Bir bekçinin yanlış bir cümleyi
+    kilitlemesi, cümleyi hiç bekçilememekten daha kötüdür.
 
     ⚠️ DÜRÜST NOT: bu araç için VERİLİ bir pozitif kontrol yoktur (fikstür
     günlük kaydı tohumlamıyor). Ölçülen şey **iki zarf hâlinin ayrıştığı**dır;
     "veri geliyor" iddiası burada KURULMAZ.
     """
     assert isinstance(dis, NotFound), f"kapsamsız aktör {type(dis).__name__} aldı"
-    assert isinstance(ic, ScopedEmpty), f"içerideki {type(ic).__name__} aldı"
+    assert isinstance(ic, Empty), f"içerideki {type(ic).__name__} aldı"
+    # 🔴 Ve cümleler AYRIŞIR: "kapsamınızda değil" ibaresi BASILMAZ.
+    assert "kapsamınızda değil" not in ic.mesaj()
+    assert "hiç kayıt yok" in ic.mesaj()
 
 
 def _bekle_sirket_geneli_ayni(dis, ic) -> None:
@@ -358,7 +379,7 @@ BEKLENTILER = {
     "taseron_hakedisleri": _bekle_scoped_empty,
     "sozlesmeler": _bekle_scoped_empty,
     # --- AI-2b: iki hâl AYRIŞIR ------------------------------------------- #
-    "gunluk_kayit": _bekle_notfound_vs_kapsam_disi_bos,
+    "gunluk_kayit": _bekle_notfound_vs_bos,
     # --- ŞİRKET GENELİ: kapsam farkı sonucu DEĞİŞTİRMEZ -------------------- #
     "taseronlar": _bekle_sirket_geneli_ayni,
     "makine_calisma": _bekle_calisma_ozeti_iki_dal,
@@ -450,6 +471,42 @@ async def test_B9_POZITIF_KONTROL_iceridekinin_zarfinda_A_PROJESI_GORUNUR(
 # --------------------------------------------------------------------------- #
 # AI-0 kabul ölçütü 5 + S14
 # --------------------------------------------------------------------------- #
+
+
+async def test_TASERONLAR_PASIF_kayitlari_da_getirir_active_only_DEVRALINMAZ(
+    kapsam_kurulumu, transport_factory, actor_factory, seeded_db
+):
+    """🔴 GİZLİ VARSAYILAN — ÜÇ YERDE BİRDEN YALAN ÜRETİYORDU.
+
+    `GET /subcontractors` `active_only: bool = True` bildirir. Handler
+    parametresiz çağırsaydı repository `WHERE is_active IS TRUE` koyardı ve:
+
+      (a) katalog açıklaması *"şirketin tüm taşeronlarını içerir"* derken küme
+          SÜZÜLMÜŞ olurdu,
+      (b) `AiTaseron.is_active` yapısal olarak HEP `True` olurdu — alan bilgi
+          taşımaz, `presenters` içindeki "pasif" dalı ÖLÜ KOD olurdu,
+      (c) boş küme "kayıt yok" derdi, doğrusu "AKTİF kayıt yok"tur.
+
+    Bu test üçünü birden kapatır: pasif kayıt **dönmeli** ve `is_active`
+    alanı **gerçekten iki değer** taşımalı. Bekçi yapısal değil DAVRANIŞSALDIR;
+    params bekçisi `active_only` gönderildiğini görür ama ETKİSİNİ göremez.
+    """
+    sonuc = await _cagir(
+        "taseronlar",
+        kapsam_kurulumu["iceriden"],
+        kapsam_kurulumu,
+        transport_factory,
+        actor_factory,
+        seeded_db,
+    )
+    assert isinstance(sonuc, Ok), sonuc
+    adlar = {t["name"] for t in sonuc.data}
+    assert "Kapsamsiz Taseron" in adlar
+    assert "Pasif Taseron" in adlar, (
+        "Pasif taşeron DÖNMEDİ — `active_only` varsayılanı devralınmış olabilir."
+    )
+    # 🔴 Alan gerçekten İKİ DEĞER taşıyor: "pasif" dalı ölü kod değil.
+    assert {t["is_active"] for t in sonuc.data} == {True, False}
 
 
 async def test_B9_KABUL_OLCUTU_5_baska_projenin_santiyesi_NotFound_A_ile_GORUNUR(

@@ -591,6 +591,10 @@ AI2BD_TOOLS: Final[tuple[ToolSpec, ...]] = (
 )
 
 
+#: 🔴 `READ_TOOLS` iki dilim demetinin BİRLEŞİMİDİR ve bu, bir bekçinin
+#: dayanağıdır: parametrize testlerin bir kısmı `AI2BD_TOOLS` üzerinden koşar.
+#: Bir araç `READ_TOOLS`a elle eklenip demete yazılmazsa o bekçiler onu
+#: **sessizce atlar**; küme eşitliği `test_ai2bd_araclar.py::test_KAT_*`ta.
 READ_TOOLS: Final[tuple[ToolSpec, ...]] = (*AI0B_TOOLS, *AI2BD_TOOLS)
 
 #: AI-3'e kadar BOŞ. Dallanma ve testi ŞİMDİ yazılır (spec T5).

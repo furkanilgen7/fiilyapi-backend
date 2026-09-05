@@ -16,16 +16,40 @@ Bu dosya üç işi yapar ve üçü de **koddan ölçer**, emirden değil:
 from __future__ import annotations
 
 import inspect
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 from fastapi.routing import APIRoute
+from pydantic import BaseModel
 
 from app.main import app
 from app.modules.ai import exposure, presenters
 from app.modules.ai.navigation import EKRAN_ADLARI, EkranAnahtari
 from app.modules.ai.registry import ToolKumesi, ToolSpec
+from app.modules.ai.tools import schemas
 from app.modules.ai.tools.catalog import AI2BD_TOOLS, CATALOG
+
+
+def test_KAT_AI2BD_TOOLS_katalogla_BAGLIDIR() -> None:
+    """🔴 Bu dosyadaki beş parametrize bekçi `AI2BD_TOOLS` üzerinden koşar.
+
+    Bir araç `READ_TOOLS`a elle eklenip demete yazılmazsa o beş bekçi onu
+    **sessizce atlar** — parametrize bir test eksik girdi için kırmızı olmaz,
+    sadece daha az koşar. Küme eşitliği o sessizliği kapatır.
+    """
+    from app.modules.ai.tools.catalog import AI0B_TOOLS, PROPOSE_TOOLS, READ_TOOLS
+
+    # 🔴 `set()` KULLANILAMAZ: `ToolSpec` `yol_parametreleri: Mapping` taşır ve
+    # frozen dataclass olmasına rağmen **unhashable**dır. Demet eşitliği zaten
+    # daha güçlüdür — sırayı da kilitler.
+    assert AI0B_TOOLS + AI2BD_TOOLS == READ_TOOLS
+    assert READ_TOOLS + PROPOSE_TOOLS == CATALOG
+    adlar_0b = {s.ad for s in AI0B_TOOLS}
+    adlar_2bd = {s.ad for s in AI2BD_TOOLS}
+    assert adlar_0b & adlar_2bd == set(), "demetler ÖRTÜŞÜYOR"
+    assert adlar_0b | adlar_2bd == {s.ad for s in CATALOG}
+    assert len(AI2BD_TOOLS) == 16
 
 
 def _api_rotalari(rotalar) -> list[APIRoute]:
@@ -51,6 +75,14 @@ def _get_rotalari() -> dict[str, APIRoute]:
 
 #: Aracın sardığı ucun **HAM** yanıt modeli — daraltmanın gerekli olup
 #: olmadığını ölçmek için. 🔴 Elle yazılmış değil, rota tablosundan çıkarılır.
+class _KorHissedar(BaseModel):
+    """`AiHissedar`ın rename YAPILMAMIŞ hâli — yalnız maske körlüğünü ölçmek için."""
+
+    name: str
+    share_pct: Decimal
+    unit_count: int
+
+
 def _ham_yanit_modeli(spec: ToolSpec):
     return _get_rotalari()[spec.ucler[0]].response_model
 
@@ -162,6 +194,48 @@ def test_POZITIF_KONTROL_ham_semalarin_UCU_GERCEKTEN_kaydedilemez() -> None:
         mutant = dataclasses.replace(spec, yanit_modeli=_ham_yanit_modeli(spec))
         with pytest.raises(exposure.IfsaIhlali, match="maskelenmiş alan"):
             ToolRegistry((mutant,))
+
+
+def test_HISSEDAR_ADI_MASKE_TARAFINDAN_GORULUR() -> None:
+    """🔴 DARALTMA BİR MASKEYİ DEVRE DIŞI BIRAKAMAZ.
+
+    `LandShareShareholderRow.name` → araçta **`shareholder_name`**. Adı `name`e
+    çevirmek `dogrula_spec`in kişi-adı kapısını yapısal olarak körleştirirdi:
+    `shareholder_name` `KISI_ADI_ANAHTARLARI` üyesidir, `name` değildir.
+
+    ⚠️ **İDDİA YALITILMIŞ BİR MODELLE KURULUR — ve bu bilinçlidir.** Ölçüldü:
+    `arsa_payi`ın tamamıyla mutasyon denemek EŞDEĞER çıkıyor, çünkü aynı şema
+    `landowner_name` de taşır ve kapı ondan zaten tetiklenir. Rename'in
+    etkisini görebilmek için tek kişi-adı taşıyıcısı hissedar olan bir model
+    gerekir. Bu, "mutasyonum bir şey ölçtü" iddiasını dürüst tutar.
+    """
+    import dataclasses
+
+    from pydantic import BaseModel
+
+    from app.modules.ai.registry import ToolRegistry
+
+    assert "shareholder_name" in exposure.KISI_ADI_ANAHTARLARI
+    assert "name" not in exposure.KISI_ADI_ANAHTARLARI
+
+    class _YalitikDogru(BaseModel):
+        hissedarlar: list[schemas.AiHissedar]
+
+    class _YalitikKor(BaseModel):
+        # Rename YAPILMASAYDI şema böyle görünürdü.
+        hissedarlar: list[_KorHissedar]
+
+    spec = next(s for s in AI2BD_TOOLS if s.ad == "arsa_payi")
+    agrega = frozenset({"projects", "personnel"})
+
+    # (a) DOĞRU ad: maske görüyor → araç kaydedilemiyor.
+    with pytest.raises(exposure.IfsaIhlali, match="KİŞİ ADI"):
+        ToolRegistry(
+            (dataclasses.replace(spec, veri_modulleri=agrega, yanit_modeli=_YalitikDogru),)
+        )
+
+    # (b) `name`e çevrilmiş hâl: maske KÖR — mutant hayatta kalırdı.
+    ToolRegistry((dataclasses.replace(spec, veri_modulleri=agrega, yanit_modeli=_YalitikKor),))
 
 
 def test_PUANTAJ_ham_matris_KISI_SATIRI_tasir_arac_TASIMAZ() -> None:
@@ -369,14 +443,21 @@ def test_SUN_sunucu_haritasinda_KATALOGDA_OLMAYAN_ad_YOKTUR() -> None:
     assert fazla == set(), f"katalogda olmayan sunucu(lar): {sorted(fazla)}"
 
 
-def test_SUN_MUTASYON_sunucusu_silinen_arac_YAKALANIR() -> None:
-    """Bekçinin eşdeğer olmadığının kanıtı — aynı denetleyici, eksik haritada."""
+def test_SUN_DENETLEYICI_sunucusu_silinen_araci_BULUR() -> None:
+    """🔴 ADLANDIRMA DÜRÜSTLÜĞÜ: bu bir ÜRETİM MUTASYONU DEĞİLDİR.
+
+    Ölçtüğü şey, denetleyicinin (`_sunucusuz_araclar`) eksik bir haritada
+    konuştuğudur — üretim kodu dokunulmamıştır. Gerçek üretim mutasyonu
+    (`presenters.py`den `"makine_kira"` girdisini silmek) **elle koşuldu** ve
+    ÜÇ testi kırmızı yaptı; kaydı PR gövdesindedir. İkisi farklı güç
+    seviyesindedir ve adları da farklı olmalıdır.
+    """
     mutant = dict(presenters.SUNUCULAR)
     del mutant["makine_kira"]
     assert _sunucusuz_araclar(mutant, presenters.SUNUCUSUZ_ARACLAR, CATALOG) == {"makine_kira"}
 
 
-def test_SUN_MUTASYON_istisna_listesi_KOR_NOKTA_URETMEZ() -> None:
+def test_SUN_istisna_listesi_KOR_NOKTA_URETMEZ() -> None:
     """🔴 İstisna listesinin kendisi de bir kaçış yolu olabilirdi.
 
     Bu test onu kapatmaz ama **ÖLÇER**: istisna listesi tek üyelidir ve o üye
@@ -387,11 +468,32 @@ def test_SUN_MUTASYON_istisna_listesi_KOR_NOKTA_URETMEZ() -> None:
 
 
 @pytest.mark.parametrize("spec", AI2BD_TOOLS, ids=lambda s: s.ad)
+def test_SUN_ornek_govde_ARACIN_KENDI_SEMASINDAN_gelir(spec: ToolSpec) -> None:
+    """🔴 ÇIKTI BEKÇİSİNİN İÇERİK KÖRLÜĞÜNÜ KAPATIR.
+
+    Örnek gövdenin anahtarları elle yazılsaydı bekçi şemadan **kopardı**:
+    `AiMakineListesi.items[].name` bir gün `equipment_name` olsa eşleyici boş
+    ad basmaya başlar, örnek gövde eski anahtarı taşımaya devam eder ve test
+    **yeşil kalırdı**. Bu yüzden her anahtar `sema_anahtarlari`nda BULUNMALIDIR.
+    """
+    izinli = exposure.sema_anahtarlari(spec.yanit_modeli)
+    ornek = _ornek_govde(spec.ad)
+    satirlar = ornek if isinstance(ornek, list) else [ornek]
+    kullanilan = {a for satir in satirlar for a in satir}
+    kacak = sorted(kullanilan - izinli)
+    assert kacak == [], (
+        f"`{spec.ad}` örnek gövdesi aracın şemasında OLMAYAN anahtar taşıyor: "
+        f"{kacak}. Bekçi şemadan koptuysa hiçbir şey ölçmüyordur."
+    )
+
+
+@pytest.mark.parametrize("spec", AI2BD_TOOLS, ids=lambda s: s.ad)
 def test_SUN_her_yeni_arac_GERCEKTEN_blok_uretir(spec: ToolSpec) -> None:
     """Harita dolu ama eşleyici hep `()` dönüyorsa bekçi hiçbir şey ölçmez.
 
     Bu yüzden iddia haritada değil **çıktıdadır**: aracın kendi yanıt modelinin
-    örnek gövdesiyle çağrılınca en az bir blok çıkmalı.
+    örnek gövdesiyle çağrılınca en az bir blok çıkmalı. Örnek gövdenin
+    anahtarları da şemaya kilitlidir (yukarıdaki test).
     """
     from app.modules.ai.result import Ok
 
@@ -457,20 +559,44 @@ def test_NAV_EKRAN_ADLARI_enum_ile_KUME_ESITTIR() -> None:
     assert set(EKRAN_ADLARI) - set(EkranAnahtari) == set()
 
 
-def test_NAV_MUTASYON_etiketsiz_uye_YAKALANIR() -> None:
-    """Bekçinin eşdeğer olmadığının kanıtı: etiketi düşen üye bulunuyor."""
+def test_NAV_DENETLEYICI_etiketsiz_uyeyi_BULUR() -> None:
+    """🔴 Bu da bir üretim mutasyonu DEĞİL, denetleyici sondasıdır.
+
+    Gerçek mutasyon (`navigation.py`den `puantaj` etiketini silmek) elle
+    koşuldu ve `test_NAV_EKRAN_ADLARI_enum_ile_KUME_ESITTIR`i kırmızı yaptı.
+    """
     eksik_harita = {k: v for k, v in EKRAN_ADLARI.items() if k is not EkranAnahtari.puantaj}
     assert _etiketsiz_ekranlar(EkranAnahtari, eksik_harita) == {EkranAnahtari.puantaj}
 
 
-def test_NAV_MUTASYON_etiketsiz_uye_CALISMA_ANI_500_uretir() -> None:
-    """🔴 Ve kaybın BEDELİ ölçülür: eksik etiket sessiz değil, PATLAYICIDIR.
+def test_NAV_eksik_etiket_HANDLERI_calisma_aninda_PATLATIR() -> None:
+    """🔴 Kaybın BEDELİ ölçülür — ve bedel ÜRETİM KODUNDA ölçülür.
 
-    Bu, "eksik etiket zararsız" savunmasını kapatır.
+    İlk hâlim düz bir `dict`ten eksik anahtar okuyup `KeyError` bekliyordu; o,
+    CPython'un `dict`ini sınamaktan başka bir şey değildi. İddia artık gerçek
+    handler üzerinden kurulur: `handlers.navigate_to` `EKRAN_ADLARI[…]` okur ve
+    etiket düşerse **çalışma anı `KeyError`ı** (yani 500) üretir — "eksik etiket
+    zararsız" savunmasını kapatan şey budur.
     """
-    eksik_harita = {k: v for k, v in EKRAN_ADLARI.items() if k is not EkranAnahtari.puantaj}
-    with pytest.raises(KeyError):
-        _ = eksik_harita[EkranAnahtari.puantaj]
+    import asyncio
+
+    from app.modules.ai.tools.reads import handlers
+
+    class _Girdi:
+        ekran = EkranAnahtari.puantaj
+
+    # Pozitif kontrol: etiket YERİNDEYKEN handler normal çalışıyor.
+    sonuc = asyncio.run(handlers.navigate_to(None, _Girdi()))
+    assert sonuc.data["ekran_adi"] == "Puantaj"
+
+    eksik = {k: v for k, v in EKRAN_ADLARI.items() if k is not EkranAnahtari.puantaj}
+    orijinal = handlers.EKRAN_ADLARI
+    handlers.EKRAN_ADLARI = eksik
+    try:
+        with pytest.raises(KeyError):
+            asyncio.run(handlers.navigate_to(None, _Girdi()))
+    finally:
+        handlers.EKRAN_ADLARI = orijinal
 
 
 def test_NAV_taseron_hakedisleri_EKLENDI_ve_ETIKETI_VAR() -> None:

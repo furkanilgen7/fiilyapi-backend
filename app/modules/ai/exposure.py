@@ -86,7 +86,9 @@ class IfsaSeviyesi(str, enum.Enum):
 
 
 #: 🔴 **VARSAYILAN YOK.** 22 izin modülünün 22'si de burada ADIYLA geçer ve
-#: `test_ifsa_haritasi_TUM_MODULLERI_KAPSAR` küme eşitliğiyle bunu kilitler
+#: `test_ai2a_korkuluklar.py::test_ifsa_haritasi_TUM_IZIN_MODULLERINI_ADIYLA_KAPSAR`
+#: küme eşitliğiyle bunu kilitler (🔴 bu satır eskiden var olmayan bir
+#: `test_ifsa_haritasi_TUM_MODULLERI_KAPSAR` adını gösteriyordu)
 #: (sihirli sayı yasak — B1 kanonu). 23. modül açılırsa test kırmızı olur ve
 #: ekleyen kişi **bilinçli bir KVKK kararı** vermek zorunda kalır; sessiz bir
 #: `ACIK` varsayılanına düşemez.

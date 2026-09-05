@@ -12,6 +12,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 from app.modules.ai import blocks, presenters
 from app.modules.ai.blocks import (
     AksiyonBloku,
@@ -104,16 +106,45 @@ def test_YapisalBloklar_SAGLAYICI_OLAYI_DEGIL() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_presenters_MODEL_METNINE_hicbir_yerden_ULASMAZ() -> None:
-    """`presenters.py` yalnız `AracSonucu` görür — `Mesaj`/`MetinParcasi` değil.
+#: 🔴 Eşleyici katmanının **TÜM** parçaları. `presenters.py` 800 satır tavanını
+#: aşınca üçe bölündü (`presenters_base` · `presenters_ai2bd`) ve tek dosya
+#: okuyan bir bekçi **iki yeni dosyayı sessizce atlardı** — aynı PR'de params
+#: bekçisi tam bu şekilde körleşmişti. Küme `glob`la kurulur, elle sayılmaz.
+def _esleyici_kaynaklari() -> list[Path]:
+    return sorted(AI_KOK.glob("presenters*.py"))
+
+
+#: Modelin ürettiği metni taşıyan adlar. Bu katmanda HİÇBİRİ geçemez.
+_MODEL_METNI_ADLARI = ("MetinParcasi", "Mesaj", "gecmis", "kullanici_mesaji", "re.", "import re")
+
+
+def _model_metnine_dokunanlar(kaynak: str) -> list[str]:
+    return [y for y in _MODEL_METNI_ADLARI if y in kaynak]
+
+
+def test_POZITIF_KONTROL_TARANAN_esleyici_dosyalari_UCTEN_AZ_DEGIL() -> None:
+    """Tarama kümesi daralırsa bekçi sessizce körleşir."""
+    adlar = {y.name for y in _esleyici_kaynaklari()}
+    assert {"presenters.py", "presenters_base.py", "presenters_ai2bd.py"} <= adlar, adlar
+
+
+@pytest.mark.parametrize("yol", _esleyici_kaynaklari(), ids=lambda p: p.name)
+def test_presenters_MODEL_METNINE_hicbir_yerden_ULASMAZ(yol: Path) -> None:
+    """Eşleyiciler yalnız `AracSonucu` görür — `Mesaj`/`MetinParcasi` değil.
 
     Bu bir tip kısıtı değil bir **erişim** kısıtıdır: modelin ürettiği metni
-    taşıyan sınıflar bu modülde import EDİLEMEZ. Edilirse bir gün biri
+    taşıyan sınıflar bu katmanda import EDİLEMEZ. Edilirse bir gün biri
     "metinden şu kalıbı ayıkla" yazar ve K1 sessizce düşer.
     """
-    kaynak = (AI_KOK / "presenters.py").read_text(encoding="utf-8")
-    for yasak in ("MetinParcasi", "Mesaj", "gecmis", "kullanici_mesaji", "re.", "import re"):
-        assert yasak not in kaynak, f"presenters.py model metnine dokunuyor: {yasak}"
+    dokunanlar = _model_metnine_dokunanlar(yol.read_text(encoding="utf-8"))
+    assert dokunanlar == [], f"{yol.name} model metnine dokunuyor: {dokunanlar}"
+
+
+def test_MUTASYON_model_metnine_dokunan_esleyici_YAKALANIR() -> None:
+    """Bekçinin eşdeğer olmadığının kanıtı: aynı denetleyici, ihlalli kaynakta."""
+    mutant = "from app.modules.ai.providers.base import MetinParcasi\nx = MetinParcasi\n"
+    assert _model_metnine_dokunanlar(mutant) == ["MetinParcasi"]
+    assert _model_metnine_dokunanlar("temiz kaynak\n") == []
 
 
 def test_bloklar_ARAC_ADINDAN_secilir_modelin_METNINDEN_degil() -> None:

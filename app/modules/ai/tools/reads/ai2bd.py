@@ -224,7 +224,11 @@ async def arsa_payi(ctx: AracBaglami, girdi: Any) -> AracSonucu:
         arsa_sahibi_deger=a["value_total"],
         atanmamis_unite=g["unassigned"]["unit_count"],
         hissedarlar=[
-            schemas.AiHissedar(name=h["name"], share_pct=h["share_pct"], unit_count=h["unit_count"])
+            schemas.AiHissedar(
+                shareholder_name=h["name"],
+                share_pct=h["share_pct"],
+                unit_count=h["unit_count"],
+            )
             for h in g["shareholders"]
         ],
         adet_dengesi_notu=(
@@ -233,8 +237,16 @@ async def arsa_payi(ctx: AracBaglami, girdi: Any) -> AracSonucu:
             f"{cb['owner_expected_count']}, atanan {cb['owner_assigned_count']}. "
             f"Atanmamış {cb['unassigned_count']}. İşaret ANLAMLIDIR: eksi = fazla atama."
         ),
+        # 🔴 `deviation_pct` `None` iken sebep TEK DEĞİLDİR: payda ATANMIŞ
+        # rayiç toplamıdır, yani (a) rayiç hiç girilmemiş ya da (b) hiçbir ünite
+        # bir tarafa atanmamış olabilir. Tek sebep yazmak ikinci hâlde
+        # kullanıcıyı yanlış yere baktırırdı.
         deger_dengesi_notu=(
-            "Rayiç değer girilmediği için sapma HESAPLANAMAZ — bu 'denge uygun' DEMEK DEĞİLDİR."
+            "Değer sapması HESAPLANAMADI ve bunun İKİ sebebi olabilir: rayiç "
+            "değer hiç girilmemiş olabilir, ya da hiçbir ünite bir tarafa "
+            "ATANMAMIŞ olabilir (payda ATANMIŞ değerdir). Hangisi olduğunu "
+            "`toplam_deger` ile `atanmamis_unite` birlikte söyler. Bu 'denge "
+            "uygun' DEMEK DEĞİLDİR."
             if sapma is None
             else (
                 f"Sapma %{sapma}, tolerans %{vb['tolerance_pct']}. "
@@ -363,9 +375,28 @@ async def taseronlar(ctx: AracBaglami, girdi: Any) -> AracSonucu:
     demektir. `ScopedEmpty` yazmak var olmayan bir kapsam süzgecini ima ederdi
     — kapsam notunun tersi bir yalan.
 
+    🔴 **`active_only=False` AÇIKÇA GÖNDERİLİR — ve bu bir DÜZELTMEDİR.**
+    Uç `active_only: bool = True` bildirir; parametresiz çağırmak repository'ye
+    `WHERE is_active IS TRUE` koydurur. Handler bunu bilmeden `ctx.get()`
+    çağırırsa ÜÇ YERDE BİRDEN yalan doğar: (a) katalog açıklaması "şirketin tüm
+    taşeronları" der ama küme süzülmüştür, (b) `AiTaseron.is_active` yapısal
+    olarak HEP `True` olur — alanın kendisi bilgi taşımaz, (c) boş küme "kayıt
+    yok" der, doğrusu "aktif kayıt yok"tur. Varsayılanı devralmak yerine ONU
+    EZMEK üçünü birden gerçeğe eşitler. `active_only` ucun BİLDİRDİĞİ bir addır,
+    params bekçisi geçirir.
+
     🔴 `tax_number` · `phone` · `email` OKUNMAZ (S5-c, üçü de yasak anahtar).
+
+    ⚠️ **`contact_person` KALIR — bilinçli bir sınır çizgisi.** Düşürülen üç
+    komşusu **kimlik ya da iletişim KANALIDIR**: vergi no bir kişiyi eşleştirir,
+    telefon ve e-posta doğrudan erişim açar. `contact_person` ise kurumsal
+    muhatabın adıdır ve "bu taşeronla kiminle konuşuluyor" sorusu tam da bu
+    aracın işidir. Ne `YASAK_ALAN_ANAHTARLARI`nda ne de
+    `KISI_ADI_ANAHTARLARI`ndadır (`created_by_name` ile aynı sınıf: bir
+    kaydın/kurumun muhatabı). Kullanıcı sınırı daraltmak isterse alan tek
+    satırda düşer — ama bu bir KARAR olmalı, sessiz bir tercih değil.
     """
-    yanit = await ctx.get()
+    yanit = await ctx.get(params={"active_only": False})
     if (hal := kod_hali(yanit.status_code, "contracts")) is not None:
         return hal
     satirlar = [
@@ -423,6 +454,16 @@ async def gunluk_kayit(ctx: AracBaglami, girdi: Any) -> AracSonucu:
     🔴 Kayıt METNİ (`notes`, satırlar, olay açıklaması) BASILMAZ: künye
     yeterlidir ve serbest metin, sağlayıcıya giden yüzeyin en zehirlenebilir
     parçasıdır (blocks.py'nin uzak-görsel sızıntısı gerekçesi).
+
+    🔴 **`kapsam_modulu` VERİLMEZ — ve bu bir DÜZELTMEDİR.** İlk hâlim
+    `kapsam_modulu="site_diary"` yazıyordu, yani boş liste `ScopedEmpty` olup
+    *"bu modülde kayıt olabilir ama hiçbiri sizin kapsamınızda değil"* diyordu.
+    **YALAN.** Ölçüldü: uç kapsam kararını ŞANTİYE üzerinden verir
+    (`site_diary/read.py::list_entries` → `service.visible_site`) ve görünmeyen
+    şantiye **404** alır. Yani 200 + boş listenin **tek** anlamı vardır: *bu
+    şantiyede günlük kaydı girilmemiş.* Kapsam dışılık bu dala hiç ulaşamaz.
+    `taseronlar`la aynı sonuç, farklı sebep: orada süzgeç YOK, burada süzgeç
+    ucun 404'ünde TÜKENİYOR.
     """
     yanit = await ctx.get(params={"limit": ctx.spec.satir_tavani, "offset": 0})
     if (hal := kod_hali(yanit.status_code, "site_diary")) is not None:
@@ -440,7 +481,7 @@ async def gunluk_kayit(ctx: AracBaglami, girdi: Any) -> AracSonucu:
         ).model_dump(mode="json")
         for k in g["items"]
     ]
-    return liste_sonucu(data=satirlar, total=g["total"], kapsam_modulu="site_diary")
+    return liste_sonucu(data=satirlar, total=g["total"])
 
 
 async def gun_plani(ctx: AracBaglami, girdi: Any) -> AracSonucu:
@@ -452,6 +493,22 @@ async def gun_plani(ctx: AracBaglami, girdi: Any) -> AracSonucu:
 
     🔴 İzin kapısı `site_diary`dir, `site_planning` DEĞİL — `site_planning`
     bir izin modülü değildir (rota tablosundan ölçüldü).
+
+    🔴 **`text` BASILIR ve bu `gunluk_kayit`la ÇELİŞMEZ — sınır aynı yerdedir.**
+    Kardeş araç günlük kaydın serbest metnini düşürür; burada plan metni
+    kalıyor. Fark üslup değil ÖLÇÜLMÜŞ bir kaynak farkıdır: `gunluk_kayit`
+    GERÇEKLEŞEN kaydın notudur, aracın cevabı için gerekmez (künye yeter).
+    `…/plan/day-summary` ise ızgaradan TÜRETİLİR (uç sözleşmesi: "gün başına
+    hücre metinlerinin birleşimi") ve aracın TEK işi "önümüzdeki günlerde ne
+    planlanmış" sorusudur — metin düşerse araç boş bir iskelet döner.
+
+    ⚠️ **DÜRÜST SINIR: bu metnin GÜVENLİ olduğu anlamına GELMEZ.** Plan hücresi
+    de kullanıcı girdisidir ve enjeksiyon taşıyabilir. Taşıyan korkuluklar başka
+    katmanlardadır ve bu dilimde DEĞİŞMEDİ: model çıktısı düz metin basılır
+    (`blocks.py` — markdown/HTML çözücü YOK), CSP `img-src 'self'`, ve tur
+    başına niyet allowlist'i araç çıktısından gelen bir talimatın yeni araç
+    çağırmasını engeller (`niyet_disi`). Bu araç o korkulukların ARKASINDADIR,
+    yerine geçmez.
     """
     yanit = await ctx.get(params={"start": girdi.start.isoformat()})
     if (hal := kod_hali(yanit.status_code, "site_diary")) is not None:
