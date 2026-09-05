@@ -374,27 +374,79 @@ def test_BOS_baglam_HIC_blok_basmaz() -> None:
     assert context.baglam_govdesi(context.BOS_BAGLAM) == {}
 
 
-def test_ALAN_MASKESI_baglam_govdesinde_de_KOSAR_ve_bloku_TAMAMEN_dusurur() -> None:
-    """🔴 AI-2a'nın 18 yasak anahtarı burada da taranır.
+def test_MASKENIN_BU_BLOKTA_YUZEYI_YOKTUR_ve_bu_OLCULDU() -> None:
+    """🔴 GERİ ALMANIN BEKÇİSİ — *"koruma var görünüp yok olmasın"*.
 
-    Bekçi gövdeyi **besleyebildiği** için ateşlenebilir; `SohbetBaglami` alan bir
-    imza bugün iki alanı olduğu için maskeyi hiçbir koşulda ateşleyemez ve
-    dekoratif kalırdı (`Scope` enum'unun düştüğü yer).
+    Eskiden burada `exposure.yasak_anahtarlar` çağrılıyordu ve 19 iddia onu
+    "bekçiliyordu"; hepsi **üretimin kuramayacağı** bir gövdeyi elle besliyordu.
+    Bu test iddiayı tersine çevirir ve **ölçülebilir** hâle getirir: maskenin
+    bu blokta bir yüzeyi **yoktur**, çünkü blok yalnız iki SABİT anahtar
+    taşıyabilir.
+
+    🔴 Bu bir "yapılmadı" notu değil bir KİLİTTİR: biri `baglam_govdesi`ye
+    dinamik bir anahtar eklerse (`govde[ad] = ...`) test kırmızı olur ve
+    ekleyen kişi maske kararını **yeniden** vermek zorunda kalır.
     """
-    temiz = context.baglam_mesaji_govdeden({"proje": "Güneşkent Konut"})
-    assert temiz is not None and "Güneşkent" in temiz  # POZİTİF KONTROL
+    from app.modules.ai import exposure
 
-    zehirli = context.baglam_mesaji_govdeden({"proje": "X", "tc_no": "12345678901"})
-    assert zehirli is None, "Yasak anahtar taşıyan gövde bloğu DÜŞÜRMELİ (fail-closed)"
+    kaynak = pathlib.Path(inspect.getfile(context)).read_text(encoding="utf-8")
+    fn = next(
+        d
+        for d in ast.walk(ast.parse(kaynak))
+        if isinstance(d, ast.FunctionDef) and d.name == "baglam_govdesi"
+    )
+    yazilanlar, dinamik = [], False
+    for dugum in ast.walk(fn):
+        if not isinstance(dugum, ast.Assign):
+            continue
+        for hedef in dugum.targets:
+            if not isinstance(hedef, ast.Subscript):
+                continue
+            if isinstance(hedef.slice, ast.Constant):
+                yazilanlar.append(hedef.slice.value)
+            else:
+                dinamik = True
 
-    # Gövde KISMEN temizlenmez: `alan_maskesi_ihlali` doktrininin aynısı.
-    assert context.baglam_mesaji_govdeden({"iban": "TR00"}) is None
+    assert sorted(yazilanlar) == ["proje", "santiye"], yazilanlar
+    assert not dinamik, (
+        "`baglam_govdesi` artık DİNAMİK anahtar yazıyor — maske kararı YENİDEN verilmeli"
+    )
+    assert set(yazilanlar) & exposure.YASAK_ALAN_ANAHTARLARI == set()
 
 
-@pytest.mark.parametrize("anahtar", sorted(context.exposure.YASAK_ALAN_ANAHTARLARI))
-def test_ALAN_MASKESI_ON_SEKIZ_anahtarin_HEPSI_bloku_dusurur(anahtar: str) -> None:
-    """18 anahtarın **hepsi** ADIYLA koşar; bir tanesi elenirse test kırmızı."""
-    assert context.baglam_mesaji_govdeden({"proje": "X", anahtar: "y"}) is None
+def test_ACIK_BORC_deger_duzeyi_PII_maskesiz_ve_bu_bloga_OZGU_DEGIL() -> None:
+    """🔴 AÇIK BORCU **GÖRÜNÜR** kılar — sessizce gömmek en kötü seçenekti.
+
+    `exposure.yasak_anahtarlar` **ANAHTAR** tarar, DEĞER taramaz. Serbest metin
+    bir proje adına TCKN/IBAN yazılırsa maske onu göremez.
+
+    🔴 Ama bu **bu bloğun regresyonu DEĞİLDİR**: aynı ad, 22 aracın **14'ünün**
+    yanıt şemasında (`name` · `project_name` · `site_name`) sağlayıcıya zaten
+    gidiyor. Değer düzeyi tarama `exposure.py`ye — tek yere, hepsine — aittir.
+    Bu testin işi o gerçeği ÖLÇÜLMÜŞ hâlde tutmaktır: sayı düşerse (ya da
+    `exposure` bir gün değere de bakarsa) burası konuşur.
+    """
+    from app.modules.ai import exposure
+    from app.modules.ai.tools.catalog import READ_TOOLS
+
+    zehir = "Ahmet Yilmaz TC 12345678901 IBAN TR330006100519786457841326"
+    # (a) Maske değere BAKMIYOR — blok düşmüyor.
+    assert exposure.yasak_anahtarlar({"proje": zehir}) == []
+    blok = context.baglam_mesaji(context.SohbetBaglami(project_id=uuid.uuid4(), proje_adi=zehir))
+    assert blok is not None and "12345678901" in blok
+
+    # (b) …ve aynı metin bu bloktan BAĞIMSIZ olarak zaten sağlayıcıya gidiyor.
+    # 🔴 `model_fields` YETMEZ — YÜZEYSEL tarama 14 yerine 6 der (ölçüldü):
+    # `AiProje.name` `AiProjeListesi.items`in İÇİNDE yaşar. `exposure`ın kendi
+    # iç içe tarayıcısı kullanılır; yoksa bu test borcu OLDUĞUNDAN KÜÇÜK
+    # gösterirdi — yani sahte bir rahatlama üretirdi.
+    ad_tasiyan = {
+        s.ad
+        for s in READ_TOOLS
+        if {"name", "project_name", "site_name"} & exposure.sema_anahtarlari(s.yanit_modeli)
+    }
+    assert len(ad_tasiyan) == 14, sorted(ad_tasiyan)
+    assert {"projeleri_listele", "santiye_detayi", "puantaj_haftasi"} <= ad_tasiyan
 
 
 def test_AD_zarfi_KAPATAMAZ_ve_SAHTE_BASLIK_kuramaz() -> None:
@@ -600,7 +652,13 @@ async def test_BAGLAM_parametresiz_cagriya_site_id_DOLDURUR(
     # söylerse bu hattın tüm meselesi (atfedilebilirlik) düşer.
     yazilan = [i for i in denetim_izleri if i["tool_name"] == "santiye_detayi"]
     assert yazilan, denetim_izleri
-    assert yazilan[0]["arguments"] == {"site_id": baglam.site_id}
+    # 🔴 DEĞER **`str`**, `uuid.UUID` DEĞİL. Bu satır eskiden `baglam.site_id`
+    # (UUID nesnesi) bekliyordu ve **bozuk tipi doğru diye çiviliyordu**:
+    # `arguments` JSONB'ye yazılır ve `json.dumps(UUID)` patlar (bkz.
+    # `test_JSONB_*`). Aynı dosyada `test_MODELIN_ACIK_DEGERI_baglami_EZER`
+    # açık değeri `str` veriyordu — aynı alan iki ayrı tipteydi.
+    assert yazilan[0]["arguments"] == {"site_id": str(baglam.site_id)}
+    assert all(isinstance(d, str) for d in yazilan[0]["arguments"].values())
     assert str(baglam.site_id) in (yazilan[-1]["resolved_path"] or "")
 
 
@@ -777,11 +835,146 @@ async def test_UCTAN_dongu_baglami_ARACA_TASIR_cagri_yeri_de_MUTANTTIR(
     assert "arac" in {m.rol for m in ikinci_tur}
 
 
+# ############################################################################ #
+# 3b — 🔴 SERİLEŞME: `record_tool_call` MONKEYPATCH EDİLMEZ
+# ############################################################################ #
+#
+# 🔑 KANON (bu dilimde ölçülerek doğdu): **KALICILIK KATMANINI MONKEYPATCH
+# ETMEK, BİR TİP HATASININ YÜZEYE ÇIKABİLECEĞİ TEK YERİ SİLER — VE ARDINDAN
+# ASSERTION YANLIŞ TİPİ KANON YAPAR.**
+#
+# Yukarıdaki `denetim_izleri` fikstürü `record_tool_call`ü bellek içi bir
+# listeye çevirir; o listeye `uuid.UUID` koymak sorunsuzdur. Oysa üretimde
+# `arguments` **JSONB** bir kolondur, motorda `json_serializer` YOKTUR
+# (ölçüldü: `dialect._json_serializer is None`) ve `json.dumps(UUID)` patlar.
+# Huninin 5. adımı FAIL-CLOSED olduğu için sonuç `denetim_yazilamadi` olur ve
+# **handler hiç koşmaz** — yani dilimin baş özelliği %100 kırık olurdu.
+#
+# Bu bölümdeki testler `record_tool_call`ü **YAMALAMAZ**. Yalnız `SessionLocal`
+# testin oturumuna yönlendirilir (`test_ai1_dongu.py`nin yerleşik deseni) —
+# serileşme yolu GERÇEK kalır.
+
+
+class _AyriDenetimOturumu:
+    """`record_tool_call`ün ayrı session'ını **testin** bağlantısına yöneltir.
+
+    🔴 `add` + `flush` GERÇEKTİR: INSERT fiilen koşar, dolayısıyla JSONB bind
+    işlemcisi de fiilen koşar. Yalnız `commit` `flush`a iner (testin SAVEPOINT'i
+    dışına düşmemek için).
+    """
+
+    _hedef = None
+
+    def __init__(self) -> None:
+        self._eklenen: list[Any] = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        return None
+
+    def add(self, nesne) -> None:
+        self._eklenen.append(nesne)
+
+    async def commit(self) -> None:
+        for nesne in self._eklenen:
+            _AyriDenetimOturumu._hedef.add(nesne)
+        await _AyriDenetimOturumu._hedef.flush()
+
+
+@pytest.fixture
+def gercek_denetim(db_session, monkeypatch):
+    """GERÇEK `record_tool_call` + gerçek JSONB yazımı."""
+    _AyriDenetimOturumu._hedef = db_session
+    monkeypatch.setattr(ai_audit, "SessionLocal", _AyriDenetimOturumu)
+    return db_session
+
+
+def test_JSONB_varsayilan_kapsam_SERILESEBILIR_olmali() -> None:
+    """🔴 En dar ve en hızlı sinyal: değerler `json.dumps`tan geçmeli.
+
+    Mutasyon: `varsayilan_kapsam`daki `str(...)` kaldırılırsa bu test KIRMIZI.
+    """
+    import json
+
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    import app.core.db as core_db
+
+    baglam = _ornek_baglam()
+    kapsam = context.varsayilan_kapsam(baglam)
+
+    assert kapsam and all(isinstance(d, str) for d in kapsam.values()), kapsam
+    # (a) düz `json.dumps` — SQLAlchemy'nin düştüğü yedek.
+    json.dumps(dict(kapsam))
+    # (b) 🔴 ve GERÇEK yol: motorun kendi diyalektinin JSONB bind işlemcisi.
+    #     Motorda `json_serializer` OLMADIĞI burada da doğrulanır — yani (a) ile
+    #     (b) aynı `json.dumps`a düşer ve iddia bir varsayıma dayanmaz.
+    assert getattr(core_db.engine.dialect, "_json_serializer", None) is None
+    ciktı = JSONB().bind_processor(core_db.engine.dialect)(dict(kapsam))
+    assert str(baglam.site_id) in ciktı
+
+
+async def test_REGRESYON_baglamdan_dolan_cagri_GERCEK_denetimle_KOSAR(
+    kurulum, transport_factory, actor_factory, gercek_denetim
+) -> None:
+    """🔴 MERGE ENGELİNİN BEKÇİSİ — `record_tool_call` **yamalanmaz**.
+
+    Mutasyon: `varsayilan_kapsam`daki `str(...)` kaldırılırsa `arguments`
+    JSONB'ye yazılamaz, huni FAIL-CLOSED davranır ve sonuç `Ok` değil
+    `ToolError("denetim_yazilamadi")` olur.
+    """
+    from sqlalchemy import text
+
+    santiye = kurulum["a_santiye"]
+    sonuc = await _kapsamli_cagir(
+        "santiye_detayi",
+        argumanlar={},
+        baglam=context.SohbetBaglami(site_id=santiye.id, santiye_adi="A-Blok Şantiyesi"),
+        user=kurulum["iceriden"],
+        transport_factory=transport_factory,
+        actor_factory=actor_factory,
+    )
+    assert not isinstance(sonuc, ToolError), (
+        f"Araç koşmadı: {sonuc.kod if isinstance(sonuc, ToolError) else sonuc}. "
+        "`denetim_yazilamadi` ise bağlam değeri JSONB'ye serileşmiyordur."
+    )
+    assert isinstance(sonuc, Ok) and sonuc.data["name"] == "A-Blok Şantiyesi"
+
+    # 🔴 Ve satır GERÇEKTEN veritabanına indi.
+    #
+    # 🔴 ORM ile okumak YETMEZ: kimlik haritası aynı nesneyi döndürür ve
+    # `r.arguments` PostgreSQL'den DÖNEN değer değil, testin biraz önce yazdığı
+    # PYTHON SÖZLÜĞÜ olurdu — yani "geri okundu" iddiası bir teğet olurdu.
+    # Bu yüzden değer HAM SQL ile, `jsonb`den `text`e çevrilerek okunur; böylece
+    # iddia gerçekten sunucudaki baytlara bakar.
+    satirlar = (
+        (
+            await gercek_denetim.execute(
+                text(
+                    "SELECT arguments::text FROM ai_tool_calls "
+                    "WHERE tool_name = :ad ORDER BY occurred_at"
+                ),
+                {"ad": "santiye_detayi"},
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert satirlar, "Denetim satırı hiç yazılmamış — bekçi bir şey ölçmüyor olabilir"
+    assert any(str(santiye.id) in ham for ham in satirlar), satirlar
+    # Kimliğin `str` olarak yazıldığı: JSONB'de tırnak içinde durur.
+    assert any(f'"{santiye.id}"' in ham for ham in satirlar), satirlar
+
+
 def test_varsayilan_kapsam_KAPALI_KUME_disina_cikmaz() -> None:
     """Serbest bir sözlük bir gün `year`/`month` gibi bambaşka bir alanı da
     ezebilirdi."""
     kapsam = context.varsayilan_kapsam(_ornek_baglam())
     assert set(kapsam) == {"project_id", "site_id"}
+    # 🔴 DEĞERLER `str` — gerekçe `varsayilan_kapsam` docstring'i (JSONB).
+    assert all(isinstance(d, str) for d in kapsam.values())
     assert set(context.KAPSAM_ALANLARI) == {"project_id", "site_id"}
     assert context.varsayilan_kapsam(context.BOS_BAGLAM) == {}
     # `None` değerler HİÇ taşınmaz — `invoke` onları zaten atlar, ama sözlüğe

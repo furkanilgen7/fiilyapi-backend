@@ -10,7 +10,9 @@ Bu modül o bağlamı üç işe koşar:
 1. **Görünürlük kapısı** — verilen kimlik kullanıcının kapsamında değilse
    `BaglamGorunmuyor` (router bunu **404**a çevirir, 403'e DEĞİL: S14 varlık
    sızıntısı, `conversation_id` emsali).
-2. **Modele giden bağlam bloğu** — yalnız **AD**, kimlik YOK.
+2. **Modele giden bağlam bloğu** — yalnız **AD**, kimlik YOK. (🔴 Blok
+   üzerinde KVKK **alan maskesi koşmaz**: maske ANAHTAR tarar, blok ise iki
+   sabit anahtar taşır — gerekçe `baglam_mesaji_govdeden` docstring'inde.)
 3. **Araçlara varsayılan kapsam** — `ToolRegistry.invoke` hunisinde **TEK
    YERDE** uygulanır (`varsayilan_kapsam`).
 
@@ -49,7 +51,6 @@ from typing import Final
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
-from app.modules.ai import exposure
 
 # 🔴 MODÜL DÜZEYİNDE — ve bu ÖLÇÜLDÜ, varsayılmadı. `readplane`in tembel import
 # gerekçesi (`build_read_plane` → `app.main` → bu router → döngü) buraya
@@ -164,15 +165,42 @@ async def cozumle(
     return SohbetBaglami(project_id=project.id, proje_adi=project.name)
 
 
-def varsayilan_kapsam(baglam: SohbetBaglami) -> Mapping[str, uuid.UUID]:
-    """Araçlara geçecek **varsayılan** kapsam sözlüğü.
+def varsayilan_kapsam(baglam: SohbetBaglami) -> Mapping[str, str]:
+    """Araçlara geçecek **varsayılan** kapsam sözlüğü — değerler **`str`**.
 
     🔴 Yalnız `KAPSAM_ALANLARI` üyeleri ve yalnız `None` OLMAYAN değerler. Bunu
     okuyan tek yer `ToolRegistry.invoke`dur; her handler'a kopyalanmaz, çünkü
     *"aynı korumanın ikinci kopyası bir bekçi değil, eşdeğer mutant yatağıdır"*.
+
+    🔴 **`uuid.UUID` NESNESİ DÖNDÜRÜLEMEZ — bu satır bir MERGE ENGELİYDİ.**
+    Ölçülmüş zincir:
+
+      1. `invoke._kapsamla` bu değerleri `argumanlar`a koyar;
+      2. `audit.record_tool_call` `arguments`ı **JSONB** kolona yazar
+         (`models.py::AiToolCall.arguments`);
+      3. motorda `json_serializer` **YOKTUR** (`dialect._json_serializer is None`
+         ölçüldü) → SQLAlchemy düz `json.dumps`a düşer;
+      4. `json.dumps(UUID)` → `TypeError: Object of type UUID is not JSON
+         serializable`;
+      5. huninin 5. adımı **FAIL-CLOSED**tur → `ToolError("denetim_yazilamadi")`
+         ve **handler HİÇ KOŞMAZ**.
+
+    Yani bağlamdan dolan **her** araç çağrısı — bu dilimin tek gerekçesi olan
+    yol — üretimde *"Erişim izi kaydedilemediği için araç ÇALIŞTIRILMADI"*
+    cümlesiyle biterdi; üstelik sebeple **alakasız** bir cümleyle: kullanıcı
+    denetim sisteminin bozulduğunu sanardı.
+
+    Bugünkü kod bundan etkilenmiyordu çünkü `argumanlar` yalnız sağlayıcının
+    JSON araç çağrısından geliyordu ve orada her değer zaten `str`di. Regresyonu
+    **bu dilim** doğurdu.
+
+    🔴 `str` kayıpsızdır: `spec.girdi` pydantic modeli metni `uuid.UUID`ye geri
+    çevirir (ölçüldü), `transport.kacisla` zaten `str` bekler ve `_kapsamla`nın
+    `is None` koşulu değişmez. Alternatif — motora UUID-farkında bir
+    `json_serializer` koymak — **tüm depoyu** etkiler ve ayrı bir dilimdir.
     """
     degerler = {"project_id": baglam.project_id, "site_id": baglam.site_id}
-    return {ad: degerler[ad] for ad in KAPSAM_ALANLARI if degerler[ad] is not None}
+    return {ad: str(degerler[ad]) for ad in KAPSAM_ALANLARI if degerler[ad] is not None}
 
 
 def _kisalt(ad: str) -> str:
@@ -199,22 +227,44 @@ def baglam_govdesi(baglam: SohbetBaglami) -> dict[str, str]:
 
 
 def baglam_mesaji_govdeden(govde: Mapping[str, str]) -> str | None:
-    """Gövdeden bağlam bloğunu kurar; **KVKK alan maskesi burada da koşar**.
+    """Gövdeden bağlam bloğunu kurar.
 
-    🔴 İmza `SohbetBaglami` değil **gövde** alır ve bu bir tercih değil bir
-    ölçüm imkânıdır: maske ancak zehirli bir gövde **beslenebiliyorsa**
-    bekçilenebilir. `SohbetBaglami` alsaydı bugün iki alanı olduğu için maske
-    hiçbir koşulda ateşlenemez, yani **dekoratif** olurdu — `Scope` enum'unun ve
-    `YONETISIM_DENYLIST`in düştüğü yer tam olarak burası.
+    ## 🔴 BURADA ALAN MASKESİ **KOŞMAZ** — ve bu bilinçli bir GERİ ALMADIR
 
-    🔴 İhlalde gövde KISMEN temizlenmez, blok **TAMAMEN düşürülür** (`None`):
-    `ToolRegistry.invoke`un `alan_maskesi_ihlali` dalıyla aynı doktrin —
-    anahtarları ayıklamak sızıntıyı yok etmez, yalnız fark edilmesini
-    zorlaştırır.
+    İlk hâlde burada `exposure.yasak_anahtarlar(govde)` çağrılıyordu ve
+    docstring *"imza gövde alır ki maske bekçilenebilsin"* diyordu. Çürütüldü:
+    **imza değişikliği dekoratifliği kurtarmadı, yalnız TESTE taşıdı.** Üç
+    bağımsız yoldan ölçüldü:
+
+    * **AST** — `baglam_govdesi` yalnız **iki SABİT anahtar** yazabilir
+      (`proje` · `santiye`); dinamik anahtar yoktur.
+    * **Küme** — `{'proje','santiye'} & YASAK_ALAN_ANAHTARLARI == ∅`. Yani
+      `exposure.govde_anahtarlari` (ANAHTAR tarar, değer değil) burada
+      **hiçbir girdide** ateşlenemez.
+    * **Çağıran** — üretimde tek çağıran `baglam_mesaji`dır ve girdisi her
+      zaman `baglam_govdesi` çıktısıdır.
+
+    19 maske iddiasının hepsi **üretimin kuramayacağı** bir gövdeyi elle
+    besliyordu. Bu, `exposure.py`nin kendi docstring'inde iki kez adıyla
+    reddettiği desendir: *"bugün onu okuyan TEK yer bir TEST DOSYASIDIR."*
+    Koruma VAR görünüp YOK olmasındansa **hiç olmaması** dürüsttür.
+
+    ## 🔴 GERÇEK RİSK ANAHTARDA DEĞİL **DEĞERDE** — ve bu bloğa ÖZGÜ DEĞİL
+
+    `projects.name` / `sites.name` `String(200)` **serbest metindir** ve onu
+    başka bir kullanıcı yazar; içine TCKN/IBAN konursa maske bunu **hiçbir
+    zaman göremez** (anahtar tarar). Ama ölçüldü: **22 aracın 14'ü** yanıt
+    şemasında zaten `name` / `project_name` / `site_name` taşıyor
+    (`projeleri_listele` · `santiye_detayi` · `puantaj_haftasi` …). Yani aynı
+    metin sağlayıcıya **bu bloktan bağımsız olarak** gidiyor.
+
+    Dolayısıyla değer taramasının yeri burası **değildir**: buraya konsaydı (a)
+    aynı korumanın ikinci ve zayıf bir kopyası olurdu, (b) `projeleri_listele`in
+    zaten gönderdiği bir adı bu blokta düşürmek **tutarsız** olurdu. Değer
+    düzeyi tarama `exposure.py`ye — yani **tek yere, 22 aracın hepsine** —
+    aittir ve AÇIK BİR BORÇTUR (bkz. teslim raporu).
     """
     if not govde:
-        return None
-    if exposure.yasak_anahtarlar(dict(govde)):
         return None
     satirlar = [ZARF_AC, BAGLAM_BASLIGI]
     satirlar += [f"- {etiket}: {deger}" for etiket, deger in govde.items()]

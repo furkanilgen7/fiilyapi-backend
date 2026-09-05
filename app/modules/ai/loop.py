@@ -284,7 +284,7 @@ async def _cagriyi_kosur(
     ai_session_id: uuid.UUID | None,
     saglayici_adi: str,
     model: str,
-    varsayilan_kapsam: Mapping[str, uuid.UUID],
+    varsayilan_kapsam: Mapping[str, str],
 ) -> AracSonucu:
     """Tek bir araç çağrısı: bütçe → niyet → **taze kimlik** → huni.
 
