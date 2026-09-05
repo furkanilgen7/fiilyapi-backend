@@ -53,7 +53,8 @@ def _json_varsayilani(deger: Any) -> Any:
     korur ve tek bir üye `str` tabanını kaybederse (ya da bir gün `enum.Enum`a
     dönerse) `default=str` sessizce `"EkranAnahtari.stok"` yazardı — istemcinin
     rota kataloğu bunu çözemez ve derin bağlantı **sessizce** ölürdü.
-    Bekçisi `test_aichat2_akis.py::test_sse_karesi_ekran_anahtarini_DEGERIYLE_yazar`.
+    Bekçisi `test_aichat2_bloklar.py::test_sse_karesi_ekran_anahtarini_DEGERIYLE_
+    yazar` (🔴 eskiden VAR OLMAYAN bir `test_aichat2_akis.py`yi gösteriyordu).
     """
     if isinstance(deger, enum.Enum):
         return deger.value

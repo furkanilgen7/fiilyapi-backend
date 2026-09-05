@@ -593,10 +593,33 @@ def test_bilinmeyen_arac_UCUNCU_NOTU_alir_SESSIZCE_ATLANMAZ() -> None:
 
 
 def test_gosterge_ozeti_SIRKET_GENELI_beyan_eder() -> None:
-    """`SIRKET_GENELI`nin bu depodaki İLK gerçek kullanımı."""
+    """`SIRKET_GENELI` beyan eden araçların TAM kümesi.
+
+    🔴 AI-2b/2d'de küme BİRDEN BEŞE çıktı ve **sessizce değil, ADIYLA**. Her
+    üyenin gerekçesi ayrı ayrı ölçüldü ve `test_ai2bd_araclar.py` her birini
+    kaynak zinciriyle kilitler:
+
+    * `gosterge_ozeti` — `inventory._warehouse_scope` OR'lu,
+    * `makine_listesi` — `equipment.repository.scope` OR'lu,
+    * `makine_calisma` — `equipment.repository.work_log_scope` OR'lu,
+    * `makine_yakit`  — `equipment.repository.fuel_log_scope` OR'lu,
+    * `makine_kira`   — `equipment.rental_repository.invoice_scope` OR'lu,
+    * `taseronlar`    — kapsam süzgeci **HİÇ YOK** (uç `user` bile almaz).
+
+    ⚠️ Altı gerekçe, beş+bir araç: `taseronlar`ın gerekçesi ötekilerden
+    FARKLIDIR (OR dalı değil, süzgecin yokluğu) ve bu fark kayda geçsin diye
+    burada ayrı yazılır.
+    """
     assert GOSTERGE_OZETI.kume is ToolKumesi.SIRKET_GENELI
     beyan_edenler = {s.ad for s in CATALOG if s.kume is ToolKumesi.SIRKET_GENELI}
-    assert beyan_edenler == {"gosterge_ozeti"}
+    assert beyan_edenler == {
+        "gosterge_ozeti",
+        "taseronlar",
+        "makine_listesi",
+        "makine_calisma",
+        "makine_yakit",
+        "makine_kira",
+    }
 
 
 def test_BEYANIN_GEREKCESI_HALA_KODDA_DURUYOR() -> None:
@@ -770,8 +793,64 @@ def _get_rotalari() -> dict[str, APIRoute]:
 
 
 def _sorgu_parametreleri(yol: str) -> set[str]:
+    """Ucun **TEL ÜZERİNDE** kabul ettiği sorgu parametresi adları.
+
+    🔴 **DÜZELTİLDİ (AI-2b) — bekçi yanlış ekseni ölçüyordu.** Eski hâli
+    `p.name` okuyordu, yani PYTHON adını; FastAPI ise bir `alias` varsa
+    **yalnız alias'ı** tanır. Ölçüldü (`/contracts`):
+
+        NAMES   = {'contract_type', 'project_id', 'q', 'status_filter'}
+        ALIASES = {'type',          'project_id', 'q', 'status'}
+
+    Yani eski bekçi, tel üzerinde **DOĞRU** olan `params={'type': …}`ı
+    "bildirilmemiş parametre" diye kırmızıya çevirir; tel üzerinde
+    **SESSİZCE DÜŞECEK** olan `params={'contract_type': …}`ı ise yeşil
+    geçirirdi. Bu, bekçinin önlemeye çalıştığı hatanın ta kendisidir
+    (FastAPI bilinmeyen parametreyi 422 ile reddetmez, **yutar**).
+
+    İki okumanın eşdeğer OLMADIĞI ayrıca kilitlidir:
+    `test_ALIAS_ile_PYTHON_ADI_AYRISAN_bir_uc_GERCEKTEN_VAR`.
+    """
+    rota = _get_rotalari()[yol]
+    return {p.alias for p in rota.dependant.query_params}
+
+
+def _python_adlari(yol: str) -> set[str]:
+    """Aynı ucun PYTHON adları — yalnız iki okumanın farkını ölçmek için."""
     rota = _get_rotalari()[yol]
     return {p.name for p in rota.dependant.query_params}
+
+
+def test_ALIAS_ile_PYTHON_ADI_AYRISAN_bir_uc_GERCEKTEN_VAR() -> None:
+    """🔴 POZİTİF KONTROL: iki okuma **eşdeğer değildir**.
+
+    Alias ile python adı hiçbir uçta ayrışmasaydı yukarıdaki düzeltme eşdeğer
+    bir mutant olurdu ve bu test onu söylerdi. Ölçüm `/contracts`tadır ve
+    ZORUNLU parametrenin ta kendisidir — yani ayrışma teorik değil, bu dilimin
+    `sozlesmeler` aracını doğrudan etkileyen bir olgudur.
+    """
+    tel = _sorgu_parametreleri("/contracts")
+    python = _python_adlari("/contracts")
+    assert tel != python, "alias/ad ayrışması kayboldu — düzeltme eşdeğer mutant olurdu"
+    assert "type" in tel and "type" not in python
+    assert "contract_type" in python and "contract_type" not in tel
+
+
+def test_MUTASYON_PYTHON_ADINI_gonderen_handler_YENI_BEKCIDE_YAKALANIR() -> None:
+    """Yeni hâlin bir şey ÖLÇTÜĞÜNÜN kanıtı — ve eski hâlin körlüğünün.
+
+    `params={'contract_type': …}` tel üzerinde SESSİZCE düşerdi ve uç zorunlu
+    `type`ı bulamayıp 422 verirdi. Eski bekçi (python adı okuyan) bunu YEŞİL
+    geçirirdi; yeni bekçi kırmızı yapar.
+    """
+    mutant = (
+        "async def sozlesmeler(ctx, girdi):\n"
+        "    return await ctx.get(params={'contract_type': girdi.contract_type})\n"
+    )
+    gonderilen = _handlerin_gonderdigi_params(mutant)["sozlesmeler"]
+    assert sorted(gonderilen - _sorgu_parametreleri("/contracts")) == ["contract_type"]
+    # 🔴 Ve eski okuma bu mutantı GÖRMEZDİ:
+    assert gonderilen - _python_adlari("/contracts") == set()
 
 
 SAYFALAMASIZ_UCLAR = ("/progress-payments", "/contracts", "/subcontractors")
@@ -898,12 +977,53 @@ def _handlerin_gonderdigi_params(kaynak: str) -> dict[str, set[str]]:
     return cikti
 
 
+def _handler_kaynaklari() -> list[Path]:
+    """`tools/reads/` altındaki **TÜM** handler modülleri.
+
+    🔴 **DÜZELTİLDİ (AI-2b).** Bekçi tek bir dosyayı (`handlers.py`) okuyordu.
+    `handlers.py` 800 satır tavanını aşınca ikiye bölündü (`ai2bd.py`) ve tek
+    dosya okuyan bir bekçi **on altı handler'ın hiçbirini görmezdi** — sessizce.
+    Bu, §3.9'daki `SUNUCULAR` deliğinin birebir ikizi olurdu.
+    """
+    return sorted((AI_KOK / "tools" / "reads").glob("*.py"))
+
+
+def _tum_handler_paramlari() -> dict[str, set[str]]:
+    birlesik: dict[str, set[str]] = {}
+    for yol in _handler_kaynaklari():
+        birlesik.update(_handlerin_gonderdigi_params(yol.read_text(encoding="utf-8")))
+    return birlesik
+
+
+def test_POZITIF_KONTROL_TARANAN_handler_dosyalari_IKIDEN_AZ_DEGIL() -> None:
+    """Tarama kümesi boş ya da eksik kalırsa bekçi sessizce körleşir."""
+    adlar = {y.name for y in _handler_kaynaklari()}
+    assert {"handlers.py", "ai2bd.py"} <= adlar, adlar
+
+
 def test_POZITIF_KONTROL_AST_cikaricisi_GERCEKTEN_params_BULUYOR() -> None:
-    """Çıkarıcı boş dönseydi aşağıdaki bekçi hiçbir şey ölçmezdi."""
-    kaynak = (AI_KOK / "tools" / "reads" / "handlers.py").read_text(encoding="utf-8")
-    bulunan = _handlerin_gonderdigi_params(kaynak)
+    """Çıkarıcı boş dönseydi aşağıdaki bekçi hiçbir şey ölçmezdi.
+
+    İddia **her iki** handler modülünden birer örnek taşır: biri düşerse test
+    kırmızı olur ve tarama kümesinin daraldığı anlaşılır.
+    """
+    bulunan = _tum_handler_paramlari()
     assert bulunan.get("projeleri_listele") == {"limit", "offset"}
     assert bulunan.get("puantaj_haftasi") == {"iso_year", "iso_week"}
+    # AI-2b tarafı — ALIAS'lı ve ZORUNLU parametrenin ta kendisi.
+    assert bulunan.get("sozlesmeler") == {"type"}
+    # 🔴 Zorunlu parametreli DÖRT aracın dördü de ADIYLA sayılır: biri sessizce
+    # `BosGirdi`ye düşerse (ya da parametresini göndermeyi bırakırsa) araç HER
+    # çağrıda 422 alırdı ve bu, çıkarıcı "boş küme" dönerken FARK EDİLMEZDİ.
+    assert bulunan.get("puantaj") == {"year", "month"}
+    assert bulunan.get("gun_plani") == {"start"}
+    assert bulunan.get("makine_calisma") == {"year", "month"}
+    assert bulunan.get("makine_yakit") == {"year", "month"}
+    # 🔴 Sayfalamasız uç `limit` GÖNDERMEZ (FastAPI onu sessizce yutardı).
+    assert bulunan.get("isveren_hakedisleri") == set()
+    # 🔴 `taseronlar` params GÖNDERİR ama `limit` DEĞİL: ucun `active_only`
+    # varsayılanı `True`dur ve devralmak kümeyi sessizce süzerdi.
+    assert bulunan.get("taseronlar") == {"active_only"}
 
 
 @pytest.mark.parametrize("spec", CATALOG, ids=lambda s: s.ad)
@@ -912,8 +1032,7 @@ def test_HANDLERIN_GONDERDIGI_PARAMS_UCUN_BILDIRDIGI_KUMENIN_ICINDEDIR(spec: Too
     saran biri `limit` gönderirse bu test onu **kod yazarken** yakalar."""
     if not spec.ucler:
         pytest.skip("veri okumayan araç")
-    kaynak = (AI_KOK / "tools" / "reads" / "handlers.py").read_text(encoding="utf-8")
-    gonderilen = _handlerin_gonderdigi_params(kaynak).get(spec.calistir.__name__, set())
+    gonderilen = _tum_handler_paramlari().get(spec.calistir.__name__, set())
     bildirilen = _sorgu_parametreleri(spec.ucler[0])
     assert "<HESAPLANMIS>" not in gonderilen, (
         f"`{spec.ad}` handler'ı hesaplanmış bir `params` sözlüğü gönderiyor; "

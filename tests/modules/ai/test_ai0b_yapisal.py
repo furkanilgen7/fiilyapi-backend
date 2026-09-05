@@ -323,6 +323,35 @@ def test_B14_MUTASYON_import_eklenirse_YAKALANIR(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
+def _reads_importlari(kaynak: str) -> list[str]:
+    """Kaynaktaki **gerçek** `tools.reads` importları — AST'den, dizeden DEĞİL.
+
+    🔴 **DÜZELTİLDİ (AI-2b) ve düzeltme bir SAHTE-KIRMIZI ile ölçüldü.** Eski
+    hâli `"ai.tools.reads" in kaynak` yazıyordu, yani **düz metin** arıyordu.
+    Bu dilimde `tools/zarf.py` doğdu ve docstring'i — gerekçesini anlatmak için
+    — o dizeyi YAZIYOR. Dosya hiçbir şey import etmiyordu; bekçi yine de
+    kırmızı oldu.
+
+    Bu tam olarak B14'ün yanındaki uyarının anlattığı tuzaktır ("bir bekçinin
+    kendi gerekçesine takılması sahte-kırmızıdır"; `route.test.ts`in yorum
+    ayıklamayan bekçisi bu tuzağa düşüyor). B14 çözmüştü, B15 çözmemişti.
+
+    AST okuması ayrıca **daha güçlüdür**: `import app.modules.ai.tools.reads
+    .handlers as h` gibi bir biçim de yakalanır.
+    """
+    bulunan: list[str] = []
+    for dugum in ast.walk(ast.parse(kaynak)):
+        adlar: list[str] = []
+        if isinstance(dugum, ast.Import):
+            adlar = [a.name for a in dugum.names]
+        elif isinstance(dugum, ast.ImportFrom) and dugum.module:
+            adlar = [dugum.module]
+        for ad in adlar:
+            if ad == "app.modules.ai.tools.reads" or ad.startswith("app.modules.ai.tools.reads."):
+                bulunan.append(ad)
+    return bulunan
+
+
 def test_B15_handlerlari_YALNIZ_catalog_import_eder() -> None:
     """Kapı E. Bir modül handler'ı doğrudan import ederse huninin dışına çıkar
     (izin + denetim + yol kaçışı + tavan hiç koşmaz)."""
@@ -333,15 +362,75 @@ def test_B15_handlerlari_YALNIZ_catalog_import_eder() -> None:
             continue
         if "tests" in yol.parts:
             continue
-        kaynak = yol.read_text(encoding="utf-8")
-        if "ai.tools.reads" in kaynak and "import" in kaynak:
+        if _reads_importlari(yol.read_text(encoding="utf-8")):
             ihlal.append(str(yol))
     assert ihlal == [], f"handler'ı huninin dışından import eden modül(ler): {ihlal}"
 
 
+def test_B15_MUTASYON_gercek_import_YAKALANIR_prose_YAKALANMAZ() -> None:
+    """🔴 Yeni hâlin hâlâ bir şey ÖLÇTÜĞÜNÜN kanıtı — iki yönlü.
+
+    (a) Gerçek bir import — üç biçiminde de — yakalanır.
+    (b) Yalnızca metinde geçen ad yakalanmaz (sahte-kırmızı kapandı).
+    """
+    for mutant in (
+        "from app.modules.ai.tools.reads import handlers\n",
+        "from app.modules.ai.tools.reads.handlers import projeleri_listele\n",
+        "import app.modules.ai.tools.reads.handlers as h\n",
+    ):
+        assert _reads_importlari(mutant), mutant
+    prose = '''"""Bu modül `ai.tools.reads` altındaki iki handler modülünü ANLATIR."""\nx = 1\n'''
+    assert _reads_importlari(prose) == []
+
+
 def test_B15_POZITIF_KONTROL_catalog_handlerlari_GERCEKTEN_import_eder() -> None:
+    """🔴 AI-2b: handler modülü ARTIK İKİ TANE (`handlers.py` 800 satır tavanını
+    aşınca `ai2bd.py` doğdu). İddia dizeye değil **kümeye** bağlandı: yeni bir
+    handler modülü eklenip `catalog.py`ye bağlanmazsa burası kırmızı olur.
+    """
     kaynak = (AI_KOK / "tools" / "catalog.py").read_text(encoding="utf-8")
-    assert "from app.modules.ai.tools.reads import handlers" in kaynak
+    modulller = {y.stem for y in (AI_KOK / "tools" / "reads").glob("*.py") if y.stem != "__init__"}
+    assert modulller == {"handlers", "ai2bd"}, modulller
+
+    # 🔴 DİZE ARAMASI YETMEZ: `assert "ai2bd." in kaynak` bir DOCSTRING'le
+    # tatmin olur. İddia AST'den kurulur — hem gerçek import, hem gerçek
+    # kullanım (`ai2bd.puantaj` gibi bir `Attribute` erişimi).
+    agac = ast.parse(kaynak)
+    import_edilen: set[str] = set()
+    for dugum in ast.walk(agac):
+        if isinstance(dugum, ast.ImportFrom) and dugum.module == "app.modules.ai.tools.reads":
+            import_edilen |= {a.asname or a.name for a in dugum.names}
+    assert import_edilen == modulller, (
+        f"`catalog.py` `{sorted(modulller - import_edilen)}` handler modülünü "
+        "import ETMİYOR — o modüldeki araçlar huninin dışında kalmış olabilir."
+    )
+    kullanilan = {
+        d.value.id
+        for d in ast.walk(agac)
+        if isinstance(d, ast.Attribute) and isinstance(d.value, ast.Name)
+    }
+    assert modulller <= kullanilan, (
+        f"`catalog.py` `{sorted(modulller - kullanilan)}` modülünü import ediyor "
+        "ama HİÇ KULLANMIYOR — o dilimin araçları kataloğa girmemiş olabilir."
+    )
+
+
+def test_B15_MUTASYON_docstringdeki_ad_POZITIF_KONTROLU_TATMIN_ETMEZ() -> None:
+    """🔴 Dize aramasının niye yetmediğinin kanıtı.
+
+    Aşağıdaki kaynakta `ai2bd.` dizesi VAR ama ne import ne kullanım var.
+    Bekçinin eski (dize) hâli bunu YEŞİL geçirirdi.
+    """
+    mutant = '"""Bu modül ai2bd. modülünü ANLATIR ama import ETMEZ."""\nx = 1\n'
+    assert "ai2bd." in mutant  # ← eski bekçinin tatmin olduğu yer
+    agac = ast.parse(mutant)
+    import_edilen = {
+        a.asname or a.name
+        for d in ast.walk(agac)
+        if isinstance(d, ast.ImportFrom) and d.module == "app.modules.ai.tools.reads"
+        for a in d.names
+    }
+    assert import_edilen == set()  # ← yeni bekçi kırmızı olurdu
 
 
 # --------------------------------------------------------------------------- #

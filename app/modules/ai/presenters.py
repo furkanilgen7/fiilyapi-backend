@@ -29,7 +29,6 @@ yetkiniz yok." cümlesi mavi büyük punto bir metrik gibi görünürdü.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from decimal import Decimal, InvalidOperation
 from typing import Any, Final
 
 from app.modules.ai import guards
@@ -45,53 +44,35 @@ from app.modules.ai.blocks import (
     YapisalBlok,
 )
 from app.modules.ai.navigation import EkranAnahtari
-from app.modules.ai.result import AracSonucu, Ok, Truncated
-from app.modules.ai.tools import schemas
-
-#: `metrik_metni`nin üretebileceği **sabit** cümleler. Bunlardan biri gelirse
-#: değer bir sayı DEĞİLDİR ve kart o şekilde çizilir.
-_YER_TUTUCU_ONEKLERI: Final[tuple[str, ...]] = (
-    schemas.IZIN_YOK,
-    schemas.DEGER_YOK,
-    schemas.MODUL_BEKLIYOR.split("{", 1)[0],
+from app.modules.ai.presenters_ai2bd import (
+    _arsa_payi,
+    _gun_plani,
+    _gunluk_kayit,
+    _is_kalemleri,
+    _isveren_hakedisleri,
+    _makine_calisma,
+    _makine_kira,
+    _makine_listesi,
+    _makine_yakit,
+    _proje_detayi,
+    _puantaj,
+    _santiye_detayi,
+    _santiyeleri_listele,
+    _sozlesmeler,
+    _taseron_hakedisleri,
+    _taseronlar,
 )
 
-
-def _yer_tutucu_mu(metin: str) -> bool:
-    return any(metin.startswith(on) for on in _YER_TUTUCU_ONEKLERI)
-
-
-def _para(deger: Any) -> str | None:
-    """`Decimal`/dize → `₺1.234.567,89`. 🔴 Çözülemezse `None` — 0 YAZILMAZ."""
-    if deger is None:
-        return None
-    try:
-        sayi = Decimal(str(deger))
-    except (InvalidOperation, ValueError):
-        return None
-    tam = f"{sayi:,.2f}"
-    # `,` binlik → `.`, `.` ondalık → `,` (TR). İki adımda takas.
-    return "₺" + tam.replace(",", "\x00").replace(".", ",").replace("\x00", ".")
-
-
-def _yuzde(deger: Any) -> float | None:
-    if deger is None:
-        return None
-    try:
-        return max(0.0, min(100.0, float(Decimal(str(deger)))))
-    except (InvalidOperation, ValueError, TypeError):
-        return None
-
-
-def _ilerleme_tonu(yuzde: float | None) -> BlokTonu:
-    if yuzde is None:
-        return BlokTonu.notr
-    if yuzde >= 75:
-        return BlokTonu.olumlu
-    if yuzde >= 35:
-        return BlokTonu.bilgi
-    return BlokTonu.uyari
-
+# 🔴 Yardımcılar `presenters_base`ten YENİDEN DIŞA VERİLİR: bölme bir REFAKTÖR
+# olmalı, bir sözleşme değişimi değil. `presenters._para` çağıran mevcut
+# bekçiler (`test_aichat2_bloklar.py`) dokunulmadan çalışmaya devam eder.
+from app.modules.ai.presenters_base import (  # noqa: F401
+    _ilerleme_tonu,
+    _para,
+    _yer_tutucu_mu,
+    _yuzde,
+)
+from app.modules.ai.result import AracSonucu, Ok, Truncated
 
 # --------------------------------------------------------------------------- #
 # Araç başına eşleyiciler
@@ -272,14 +253,45 @@ def _navigate_to(veri: Any) -> tuple[YapisalBlok, ...]:
     )
 
 
+#: 🔴 SUNUCUSU BİLEREK OLMAYAN araçlar — `UNGATED_ALLOWLIST` emsali.
+#: "Sunucusu yok" ile "yazmayı unuttum" farklı iki şeydir ve ikincisi
+#: SESSİZDİR: `bloklari_uret` bilinmeyen ad için `.get(…, lambda _: ())` döner
+#: → araç eklenir, panelde **sıfır blok** çizilir, hiçbir test kırmızı olmaz.
+#: Kümesi `CATALOG` ile bekçilidir (`test_ai2bd_araclar.py::test_SUN_*`).
+SUNUCUSUZ_ARACLAR: Final[frozenset[str]] = frozenset(
+    {
+        #: Meta cevap, kart değil: "hangi modülleri görebiliyorum" sorusunun
+        #: cevabı bir metrik kartı olarak çizilirse yetki haritası bir ÖLÇÜM
+        #: gibi görünürdü.
+        "yetkilerim",
+    }
+)
+
 #: 🔴 ARAÇ ADINDAN eşleyiciye — modelin metninden DEĞİL. Adı burada olmayan bir
-#: araç blok üretmez (`yetkilerim` bilerek yok: meta cevap, kart değil).
+#: araç blok üretmez.
 SUNUCULAR: Final[dict[str, Callable[[Any], tuple[YapisalBlok, ...]]]] = {
     "projeleri_listele": _projeleri_listele,
     "onay_kutum": _onay_kutum,
     "puantaj_haftasi": _puantaj_haftasi,
     "gosterge_ozeti": _gosterge_ozeti,
     "navigate_to": _navigate_to,
+    # --- AI-2b + AI-2d ---------------------------------------------------- #
+    "proje_detayi": _proje_detayi,
+    "santiyeleri_listele": _santiyeleri_listele,
+    "santiye_detayi": _santiye_detayi,
+    "is_kalemleri": _is_kalemleri,
+    "arsa_payi": _arsa_payi,
+    "isveren_hakedisleri": _isveren_hakedisleri,
+    "taseron_hakedisleri": _taseron_hakedisleri,
+    "sozlesmeler": _sozlesmeler,
+    "taseronlar": _taseronlar,
+    "puantaj": _puantaj,
+    "gunluk_kayit": _gunluk_kayit,
+    "gun_plani": _gun_plani,
+    "makine_listesi": _makine_listesi,
+    "makine_calisma": _makine_calisma,
+    "makine_yakit": _makine_yakit,
+    "makine_kira": _makine_kira,
 }
 
 

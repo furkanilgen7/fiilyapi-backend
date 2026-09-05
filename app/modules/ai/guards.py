@@ -65,7 +65,9 @@ KIRPILDI = (
 
 #: `ToolKumesi` üyesinin **değerine** göre. (Anahtar tip değil `str`: bu modül
 #: `registry`yi import EDEMEZ — `registry` bu modülü import ediyor. Küme
-#: eşitliği bekçisi `test_ai2a_kapsam_notu.py`dedir.)
+#: eşitliği bekçisi `test_ai2a_korkuluklar.py::test_KAPSAM_NOTLARI_ToolKumesi_
+#: ile_KUME_ESITLIGINDEDIR`tir — 🔴 eskiden VAR OLMAYAN bir
+#: `test_ai2a_kapsam_notu.py`yi gösteriyordu.)
 KAPSAM_NOTLARI: dict[str, str] = {
     "proje_kapsamli": (
         "KAPSAM: Bu sonuç, erişebildiğiniz projelerle SINIRLI bir kümeden gelir. "
