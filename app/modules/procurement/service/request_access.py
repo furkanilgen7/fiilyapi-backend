@@ -24,7 +24,7 @@ from app.modules.users.models import User
 
 
 async def visible_request(
-    session: AsyncSession, actor: User, request_id: uuid.UUID
+    session: AsyncSession, actor: User, request_ref: uuid.UUID | str
 ) -> PurchaseRequest:
     """Tekil erisimin TEK kapisi — okuma da yazma da buradan gecer.
 
@@ -32,7 +32,7 @@ async def visible_request(
     kimliginkiyle BIREBIR AYNIDIR — 403 verilseydi elinde kimlik olan kullanici
     kaydin var oldugunu ogrenirdi.
     """
-    request = await repository.get_request(session, request_id)
+    request = await repository.get_request(session, request_ref)
     if request is None or request.project_id not in await _visible_project_ids(session, actor):
         raise NotFoundError(guards.REQUEST_MISSING)
     return request

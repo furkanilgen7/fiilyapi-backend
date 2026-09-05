@@ -40,6 +40,7 @@ __all__ = [
     "INCOMING_PATCH_FIELDS_LIMITED",
     "INVOICE_DUPLICATE_NO",
     "INVOICE_MISSING",
+    "INVOICE_NO_AMBIGUOUS",
     "INVOICE_PARTY_INVALID",
     "INVOICE_PROJECT_INVALID",
     "INVOICE_SITE_INVALID",
@@ -52,6 +53,17 @@ __all__ = [
 # 404 — görünmeyen fatura ile var olmayan fatura AYNI gövdeyi alır. 403
 # verilseydi elinde kimlik olan kullanıcı kaydın var olduğunu öğrenirdi.
 INVOICE_MISSING = "Fatura bulunamadı"
+
+#: URL-4 — `invoice_no` ŞİRKET GENELİ TEKİL DEĞİLDİR: `uq_invoices_no_direction`
+#: (`direction`, `invoice_no`) yalnız YÖN BAŞINA tekilliği zorlar, yani aynı
+#: numara bir GELEN ve bir GİDEN faturada aynı anda bulunabilir. Böyle bir
+#: numarayla gelen istekte SESSİZCE BİRİ SEÇİLMEZ (yönetim kararı 2026-09-05):
+#: kullanıcı hangi faturayı açtığını bilemezdi ve seçim, satır sırası gibi
+#: TANIMSIZ bir şeye bağlı olurdu.
+INVOICE_NO_AMBIGUOUS = (
+    "Bu fatura numarası hem gelen hem giden faturada kayıtlı — "
+    "faturayı listeden ya da kimliğiyle açın"
+)
 
 # 404 — gövdedeki `project_id` görünmüyor ya da hiç yok. İki durum AYNI cümleyi
 # alır; ayrı cümleler kimliğin varlığını ele verirdi.

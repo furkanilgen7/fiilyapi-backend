@@ -222,6 +222,8 @@ def test_invoice_columns_match_spec():
         "id",
         "supplier_id",
         "invoice_no",
+        # URL-4: `invoice_no`dan üretilen okunabilir URL kimliği.
+        "slug",
         "invoice_amount",
         "period_year",
         "period_month",

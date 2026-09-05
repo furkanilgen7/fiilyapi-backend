@@ -33,10 +33,17 @@ PaymentRow = tuple[SubcontractorProgressPayment, SubcontractorContract, Project]
 
 
 async def get_payment(
-    session: AsyncSession, payment_id: uuid.UUID
+    session: AsyncSession, payment_ref: uuid.UUID | str
 ) -> SubcontractorProgressPayment | None:
-    """`lines` `lazy="selectin"` olduğu için ek sorgu YOK."""
-    return await session.get(SubcontractorProgressPayment, payment_id)
+    """`lines` `lazy="selectin"` olduğu için ek sorgu YOK.
+
+    URL-4: kimlik YA DA slug (`<sözleşme-slug>-<sıra>`, GLOBAL tekil).
+    """
+    if isinstance(payment_ref, uuid.UUID):
+        return await session.get(SubcontractorProgressPayment, payment_ref)
+    return await session.scalar(
+        select(SubcontractorProgressPayment).where(SubcontractorProgressPayment.slug == payment_ref)
+    )
 
 
 async def get_payment_locked(

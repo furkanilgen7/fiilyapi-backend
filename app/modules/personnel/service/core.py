@@ -16,6 +16,7 @@ from app.core.errors import (
     NotFoundError,
     PersonnelValidationError,
 )
+from app.core.slug import allocate_slug
 from app.modules.personnel import guards, repository
 from app.modules.personnel.models import (
     Personnel,
@@ -53,8 +54,8 @@ _CARD_FIELDS: tuple[str, ...] = (
 )
 
 
-async def get_personnel(session: AsyncSession, personnel_id: uuid.UUID) -> Personnel:
-    personnel = await repository.get_personnel(session, personnel_id)
+async def get_personnel(session: AsyncSession, personnel_ref: uuid.UUID | str) -> Personnel:
+    personnel = await repository.get_personnel(session, personnel_ref)
     if personnel is None:
         raise NotFoundError(guards.PERSONNEL_MISSING)
     return personnel
@@ -122,6 +123,11 @@ async def create_personnel(session: AsyncSession, data: PersonnelCreate) -> Pers
         is_draft=data.is_draft,
         **{field: getattr(data, field) for field in _CARD_FIELDS},
     )
+    # URL-4: slug OLUŞTURULURKEN üretilir, ad değişince DEĞİŞMEZ (URL-2 kararı
+    # 4) — bu yüzden `update_personnel` slug'a DOKUNMAZ. Aynı adlı ikinci
+    # personel `-2` eki alır (`unique_slug`).
+    # 🔴 KVKK: tabana YALNIZ `full_name` girer.
+    personnel.slug = await allocate_slug(session, data.full_name, Personnel.slug)
     return await repository.add_personnel(session, personnel)
 
 

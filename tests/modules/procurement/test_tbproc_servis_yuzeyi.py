@@ -29,6 +29,18 @@ DEGILDIR, tasinmasi serbesttir. Yabanci modul yollari (`app.core.errors`,
 `app.modules.audit.messages`, ...) normallestirilmez — onlarin degismesi
 gercek bir sozlesme kaymasidir.
 
+## 🔴 URL-4 (2026-09-05) — anlik goruntude TEK satir BILEREK degistirildi
+
+`visible_request`in ucuncu parametresi `request_id: uuid.UUID`ten
+`request_ref: uuid.UUID | str`e GENISLETILDI: okuma ucu artik `request_no` ile
+de cozuluyor (URL-2 kanonunun genisletilmesi). Bu bekci degisimi DOGRU YAKALADI
+ve satir korukorune yeniden uretilmedi — elle, TEK satir olarak guncellendi.
+
+Degisim GERIYE UYUMLUDUR: tip DARALMADI, GENISLEDI; UUID geciren her mevcut
+cagiran (`visible_request_locked` dahil) aynen calisir. `visible_request_locked`
+BILEREK `uuid.UUID` KALDI — yazma yollarinin girisidir ve URL-2 karari 3 yalniz
+OKUMA uclarini anahtara acar.
+
 ## Yeniden uretim
 
     python -c "import importlib.util as u; \

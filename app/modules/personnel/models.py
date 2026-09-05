@@ -118,10 +118,24 @@ class Personnel(Base):
             name="ck_personnel_subcontractor_only_for_subcontractor_source",
         ),
         UniqueConstraint("tc_no", name="uq_personnel_tc_no"),
+        # URL-4: slug GLOBAL tekildir ve indeks KISMIDIR (`WHERE slug IS NOT NULL`)
+        # — kolon nullable oldugu icin coklu NULL serbest kalmak ZORUNDA.
+        Index(
+            "uq_personnel_slug",
+            "slug",
+            unique=True,
+            postgresql_where=text("slug IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     full_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    # URL-4: okunabilir URL kimligi (`/personel/ahmet-yilmaz`).
+    # 🔴 KVKK — KULLANICI KARARI 2026-09-05: slug'a YALNIZ `full_name` girer.
+    # `tc_no` tablonun TEK tekil anahtaridir (`uq_personnel_tc_no`) ve URL'ye
+    # ASLA konmaz; telefon/e-posta/TCKN'nin HICBIR PARCASI slug'a girmez.
+    # Ayni adli iki personel `unique_slug` ile `-2` eki alir.
+    slug: Mapped[str | None] = mapped_column(String(160), nullable=True)
     trade: Mapped[str | None] = mapped_column(String(100), nullable=True)
     source: Mapped[WorkerSource] = mapped_column(
         Enum(WorkerSource, name="worker_source"), nullable=False

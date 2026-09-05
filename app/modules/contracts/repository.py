@@ -393,9 +393,21 @@ async def employer_group_has_items(session: AsyncSession, group_id: uuid.UUID) -
 
 
 async def get_subcontractor_contract(
-    session: AsyncSession, contract_id: uuid.UUID
+    session: AsyncSession, contract_ref: uuid.UUID | str
 ) -> SubcontractorContract | None:
-    return await session.get(SubcontractorContract, contract_id)
+    """URL-4: kimlik YA DA slug ile okur. Slug GLOBAL tekildir
+    (`uq_subcontractor_contracts_slug`).
+
+    UUID yolunda `session.get` KALIR: kimlik haritasını (identity map) kullanır
+    ve aynı istekte ikinci kez okunduğunda sorgu ATMAZ. Slug yolu bu kısayolu
+    kullanamaz (anahtar PK değildir) ve `select`e düşer — davranış aynıdır,
+    yalnız bir sorgu daha koşar.
+    """
+    if isinstance(contract_ref, uuid.UUID):
+        return await session.get(SubcontractorContract, contract_ref)
+    return await session.scalar(
+        select(SubcontractorContract).where(SubcontractorContract.slug == contract_ref)
+    )
 
 
 async def get_subcontractor_contract_by_contract_no(

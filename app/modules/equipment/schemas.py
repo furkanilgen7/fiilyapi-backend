@@ -187,6 +187,9 @@ class EquipmentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    # URL-4: URL'de taşınacak okunabilir anahtar. `None` olabilir (adı
+    # slug'lanamayan kayıt) — istemci `slug ?? id` kullanır (`routes.ts`).
+    slug: str | None = None
     name: str
     category: EquipmentCategory
     brand: str | None

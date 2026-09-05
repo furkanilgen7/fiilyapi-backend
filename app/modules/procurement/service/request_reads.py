@@ -11,6 +11,7 @@ from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access import can_delete
+from app.core.slug import url_safe_key
 from app.modules.inventory.models import StockItem
 from app.modules.procurement import repository
 from app.modules.procurement.models import (
@@ -87,27 +88,34 @@ async def build_request_detail(
 
 
 def _base_fields(request: PurchaseRequest) -> dict:
+    # `slug` LISTEDE DE ZORUNLUDUR: liste ucu link uretir ve URL-2'de
+    # `SiteOptionListResponse`e slug EKLENMEDIGI icin secici slug uretememisti
+    # (`routes.ts:34-45`de kural olarak yazili). Ayni tuzak tekrarlanmaz —
+    # `_base_fields` hem listeyi hem detayi besledigi icin TEK yerde eklenir.
     return {
-        alan: getattr(request, alan)
-        for alan in (
-            "id",
-            "request_no",
-            "request_date",
-            "priority",
-            "project_id",
-            "site_id",
-            "section_id",
-            "needed_by",
-            "justification",
-            "status",
-            "quote_deadline",
-            "approved_by_user_id",
-            "approved_at",
-            "rejected_at",
-            "rejection_reason",
-            "created_by_user_id",
-            "created_at",
-        )
+        "slug": url_safe_key(request.request_no),
+        **{
+            alan: getattr(request, alan)
+            for alan in (
+                "id",
+                "request_no",
+                "request_date",
+                "priority",
+                "project_id",
+                "site_id",
+                "section_id",
+                "needed_by",
+                "justification",
+                "status",
+                "quote_deadline",
+                "approved_by_user_id",
+                "approved_at",
+                "rejected_at",
+                "rejection_reason",
+                "created_by_user_id",
+                "created_at",
+            )
+        },
     }
 
 

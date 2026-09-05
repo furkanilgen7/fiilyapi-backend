@@ -32,6 +32,7 @@ from app.core.deps import get_current_user
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
 from app.core.ratelimit import client_ip
+from app.core.slug import parse_ref
 from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
@@ -214,10 +215,17 @@ async def create_personnel_endpoint(
 
 @router.get("/personnel/{personnel_id}", response_model=PersonnelResponse, dependencies=[_VIEW])
 async def get_personnel_endpoint(
-    personnel_id: uuid.UUID,
+    personnel_id: str,
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> PersonnelResponse:
-    personnel = await service.get_personnel(session, personnel_id)
+    """URL-4 — yol parametresi UUID **ya da** ad slug'ı kabul eder.
+
+    🔴 Bu modülde PROJE KAPSAMLI bir görünürlük süzgeci YOKTUR (ölçüldü:
+    `service/core.py`de `visible_*` kapısı yok) — personel kartı şirket
+    genelinde `personnel:view` iznine bağlıdır. Slug bu yüzden var olmayan bir
+    süzgeci DELMEZ; izinsiz kullanıcı slug'la da UUID'yle de aynı 403'ü alır.
+    """
+    personnel = await service.get_personnel(session, parse_ref(personnel_id))
     return PersonnelResponse.model_validate(personnel)
 
 

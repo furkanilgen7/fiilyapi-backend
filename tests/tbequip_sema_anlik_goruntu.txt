@@ -1,6 +1,7 @@
 TABLO equipment
   equipment.id: tur=UUID() null=False pk=True varsayilan=uuid4 sunucu=None
   equipment.name: tur=String(length=200) null=False pk=False varsayilan=None sunucu=None
+  equipment.slug: tur=String(length=160) null=True pk=False varsayilan=None sunucu=None
   equipment.category: tur=Enum('crane', 'machinery', 'truck', 'concrete', 'compressor', 'hand_tool', name='equipment_category') null=False pk=False varsayilan=None sunucu=None
   equipment.brand: tur=String(length=100) null=True pk=False varsayilan=None sunucu=None
   equipment.model: tur=String(length=100) null=True pk=False varsayilan=None sunucu=None
@@ -58,6 +59,7 @@ TABLO equipment
   INDEKS ix_equipment_category ['category'] unique=False
   INDEKS ix_equipment_site_id ['site_id'] unique=False
   INDEKS ix_equipment_status ['status'] unique=False
+  INDEKS uq_equipment_slug ['slug'] unique=True
 TABLO equipment_document_types
   equipment_document_types.id: tur=UUID() null=False pk=True varsayilan=uuid4 sunucu=None
   equipment_document_types.code: tur=String(length=50) null=False pk=False varsayilan=None sunucu=None
@@ -139,6 +141,7 @@ TABLO equipment_rental_invoices
   equipment_rental_invoices.id: tur=UUID() null=False pk=True varsayilan=uuid4 sunucu=None
   equipment_rental_invoices.supplier_id: tur=UUID() null=False pk=False varsayilan=None sunucu=None
   equipment_rental_invoices.invoice_no: tur=String(length=100) null=True pk=False varsayilan=None sunucu=None
+  equipment_rental_invoices.slug: tur=String(length=160) null=True pk=False varsayilan=None sunucu=None
   equipment_rental_invoices.invoice_amount: tur=Numeric(precision=18, scale=2) null=True pk=False varsayilan=None sunucu=None
   equipment_rental_invoices.period_year: tur=Integer() null=False pk=False varsayilan=None sunucu=None
   equipment_rental_invoices.period_month: tur=Integer() null=False pk=False varsayilan=None sunucu=None
@@ -163,6 +166,7 @@ TABLO equipment_rental_invoices
   INDEKS ix_equipment_rental_invoices_site_id ['site_id'] unique=False
   INDEKS ix_equipment_rental_invoices_status ['status'] unique=False
   INDEKS ix_equipment_rental_invoices_supplier_id ['supplier_id'] unique=False
+  INDEKS uq_equipment_rental_invoices_slug ['slug'] unique=True
 TABLO equipment_work_logs
   equipment_work_logs.id: tur=UUID() null=False pk=True varsayilan=uuid4 sunucu=None
   equipment_work_logs.equipment_id: tur=UUID() null=False pk=False varsayilan=None sunucu=None
