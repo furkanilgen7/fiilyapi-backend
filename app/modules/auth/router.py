@@ -76,9 +76,19 @@ async def refresh(
     ):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Oturum süresi dolmuş")
 
+    # 🔴 REFRESH TOKEN BURADA YENILENMEZ (auth-refresh-rotasyon, kayit 25).
+    # Onceden bu satir `create_refresh_token(...)` cagirip O ANDAN itibaren 30 gunluk
+    # YENI bir refresh token basiyordu; eskisi de gecersizlesmedigi icin (rotasyon,
+    # jti, kara liste yok) oturumun MUTLAK omru her cagrida sifirlaniyordu. Sonuc:
+    # calinmis bir refresh token 30 gun degil SINIRSIZ yasiyordu — saldirgan her
+    # 29 gunde bir /auth/refresh cagirdikca saat basa donuyordu.
+    # Sunulan token'i aynen geri vererek 30 gunluk tavani GERCEKTEN tavan yapiyoruz.
+    # Gercek rotasyon (jti + reuse tespiti) migration ister, ayri dilimde yapilacak;
+    # BFF zaten donen refresh token'i saklamiyor (frontend/src/lib/auth/backend.ts:145),
+    # bu yuzden mesru kullanicinin davranisi degismez.
     return TokenPair(
         access_token=create_access_token(user.id, user.token_version),
-        refresh_token=create_refresh_token(user.id, user.token_version),
+        refresh_token=payload.refresh_token,
     )
 
 

@@ -2,10 +2,16 @@
 # build planı üretemeyen Nixpacks'in sessiz "Deploy failed" sorununu tümden ortadan kaldırır.
 FROM python:3.12-slim
 
+# `ENVIRONMENT=production` İMAJIN KENDİ BEYANIDIR ve fail-closed'dur: tek tüketicisi
+# `app/core/config.py`deki varsayılan-JWT-secret reddidir. Bu satır olmadan o kapı
+# YALNIZCA Railway panelinde elle girilmiş bir değişkene bağlı kalır; panelden silinen
+# tek satır, canlıyı herkese açık `dev-only-change-me` ile token imzalar hâle getirir.
+# Bekçisi: tests/contract/test_uretim_imaji.py
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    PYTHONPATH=/app
+    PYTHONPATH=/app \
+    ENVIRONMENT=production
 
 WORKDIR /app
 
@@ -27,4 +33,9 @@ COPY alembic ./alembic
 COPY alembic.ini ./
 
 # Railway $PORT enjekte eder. Önce şema migration'larını uygula, sonra uvicorn'u başlat.
-CMD alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+# 🔴 `ALEMBIC_ALLOW_REMOTE=1` ŞART: Railway'in veritabanı host'u localhost DEĞİLDİR ve
+# `alembic/env.py`deki fail-closed uzak-DB kapısı bayraksız migration'ı reddeder —
+# bayrak olmadan `alembic` patlar, `&&` kısa devre yapar, uvicorn HİÇ başlamaz (canlı 502).
+# Bayrak YALNIZ bu satırdadır (imaj geneli `ENV` değil): kapı, insanın elindeki kabukta
+# kapalı kalsın. Bekçisi: tests/contract/test_alembic_uzak_db_kapisi.py
+CMD ALEMBIC_ALLOW_REMOTE=1 alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}

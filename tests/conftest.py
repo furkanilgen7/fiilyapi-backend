@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.core.config import settings
 from app.core.db import Base, get_db
+from app.core.db_guard import PYTEST_IZIN_DEGISKENI, uzak_veritabani_kapisi
 from app.core.ratelimit import limiter
 from app.core.security import hash_password
 from app.main import app
@@ -95,6 +96,20 @@ def _isci_veritabani_url(temel: str, isci: str | None) -> str:
 
 
 settings.test_database_url = _isci_veritabani_url(settings.test_database_url, XDIST_ISCI)
+
+# 🔴 FAIL-CLOSED UZAK TEST DB KAPISI (altyapi-fail-closed, kayıt 0).
+# `.env`deki TEST_DATABASE_URL de UZAK Railway sunucusunu gösterir
+# (`tokaido.proxy.rlwy.net:31217/fiil_erp_test`). Aşağıdaki `_create_schema` fikstürü
+# oturum başında `Base.metadata.drop_all` koşar: DSN override'ı unutulmuş TEK bir seri
+# koşu, ÜRETİM PG instance'ındaki bir veritabanının tüm tablolarını düşürür.
+# `_isci_veritabani_adi()`nin `_gwN` çakması yalnız `DROP DATABASE`i korur, `drop_all`ı
+# DEĞİL — ve seri koşuda (xdist yok) hiç çalışmaz. Bkz. app/core/db_guard.py.
+try:
+    uzak_veritabani_kapisi(
+        settings.test_database_url, izin_degiskeni=PYTEST_IZIN_DEGISKENI, baglam="pytest"
+    )
+except RuntimeError as hata:
+    pytest.exit(str(hata), returncode=2)
 
 
 # ---------------------------------------------------------------------------

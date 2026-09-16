@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 from app.core.config import settings
 from app.core.db import Base
+from app.core.db_guard import ALEMBIC_IZIN_DEGISKENI, uzak_veritabani_kapisi
 
 # TUM modullerin `models` modulu BURADA import edilir (TB1). Import bir YAN ETKI
 # icindir: model modulu yuklenmeden tablolari `Base.metadata`ya kaydolmaz ve
@@ -52,6 +53,14 @@ from app.modules.users import models as users_models  # noqa: F401
 # access to the values within the .ini file in use.
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)
+
+# 🔴 FAIL-CLOSED UZAK DB KAPISI. `alembic.ini:89 sqlalchemy.url` BOŞtur; alembic'in TEK
+# URL kaynağı `.env`dir ve oradaki `DATABASE_URL` UZAK Railway CANLI veritabanını
+# gösterir. Override'sız koşulan `upgrade`/`downgrade`/`stamp` doğrudan canlıya vurur
+# (P7'de oldu: canlı damgalandı, konteyner açılamadı). Bkz. app/core/db_guard.py.
+uzak_veritabani_kapisi(
+    settings.database_url, izin_degiskeni=ALEMBIC_IZIN_DEGISKENI, baglam="alembic"
+)
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.

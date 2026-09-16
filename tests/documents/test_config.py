@@ -7,6 +7,15 @@ varsayılanlarıdır.
 
 from app.core.config import Settings
 
+# 🔴 `environment="development"` AÇIKÇA verilir (altyapi-fail-closed, kayıt 4).
+# `Settings.environment` varsayılanı artık FAIL-CLOSED (`production`); `_env_file=None`
+# ile `.env`den yalıtılmış ve `JWT_SECRET` de verilmemiş bir Settings artık kasıtlı
+# olarak `ValueError` atar. Bu dosyanın iddiaları BELGE SINIRLARI hakkındadır, güvenlik
+# duruşu hakkında değil — o yüzden duruş burada açıkça beyan edilir.
+# (Beyan edilmeseydi kapı YEREL kırmızı, CI'da YEŞİL olurdu: CI `JWT_SECRET`i ortam
+#  değişkeni olarak verir, yerelde ise o değer yalnız `.env` içindedir.)
+DEV = {"environment": "development"}
+
 BEKLENEN_UZANTILAR = {
     "pdf",
     "doc",
@@ -25,17 +34,17 @@ BEKLENEN_UZANTILAR = {
 
 def test_belge_boyut_tavani_50_mb() -> None:
     """Mockup kanıtı: E12'de 48 MB'lık bir ZIP var — tavan onun üstünde olmalı."""
-    ayarlar = Settings(_env_file=None)
+    ayarlar = Settings(_env_file=None, **DEV)
     assert ayarlar.document_max_bytes == 50 * 1024 * 1024
     assert ayarlar.document_max_bytes > 48 * 1024 * 1024
 
 
 def test_beyaz_liste_zip_ve_heic_dahil_genis() -> None:
-    ayarlar = Settings(_env_file=None)
+    ayarlar = Settings(_env_file=None, **DEV)
     assert ayarlar.allowed_document_extension_set == BEKLENEN_UZANTILAR
 
 
 def test_beyaz_liste_nokta_ve_buyuk_harf_toleransli() -> None:
     """Env'i `.PDF, .Zip` diye yazmak listeyi sessizce boşaltmamalı."""
-    ayarlar = Settings(_env_file=None, allowed_document_extensions=".PDF, .Zip ,HEIC")
+    ayarlar = Settings(_env_file=None, allowed_document_extensions=".PDF, .Zip ,HEIC", **DEV)
     assert ayarlar.allowed_document_extension_set == {"pdf", "zip", "heic"}
