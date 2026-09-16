@@ -21,6 +21,7 @@ from decimal import Decimal
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.invoicing.models import InvoiceDirection, InvoiceDocumentType, InvoiceStatus
@@ -28,7 +29,8 @@ from app.modules.subcontractor_progress_payments.models import (
     SubcontractorPaymentStatus,
     SubcontractorProgressPayment,
 )
-from app.modules.treasury.models import FinancialInstrumentStatus, PaymentMethodKind
+from app.modules.treasury.models import FinancialInstrumentStatus, Payment, PaymentMethodKind
+from app.modules.treasury.payments_service import PAYMENT_SOURCE_PAID
 from app.modules.treasury.realized import (
     BINDING_INVOICE_INVALID,
     PAYMENT_NOT_REALIZED,
@@ -822,3 +824,68 @@ def test_G8_yon_tablosu_IKI_kaynak_kolonunu_da_KAPSAR() -> None:
     # Iki aile TERS yonlerdedir; esitlenirse biri sessizce yanlis olurdu.
     assert SOURCE_DIRECTION["progress_payment_id"] is InvoiceDirection.outgoing
     assert SOURCE_DIRECTION["subcontractor_progress_payment_id"] is InvoiceDirection.incoming
+
+
+# --------------------------------------------------------------------------- #
+# 🔴 ODM-HAK — ödenmiş hakedişin ALTINDAKİ para ÇEKİLEMEZ (taşeron ikizi)
+# --------------------------------------------------------------------------- #
+
+
+async def test_ODENMIS_hakedisin_ODEMESI_SILINEMEZ(
+    client: AsyncClient,
+    seeded_db: AsyncSession,
+    admin_headers: dict[str, str],
+    admin_kullanicisi: User,
+    taseron_sozlesmesi,
+    hakedis_fabrikasi,
+) -> None:
+    """🔴 Kapı İLERİ yöndedir ama SIZDIRIYORDU: `DELETE /payments/{id}` damganın
+    dayandığı parayı geri çekiyor, hakediş ise `paid` KALIYORDU (terminal, geri
+    dönüşü yok ve `paid` hakediş silinemez).
+
+    İkiz ZORUNLUDUR: kapı tek ailede kapatılsaydı `_TRANSITION_SHAPE`i paylaşan
+    iki makine aynı damga için FARKLI davranırdı ve fark hiçbir yerde görünmezdi.
+    """
+    contract, _, _ = taseron_sozlesmesi
+    hakedis = await _onayli_hakedis(seeded_db, hakedis_fabrikasi, contract, admin_kullanicisi)
+    fatura = await fatura_kes(seeded_db, hakedis.id, taseron=True)
+    odeme = await odeme_yaz(seeded_db, fatura, taseron=True, tutar=fatura.total)
+
+    gecis = await client.post(f"{_UC}/{hakedis.id}/mark-paid", headers=admin_headers)
+    assert gecis.status_code == 200, gecis.text
+
+    silme = await client.delete(f"/payments/{odeme.id}", headers=admin_headers)
+
+    assert silme.status_code == 409, silme.text
+    assert silme.json()["detail"] == PAYMENT_SOURCE_PAID
+    kalan = await seeded_db.execute(
+        select(func.count()).select_from(Payment).where(Payment.id == odeme.id)
+    )
+    assert kalan.scalar_one() == 1
+    await seeded_db.refresh(hakedis)
+    assert hakedis.status is SubcontractorPaymentStatus.paid
+
+
+async def test_POZITIF_KONTROL_ODENMEMIS_hakedisin_odemesi_SILINEBILIR(
+    client: AsyncClient,
+    seeded_db: AsyncSession,
+    admin_headers: dict[str, str],
+    admin_kullanicisi: User,
+    taseron_sozlesmesi,
+    hakedis_fabrikasi,
+) -> None:
+    """🔴 İddianın ikinci yarısı: AYNI kurulum, TEK fark `mark-paid`in
+    koşmamış olması. Kapı "hakedişe bağlı hiçbir ödeme silinmez" hâline
+    gelseydi yanlış girilmiş tahsilat da düzeltilemezdi."""
+    contract, _, _ = taseron_sozlesmesi
+    hakedis = await _onayli_hakedis(seeded_db, hakedis_fabrikasi, contract, admin_kullanicisi)
+    fatura = await fatura_kes(seeded_db, hakedis.id, taseron=True)
+    odeme = await odeme_yaz(seeded_db, fatura, taseron=True, tutar=fatura.total)
+
+    silme = await client.delete(f"/payments/{odeme.id}", headers=admin_headers)
+
+    assert silme.status_code == 204, silme.text
+    kalan = await seeded_db.execute(
+        select(func.count()).select_from(Payment).where(Payment.id == odeme.id)
+    )
+    assert kalan.scalar_one() == 0

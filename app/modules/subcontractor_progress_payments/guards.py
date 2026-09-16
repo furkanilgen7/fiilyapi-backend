@@ -41,6 +41,7 @@ __all__ = [
     "REJECTION_REASON_REQUIRED",
     "SECTION_MISMATCH",
     "quantity_exceeds_quota",
+    "source_quantity_exceeds_quota",
     "validate_reject",
     "validate_submit",
 ]
@@ -84,6 +85,26 @@ def quantity_exceeds_quota(code: str, remaining: Decimal, unit: str) -> str:
     kalan = max(remaining, Decimal("0"))
     return (
         f"Kümülatif hakediş miktarı sözleşme miktarını aşamaz: {code} · kalan {kalan:,.3f} {unit}"
+    )
+
+
+def source_quantity_exceeds_quota(code: str, remaining: Decimal, unit: str) -> str:
+    """422 — ÇİFT SAYIM tavanı (TH-PRJGENEL): tavan taşeron sözleşmesinin kalem
+    miktarı DEĞİL, kalemin bağlı olduğu **işveren kaleminin** miktarıdır.
+
+    Aynı işveren kalemine iki taşeron sözleşmesi köprü kurabildiği için
+    (`subcontractor_contract_items`te UNIQUE yalnız `(contract_id, code)`),
+    sözleşme başına kota ikisini birbirinden habersiz sayar ve aynı imalat iki
+    kez ödenebilirdi. Bu tavan kaynak kalemin TOPLAMINA karşıdır: bölünmüş iş
+    (10 + 6) geçer, çift sayım (16 + 12) geçmez.
+
+    🔴 Metin KARŞI SÖZLEŞMEYİ ADLANDIRMAZ — yalnız KALAN sayıyı taşır; aksi
+    hâlde kapsam dışı bir sözleşmenin varlığı hata mesajından sızardı.
+    """
+    kalan = max(remaining, Decimal("0"))
+    return (
+        "Bu kalemin bağlı olduğu işveren kalemi için yapılan toplam hakediş "
+        f"işveren sözleşmesindeki miktarı aşamaz: {code} · kalan {kalan:,.3f} {unit}"
     )
 
 

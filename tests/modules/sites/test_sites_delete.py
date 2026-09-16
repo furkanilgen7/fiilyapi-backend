@@ -16,6 +16,7 @@ engelleme testlerinin hepsi oncesi/sonrasi esitligini dogrular.
 """
 
 import uuid
+from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import func, select
@@ -23,14 +24,30 @@ from sqlalchemy import func, select
 from app.core.access import AccessLevel
 from app.modules.audit.models import AuditAction, AuditLog
 from app.modules.boq.models import BoqGroup, BoqItem
+from app.modules.documents.models.core import Document, DocumentFolder
+from app.modules.personnel.models import Personnel
 from app.modules.roles.models import Module, Role, RolePermission
+from app.modules.site_diary.models import SiteDiaryEntry, WorkerSource
+from app.modules.site_planning.models import (
+    PlanGoalStatus,
+    PlanResourceKind,
+    SitePlanGoal,
+    SitePlanRow,
+    SitePlanSprint,
+)
 from app.modules.sites.models import Section, Site
+from app.modules.timesheet.models import TimesheetEntry
 from app.modules.units.models import Block, Unit, UnitKind
 
 # Spec §7.2 — silme korkuluklarinin Turkce metinleri (testte BIREBIR beklenir).
 SECTION_BLOCKER = "Bu şantiyede bölüm var, önce bölümleri silin"
 BOQ_BLOCKER = "Bu şantiyede iş kalemi var, önce iş kalemlerini silin"
 BLOCK_BLOCKER = "Bu şantiyede blok var, önce blokları silin"
+# 59/60 — CASCADE'li ama KORKULUKSUZ yedi FK icin eklenen dort yeni metin.
+TIMESHEET_BLOCKER = "Bu şantiyede puantaj kaydı var, önce puantaj kayıtlarını silin"
+DIARY_BLOCKER = "Bu şantiyede şantiye günlüğü var, önce günlükleri silin"
+DOCUMENT_BLOCKER = "Bu şantiyede belge arşivi kaydı var, önce belge ve klasörleri silin"
+PLAN_BLOCKER = "Bu şantiyede plan ızgarası var, önce planı temizleyin"
 SITE_MISSING = "Şantiye bulunamadı"
 SECTION_MISSING = "Bölüm bulunamadı"
 
@@ -107,9 +124,15 @@ async def _unit(session, project, block, unit_no: str = "1") -> Unit:
 async def _counts(session, site_id: uuid.UUID) -> dict[str, int]:
     """CASCADE'in tetiklenmedigini kanitlayan olcum (§0.1).
 
-    Dort bagli tablonun da SANTIYE KAPSAMINDA sayimi + santiyenin kendisi.
-    `units` ayrica sayilir: `units.block_id` RESTRICT oldugu icin blok
-    cascade'i patlar, ama bu KAZA sonucu bir korumadir — olculmeden guvenilmez.
+    `sites.id`'ye CASCADE ile bagli TUM tablolarin SANTIYE KAPSAMINDA sayimi +
+    santiyenin kendisi. `units` ayrica sayilir: `units.block_id` RESTRICT oldugu
+    icin blok cascade'i patlar, ama bu KAZA sonucu bir korumadir — olculmeden
+    guvenilmez.
+
+    🔴 59/60 dersi: bu yardimci UZUN SURE yalniz sections/boq/blocks/units
+    sayiyordu ve tam da bu yuzden puantaj/gunluk/belge/plan bacaginda YAPISAL
+    OLARAK KORDU — o tablolar sayilmadigi icin "cascade tetiklenmedi" iddiasi o
+    bacaklarda hicbir sey bekciliyemiyordu.
     """
 
     async def _count(model, column, value) -> int:
@@ -130,7 +153,107 @@ async def _counts(session, site_id: uuid.UUID) -> dict[str, int]:
         "boq_items": await _count(BoqItem, BoqItem.site_id, site_id),
         "blocks": await _count(Block, Block.site_id, site_id),
         "units": unit_count,
+        "timesheet_entries": await _count(TimesheetEntry, TimesheetEntry.site_id, site_id),
+        "diary_entries": await _count(SiteDiaryEntry, SiteDiaryEntry.site_id, site_id),
+        "plan_rows": await _count(SitePlanRow, SitePlanRow.site_id, site_id),
+        "plan_goals": await _count(SitePlanGoal, SitePlanGoal.site_id, site_id),
+        "plan_sprints": await _count(SitePlanSprint, SitePlanSprint.site_id, site_id),
+        "documents": await _count(Document, Document.site_id, site_id),
+        "document_folders": await _count(DocumentFolder, DocumentFolder.site_id, site_id),
     }
+
+
+# --- 59/60 fabrikalari: BOLUMSUZ santiyeye bagli CASCADE satirlari ---
+#
+# Hepsi `section_id` VERMEDEN yazilir (NULLABLE, SET NULL): kaydin tam da
+# iddiasi "bolumu olmayan santiye ilk korkuluga takilmaz" oldugu icin bu
+# satirlarin bolumsuz kurulabilmesi testin ON KOSULUDUR.
+
+
+async def _personnel(session, full_name: str = "Ahmet Yılmaz") -> Personnel:
+    personnel = Personnel(full_name=full_name, source=WorkerSource.company)
+    session.add(personnel)
+    await session.flush()
+    return personnel
+
+
+async def _timesheet(session, project, site, personnel, user) -> TimesheetEntry:
+    entry = TimesheetEntry(
+        personnel_id=personnel.id,
+        site_id=site.id,
+        project_id=project.id,
+        work_date=date(2026, 3, 2),
+        hours=Decimal("8.0"),
+        created_by=user.id,
+    )
+    session.add(entry)
+    await session.flush()
+    return entry
+
+
+async def _diary(session, project, site, user) -> SiteDiaryEntry:
+    entry = SiteDiaryEntry(
+        site_id=site.id,
+        project_id=project.id,
+        entry_date=date(2026, 3, 2),
+        created_by=user.id,
+    )
+    session.add(entry)
+    await session.flush()
+    return entry
+
+
+async def _document(session, project, site) -> Document:
+    document = Document(
+        project_id=project.id,
+        site_id=site.id,
+        filename="isg-tutanak.pdf",
+        mime_type="application/pdf",
+        size_bytes=1024,
+    )
+    session.add(document)
+    await session.flush()
+    return document
+
+
+async def _folder(session, project, site, name: str = "İSG") -> DocumentFolder:
+    folder = DocumentFolder(project_id=project.id, site_id=site.id, name=name)
+    session.add(folder)
+    await session.flush()
+    return folder
+
+
+async def _plan_row(session, project, site) -> SitePlanRow:
+    """EKIPMAN satiri: `section_id` bu turde ZATEN NULL'dur (models.py:120-125)."""
+    row = SitePlanRow(
+        site_id=site.id,
+        project_id=project.id,
+        kind=PlanResourceKind.equipment,
+        label="Tower Crane",
+    )
+    session.add(row)
+    await session.flush()
+    return row
+
+
+async def _plan_goal(session, project, site) -> SitePlanGoal:
+    goal = SitePlanGoal(
+        site_id=site.id,
+        project_id=project.id,
+        week_start=date(2026, 3, 2),
+        title="Temel betonu",
+        status=PlanGoalStatus.in_progress,
+    )
+    session.add(goal)
+    await session.flush()
+    return goal
+
+
+async def _plan_sprint(session, site) -> SitePlanSprint:
+    sprint = SitePlanSprint(site_id=site.id, name="Mart Sprinti")
+    session.add(sprint)
+    await session.flush()
+    return sprint
 
 
 # --- S1: bos santiye silinir ---
@@ -606,3 +729,213 @@ async def test_delete_section_leaves_sibling_boq_and_blocks_intact(
     assert after["boq_groups"] == before["boq_groups"] == 1
     assert after["boq_items"] == before["boq_items"] == 1
     assert after["blocks"] == before["blocks"] == 1
+
+
+# --- 59/60: CASCADE'li ama KORKULUKSUZ yedi FK ---
+#
+# HEPSI BOLUMSUZ SANTIYEDE kosar. Kaydin cekirdegi budur: `site_has_sections`
+# bu satirlari YAPISAL OLARAK kapsamaz (`section_id` hepsinde NULLABLE), yani
+# bolumu/pozu/blogu olmayan ama puantajli/gunluklu/belgeli/planli bir santiye
+# bes korkulugun besini de gecer ve tek istekte 204 alir.
+
+
+async def test_delete_site_with_timesheet_returns_409(
+    client, db_session, user_factory, project_factory
+):
+    """Puantaj BORDRONUN GIRDISIDIR: sessizce gitmesi kanit tabanini yok eder."""
+    project = await project_factory("G-1")
+    site = await _site(db_session, project)
+    owner = await user_factory(email="pt-owner@t.co", password="parola1234", role_key="patron")
+    personnel = await _personnel(db_session)
+    await _timesheet(db_session, project, site, personnel, owner)
+    token = await _login(client, user_factory)
+    before = await _counts(db_session, site.id)
+
+    resp = await client.delete(f"/sites/{site.id}", headers=_auth(token))
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == TIMESHEET_BLOCKER
+    assert await _counts(db_session, site.id) == before
+    assert before["sections"] == 0
+    assert before["timesheet_entries"] == 1
+
+
+async def test_delete_site_with_diary_returns_409(
+    client, db_session, user_factory, project_factory
+):
+    """Gunlukte ISG/kaza notu vardir; CASCADE onu da goturur."""
+    project = await project_factory("G-2")
+    site = await _site(db_session, project)
+    owner = await user_factory(email="sd-owner@t.co", password="parola1234", role_key="patron")
+    await _diary(db_session, project, site, owner)
+    token = await _login(client, user_factory)
+    before = await _counts(db_session, site.id)
+
+    resp = await client.delete(f"/sites/{site.id}", headers=_auth(token))
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == DIARY_BLOCKER
+    assert await _counts(db_session, site.id) == before
+    assert before["sections"] == 0
+    assert before["diary_entries"] == 1
+
+
+async def test_delete_site_with_documents_returns_409(
+    client, db_session, user_factory, project_factory
+):
+    """`documents` gidince `document_blobs.document_id` CASCADE'i BAYTLARI da siler."""
+    project = await project_factory("G-3")
+    site = await _site(db_session, project)
+    await _document(db_session, project, site)
+    token = await _login(client, user_factory)
+    before = await _counts(db_session, site.id)
+
+    resp = await client.delete(f"/sites/{site.id}", headers=_auth(token))
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == DOCUMENT_BLOCKER
+    assert await _counts(db_session, site.id) == before
+    assert before["sections"] == 0
+    assert before["documents"] == 1
+
+
+async def test_delete_site_with_empty_document_folder_returns_409(
+    client, db_session, user_factory, project_factory
+):
+    """Belgesiz KLASOR de tek basina engeldir (`site_has_boq`nun grup dali dersi)."""
+    project = await project_factory("G-4")
+    site = await _site(db_session, project)
+    await _folder(db_session, project, site)
+    token = await _login(client, user_factory)
+    before = await _counts(db_session, site.id)
+
+    resp = await client.delete(f"/sites/{site.id}", headers=_auth(token))
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == DOCUMENT_BLOCKER
+    assert await _counts(db_session, site.id) == before
+    assert before["documents"] == 0
+    assert before["document_folders"] == 1
+
+
+async def test_delete_site_with_plan_rows_returns_409(
+    client, db_session, user_factory, project_factory
+):
+    """Ekipman satirinin `section_id`si ZATEN NULL — bolum korkulugu kapsamaz."""
+    project = await project_factory("G-5")
+    site = await _site(db_session, project)
+    await _plan_row(db_session, project, site)
+    token = await _login(client, user_factory)
+    before = await _counts(db_session, site.id)
+
+    resp = await client.delete(f"/sites/{site.id}", headers=_auth(token))
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == PLAN_BLOCKER
+    assert await _counts(db_session, site.id) == before
+    assert before["sections"] == 0
+    assert before["plan_rows"] == 1
+
+
+async def test_delete_site_with_plan_goal_only_returns_409(
+    client, db_session, user_factory, project_factory
+):
+    """Izgarasi bos ama HEDEFI olan santiye de engellenir (uc tablo `or_`lanir)."""
+    project = await project_factory("G-6")
+    site = await _site(db_session, project)
+    await _plan_goal(db_session, project, site)
+    token = await _login(client, user_factory)
+    before = await _counts(db_session, site.id)
+
+    resp = await client.delete(f"/sites/{site.id}", headers=_auth(token))
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == PLAN_BLOCKER
+    assert await _counts(db_session, site.id) == before
+    assert before["plan_rows"] == 0
+    assert before["plan_goals"] == 1
+
+
+async def test_delete_site_with_plan_sprint_only_returns_409(
+    client, db_session, user_factory, project_factory
+):
+    """Yalniz SPRINT'i olan santiye de engellenir."""
+    project = await project_factory("G-7")
+    site = await _site(db_session, project)
+    await _plan_sprint(db_session, site)
+    token = await _login(client, user_factory)
+    before = await _counts(db_session, site.id)
+
+    resp = await client.delete(f"/sites/{site.id}", headers=_auth(token))
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == PLAN_BLOCKER
+    assert await _counts(db_session, site.id) == before
+    assert before["plan_sprints"] == 1
+
+
+async def test_new_blockers_run_after_the_existing_five(
+    client, db_session, user_factory, project_factory
+):
+    """SIRA KILIDI: bolum + puantaj birlikteyken MESAJ HALA bolum mesajidir.
+
+    Yeni dort korkuluk zincirin SONUNA eklendi; basina eklenseydi bugun bolum
+    mesaji goren kullanici yarin puantaj mesaji gorurdu (sessiz UX kirilmasi).
+    """
+    project = await project_factory("G-8")
+    site = await _site(db_session, project)
+    await _section(db_session, site)
+    owner = await user_factory(email="sira-owner@t.co", password="parola1234", role_key="patron")
+    personnel = await _personnel(db_session, "Mehmet Demir")
+    await _timesheet(db_session, project, site, personnel, owner)
+    token = await _login(client, user_factory)
+
+    resp = await client.delete(f"/sites/{site.id}", headers=_auth(token))
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == SECTION_BLOCKER
+
+
+async def test_delete_after_removing_plan_rows_returns_204(
+    client, db_session, user_factory, project_factory
+):
+    """Yeni korkuluk KALICI KILIT uretmiyor (S9 deseninin plan varyanti)."""
+    project = await project_factory("G-9")
+    site = await _site(db_session, project)
+    row = await _plan_row(db_session, project, site)
+    token = await _login(client, user_factory)
+
+    blocked = await client.delete(f"/sites/{site.id}", headers=_auth(token))
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"] == PLAN_BLOCKER
+
+    await db_session.delete(row)
+    await db_session.flush()
+
+    resp = await client.delete(f"/sites/{site.id}", headers=_auth(token))
+
+    assert resp.status_code == 204, resp.text
+    assert (await _counts(db_session, site.id))["sites"] == 0
+
+
+async def test_delete_site_with_closed_sprint_returns_204(
+    client, db_session, user_factory, project_factory
+):
+    """🔴 KILITLENME BEKCISI: KAPALI sprint santiyeyi silinemez YAPMAMALI.
+
+    Olcum (`site_planning/write.py:274-304`): `save_sprint` sprint satirini ASLA
+    SILMEZ, yalniz `is_active`i false'a ceker; sprint silen baska bir uc yoktur.
+    Korkuluk `is_active` suzgeci olmadan yazilsaydi, seridine bir kez ad yazip
+    sonra bosaltan santiye BIR DAHA silinemezdi — ustelik hata metni UI'da
+    GORUNMEYEN bir satiri isaret ederdi.
+    """
+    project = await project_factory("G-10")
+    site = await _site(db_session, project)
+    sprint = await _plan_sprint(db_session, site)
+    sprint.is_active = False
+    await db_session.flush()
+    token = await _login(client, user_factory)
+
+    resp = await client.delete(f"/sites/{site.id}", headers=_auth(token))
+
+    assert resp.status_code == 204, resp.text

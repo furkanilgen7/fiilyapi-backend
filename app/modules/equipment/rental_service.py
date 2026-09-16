@@ -254,8 +254,18 @@ async def _build_lines(session: AsyncSession, actor: User, invoice: EquipmentRen
     Dayanağı kalmayan satır SİLİNİR: kaydı geri alınmış bir makine faturada
     kalsaydı, ödenecek toplam artık var olmayan bir saatten beslenirdi.
 
-    Kapsam süzgeci (K9/MK-1 K20) burada da koşar: kullanıcının göremediği bir
-    projenin saatleri görünür bir faturaya SIZAMAZ.
+    Kapsam süzgeci (K9/MK-1 K20) HEDEFLERİ kurarken koşar: kullanıcının
+    göremediği bir projenin saatleri görünür bir faturaya SIZAMAZ.
+
+    🔴 Ama kapsam bir OKUMA süzgecidir, SİLME yetkisi DEĞİLDİR. Satır kümesi
+    `invoice_id`ye göre KAPSAMSIZ kilitlenir ve detay ucu da satırları kapsamsız
+    basar — yani dar kapsamlı kullanıcı o satırları zaten GÖRÜR. Silme dalı
+    kapsamla daraltılmasaydı, geniş kapsamlı birinin kurduğu "Tüm Projeler"
+    faturasını dar kapsamlı biri tazelediğinde görmediği projelerin satırları ve
+    onlara girilmiş `invoiced_hours`/`rate_amount` emeği SESSİZCE silinir,
+    ödenecek toplam düşerdi. Bu yüzden kapsam DIŞI artık satıra DOKUNULMAZ:
+    onu geniş kapsamlı bir `reload` temizler. Sessiz veri kaybı ile gecikmiş
+    temizlik arasında doğru seçim gecikmiş temizliktir.
     """
     project_ids = await service._visible_project_ids(session, actor)
     ilk, son = service.month_bounds(invoice.period_year, invoice.period_month)
@@ -310,8 +320,15 @@ async def _build_lines(session: AsyncSession, actor: User, invoice: EquipmentRen
         # alınır, fatura yeniden ekipman kartına bağlanırdı.
         if satir.capacity_hours is None:
             satir.capacity_hours = kapasite
-    for artik in mevcut.values():
-        await session.delete(artik)
+    if mevcut:
+        gorunen_santiyeler = await rental_repository.visible_site_ids(session, project_ids)
+        for artik in mevcut.values():
+            # 🔴 Kapsam DIŞI satır SİLİNMEZ (docstring). Şantiyesiz satır
+            # ("Atanmamış") kapsam süzgecine TABİ DEĞİLDİR — `scope()`un depo
+            # dalının birebir kardeşi.
+            if artik.site_id is not None and artik.site_id not in gorunen_santiyeler:
+                continue
+            await session.delete(artik)
     await session.flush()
 
 

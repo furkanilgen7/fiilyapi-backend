@@ -744,3 +744,111 @@ async def test_sort_order_istekten_alinabilir(
     # `lines` ilişkisi `sort_order` ile sıralanır — gönderilen sıra otoritedir.
     assert [s["sort_order"] for s in govde["lines"]] == [2, 5]
     assert govde["lines"][0]["contract_item_id"] == str(kalem2.id)
+
+
+# --- ÇİFT SAYIM: kaynak (işveren) kalem tavanı, SÖZLEŞMELER ARASI ---
+
+
+async def test_ayni_kaynak_kalemi_paylasan_iki_sozlesme_TOPLAM_tavani_asamaz(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    taseron_sozlesmesi,
+    hakedis_fabrikasi,
+    admin_kullanicisi,
+    ikiz_sozlesme_fabrikasi,
+    seeded_db: AsyncSession,
+) -> None:
+    """🔴 ÇİFT SAYIM: aynı imalat iki sözleşme üzerinden iki kez ödenemez.
+
+    İşveren kalemi 200 birimdir. Birinci sözleşmede 150 birim ONAYLANMIŞTIR.
+    İkinci sözleşme KENDİ kalem miktarı (200) içinde kaldığı için bugünkü tek
+    tavan 60 birime izin verir — oysa kaynak kalemde yalnız 50 birim kalmıştır.
+    Toplam 210 > 200: 422 beklenir.
+    """
+    contract, _, _ = taseron_sozlesmesi
+    kalem = _kalemler(contract)[0]
+    await _tamamlanmis_hakedis(
+        seeded_db,
+        hakedis_fabrikasi,
+        contract,
+        admin_kullanicisi,
+        sequence_no=1,
+        status=SubcontractorPaymentStatus.approved,
+        satirlar=[(kalem, Decimal("150"))],
+    )
+    ikiz = await ikiz_sozlesme_fabrikasi(contract, kalem.source_contract_item_id)
+    ikiz_kalem = _kalemler(ikiz)[0]
+    hakedis = await _olustur(client, admin_headers, ikiz.id)
+
+    yanit = await _kaydet(
+        client,
+        admin_headers,
+        hakedis["id"],
+        [{"contract_item_id": str(ikiz_kalem.id), "quantity": "60"}],
+    )
+    assert yanit.status_code == 422, yanit.text
+    detay = yanit.json()["detail"]
+    assert ikiz_kalem.code in detay, "aşılan kalem mesajda olmalı"
+    assert "50" in detay, "kaynak kalemde kalan miktar mesajda olmalı"
+    assert contract.contract_no not in detay, "karşı sözleşmenin kimliği sızmamalı"
+
+
+async def test_kaynak_kalem_tavani_mesru_bolunmus_isi_ENGELLEMEZ(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    taseron_sozlesmesi,
+    hakedis_fabrikasi,
+    admin_kullanicisi,
+    ikiz_sozlesme_fabrikasi,
+    seeded_db: AsyncSession,
+) -> None:
+    """Aynı kalemi iki taşerona paylaştırmak MEŞRUDUR: 150 + 50 = 200 GEÇER.
+
+    Tavan sözleşme başına değil kaynak kalemin TOPLAM miktarına karşıdır;
+    aksi hâlde bölünmüş iş yanlışlıkla engellenirdi.
+    """
+    contract, _, _ = taseron_sozlesmesi
+    kalem = _kalemler(contract)[0]
+    await _tamamlanmis_hakedis(
+        seeded_db,
+        hakedis_fabrikasi,
+        contract,
+        admin_kullanicisi,
+        sequence_no=1,
+        status=SubcontractorPaymentStatus.approved,
+        satirlar=[(kalem, Decimal("150"))],
+    )
+    ikiz = await ikiz_sozlesme_fabrikasi(contract, kalem.source_contract_item_id)
+    ikiz_kalem = _kalemler(ikiz)[0]
+    hakedis = await _olustur(client, admin_headers, ikiz.id)
+
+    yanit = await _kaydet(
+        client,
+        admin_headers,
+        hakedis["id"],
+        [{"contract_item_id": str(ikiz_kalem.id), "quantity": "50"}],
+    )
+    assert yanit.status_code == 200, yanit.text
+
+
+async def test_kaynaksiz_kalem_tavandan_MUAFTIR(
+    client: AsyncClient,
+    admin_headers: dict[str, str],
+    taseron_sozlesmesi,
+    seeded_db: AsyncSession,
+) -> None:
+    """`source_contract_item_id IS NULL` (bağı kopmuş ya da hiç bağlanmamış kalem)
+    kaynak tavanı TAŞIMAZ — yoksa bağı kopan kalem sessizce kilitlenirdi."""
+    contract, _, _ = taseron_sozlesmesi
+    kalem = _kalemler(contract)[0]
+    kalem.source_contract_item_id = None
+    await seeded_db.flush()
+    hakedis = await _olustur(client, admin_headers, contract.id)
+
+    yanit = await _kaydet(
+        client,
+        admin_headers,
+        hakedis["id"],
+        [{"contract_item_id": str(kalem.id), "quantity": "200"}],
+    )
+    assert yanit.status_code == 200, yanit.text

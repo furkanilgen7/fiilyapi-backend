@@ -119,9 +119,15 @@ async def _revalidate_quota(
 
     Kural `lines.check_quota` ile TEK kopyadır, toplama `lines.
     completed_quantities_for` ile TEK kopyadır — ikinci bir doğruluk tanımı
-    açılmaz. Bağı kopmuş satır (`contract_item_id IS NULL`) atlanır: kalemi
-    silinmiş satırın kotası da yoktur, onayı engellemek evrağı kilitlerdi
-    (kümülatiften de düşer — `completed_quantities` ile aynı ONAYLI SAPMA).
+    açılmaz. 🔴 İKİNCİ tavan (ÇİFT SAYIM / TH-PRJGENEL) burada da koşar
+    (`lines.check_source_quota`): aynı işveren kalemine bağlı BAŞKA bir taşeron
+    sözleşmesi araya girip onaylanmışsa, yazma anında sığan evrak onay anında
+    AŞAR — yalnız yazma yolunda sınansaydı iki taslak önce yazılıp sonra ikisi
+    de onaylanarak tavan aşılabilirdi.
+
+    Bağı kopmuş satır (`contract_item_id IS NULL`) atlanır: kalemi silinmiş
+    satırın kotası da yoktur, onayı engellemek evrağı kilitlerdi (kümülatiften
+    de düşer — `completed_quantities` ile aynı ONAYLI SAPMA).
     """
     item_ids = [line.contract_item_id for line in payment.lines if line.contract_item_id]
     if not item_ids:
@@ -130,11 +136,21 @@ async def _revalidate_quota(
         session, contract.id, exclude_payment_id=payment.id
     )
     items = await repository.get_contract_items_by_ids(session, item_ids)
+    source_quotas = await lines.source_quotas_for(
+        session, list(items.values()), exclude_payment_id=payment.id
+    )
+    # Bu evrağın KENDİ satırlarının kaynak tüketimi — evrak kümülatif kümeye
+    # BİRLİKTE girer, satırları tek tek sınamak gövdeyi çift saydırırdı.
+    used_by_source: dict[uuid.UUID, Decimal] = {}
     for line in payment.lines:
         item = items.get(line.contract_item_id) if line.contract_item_id else None
         if item is None:
             continue
         lines.check_quota(item, completed.get(item.id, _ZERO), line.quantity)
+        source_id = item.source_contract_item_id
+        lines.check_source_quota(item, source_quotas, used_by_source, line.quantity)
+        if source_id is not None:
+            used_by_source[source_id] = used_by_source.get(source_id, _ZERO) + line.quantity
 
 
 async def _fisle(

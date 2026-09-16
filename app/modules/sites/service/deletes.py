@@ -19,17 +19,30 @@ from app.modules.users.models import User
 async def delete_site(session: AsyncSession, actor: User, site_id: uuid.UUID) -> str:
     """Spec §7.1. **CASCADE'i ENGELLEMEK bu fonksiyonun TEK isidir.**
 
-    `sites.id`'yi hedefleyen DORT FK'nin da `ON DELETE CASCADE` oldugu koddan
-    dogrulandi (`sections`, `boq_groups`, `boq_items`, `blocks`). Yani DB
-    KENDILIGINDEN KORUMAZ: asagidaki uc kontrol kaldirilirsa tek bir istek
-    bolumleri, poz gruplarini, poz kalemlerini ve bloklari SESSIZCE yok eder ve
-    bu GERI ALINAMAZ. `delete_block` (`units/service.py:307`) deseninin
-    birebiridir, tek farkla: orada DB'de `RESTRICT` ikinci katman olarak vardi,
-    BURADA YOKTUR — servis korkulugu TEK savunmadir.
+    🔴 ESKI METIN EKSIKTI (59/60'ta olculdu): "DORT FK" degil, `sites.id`'yi
+    hedefleyen ON BIR FK `ON DELETE CASCADE`tir. Olcum
+    (`command grep -rn 'ForeignKey("sites.id"' app/`): `sections`, `boq_groups`,
+    `boq_items`, `blocks`, `timesheet_entries`, `site_diary_entries`,
+    `documents`, `document_folders`, `site_plan_rows`, `site_plan_goals`,
+    `site_plan_sprints`. Yani DB KENDILIGINDEN KORUMAZ: asagidaki kontroller
+    kaldirilirsa tek bir istek bolumleri, pozlari, bloklari, PUANTAJ
+    HUCRELERINI, GUNLUKLERI, BELGELERI (ve `document_blobs` CASCADE'i uzerinden
+    BAYTLARI) ve PLAN GECMISINI SESSIZCE yok eder ve bu GERI ALINAMAZ.
+    `delete_block` (`units/service.py:307`) deseninin birebiridir, tek farkla:
+    orada DB'de `RESTRICT` ikinci katman olarak vardi, BURADA YOKTUR — servis
+    korkulugu TEK savunmadir.
 
-    Sira sabittir ve ILK ENGELDE DURUR: bolum -> poz -> blok. Kullaniciya tek,
-    eyleme donuk mesaj verilir; uc engeli birden listelemek onu ayni formda uc
-    kez geri gonderirdi.
+    🔴 Son dort korkuluk neden ilk besin kapsamina GIRMEZ: puantaj, gunluk,
+    belge ve plan tablolarinin hepsinde `section_id` NULLABLE'dir (SET NULL; plan
+    ekipman satirinda zaten NULL). Bolumu OLMAYAN ama bu kayitlarla dolu bir
+    santiye, `site_has_sections` dahil bes korkulugun besini de gecer.
+
+    Sira sabittir ve ILK ENGELDE DURUR: bolum -> poz -> blok -> sozlesme ->
+    hakedis -> puantaj -> gunluk -> belge -> plan. Yeni dort dal zincirin SONUNA
+    eklendi (basina DEGIL): sira degisseydi bugun "bolum var" mesaji goren
+    kullanici yarin baska bir mesaj gorurdu. Kullaniciya tek, eyleme donuk mesaj
+    verilir; tum engelleri birden listelemek onu ayni formda dokuz kez geri
+    gonderirdi.
 
     Taslak santiye icin AYRICALIK YOKTUR: bolumlu bir taslak da 409 doner.
     "Taslak zaten yarim, gitsin" kisayolu taslak/yayin ayrimini silme
@@ -55,6 +68,14 @@ async def delete_site(session: AsyncSession, actor: User, site_id: uuid.UUID) ->
         raise RelatedRecordsExistError(guards.SITE_HAS_CONTRACTS)
     if await repository.site_has_progress_payment_lines(session, site.id):
         raise RelatedRecordsExistError(guards.SITE_HAS_PROGRESS_PAYMENTS)
+    if await repository.site_has_timesheet(session, site.id):
+        raise RelatedRecordsExistError(guards.SITE_HAS_TIMESHEET)
+    if await repository.site_has_diary(session, site.id):
+        raise RelatedRecordsExistError(guards.SITE_HAS_DIARY)
+    if await repository.site_has_documents(session, site.id):
+        raise RelatedRecordsExistError(guards.SITE_HAS_DOCUMENTS)
+    if await repository.site_has_plan(session, site.id):
+        raise RelatedRecordsExistError(guards.SITE_HAS_PLAN)
     detail = messages.site_deleted(project.name, site.name)
     await session.delete(site)
     await session.flush()

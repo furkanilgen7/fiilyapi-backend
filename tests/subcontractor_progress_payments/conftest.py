@@ -215,6 +215,53 @@ def taseron_sozlesmesi_fabrikasi(seeded_db: AsyncSession, project_factory, sozle
 
 
 @pytest.fixture
+def ikiz_sozlesme_fabrikasi(seeded_db: AsyncSession, sozlesme_sahibi: User):
+    """AYNI projede, AYNI işveren kalemine (`source_contract_item_id`) köprü kuran
+    İKİNCİ taşeron sözleşmesi — ÇİFT SAYIM (TH-PRJGENEL) kurulumu.
+
+    `subcontractor_contract_items`te UNIQUE yalnız `(contract_id, code)`tur;
+    aynı kaynak kalemi iki sözleşmenin göstermesi DB'de serbesttir.
+    """
+
+    async def _create(
+        contract: SubcontractorContract,
+        kaynak_kalem_id: uuid.UUID,
+        *,
+        code: str = "THK-IKIZ",
+        quantity: Decimal = Decimal("200"),
+    ) -> SubcontractorContract:
+        ikiz = SubcontractorContract(
+            project_id=contract.project_id,
+            site_id=contract.site_id,
+            subcontractor_name="İkiz Taşeron Ltd.",
+            contract_no=f"{code}-TSZ",
+            advance_pct=Decimal("10"),
+            retainage_pct=Decimal("5"),
+            vat_pct=Decimal("20"),
+            created_by=sozlesme_sahibi.id,
+        )
+        seeded_db.add(ikiz)
+        await seeded_db.flush()
+        seeded_db.add(
+            SubcontractorContractItem(
+                contract_id=ikiz.id,
+                source_contract_item_id=kaynak_kalem_id,
+                code=f"{code}.001",
+                description="İkiz kalem",
+                unit="Ton",
+                quantity=quantity,
+                unit_price=Decimal("21500"),
+                sort_order=0,
+            )
+        )
+        await seeded_db.flush()
+        await seeded_db.refresh(ikiz)
+        return ikiz
+
+    return _create
+
+
+@pytest.fixture
 async def taseron_sozlesmesi(
     taseron_sozlesmesi_fabrikasi,
 ) -> tuple[SubcontractorContract, Project, Site | None]:
