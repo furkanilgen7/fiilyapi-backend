@@ -550,6 +550,90 @@ def test_alan_maskesi_ihlali_HATA_METNI_KAYIT_YOK_DEMEZ() -> None:
 
 
 # ############################################################################ #
+# ②b DEĞER MASKESİ — ANAHTAR DEĞİL **DEĞERİN İÇİ** (KVKK borcu #13 + #15)
+# ############################################################################ #
+#
+# 🔴 İki kapı da (kayıt anı ŞEMASI + çalışma anı ANAHTARI) bir şeyi göremez:
+# `AiPlanGunu.text` / `AiPozKalemi.description` / `projects.name` **serbest
+# metindir** ve içine yazılan TCKN/IBAN/telefon hiçbir anahtar kesişimine
+# düşmez. Bu üçüncü kapı DEĞERİN İÇİNE bakar.
+#
+# 🔴 Neden DÜŞÜRMEZ, MASKELER: zarfı düşürmek yanlış pozitifte (sağlaması
+# tesadüfen tutan bir numara) meşru bir aracı tümden kırardı. Maske yalnız
+# eşleşen ALT DİZİYİ yutar; kalan cevap modele gider.
+
+#: Sağlaması TUTAN bir TCKN (kontrol basamakları doğrulandı).
+_GECERLI_TCKN = "11111111110"
+#: 11 hane ama sağlaması TUTMAZ — fiş/sözleşme numarası emsali.
+_GECERSIZ_11_HANE = "12345678901"
+#: mod-97 TUTAN gerçek biçimli TR IBAN.
+_GECERLI_IBAN = "TR330006100519786457841326"
+#: Aynı IBAN'ın son hanesi bozulmuş hâli — mod-97 TUTMAZ.
+_GECERSIZ_IBAN = "TR330006100519786457841327"
+
+
+def test_DEGER_MASKESI_TCKNYI_YUTAR_ama_SAGLAMASI_TUTMAYAN_11_HANEYI_BIRAKIR() -> None:
+    """ÇİFT YÖNLÜ. Tek yön yazılsaydı 'her 11 haneyi maskele' mutantı geçerdi."""
+    maskeli = exposure.deger_maskesi({"text": f"usta {_GECERLI_TCKN} bugün gelmiyor"})
+    assert _GECERLI_TCKN not in json.dumps(maskeli, ensure_ascii=False)
+    assert exposure.MASKE_JETONU in maskeli["text"]
+    assert "bugün gelmiyor" in maskeli["text"]
+
+    temiz = {"text": f"fiş no {_GECERSIZ_11_HANE}"}
+    assert exposure.deger_maskesi(temiz) == temiz
+
+
+def test_DEGER_MASKESI_IBANI_YUTAR_ama_SAGLAMASI_TUTMAYANI_BIRAKIR() -> None:
+    maskeli = exposure.deger_maskesi([f"ödeme {_GECERLI_IBAN} hesabına"])
+    assert _GECERLI_IBAN not in maskeli[0]
+    assert exposure.MASKE_JETONU in maskeli[0]
+
+    bozuk = [f"ödeme {_GECERSIZ_IBAN} hesabına"]
+    assert exposure.deger_maskesi(bozuk) == bozuk
+
+
+def test_DEGER_MASKESI_TELEFONU_YUTAR_ama_PARAYI_BIRAKIR() -> None:
+    maskeli = exposure.deger_maskesi({"not": "ara 0532 123 45 67 numarasından"})
+    assert "0532" not in maskeli["not"]
+    assert exposure.MASKE_JETONU in maskeli["not"]
+
+    para = {"tutar": "12500.00", "gun": 22, "wage_type": "monthly"}
+    assert exposure.deger_maskesi(para) == para
+
+
+def test_DEGER_MASKESI_SERBEST_SOZLUGUN_ICINE_BAKAR_ve_KAYNAGI_BOZMAZ() -> None:
+    """🔴 Şema taramasının kör noktası (`dict[str, Any]`) burada da geçerli;
+    ayrıca maske KAYNAĞI DEĞİŞTİRMEZ (immutability)."""
+    kaynak = {"totals": [{"aciklama": f"TC {_GECERLI_TCKN}"}]}
+    maskeli = exposure.deger_maskesi(kaynak)
+    assert _GECERLI_TCKN not in json.dumps(maskeli, ensure_ascii=False)
+    assert kaynak["totals"][0]["aciklama"] == f"TC {_GECERLI_TCKN}"
+
+
+@pytest.mark.asyncio
+async def test_HUNI_DEGER_duzeyi_PIIyi_MASKELER_ve_ZARFI_DUSURMEZ(
+    _denetim_sussun, transport_factory
+) -> None:
+    """Üretim yolu: `ToolRegistry.invoke` → zarf. Anahtar taraması burada
+    KÖRDÜR (`text` yasak listede değildir)."""
+
+    async def _sizdir(ctx: AracBaglami, girdi: Any) -> AracSonucu:
+        return Ok(data={"days": [{"text": f"usta {_GECERLI_TCKN} gelmiyor"}]}, row_count=1)
+
+    kayit = ToolRegistry(
+        (_spec("deger_sizinti", veri_modulleri=frozenset({"timesheet"}), calistir=_sizdir),)
+    )
+    sonuc = await _kos_arac(kayit, "deger_sizinti", transport_factory(bearer="x"))
+
+    # Anahtar kapısı bu gövdede hiçbir şey görmez — kanıt:
+    assert exposure.yasak_anahtarlar({"days": [{"text": "x"}]}) == []
+    # …ama değer kapısı görür ve zarf DÜŞMEZ, yalnız alt dize yutulur.
+    assert isinstance(sonuc, Ok)
+    assert _GECERLI_TCKN not in json.dumps(sonuc.govde(), ensure_ascii=False)
+    assert "gelmiyor" in sonuc.govde()["veri"]["days"][0]["text"]
+
+
+# ############################################################################ #
 # ③ `scope_note` (S10) + `SIRKET_GENELI`nin İLK GERÇEK KULLANIMI
 # ############################################################################ #
 

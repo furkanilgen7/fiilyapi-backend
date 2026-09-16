@@ -228,23 +228,33 @@ async def week_rows(
 
 
 async def locked_week_entries(
-    session: AsyncSession, site_id: uuid.UUID, *, iso_year: int, iso_week: int
+    session: AsyncSession,
+    site_id: uuid.UUID,
+    *,
+    iso_year: int,
+    iso_week: int,
+    section_id: uuid.UUID | None = None,
 ) -> list[TimesheetEntry]:
-    """`SELECT … FOR UPDATE` — **HAFTA**+santiye kapsaminin TAMAMI kilitlenir.
+    """`SELECT … FOR UPDATE` — **HAFTA**+santiye kapsami kilitlenir.
 
     🔴 Kapsam `locked_period_entries`ten (ay) DARDIR ve oyle olmak ZORUNDADIR:
     kaydetme artik haftalik "degistirme"dir, ay kapsamini kilitleyip hafta
     kapsamini silmek ya da tersi, ayin geri kalanini supururdu.
 
+    🔴 `section_id` VERILIRSE kapsam O BOLUME daralir (`_scoped`in haftalik
+    ikizi). Daralmasaydi bolum suzgecli bir izgarayi kaydeden istemci AYNI
+    HAFTADAKI diger bolumlerin ve bolumsuz hucrelerin hepsini silerdi: donen
+    liste hem kilidin hem silme listesinin kapsamidir (`service._apply`).
+    `IS NULL` hucreler `== section_id` karsilastirmasinin disinda kalir — bu
+    KASITLIDIR, bolumsuz hucre hicbir bolumun suzgecine ait degildir.
+
     Siralama (`personnel_id`, `work_date`) SABITTIR — iki istek satirlari farkli
     sirada kilitlerse kilitlenme (deadlock) dogar.
     """
-    stmt = (
-        select(TimesheetEntry)
-        .where(*_week_conditions(site_id, iso_year, iso_week))
-        .order_by(TimesheetEntry.personnel_id, TimesheetEntry.work_date)
-        .with_for_update()
-    )
+    stmt = select(TimesheetEntry).where(*_week_conditions(site_id, iso_year, iso_week))
+    if section_id is not None:
+        stmt = stmt.where(TimesheetEntry.section_id == section_id)
+    stmt = stmt.order_by(TimesheetEntry.personnel_id, TimesheetEntry.work_date).with_for_update()
     return list((await session.execute(stmt)).scalars().all())
 
 

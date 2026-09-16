@@ -9,7 +9,7 @@ from app.core.errors import DomainError, NotFoundError, PermissionLockedError
 from app.core.security import hash_password
 from app.modules.projects.models import Project
 from app.modules.roles.models import SYSTEM_ADMIN_KEY, Role
-from app.modules.roles.repository import get_permission
+from app.modules.roles.repository import get_permission, get_role_matrix
 from app.modules.users import repository
 from app.modules.users.models import User, UserProjectAccess, UserStatus
 from app.modules.users.schemas import ProjectAccessInput, UserCreate, UserUpdate
@@ -30,15 +30,34 @@ async def _is_last_active_system_admin(session: AsyncSession, user: User) -> boo
 
 
 async def _require_assignable_role(session: AsyncSession, actor: User, role_id: uuid.UUID) -> Role:
+    """Aktörün bu rolü atamaya yetkisi var mı?
+
+    `user_management=admin` (Sistem Yöneticisi) her rolü atar. Onun altındaki bir aktör
+    (1) sistem rollerini atayamaz ve (2) KENDİ seviyesini herhangi bir modülde aşan bir
+    rolü atayamaz — yoksa `is_system=False` güçlü bir rolü kendine ya da açtığı
+    kullanıcıya vererek sahip olmadığı yetkiyi kendine basar (spec §5.0).
+    """
     role = (await session.execute(select(Role).where(Role.id == role_id))).scalar_one_or_none()
     if role is None:
         raise NotFoundError("Rol bulunamadı")
+
+    perm = await get_permission(session, actor.role_id, "user_management")
+    if perm is not None and satisfies(perm.access_level, AccessLevel.admin):
+        return role
+
     if role.is_system:
-        perm = await get_permission(session, actor.role_id, "user_management")
-        if perm is None or not satisfies(perm.access_level, AccessLevel.admin):
-            raise PermissionLockedError(
-                "Sistem rolleri yalnızca Sistem Yöneticisi tarafından atanabilir"
-            )
+        raise PermissionLockedError(
+            "Sistem rolleri yalnızca Sistem Yöneticisi tarafından atanabilir"
+        )
+
+    actor_levels = {
+        module.key: permission.access_level
+        for module, permission in await get_role_matrix(session, actor.role_id)
+    }
+    for module, permission in await get_role_matrix(session, role_id):
+        actor_level = actor_levels.get(module.key, AccessLevel.none)
+        if not satisfies(actor_level, permission.access_level):
+            raise PermissionLockedError("Sahip olmadığınız yetkileri içeren bir rol atayamazsınız")
     return role
 
 

@@ -66,12 +66,15 @@ eşleşen bir maske o on anahtarın onunu da yakalardı.
 from __future__ import annotations
 
 import enum
+import re
 import types
 import typing
 from collections.abc import Iterable, Mapping
 from typing import Any, Final
 
 from pydantic import BaseModel
+
+from app.core.iban import validate_iban
 
 
 class IfsaSeviyesi(str, enum.Enum):
@@ -337,6 +340,105 @@ def yasak_anahtarlar(veri: Any) -> list[str]:
     return sorted(govde_anahtarlari(veri) & YASAK_ALAN_ANAHTARLARI)
 
 
+# ############################################################################ #
+# DEĞER MASKESİ — anahtar değil **DEĞERİN İÇİ**
+# ############################################################################ #
+#
+# 🔴 Yukarıdaki iki kapı da (kayıt anı ŞEMASI + çalışma anı ANAHTARI) bir şeyi
+# göremez: `AiPlanGunu.text` · `AiPozKalemi.description` · `projects.name` gibi
+# alanlar **serbest metindir** ve onları BAŞKA bir kullanıcı yazar. İçlerine
+# konan bir TCKN/IBAN/telefon hiçbir anahtar kesişimine düşmez — `text` yasak
+# bir ad değildir — ve zarf olduğu gibi üçüncü taraf sağlayıcıya gider.
+#
+# 🔴 **NİYE DÜŞÜRMEZ, MASKELER.** Zarfı tümden düşürmek burada yanlış araçtır:
+# anahtar düzeyinde sızan bir `wage_amount` HANDLER HATASIDIR (şema onu
+# taşımamalıydı), ama serbest metindeki bir numara MEŞRU bir kaydın içeriğidir.
+# Düşürmek, adında sağlaması tesadüfen tutan bir numara geçen tek bir proje
+# yüzünden `projeleri_listele`yi tümüyle kırardı. Maske yalnız eşleşen ALT
+# DİZİYİ yutar; cevabın geri kalanı modele gider.
+#
+# 🔴 **NİYE SAĞLAMA DENETİMİ ZORUNLU.** "11 hane = TCKN" diyen bir maske fiş
+# numarasını, sözleşme numarasını ve `String(11)` taşıyan `tax_no`yu da yutar;
+# model o zaman yanlış cevap üretir. Aynı gerekçe IBAN'da mod-97'dir ve o kural
+# YENİDEN YAZILMAZ: `app/core/iban.validate_iban` TEK KAYNAKTIR.
+#
+# ⚠️ **Kapsam dışı (bilinçli):** kişi ADI regex'lenemez ve burada aranmaz —
+# K1 kararı adların gitmesine zaten izin verir (22 aracın 14'ü `name` taşır).
+
+#: Maskelenen alt dizinin yerine konan SABİT jeton.
+MASKE_JETONU: Final = "[maskelendi]"
+
+#: TCKN ADAYI — 11 hane, ilk hane 0 olamaz. Sağlaması `_tckn_gecerli` bakar.
+_TCKN_ADAYI: Final = re.compile(r"(?<![0-9])[1-9][0-9]{10}(?![0-9])")
+
+#: TR telefon: `+90`/`0` önekli 10 hane, yaygın gruplamalar dahil. Sağlama
+#: basamağı YOKTUR; önek zorunluluğu yanlış pozitifi (tutar, adet) daraltır.
+_TELEFON_ADAYI: Final = re.compile(
+    r"(?<![0-9+])(?:\+90|0)[ ]?\(?[0-9]{3}\)?[ ]?[0-9]{3}[ ]?[0-9]{2}[ ]?[0-9]{2}(?![0-9])"
+)
+
+#: BİTİŞİK IBAN (ISO 13616 biçimi). Doğrulama `validate_iban`ındır.
+_IBAN_BITISIK: Final = re.compile(r"(?<![A-Za-z0-9])[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}(?![A-Za-z0-9])")
+
+#: GRUPLU TR IBAN (`TR33 0006 … 26`) — kanonik 4'lü gruplama. Sabit tekrar
+#: sayısı bilinçlidir: `{2,4}+` gibi esnek bir desen, IBAN'ı izleyen bir
+#: BÜYÜK HARFLİ kelimeyi ya da sayıyı yutar, aday doğrulamada düşer ve IBAN
+#: **maskesiz** kalırdı (sessiz yanlış negatif).
+_IBAN_GRUPLU_TR: Final = re.compile(
+    r"(?<![A-Za-z0-9])TR[0-9]{2}(?:[ ][0-9]{4}){5}[ ][0-9]{2}(?![0-9])"
+)
+
+
+def _tckn_gecerli(aday: str) -> bool:
+    """T.C. Kimlik No sağlaması (10. ve 11. hane kontrol basamaklarıdır)."""
+    haneler = [int(k) for k in aday]
+    onuncu = ((sum(haneler[0:9:2]) * 7) - sum(haneler[1:8:2])) % 10
+    return onuncu == haneler[9] and sum(haneler[:10]) % 10 == haneler[10]
+
+
+def _iban_gecerli(aday: str) -> bool:
+    """🔴 Kural KOPYALANMAZ: biçim + ülke uzunluğu + mod-97 tek kaynaktadır."""
+    try:
+        return validate_iban(aday) is not None
+    except ValueError:
+        return False
+
+
+def _metin_maskesi(metin: str) -> str:
+    """Bir dizedeki TCKN/IBAN/telefonu jetona çevirir.
+
+    Sıra bilinçlidir: IBAN önce yutulur, yoksa 24 haneli gövdesinden bir
+    telefon/TCKN adayı ayıklanmaya çalışılırdı.
+    """
+    sonuc = _IBAN_GRUPLU_TR.sub(
+        lambda e: MASKE_JETONU if _iban_gecerli(e.group()) else e.group(), metin
+    )
+    sonuc = _IBAN_BITISIK.sub(
+        lambda e: MASKE_JETONU if _iban_gecerli(e.group()) else e.group(), sonuc
+    )
+    sonuc = _TELEFON_ADAYI.sub(MASKE_JETONU, sonuc)
+    return _TCKN_ADAYI.sub(lambda e: MASKE_JETONU if _tckn_gecerli(e.group()) else e.group(), sonuc)
+
+
+def deger_maskesi(veri: Any) -> Any:
+    """Gövdedeki **her dizenin içini** tarar; YENİ bir gövde döndürür.
+
+    🔴 Kaynak gövde DEĞİŞTİRİLMEZ (immutability): çağıran, maskelenmiş olanı
+    zarfa `dataclasses.replace` ile koyar.
+    """
+    if isinstance(veri, str):
+        return _metin_maskesi(veri)
+    if isinstance(veri, Mapping):
+        return {ad: deger_maskesi(deger) for ad, deger in veri.items()}
+    if isinstance(veri, list):
+        return [deger_maskesi(oge) for oge in veri]
+    if isinstance(veri, tuple):
+        return tuple(deger_maskesi(oge) for oge in veri)
+    if isinstance(veri, (set, frozenset)):
+        return type(veri)(deger_maskesi(oge) for oge in veri)
+    return veri
+
+
 def seviye(modul: str) -> IfsaSeviyesi:
     """Modülün ifşa seviyesi. 🔴 Bilinmeyen modül **fail-closed** `KAPALI`dır.
 
@@ -455,6 +557,8 @@ __all__ = [
     "KISI_ADI_ANAHTARLARI",
     "S5C_ANAHTARLARI",
     "YASAK_ALAN_ANAHTARLARI",
+    "MASKE_JETONU",
+    "deger_maskesi",
     "dogrula_spec",
     "govde_anahtarlari",
     "sema_anahtarlari",

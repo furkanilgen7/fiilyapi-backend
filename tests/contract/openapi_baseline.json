@@ -54726,7 +54726,7 @@
         ]
       },
       "put": {
-        "description": "E5 76 \"Haftayı Kaydet\" — **DEĞİŞTİRME** semantiği.\n\n⚠️ Gövde **hafta**+şantiye kapsamının TAM kümesidir: gövdede geçmeyen hücre\nSİLİNİR. Aynı ayın BAŞKA haftalarına ve başka şantiyeye DOKUNULMAZ (kesin\nkarar `service.save_week`).\n\nDenetim TEK hafta-özeti olayıdır; hücre başına olay yazmak 7×48'lik bir\nkaydetmede denetim günlüğünü kullanılamaz hâle getirirdi (spec §3).\n\nYanıt GÜNCEL haftadır (bölüm süzgeci UYGULANMAZ — kaydedilen kapsam\nşantiyenin tamamıdır, ekran kaydettiğinin tamamını geri görmelidir).",
+        "description": "E5 76 \"Haftayı Kaydet\" — **DEĞİŞTİRME** semantiği.\n\n⚠️ Gövde kaydedilen KAPSAMIN TAM kümesidir: kapsam içinde gövdede geçmeyen\nhücre SİLİNİR. Aynı ayın BAŞKA haftalarına ve başka şantiyeye DOKUNULMAZ\n(kesin karar `service.save_week`).\n\n🔴 `section_id` GET ile AYNI süzgeçtir ve KAPSAMI DARALTIR: verildiğinde\nyalnız o bölümün hücreleri kilitlenir, güncellenir ve silinir. Süzgeç\nyazmada da tanınmasaydı, bölüm süzgeçli bir ızgarayı gönderen istemci aynı\nhaftanın DİĞER bölümlerini geri alınamaz biçimde silerdi. Süzgeç varken\ngövdedeki her hücre o bölüme ait olmalıdır (422), başka şantiyenin bölümü\nokumadaki ile aynı 404'tür.\n\nDenetim TEK hafta-özeti olayıdır; hücre başına olay yazmak 7×48'lik bir\nkaydetmede denetim günlüğünü kullanılamaz hâle getirirdi (spec §3).\n\nYanıt GÜNCEL haftadır ve KAYDEDİLEN kapsamı gösterir: süzgeçsiz istekte\nşantiyenin tamamı, süzgeçli istekte o bölüm — ekran kaydettiğinin tamamını,\nfazlasını DEĞİL, geri görmelidir.",
         "operationId": "save_site_timesheet_week_endpoint_sites__site_id__timesheet_week_put",
         "parameters": [
           {
@@ -54759,6 +54759,23 @@
               "minimum": 1,
               "title": "Iso Week",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "section_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Section Id"
             }
           }
         ],

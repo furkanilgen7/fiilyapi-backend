@@ -378,6 +378,16 @@ class ToolRegistry:
             if sizan:
                 sonuc = ToolError("alan_maskesi_ihlali")
                 hata = f"alan_maskesi_ihlali:{','.join(sizan)}"
+            elif hasattr(sonuc, "data"):
+                # --- 6c. DEĞER MASKESİ (KVKK) -------------------------
+                # 🔴 Anahtar taraması SERBEST METNİ göremez: `text` yasak bir
+                # ad değildir, içine yazılmış bir TCKN/IBAN da anahtar
+                # kesişimine düşmez. Burada zarf DÜŞÜRÜLMEZ, yalnız eşleşen
+                # alt dize yutulur — meşru bir kaydın içeriği yüzünden aracı
+                # tümden kırmak yanlış araçtır (gerekçe `exposure.py`de).
+                maskeli = exposure.deger_maskesi(sonuc.data)
+                if maskeli != sonuc.data:
+                    sonuc = dataclasses.replace(sonuc, data=maskeli)
         if isinstance(sonuc, ToolError):
             hata = hata or sonuc.kod
 

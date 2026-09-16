@@ -28,6 +28,7 @@ __all__ = [
     "WEEK_MISSING",
     "DUPLICATE_CELL",
     "PERSONNEL_UNKNOWN",
+    "SECTION_FILTER_MISMATCH",
     "SECTION_MISMATCH",
     "SECTION_MISSING",
     "SITE_MISSING",
@@ -37,6 +38,16 @@ __all__ = [
 # 422 — bölüm sahipliği. `site_diary.guards.SECTION_MISMATCH` ile AYNI cümle:
 # aynı kural iki modülde iki farklı metinle konuşmamalı.
 SECTION_MISMATCH = "Seçilen bölüm bu şantiyeye ait değil"
+
+# 422 — bölüm SÜZGEÇLİ kaydetmede gövde kapsamın dışına taşıyor. `DATE_OUT_OF_WEEK`
+# kuralının bölüm eksenindeki ikizi: süzgeç kapsamı daralttığı için o kapsamın
+# dışındaki bir hücre yazılsaydı, bir sonraki süzgeçli kaydetme onu ne yazar ne
+# silerdi — ekranda görünen ama kaydedilemeyen bir satır doğardı. Bölümsüz
+# (`section_id IS NULL`) hücre de DIŞARIDADIR: hiçbir bölümün süzgecine ait değildir.
+SECTION_FILTER_MISMATCH = (
+    "Bölüm süzgeciyle kaydetmede her hücre o bölüme ait olmalıdır; "
+    "süzgecin dışındaki hücre bu istekle gönderilemez."
+)
 
 # 422 — gövdedeki personel kartotekste yok. Var olmayan kimlik ile silinmiş kayıt
 # AYNI cümleyi alır (kimlik varlığı sızdırılmaz).

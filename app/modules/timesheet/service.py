@@ -127,12 +127,32 @@ async def _assert_sections(session: AsyncSession, site: Site, section_ids: set[u
             raise SiteValidationError(guards.SECTION_MISMATCH)
 
 
+def _assert_in_section_filter(cell: TimesheetCellInput, section: Section | None) -> None:
+    """Süzgeç verildiyse hücre O BÖLÜME ait olmalı — 422 (`_assert_week` ikizi).
+
+    Süzgeç kaydetme kapsamını daraltır; kapsamın dışına düşen bir hücre sessizce
+    yazılsaydı bir sonraki süzgeçli kaydetme onu ne günceller ne siler — hücre
+    kendi bölümünün ekranında hiç görünmeden orada kalırdı.
+    """
+    if section is None:
+        return
+    if cell.section_id != section.id:
+        raise SiteValidationError(guards.SECTION_FILTER_MISMATCH)
+
+
 async def _plan(
-    session: AsyncSession, site: Site, data: TimesheetWeekSave, *, iso_year: int, iso_week: int
+    session: AsyncSession,
+    site: Site,
+    data: TimesheetWeekSave,
+    *,
+    iso_year: int,
+    iso_week: int,
+    section: Section | None,
 ) -> _Plan:
     cells: dict[tuple[uuid.UUID, date], TimesheetCellInput] = {}
     for cell in data.cells:
         _assert_week(cell, iso_year, iso_week)
+        _assert_in_section_filter(cell, section)
         key = guards.cell_key(cell.personnel_id, cell.work_date)
         if key in cells:
             # Kismi UQ ihlali GOVDE ICINDE yakalanir; `IntegrityError` emniyet agi kalir.
@@ -221,17 +241,27 @@ async def save_week(
     *,
     iso_year: int,
     iso_week: int,
+    section: Section | None = None,
 ) -> int:
     """**Hafta**+şantiye kapsamını gövdeye eşitler; yazılan hücre sayısını döner.
 
     Kapsam kararı (404) kilitten ÖNCE verilmiştir (`visible_site`, router'da):
     görünmeyen şantiyenin satırları boşuna kilitlenmez.
+
+    🔴 `section` VERİLİRSE kapsam O BÖLÜME daralır — kilit de silme de. Okuma ucu
+    bölüm süzerken yazma ucu süzmeseydi, süzgeçli bir ızgarayı gönderen istemci
+    aynı haftadaki DİĞER bölümlerin hücrelerini geri alınamaz biçimde silerdi
+    (`repository.locked_week_entries` + `_apply` aynı listeyi kullanır).
     """
     site = context.site
-    plan = await _plan(session, site, data, iso_year=iso_year, iso_week=iso_week)
+    plan = await _plan(session, site, data, iso_year=iso_year, iso_week=iso_week, section=section)
 
     existing = await repository.locked_week_entries(
-        session, site.id, iso_year=iso_year, iso_week=iso_week
+        session,
+        site.id,
+        iso_year=iso_year,
+        iso_week=iso_week,
+        section_id=None if section is None else section.id,
     )
     await _assert_person_days_free(session, site, plan)
 

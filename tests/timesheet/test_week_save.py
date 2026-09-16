@@ -20,7 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.audit.models import AuditLog
-from app.modules.sites.guards import SITE_MISSING
+from app.modules.sites.guards import SECTION_MISSING, SITE_MISSING
 from app.modules.timesheet import guards
 from app.modules.timesheet.models import TimesheetCode, TimesheetEntry
 from tests.timesheet.conftest import ISO_HAFTA, ISO_YIL, gun, hafta_gunu
@@ -244,6 +244,209 @@ async def test_baska_santiyenin_hucresine_dokunulmaz(
 
     assert await _kayitlar(seeded_db, santiye.id) == []
     assert len(await _kayitlar(seeded_db, ikinci_santiye.id)) == 1
+
+
+# --- 🔴 BÖLÜM SÜZGEÇLİ KAYDETME (kapsam sınırının ikinci ekseni) ---
+
+
+async def _kaydet_suzgecli(client, headers, site_id, cells, section_id):
+    return await client.put(
+        f"/sites/{site_id}/timesheet/week",
+        params={"iso_year": ISO_YIL, "iso_week": ISO_HAFTA, "section_id": str(section_id)},
+        json={"cells": cells},
+        headers=headers,
+    )
+
+
+async def test_bolum_suzgecli_kaydetme_DIGER_BOLUMUN_hucresini_SILMEZ(
+    client: AsyncClient,
+    sef_headers,
+    santiye,
+    bolum,
+    ikinci_bolum,
+    mehmet,
+    admin_kullanicisi,
+    hucre_fabrikasi,
+    seeded_db,
+) -> None:
+    """🔴 Okuma `section_id` süzer (router.py GET), yazma süzmezse VERİ KAYBI olur.
+
+    Süzgeçli bir ızgarayı "Haftayı Kaydet" ile gönderen istemci, AYNI HAFTADAKİ
+    başka bölümlerin ve bölümsüz hücrelerin TAMAMINI geri alınamaz biçimde
+    silerdi (silme koşulu yalnız şantiye+hafta idi). Süzgeç verildiğinde kapsam
+    O BÖLÜME daralmalıdır.
+    """
+    await hucre_fabrikasi(santiye, mehmet, hafta_gunu(0), admin_kullanicisi, hours=9, section=bolum)
+    await hucre_fabrikasi(
+        santiye, mehmet, hafta_gunu(1), admin_kullanicisi, hours=9, section=ikinci_bolum
+    )
+    await hucre_fabrikasi(santiye, mehmet, hafta_gunu(2), admin_kullanicisi, hours=9)
+
+    # Süzgeç = 1. bölüm; gövde o bölümün TEK hücresini taşır (ekranın gördüğü küme).
+    yanit = await _kaydet_suzgecli(
+        client,
+        sef_headers,
+        santiye.id,
+        [_saat_hucresi(mehmet, 0, "8", section_id=str(bolum.id))],
+        bolum.id,
+    )
+    assert yanit.status_code == 200, yanit.text
+
+    kalan = {k.work_date: k.section_id for k in await _kayitlar(seeded_db, santiye.id)}
+    assert kalan == {
+        hafta_gunu(0): bolum.id,
+        hafta_gunu(1): ikinci_bolum.id,  # BAŞKA bölüm — kapsam dışı, DURMALI
+        hafta_gunu(2): None,  # bölümsüz — kapsam dışı, DURMALI
+    }
+
+
+async def test_bolum_suzgecli_kaydetme_O_BOLUMDE_gonderilmeyeni_SILER(
+    client: AsyncClient,
+    sef_headers,
+    santiye,
+    bolum,
+    ikinci_bolum,
+    mehmet,
+    admin_kullanicisi,
+    hucre_fabrikasi,
+    seeded_db,
+) -> None:
+    """POZİTİF KONTROL: daraltma "hiçbir şey silmesin" demek DEĞİLDİR.
+
+    Süzgeçli kaydetme de DEĞİŞTİRME'dir: süzgecin İÇİNDE gövdede geçmeyen hücre
+    silinir. Bu iddia olmasaydı, süzgeç parametresini alıp silme listesini
+    tamamen boşaltan bozuk bir uç da üstteki testi yeşil geçerdi.
+    """
+    await hucre_fabrikasi(santiye, mehmet, hafta_gunu(0), admin_kullanicisi, hours=9, section=bolum)
+    await hucre_fabrikasi(
+        santiye, mehmet, hafta_gunu(1), admin_kullanicisi, hours=9, section=ikinci_bolum
+    )
+
+    yanit = await _kaydet_suzgecli(client, sef_headers, santiye.id, [], bolum.id)
+    assert yanit.status_code == 200, yanit.text
+
+    kalan = [(k.work_date, k.section_id) for k in await _kayitlar(seeded_db, santiye.id)]
+    assert kalan == [(hafta_gunu(1), ikinci_bolum.id)]
+
+
+async def test_suzgecsiz_kaydetme_TAM_kumeyi_degistirir(
+    client: AsyncClient,
+    sef_headers,
+    santiye,
+    bolum,
+    ikinci_bolum,
+    mehmet,
+    admin_kullanicisi,
+    hucre_fabrikasi,
+    seeded_db,
+) -> None:
+    """İKİZ: süzgeç YOKSA kapsam hâlâ şantiye+haftanın TAMAMIDIR.
+
+    Aynı ekranın iki modu iki farklı kapsama yazar; ayrım burada kilitlenir.
+    """
+    await hucre_fabrikasi(santiye, mehmet, hafta_gunu(0), admin_kullanicisi, hours=9, section=bolum)
+    await hucre_fabrikasi(
+        santiye, mehmet, hafta_gunu(1), admin_kullanicisi, hours=9, section=ikinci_bolum
+    )
+    await hucre_fabrikasi(santiye, mehmet, hafta_gunu(2), admin_kullanicisi, hours=9)
+
+    yanit = await _kaydet(client, sef_headers, santiye.id, [])
+    assert yanit.status_code == 200, yanit.text
+    assert await _kayitlar(seeded_db, santiye.id) == []
+
+
+async def test_suzgecle_uyusmayan_bolum_422(
+    client: AsyncClient, sef_headers, santiye, bolum, ikinci_bolum, mehmet, seeded_db
+) -> None:
+    """Süzgeç 1. bölüm iken gövdede 2. bölümün hücresi: 422.
+
+    Yazılsaydı hücre kapsamın DIŞINA düşer ve bir sonraki süzgeçli kaydetmede
+    kimsenin fark etmeyeceği biçimde silinirdi (hafta dışı tarih kuralının ikizi).
+    """
+    yanit = await _kaydet_suzgecli(
+        client,
+        sef_headers,
+        santiye.id,
+        [_saat_hucresi(mehmet, 0, section_id=str(ikinci_bolum.id))],
+        bolum.id,
+    )
+    assert yanit.status_code == 422, yanit.text
+    assert yanit.json()["detail"] == guards.SECTION_FILTER_MISMATCH
+    assert await _kayitlar(seeded_db, santiye.id) == []
+
+
+async def test_suzgec_varken_bolumsuz_hucre_422(
+    client: AsyncClient, sef_headers, santiye, bolum, mehmet, seeded_db
+) -> None:
+    """`section_id IS NULL` hücreler süzgeç kapsamının DIŞINDADIR.
+
+    `== section_id` karşılaştırması NULL'ları zaten dışarıda bırakır; bu KAZA
+    sonucu bir koruma olmasın diye gövde tarafı da açıkça reddeder.
+    """
+    yanit = await _kaydet_suzgecli(
+        client, sef_headers, santiye.id, [_saat_hucresi(mehmet, 0)], bolum.id
+    )
+    assert yanit.status_code == 422, yanit.text
+    assert yanit.json()["detail"] == guards.SECTION_FILTER_MISMATCH
+    assert await _kayitlar(seeded_db, santiye.id) == []
+
+
+async def test_suzgec_bolumu_baska_santiyenin_ise_404(
+    client: AsyncClient,
+    sef_headers,
+    santiye,
+    yabanci_bolum,
+    mehmet,
+    admin_kullanicisi,
+    hucre_fabrikasi,
+    seeded_db,
+) -> None:
+    """Süzgeç bölümü okumadaki (GET) ile AYNI 404'ü verir — ve HİÇBİR ŞEY silmez.
+
+    Süzgeç sessizce yok sayılsaydı istek şantiyenin TÜM haftasını süpürürdü.
+    """
+    await hucre_fabrikasi(santiye, mehmet, hafta_gunu(0), admin_kullanicisi, hours=9)
+
+    yanit = await _kaydet_suzgecli(client, sef_headers, santiye.id, [], yabanci_bolum.id)
+    assert yanit.status_code == 404, yanit.text
+    assert yanit.json()["detail"] == SECTION_MISSING
+    assert len(await _kayitlar(seeded_db, santiye.id)) == 1
+
+
+async def test_suzgecli_kaydetmenin_yaniti_O_BOLUMDUR(
+    client: AsyncClient,
+    sef_headers,
+    santiye,
+    bolum,
+    ikinci_bolum,
+    mehmet,
+    admin_kullanicisi,
+    hucre_fabrikasi,
+    seeded_db,
+) -> None:
+    """Yanıt KAYDEDİLEN kapsamdır: süzgeç varsa ekran kendi bölümünü geri görür.
+
+    Süzgeçsiz yanıt dönseydi ekran dokunmadığı bölümlerin hücrelerini de
+    ızgarasına basar ve bir sonraki kaydetmede onları KENDİ kümesi sanardı.
+    """
+    await hucre_fabrikasi(
+        santiye, mehmet, hafta_gunu(1), admin_kullanicisi, hours=9, section=ikinci_bolum
+    )
+    yanit = await _kaydet_suzgecli(
+        client,
+        sef_headers,
+        santiye.id,
+        [_saat_hucresi(mehmet, 0, "9", section_id=str(bolum.id))],
+        bolum.id,
+    )
+    assert yanit.status_code == 200, yanit.text
+    govde = yanit.json()
+    assert Decimal(govde["totals"]["total_hours"]) == Decimal("9.0")
+    gunler = [h["work_date"] for satir in govde["rows"] for h in satir["cells"]]
+    assert gunler == [hafta_gunu(0).isoformat()]
+    # Yanıtta görünmemesi SİLİNDİĞİ anlamına GELMEZ: 2. bölümün hücresi DB'de durur.
+    kalan = {k.work_date for k in await _kayitlar(seeded_db, santiye.id)}
+    assert kalan == {hafta_gunu(0), hafta_gunu(1)}
 
 
 # --- Kişi-gün tekliği (UQ) ---
