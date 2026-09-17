@@ -58,9 +58,15 @@ farkı olarak görülür. `test_amounts_modulunde_kayan_nokta_YOK` bunu AST
 düzeyinde bekler (yorumdaki örnekleri değil, gerçek kayan nokta değişmezlerini
 ve `float` çağrılarını arar).
 
-`tax_base`in NEGATİF olabileceği tek durum `advance_rate + retention_rate > 100`
-hâlidir; onu bu modül değil `validation.body_blockers` (422) engeller —
-hesap saftır, iş kuralı taşımaz.
+`tax_base` NEGATİF DOĞAMAZ ve bu modülün KENDİ garantisidir (2. · 3. adım):
+kesinti bacaklarının toplamı `subtotal`la sınırlıdır. Garanti burada durmak
+ZORUNDADIR — eski metin "onu `validation.body_blockers` (422) engeller" diyordu
+ve ÖLÇÜLEREK ÇÜRÜDÜ: oranların toplamı TAM %100 iken kural İHLAL EDİLMEZ
+(`body_blockers` boş döner, "matrahı sıfırlayan fatura anlamlıdır") ama iki
+bacağın AYRI AYRI yukarı yuvarlanması `tax_base`i 0,01 negatife düşürüyordu.
+Oran toplamının %100'ü aşamaması AYRI bir iş kuralıdır ve YERİ HÂLÂ
+`validation.body_blockers`tır; buradaki sınır onun yerini almaz, yuvarlama
+artığını kapatır.
 """
 
 from collections.abc import Sequence
@@ -157,9 +163,17 @@ def compute(
     line_totals = tuple(line_total(line.quantity, line.unit_price) for line in lines)
     subtotal = _topla(line_totals)
 
-    # 2 · 3
-    advance_amount = _oran_tutari(subtotal, advance_rate)
-    retention_amount = _oran_tutari(subtotal, retention_rate)
+    # 2 · 3 — 🔴 BACAKLARIN TOPLAMI `subtotal`ı AŞAMAZ (çift yuvarlama kapısı).
+    #         Her bacak AYRI AYRI `ROUND_HALF_UP` ile yuvarlanır; toplamları
+    #         `subtotal`ı 0,01 aşabilir (12345.67 × %50 = 6172.835 → 6172.84,
+    #         iki kez ⇒ 12345.68). Sınır olmasaydı 4. adım NEGATİF bir `tax_base`
+    #         üretir ve DB CHECK'i kullanıcıya OPAK bir 409 gösterirdi.
+    #         Kırpma KESİNTİ BACAĞINDADIR, `tax_base`te DEĞİL: 4. adımın
+    #         `tax_base = subtotal − advance − retention` değişmezi korunur ve
+    #         bacakların toplamı `subtotal`a kuruşu kuruşuna eşit kalır.
+    #         Artığı TEMİNAT (son bacak) taşır — sıra FGI:163-186 adım sırasıdır.
+    advance_amount = min(_oran_tutari(subtotal, advance_rate), subtotal)
+    retention_amount = min(_oran_tutari(subtotal, retention_rate), subtotal - advance_amount)
 
     # 4
     tax_base = subtotal - advance_amount - retention_amount

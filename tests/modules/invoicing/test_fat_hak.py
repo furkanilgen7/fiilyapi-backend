@@ -105,12 +105,39 @@ def test_TUTAR_evreni_YON_evreniyle_AYNIDIR() -> None:
 
 
 def test_TUTAR_evreni_KIRA_ve_SIPARIS_kaynaklarini_TASIMAZ() -> None:
-    """Kapsam DARALTMASI kasıtlıdır ve gerekçesi `source_amounts` modülündedir:
-    kira hakedişinin tek bir "brüt" kolonu yoktur, sipariş ise kısmi
-    faturalanabilir. Bir gün eklenirlerse bugün çalışan meşru faturalar
-    reddedilirdi."""
+    """Kapsam DARALTMASI kasıtlıdır: FAT-HAK **brüt** eşitliği kullanıcı
+    kararıyla (2026-09-03) iki hakediş ailesi içindir ve kümesi
+    `SOURCE_DIRECTION`a kilitlidir (üstteki bekçi).
+
+    🔴 Bu daraltma DEFTERİ SERBEST BIRAKMAZ ve bırakmamalıdır: takas sırasında
+    storno edilen tutarın kilidi AYRI bir tablodadır (`SOURCE_ENTRY_TYPES`) ve
+    onun kapsamı bu tabloya DEĞİL `SOURCE_REVERSERS`a eşittir — bir sonraki
+    bekçi tam olarak onu iddia eder.
+    """
     assert "equipment_rental_invoice_id" not in SOURCE_GROSS_MODELS
     assert "purchase_order_id" not in SOURCE_GROSS_MODELS
+
+
+def test_TAKAS_TABANI_evreni_STORNO_evreniyle_AYNIDIR() -> None:
+    """🔴 ÖLÇÜLMÜŞ KUSURUN YAPISAL BEKÇİSİ — *"fişi storno edilen her ailenin
+    tabanı kilitlenir"*.
+
+    `source_posting.SOURCE_REVERSERS` fatura fişlenince kaynağın fişini storno
+    eden aileleri sayar; `SOURCE_ENTRY_TYPES` ise storno edilecek TUTARI
+    okuyanları. İkisi ayrışırsa, ayrışan ailede fatura kaynağın fişini storno
+    eder ama yerine HİÇBİR KAPI ölçmeden BAŞKA bir tutar geçer — ve iki fiş de
+    kendi içinde dengeli olduğu için MİZAN DENK KALIR.
+
+    Kusur tam olarak buydu: `equipment_rental_invoice_id` `SOURCE_REVERSERS`ta
+    VARDI, `SOURCE_ENTRY_TYPES`ta YOKTU (740 kira gideri 100.000 → 5.000).
+    Defterdeki karşılığı `tests/modules/posting/test_mu3d_takas.py`dedir; bu
+    bekçi DÖRDÜNCÜ bir aile eklendiğinde aynı açığın SESSİZCE geri gelmesini
+    engeller.
+    """
+    from app.modules.invoicing.source_amounts import SOURCE_ENTRY_TYPES
+    from app.modules.invoicing.source_posting import SOURCE_REVERSERS
+
+    assert set(SOURCE_ENTRY_TYPES) == set(SOURCE_REVERSERS)
 
 
 # --------------------------------------------------------------------------- #

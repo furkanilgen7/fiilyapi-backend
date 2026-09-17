@@ -12,8 +12,10 @@ Govde ICI varlik referanslari (`project_id`, `bank_account_id`) da 404'tur,
 
 __all__ = [
     "BANK_ACCOUNT_INVALID",
+    "DIRECTION_LOCKED_BY_PAYMENTS",
     "DIRECTION_MISMATCH",
     "DUE_BEFORE_ISSUE",
+    "INSTRUMENT_HAS_PAYMENTS",
     "INSTRUMENT_MISSING",
     "INVALID_TRANSITION",
     "PROJECT_INVALID",
@@ -61,3 +63,18 @@ TERMINAL_STATUS_DELETE = "Yalnızca portföydeki kayıt silinebilir"
 #: `collected` bir kayit `issued` olur ve K2'nin ASLA uretemeyecegi bir cift
 #: PATCH uzerinden dogardi — invaryantin IKINCI yazma kapisi (BOQ-SEC-B kanonu).
 TERMINAL_STATUS_DIRECTION = "Portföyden çıkmış bir kaydın türü ve yönü değiştirilemez"
+
+#: 409 — 🔴 bagli odemesi olan evrak SILINEMEZ. FK `ON DELETE SET NULL`dur:
+#: silme, bagli odemelerin bagini KOPARIR ve bagsiz odemeyi nakit sayan
+#: `balance.cash_realized_condition` yuzunden banka bakiyesi tahsil edilmemis
+#: tutar kadar ANINDA siser. Ayri metindir cunku kullanicinin yapabilecegi sey de
+#: ayridir: terminal durum "bu kayit kapandi" demektir, bu ise "once bagli
+#: odemeyi sil" demektir. `treasury.service.ACCOUNT_HAS_PAYMENTS` kardesidir.
+INSTRUMENT_HAS_PAYMENTS = "Bu evrağa bağlı ödeme kayıtları var; önce onları silin"
+
+#: 409 — 🔴 bagli odemesi olan evrakta `direction`/`instrument_kind` DEGISTIRILEMEZ.
+#: Bagin yon uyumu odeme YAZILIRKEN bir kez dogrulanir
+#: (`payments_service._UYUMLU_YON`, 422); PATCH onu geriye donuk gecersizlestirirdi
+#: ve yeniden dogrulanmazdi. `TERMINAL_STATUS_DIRECTION`dan AYRI metindir: kayit
+#: terminal DEGILDIR, kilitleyen sey durum degil BAGDIR.
+DIRECTION_LOCKED_BY_PAYMENTS = "Bu evrağa bağlı ödeme kayıtları var; türü ve yönü değiştirilemez"

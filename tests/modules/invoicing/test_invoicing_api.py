@@ -242,6 +242,36 @@ async def test_tevkifat_KDVden_dusulur(client, muhasebe_headers, gorunen_proje) 
     assert Decimal(govde["total"]) == Decimal("116000.00")
 
 
+async def test_TAM_KESINTI_tek_kuruslu_tutarda_OPAK_409_VERMEZ(
+    client, muhasebe_headers, gorunen_proje
+) -> None:
+    """🔴 CANLI YOL — `advance_rate + retention_rate == 100` ve tek kuruşlu bir
+    ara toplam faturayı KAYDEDİLEMEZ yapıyordu.
+
+    Oranlar kuralı İHLAL ETMİYOR (`body_blockers` boş döner: tam %100 meşrudur),
+    ama iki kesinti bacağı ayrı ayrı yukarı yuvarlandığı için `tax_base` = −0,01
+    doğuyor ve `ck_invoices_amounts_non_negative`in `total >= 0` dalı
+    `exception_handlers`ta OPAK bir **409 "Veri bütünlüğü hatası"**na dönüşüyordu:
+    kullanıcı ne temiz bir 422 ne de doğru sonuç olan 0,00 ₺'yi alıyordu.
+    """
+    govde = _giden(
+        project_id=str(gorunen_proje.id),
+        advance_rate="50.00",
+        retention_rate="50.00",
+        lines=[dict(_KALEM, quantity="1.000", unit_price="12345.67")],
+    )
+    resp = await client.post(_YOL, headers=muhasebe_headers, json=govde)
+    assert resp.status_code == 201, resp.text
+    cevap = resp.json()
+    assert Decimal(cevap["subtotal"]) == Decimal("12345.67")
+    assert Decimal(cevap["tax_base"]) == Decimal("0.00")
+    assert Decimal(cevap["vat_amount"]) == Decimal("0.00")
+    assert Decimal(cevap["total"]) == Decimal("0.00")
+    assert Decimal(cevap["advance_amount"]) + Decimal(cevap["retention_amount"]) == Decimal(
+        "12345.67"
+    )
+
+
 async def test_giden_faturada_istemci_invoice_no_GONDEREMEZ_422(
     client, muhasebe_headers, gorunen_proje
 ) -> None:

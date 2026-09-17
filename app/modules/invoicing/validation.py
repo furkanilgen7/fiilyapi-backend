@@ -89,6 +89,8 @@ __all__ = [
     "source_amount_blockers",
     "source_amount_matches",
     "source_amount_mismatch",
+    "source_posting_base_blockers",
+    "source_posting_base_mismatch",
 ]
 
 #: K6 — kalemsiz fatura gönderilemez/onaylanamaz.
@@ -231,6 +233,59 @@ def source_amount_matches(invoice_subtotal: Decimal, source_gross: Decimal) -> b
     kuruşu AÇIKÇA tolere eder. `>` ile kıyaslanır: tam 0,01 fark GEÇER.
     """
     return abs(invoice_subtotal - source_gross) <= SOURCE_AMOUNT_TOLERANCE
+
+
+def source_posting_base_mismatch(invoice_tax_base: Decimal, source_base: Decimal) -> str:
+    """🔴 TAKAS-TABAN 422 metni — `source_amount_mismatch` gibi İKİ SAYIYI DA yazar.
+
+    Kullanıcıya YAPACAĞI İŞİ de söyler: fark, kesinti oranlarının faturaya
+    taşınmamasından doğar ve düzeltmenin yeri faturanın oran alanlarıdır.
+    """
+    return (
+        f"Faturanın matrahı ({invoice_tax_base}) bağlı olduğu hakedişin fişe giren "
+        f"tutarına ({source_base}) eşit olmalıdır; hakedişin avans ve teminat "
+        f"kesinti oranlarını faturaya da girin"
+    )
+
+
+def source_posting_base_blockers(
+    invoice_tax_base: Decimal, source_base: Decimal | None
+) -> list[str]:
+    """🔴 MU-3D TAKAS — *"takas TUTAR-KORUMALI mı"* kapısı (ÖLÇÜLMÜŞ kusur).
+
+    FAT-HAK kapısının (`source_amount_blockers`) KARDEŞİ ve tamamlayıcısıdır;
+    ikisi AYRI olguları ölçer ve biri ötekini İKAME ETMEZ:
+
+        FAT-HAK      : fatura `subtotal` == hakediş BRÜTÜ    (belge aynı işi mi
+                       faturalıyor)
+        TAKAS-TABAN  : fatura `tax_base` == hakediş FİŞİNİN tabanı (defterdeki
+                       tutar takastan sonra AYNI mı kalıyor)
+
+    **Ölçülen kusur:** faturanın `advance_rate`/`retention_rate` alanları YALNIZ
+    gövdeden gelir ve kaynak hakedişten HİÇ kopyalanmaz. Oranlar boş bırakılırsa
+    `tax_base == subtotal == brüt` olur, oysa hakediş fişinin tabanı
+    `brüt − avans − teminat`tır (`progress_payments.calculations.posting_base`).
+    `send`/`approve` anında hakediş fişi STORNO edilir ve faturanın fişi FARKLI
+    bir tutar yazar: gider/hasılat `avans + teminat` kadar KAYAR. 🔴 Her fiş
+    kendi içinde dengeli olduğu için MİZAN DENK KALIR ve hiçbir kolon farkı
+    kusuru ele vermez.
+
+    `source_base is None` "stornolanacak CANLI fiş YOK" demektir (kaynak bu iki
+    ailenin dışında, ya da henüz fişlenmemiş) ve kural KOŞMAZ: kaydıracak bir
+    takas yoktur.
+
+    Tolerans FAT-HAK'ın SOURCE_AMOUNT_TOLERANCE'ıyla AYNI sayıdır ve tek
+    kopyadan okunur — iki taraf da `Decimal` + `ROUND_HALF_UP` ile 2 haneye
+    yuvarlanır ama yuvarlama NOKTALARI farklıdır (gerekçe
+    `source_amount_matches`ta ölçülmüştür).
+
+    🔴 ORM'e DOKUNMAZ (modül docstring'i): tabanı ÇAĞIRAN okur.
+    """
+    if source_base is None:
+        return []
+    if abs(invoice_tax_base - source_base) <= SOURCE_AMOUNT_TOLERANCE:
+        return []
+    return [source_posting_base_mismatch(invoice_tax_base, source_base)]
 
 
 def source_amount_blockers(invoice_subtotal: Decimal, source_gross: Decimal | None) -> list[str]:
