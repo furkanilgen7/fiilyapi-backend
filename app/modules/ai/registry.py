@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import dataclasses
 import enum
+import logging
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
@@ -50,6 +51,8 @@ from app.modules.ai import guards
 from app.modules.ai.models import AiToolCallPhase, AiToolDecision
 from app.modules.ai.result import AracSonucu, ToolError
 from app.modules.ai.transport import ReadOnlyTransport, YolReddedildi
+
+logger = logging.getLogger(__name__)
 
 
 class ToolKapsami(str, enum.Enum):
@@ -360,6 +363,33 @@ class ToolRegistry:
             sonuc = ToolError("yol_kapsam_disi")
             hata = "yol_kapsam_disi"
         except httpx.HTTPError as exc:
+            sonuc = ToolError("ust_kaynak_hatasi")
+            hata = type(exc).__name__
+        # --- 6a. BEKLENMEYEN İSTİSNA — HUNİNİN SON DALI --------------
+        # 🔴 İki dal YETMİYORDU ve eksiği ölçüldü: 22 okuma handler'ı üst
+        # kaynak gövdesini `k["..."]` ile ayıklayıp STRICT bir pydantic
+        # modeli kurar. Bir alan NULL/eksik gelirse `ValidationError` ya da
+        # `KeyError` doğar; ikisi de ne `YolReddedildi` ne `httpx.HTTPError`
+        # olduğu için istisna huniden KAÇIYORDU. Kaçtığında iki hasar birden
+        # oluşuyordu: (1) `started` satırı eşsiz kalıyor, `finished` HİÇ
+        # yazılmıyordu — denetim tablosunda atfedilemez bir çağrı asılı
+        # kalırdı; (2) `raise_app_exceptions=True` olduğu için istisna SSE
+        # gövdesine kaçıyor, yanıt BAŞLAMIŞ olduğundan akış yarıda kopuyor ve
+        # `tur_bitti` karesi hiç gelmiyordu.
+        #
+        # 🔴 Kapı HUNİDEDİR, handler'larda DEĞİL: bu dosyanın açılış
+        # paragrafındaki "TEK HUNİ" doktrini gereği. 22 handler'a tek tek
+        # `try` koymak, birini yazan kişinin satırı unutmasına açıktır.
+        #
+        # 🔴 Kod `ust_kaynak_hatasi`dır: kullanıcıya giden cümle aynıdır ve
+        # kod sözlüğü (`guards.HATA_METINLERI`) KAPALI kalır. Ayrımı
+        # denetim taşır — `error` alanına istisnanın TÜRÜ yazılır.
+        except Exception as exc:  # noqa: BLE001 — gerekçe yukarıda
+            logger.exception(
+                "AI aracı '%s' handler'ının İÇİNDE beklenmeyen istisna: "
+                "zarf ToolError'a düşürüldü, tur devam ediyor.",
+                arac_adi,
+            )
             sonuc = ToolError("ust_kaynak_hatasi")
             hata = type(exc).__name__
         # --- 6b. ALAN MASKESİ, ÇALIŞMA ANINDA (S5-c / A1) --------------

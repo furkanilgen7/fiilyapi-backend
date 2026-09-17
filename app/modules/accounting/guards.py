@@ -28,7 +28,9 @@ __all__ = [
     "ACCOUNT_HAS_CHILDREN",
     "ACCOUNT_HAS_JOURNAL_LINES",
     "ACCOUNT_MISSING",
+    "ACCOUNT_TYPE_LOCKED",
     "ENTRY_ALREADY_REVERSED",
+    "ENTRY_DATE_IN_FUTURE",
     "INVALID_TRANSITION",
     "JOURNAL_ENTRY_MISSING",
     "JOURNAL_ENTRY_NOT_DELETABLE",
@@ -83,6 +85,14 @@ PARENT_HAS_JOURNAL_LINES = "Üst hesabın yevmiye kaydı var; altına hesap aç�
 # bağlıdır ama defter, mizan ve tüm raporlar KODU basar; kod değişseydi geçmiş
 # yevmiye sessizce başka bir hesaba kaymış gibi görünürdü.
 ACCOUNT_CODE_LOCKED = "Yevmiye kaydı olan hesabın kodu değiştirilemez"
+
+# 409 — 🔴 fiş satırı olan hesabın TÜRÜ değiştirilemez (`ACCOUNT_CODE_LOCKED`in
+# ikizi). Tür bir etiket değil, defterin YÖNÜDÜR: `balance.SIGN[tür]` bakiyenin
+# İŞARETİNİ, `balance_sheet._etkin_yon` kalemin BİLANÇO TARAFINI ondan okur.
+# Tür değişseydi tek bir PATCH ile geçmiş TÜM yevmiyenin yönü mizanda, bilançoda
+# ve gelir tablosunda geriye dönük ters dönerdi — ve bakiye SAKLANMADIĞI için
+# (K3 türevdir) hiçbir kolon farkı bunu ele vermezdi.
+ACCOUNT_TYPE_LOCKED = "Yevmiye kaydı olan hesabın türü değiştirilemez"
 
 # 409 — `journal_lines.account_id` FK RESTRICT'inin servis karşılığı. Sayım FK
 # ihlaline DÜŞMEDEN önce koşar: düşseydi kullanıcıya ya ham bir 500 ya da
@@ -149,6 +159,17 @@ REVERSAL_NOT_REVERSIBLE = "Ters kayıt fişi terslenemez"
 # SAHTE biçimde geçirir, çift dolu satır ise DB CHECK'ine düşüp kullanıcıya
 # ayrımsız bir 409 gösterirdi. DB kısıtı SON savunma olarak yerinde KALIR.
 LINE_SINGLE_SIDE = "Fiş satırı ya borç ya alacak taşır; ikisi birden ya da ikisi de boş olamaz"
+
+# 422 — 🔴 `entry_date`in ÜST SINIRI. Dört katmanın hiçbirinde yoktu: şema çıplak
+# `date`, `ck_journal_entries_period_matches_date` yalnız dönem kolonlarını
+# tarihe bağlar, dönem kapısı da ısırmaz çünkü `periods_service.lock_period`
+# istenen dönemi YOKSA `open` olarak DOĞURUR — yani gelecek bir ay isteğin
+# kendisiyle açılır. İleri tarihli fiş bugünün mizanında/bilançosunda/KDV
+# beyanında GÖRÜNMEZ, üstelik stornosu `timezone.today()` tarihlidir (K6) ve
+# orijinalinden ÖNCEKİ döneme düşer: bir ay −tutar, öteki ay +tutar.
+# 🔴 BUGÜN sınırda GEÇER (`>` kullanılır, `>=` DEĞİL): bugünün fişi kesilemeseydi
+# kapı kuralı değil kullanımı engellerdi.
+ENTRY_DATE_IN_FUTURE = "Fiş tarihi gelecekte olamaz"
 
 # --------------------------------------------------------------------------- #
 # MU-2 T3 (dönem kilidi) metinleri

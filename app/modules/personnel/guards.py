@@ -101,6 +101,16 @@ LEAVE_TYPE_INACTIVE = "Seçilen izin tipi pasif, kullanılamaz"
 # ama ihlali 409 "veri bütünlüğü" verirdi; servis DB'ye düşmeden Türkçe 422 atar.
 LEAVE_DATE_ORDER = "İzin bitiş tarihi başlangıç tarihinden önce olamaz"
 
+# 422 — PATCH gövdesinde NOT NULL kolonlara AÇIK `null`. Şema alanları
+# `... | None = None` olmak ZORUNDA (kısmi gönderim), bu yüzden "gönderilmedi" ile
+# "null gönderildi" ancak `model_fields_set` ile ayrılır. Ayrılmazsa null,
+# `setattr` ile NOT NULL kolona yazılır ve `calculate_leave_days` DB'ye
+# VARILMADAN `TypeError` atar (yakalayıcısı yok → 500) ya da `leave_type_id`de
+# gövdesi belirsiz 409'a düşer. `note`/`document_id` bu listede DEĞİL: onlar
+# nullable kolonlardır ve null ile TEMİZLENMELERİ meşrudur.
+LEAVE_NULLABLE_OLMAYAN_ALANLAR: tuple[str, ...] = ("leave_type_id", "start_date", "end_date")
+LEAVE_FIELD_NOT_NULL = "İzin tipi, başlangıç ve bitiş tarihi boş bırakılamaz"
+
 # 409 — karara bağlanmış talep DÜZENLENEMEZ/SİLİNEMEZ (spec §3: "yalnız pending").
 # `ConflictError`: engel kaydın MEVCUT DURUMUDUR, gövdedeki bir alan değil; 422
 # verilseydi ekran "hangi alanı düzelteyim" diye arardı. Onaylı izin bakiyeyi

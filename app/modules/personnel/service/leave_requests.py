@@ -292,8 +292,11 @@ async def update_leave_request(
     if "leave_type_id" in updates and updates["leave_type_id"] is not None:
         leave_type = await _resolve_leave_type(session, updates["leave_type_id"])
 
-    efektif_baslangic = updates.get("start_date") or request.start_date
-    efektif_bitis = updates.get("end_date") or request.end_date
+    # `or` DEĞİL: "gönderilmedi" ile "null gönderildi" ayrı şeylerdir ve `or`
+    # ikincisini sessizce eski değere düşürürdü (şema null'ı zaten reddediyor,
+    # bu satır o kapının arkasında yanlış varsayım bırakmamak içindir).
+    efektif_baslangic = updates["start_date"] if "start_date" in updates else request.start_date
+    efektif_bitis = updates["end_date"] if "end_date" in updates else request.end_date
     _assert_date_order(efektif_baslangic, efektif_bitis)
 
     if updates.get("document_id") is not None:

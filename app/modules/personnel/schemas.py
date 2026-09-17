@@ -382,6 +382,20 @@ class LeaveRequestUpdate(BaseModel):
     note: str | None = Field(default=None, max_length=2000)
     document_id: uuid.UUID | None = None
 
+    @model_validator(mode="after")
+    def _zorunlu_alanlar_null_olamaz(self) -> "LeaveRequestUpdate":
+        """AÇIK `null` reddi — "gönderilmedi" ile "null gönderildi" AYRI şeylerdir.
+
+        Kısmi gönderim için alanlar `... | None = None` olmak zorunda, bu yüzden
+        tip tek başına null'ı elemez; ayrım YALNIZ `model_fields_set`tedir. Kural
+        gövdenin BİÇİMİNE bakar (DB durumuna değil) — o yüzden burada, tarih
+        SIRASI kuralı ise birleştirilmiş değer istediği için serviste kalır.
+        """
+        for alan in guards.LEAVE_NULLABLE_OLMAYAN_ALANLAR:
+            if alan in self.model_fields_set and getattr(self, alan) is None:
+                raise ValueError(guards.LEAVE_FIELD_NOT_NULL)
+        return self
+
 
 class LeaveTypeResponse(BaseModel):
     """Katalog satırı — SALT OKUMA (spec §1: CRUD ucu AÇILMAZ, ayarlar dilimi).

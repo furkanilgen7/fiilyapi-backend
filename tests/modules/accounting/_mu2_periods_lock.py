@@ -51,11 +51,17 @@ _KODLAR = ("199", "399")
 
 #: Testin dönemi — canlı takvimden UZAK, sabit. Değişken bir dönem (bugün)
 #: seçilseydi başka bir testin kurduğu satırla çakışabilirdi.
-YIL, AY = 2031, 5
+#:
+#: 🔴 GEÇMİŞE alındı (2031 → 2019): `service.assert_entry_date_not_future` artık
+#: ileri tarihli fişi **422** ile reddediyor ve bu dosya fişi GERÇEK uçtan
+#: (`create_entry`) kesiyor. Uzaklık korunmuştur — 2019 de canlı takvimden aynı
+#: ölçüde uzaktır ve hiçbir testte kullanılmıyor; yarışın kurulumu, iddiaları ve
+#: ölçülmüş sonucu (`['closed', 'conflict']`) DEĞİŞMEDİ.
+YIL, AY = 2019, 5
 TARIH = date(YIL, AY, 12)
 
-#: SIRA-B — kronolojik sıra denetiminin baktığı KOMŞU dönemler. `ONCEKI` (2031/4)
-#: `(YIL, AY)`nin takvim öncesidir; `ONCEKININ_ONCESI` (2031/3) yalnızca
+#: SIRA-B — kronolojik sıra denetiminin baktığı KOMŞU dönemler. `ONCEKI` (2019/4)
+#: `(YIL, AY)`nin takvim öncesidir; `ONCEKININ_ONCESI` (2019/3) yalnızca
 #: `ONCEKI`nin kendisinin de kapatılabilmesi için KAPALI kurulur — aksi hâlde
 #: eşzamanlılık testinde iki görevden biri sıra kuralına takılır ve yarış hiç
 #: kurulamazdı.
@@ -137,7 +143,7 @@ async def _kur(
                     year=ONCEKININ_ONCESI[0],
                     month=ONCEKININ_ONCESI[1],
                     status=AccountingPeriodStatus.closed,
-                    closed_at=datetime(2031, 4, 1, tzinfo=UTC),
+                    closed_at=datetime(2019, 4, 1, tzinfo=UTC),
                     closed_by_id=aktorler[0].id,
                 )
             )
@@ -230,7 +236,7 @@ async def _temizle(kurulum: _Kurulum) -> None:
         # 🔴 SAYAC SATIRI DA SILINIR (TB-XDIST, 2026-08-25). Bu dosya GERCEKTEN
         # commit eder; `generate_entry_no(..., year=YIL)` cagrisi
         # `journal_entry_counters`e KALICI bir satir yaziyordu ve temizlik onu
-        # ATLIYORDU. Sonuc: paylasilan test veritabaninda `{2031: N}` satiri
+        # ATLIYORDU. Sonuc: paylasilan test veritabaninda `{2019: N}` satiri
         # kaliyor ve `test_fisno_numbering.py::test_YIL_sayaclari_BIRBIRINI_sifirlamaz`
         # (tabloyu GLOBAL okuyan bir iddia) kirmiziya donuyordu. Seri kosuda
         # gorunmuyordu cunku alfabetik sirada `test_fisno_*` bu dosyadan ONCE

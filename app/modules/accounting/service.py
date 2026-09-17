@@ -52,11 +52,13 @@ genelinde tek dosyadadır).
 
 import uuid
 from collections.abc import Sequence
+from datetime import date
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AccountingValidationError, ConflictError, NotFoundError
+from app.core.timezone import today
 from app.modules.accounting import (
     guards,
     numbering,
@@ -86,6 +88,7 @@ from app.modules.users.models import User
 
 __all__ = [
     "apply_totals",
+    "assert_entry_date_not_future",
     "build_detail",
     "create_entry",
     "delete_entry",
@@ -111,6 +114,26 @@ def raise_blockers(engeller: list[str]) -> None:
     """
     if engeller:
         raise AccountingValidationError(_ENGEL_AYRACI.join(engeller))
+
+
+def assert_entry_date_not_future(entry_date: date) -> None:
+    """🔴 `entry_date`in ÜST SINIRI — **422**, İKİ yazma yolunda da koşar.
+
+    Bugün TAM SINIRDA GEÇER (`>`, `>=` DEĞİL): bugünün fişi kesilemeseydi kapı
+    kuralı değil KULLANIMI engellerdi (T6/K6 sınır dersi).
+
+    "Bugün" `timezone.today()`dir, `date.today()` DEĞİL: ikincisi sunucunun
+    yerel saatini (Railway'de UTC) okur ve TR gecesi 21:00-24:00 arasında DÜNÜ
+    döndürerek bugünün fişini reddederdi (TB5 bekçisi bunu ayrıca kırmızıya
+    çevirir). Çağrı SERVİS SINIRINDA yapılır ve aşağı geçirilmez — `sales`
+    emsalinin aynısı; şemaya konsaydı saf çekirdek takvimi bilir hâle gelirdi.
+
+    Kapı `assert_periods_open`tan ÖNCE koşar: sonra koşsaydı reddedilen istek
+    bile gelecek bir dönem satırını `open` olarak DOĞURURDU (`lock_period`
+    UPSERT'tir ve "yoksa doğar" der).
+    """
+    if entry_date > today():
+        raise AccountingValidationError(guards.ENTRY_DATE_IN_FUTURE)
 
 
 async def entry_or_404(
@@ -327,7 +350,13 @@ async def create_entry(
     serileşiriz, aksi hâlde kapanışın taslak sayımı ile bu INSERT arasındaki
     pencereden taze bir fiş kapalı döneme düşerdi. Kapı K1'den de ÖNCEDİR:
     kapalı bir aya kesilen fişin dengeli olup olmadığı ilgisizdir.
+
+    🔴 **TEK İSTİSNA — `assert_entry_date_not_future` dönem kapısından da
+    ÖNCEDİR.** Sıra bilinçlidir: `lock_period` istenen dönemi YOKSA `open`
+    olarak DOĞURUR, dolayısıyla dönem kapısı önce koşsaydı REDDEDİLEN bir istek
+    bile gelecek bir dönem satırı bırakırdı.
     """
+    assert_entry_date_not_future(data.entry_date)
     await periods_service.assert_periods_open(session, [periods_service.period_of(data.entry_date)])
     await gate_lines(session, data.lines)
 
@@ -376,6 +405,7 @@ async def update_entry(
     verilen = data.model_dump(exclude_unset=True)
 
     if verilen.get("entry_date") is not None:
+        assert_entry_date_not_future(verilen["entry_date"])
         _apply_period(entry, verilen["entry_date"])
     if verilen.get("description") is not None:
         entry.description = verilen["description"].strip()

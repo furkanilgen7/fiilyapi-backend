@@ -98,7 +98,7 @@ async def test_YIL_sayaclari_BIRBIRINI_sifirlamaz(seeded_db: AsyncSession) -> No
     # 🔴 IDDIA BU TESTIN ACTIGI YILLARA DARALTILIR (TB-XDIST, 2026-08-25).
     # Onceki hali tabloyu GLOBAL okuyordu: `journal_entry_counters`e yazan BASKA
     # her testin satiri bu iddiayi oynatiyordu. Fiilen oldu — commit eden
-    # `test_mu2_periods_lock.py` 2031 satirini birakiyordu. Sizintinin kendisi
+    # `test_mu2_periods_lock.py` 2019 satirini birakiyordu. Sizintinin kendisi
     # orada kapatildi; bu daraltma IKINCI katmandir: iddia yalnizca KENDI
     # actigi hatlari konusur.
     BU_TESTIN_YILLARI = (2026, 2027)

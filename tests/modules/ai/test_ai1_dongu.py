@@ -31,7 +31,7 @@ from app.core.security import TokenError, create_access_token
 from app.modules.ai import audit as ai_audit
 from app.modules.ai import loop as ai_loop
 from app.modules.ai.loop import ajan_turu, tur_niyet_izni, tur_ozeti
-from app.modules.ai.models import AiToolCall
+from app.modules.ai.models import AiToolCall, AiToolCallPhase, AiToolDecision
 from app.modules.ai.providers.base import (
     AiOlay,
     AracCagrisiHazir,
@@ -787,3 +787,147 @@ def test_YETKILERIM_ve_NAVIGATE_TO_hala_kayitli() -> None:
     adlar = {s.ad for s in REGISTRY.tum_araclar}
     assert {YETKILERIM.ad, NAVIGATE_TO.ad} <= adlar
     assert len(adlar) == 22
+
+
+# --------------------------------------------------------------------------- #
+# DÖNGÜ REDDİ = DENETİM SATIRI (kayıt #77)
+#
+# 🔴 `_cagriyi_kosur`un ÜÇ erken dönüşü (`butce_asildi` · `niyet_disi` ·
+# `oturum_suresi_doldu`) huniye HİÇ ulaşmıyordu; `record_tool_call`ın TEK
+# çağrıldığı yer `registry.invoke` içindeki `_iz` olduğu için bu üç ret
+# `ai_tool_calls`te SIFIR satır bırakıyordu. Geriye kalan tek iz `audit_log`
+# tur özetiydi ve o yalnız TOPLAM yazar: hangi araç, hangi kod, kaç ret YOK.
+#
+# `audit.py`nin doktrini: *"iz bırakmayan bir AI turu, atfedilemez bir turdur."*
+# --------------------------------------------------------------------------- #
+
+
+async def _denetim(db_session, arac_adi: str) -> list[AiToolCall]:
+    satirlar = await db_session.execute(
+        select(AiToolCall).where(AiToolCall.tool_name == arac_adi).order_by(AiToolCall.occurred_at)
+    )
+    return list(satirlar.scalars())
+
+
+def _cift_satir_iddiasi(satirlar: list[AiToolCall], *, karar, hata: str) -> None:
+    assert len(satirlar) == 2, (
+        f"Reddedilen çağrı `ai_tool_calls`te {len(satirlar)} satır bıraktı, 2 bekleniyordu "
+        "(`started` + `finished`). Sıfırsa ret HİÇ atfedilemez."
+    )
+    assert [s.phase for s in satirlar] == [AiToolCallPhase.started, AiToolCallPhase.finished]
+    assert len({s.call_id for s in satirlar}) == 1, "iki satır AYNI call_id taşımalı"
+    assert {s.decision for s in satirlar} == {karar}
+    assert {s.error for s in satirlar} == {hata}
+
+
+async def test_NIYET_DISI_cagri_DENETIM_satiri_BIRAKIR(
+    kosum, user_factory, seeded_db, db_session
+) -> None:
+    """🔴 GÜVENLİK OLAYI: zehirli çıktının yazma denemesi yalnız SSE'de görünüyordu.
+
+    B21 bekçisi (`test_B21_zehirli_arac_ciktisi_YAZMA_TETIKLEYEMEZ`) KÖRDÜR:
+    yalnız `AracSonuclandi.hal`/mesaj metnine bakar, DB'ye hiç bakmaz. Denetçi
+    denemenin YAPILDIĞINI, HANGİ yazma aracının hedeflendiğini ve KİME
+    atfedileceğini tablodan okuyamıyordu.
+    """
+    user, bearer = await _kullanici(
+        user_factory, seeded_db, "niyetiz@fiil.example.com", rol="system_admin"
+    )
+    zehirli, _ = _sahte_spec("zehirli_arac", lambda: Ok(data={"not": ZEHIR}, row_count=1))
+    propose, propose_kosanlar = _sahte_spec(
+        "propose_zehir",
+        lambda: Ok(data="YAZILDI", row_count=1),
+        kapsam=ToolKapsami.SISTEM_YONETICISI,
+    )
+    kayit = ToolRegistry((zehirli,), (propose,))
+    saglayici = SahteSaglayici(
+        [
+            _arac_turu(_cagri("zehirli_arac", kimlik="c1")),
+            _arac_turu(_cagri("propose_zehir", {"hedef": "kasa"}, kimlik="c2")),
+            _BITTI,
+        ]
+    )
+
+    olaylar = await _kos(kosum=kosum, kayit=kayit, saglayici=saglayici, bearer=bearer)
+
+    # Pozitif kontrol: ret GERÇEKTEN oldu (yoksa aşağıdaki iddia boşa ölçer).
+    assert propose_kosanlar == []
+    izler = {o.cagri_id: o for o in olaylar if isinstance(o, AracSonuclandi)}
+    assert izler["c2"].hal == "ToolError"
+
+    satirlar = await _denetim(db_session, "propose_zehir")
+    _cift_satir_iddiasi(satirlar, karar=AiToolDecision.denied_permission, hata="niyet_disi")
+    assert satirlar[0].user_id == user.id, "ret KİMSEYE atfedilmemiş"
+    assert satirlar[0].arguments == {"hedef": "kasa"}, "hedeflenen argümanlar kaybolmuş"
+    assert {s.provider for s in satirlar} == {"sahte"}
+
+
+async def test_BUTCE_asimi_DENETIM_satiri_BIRAKIR(
+    kosum, user_factory, seeded_db, db_session
+) -> None:
+    """🔴 `AiToolDecision.denied_budget` enum üyesi TAM BU ret için açılmıştı ve
+    depoda hiçbir yerde YAZILMIYORDU (yalnız tanımı ve migration'ı vardı).
+    """
+    from app.core.config import Settings
+
+    user, bearer = await _kullanici(user_factory, seeded_db, "butceiz@fiil.example.com")
+    spec, kosanlar = _sahte_spec("butce_araci", lambda: Ok(data=[1], row_count=1))
+    kayit = ToolRegistry((spec,))
+    saglayici = SahteSaglayici(
+        [
+            _arac_turu(_cagri("butce_araci", kimlik="c1")),
+            _arac_turu(_cagri("butce_araci", kimlik="c2")),
+            _BITTI,
+        ]
+    )
+    ayarlar = Settings(jwt_secret="t", ai_max_tool_calls=1)
+
+    await _kos(kosum=kosum, kayit=kayit, saglayici=saglayici, bearer=bearer, ayarlar=ayarlar)
+
+    assert kosanlar == ["butce_araci"], "tavan aşıldığı hâlde araç KOŞTU"
+    satirlar = await _denetim(db_session, "butce_araci")
+    # İlk çağrı huniden geçti (2 satır) + aşan çağrı (2 satır) = 4.
+    assert len(satirlar) == 4, f"bütçe aşımı iz bırakmadı: {[s.phase for s in satirlar]}"
+    asan = [s for s in satirlar if s.decision is AiToolDecision.denied_budget]
+    _cift_satir_iddiasi(asan, karar=AiToolDecision.denied_budget, hata="butce_asildi")
+    assert asan[0].user_id == user.id
+
+
+async def test_TUR_ORTASI_OTURUM_DOLMASI_DENETIM_satiri_BIRAKIR(
+    kosum, user_factory, seeded_db, db_session, monkeypatch
+) -> None:
+    """🔴 Tur ortasında iptal edilmiş oturum (token_version/passive) da sessizdi."""
+    user, bearer = await _kullanici(user_factory, seeded_db, "oturumiz@fiil.example.com")
+    spec, _ = _sahte_spec("oturum_araci", lambda: Ok(data=[1], row_count=1))
+    kayit = ToolRegistry((spec,))
+    saglayici = SahteSaglayici(
+        [
+            _arac_turu(_cagri("oturum_araci", kimlik="c1")),
+            _arac_turu(_cagri("oturum_araci", kimlik="c2")),
+            _BITTI,
+        ]
+    )
+
+    gercek_coz = ai_loop.decode_token
+    sayac = {"n": 0}
+
+    def _coz(token: str, *, expected_type: str = "access"):
+        sayac["n"] += 1
+        # 1: tur açılışı · 2: ilk dispatch · 3: ikinci dispatch → burada süre dolar.
+        if sayac["n"] >= 3:
+            raise TokenError("süresi doldu")
+        return gercek_coz(token, expected_type=expected_type)
+
+    monkeypatch.setattr(ai_loop, "decode_token", _coz)
+
+    olaylar = await _kos(kosum=kosum, kayit=kayit, saglayici=saglayici, bearer=bearer)
+    izler = {o.cagri_id: o for o in olaylar if isinstance(o, AracSonuclandi)}
+    assert izler["c2"].hal == "ToolError"  # pozitif kontrol
+
+    satirlar = await _denetim(db_session, "oturum_araci")
+    assert len(satirlar) == 4, f"oturum reddi iz bırakmadı: {[s.phase for s in satirlar]}"
+    dolan = [s for s in satirlar if s.error == "oturum_suresi_doldu"]
+    _cift_satir_iddiasi(dolan, karar=AiToolDecision.denied_permission, hata="oturum_suresi_doldu")
+    # 🔴 B28: satır oturum reddini "yetkin yok"tan AYIRT ETTİRİR — `error` alanı
+    # taşır; `decision` huninin kapalı sözlüğüdür ve yeni üye açmak migration ister.
+    assert dolan[0].user_id == user.id
