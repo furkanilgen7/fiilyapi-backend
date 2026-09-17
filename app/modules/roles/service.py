@@ -32,6 +32,19 @@ async def update_role_permission(
     if permission is None:
         raise NotFoundError("İzin satırı bulunamadı")
 
+    # 🔴 `Scope` DEKORATİFTİR: `app/core/permissions.py` içinde `scope` kelimesi
+    # GEÇMEZ, hiçbir uç `permission.scope`u okumaz (`projects.service`in
+    # `visible_projects`i yalnız `AccessLevel.admin` + `user_project_access`e
+    # bakar). İzin Matrisi ekranı ise "Kendi / Sınırlı / Mali" etiketlerini
+    # YAZIYLA vaat ediyor. Vaat uygulanana kadar YENİ bir daraltma yazılamaz:
+    # 200 dönmek yöneticiye olmayan bir kısıtı kalıcı olarak onaylatırdı.
+    # Seed satırları (roles/seed_data.py:183-227) AYNEN kalır — mevcut kapsam
+    # geri gönderildiğinde seviye değişimi geçer, `all`a çekmek hep serbesttir.
+    if scope is not Scope.all and scope != permission.scope:
+        raise PermissionLockedError(
+            "Kapsam kısıtı henüz uygulanmıyor; erişimi daraltmak için proje erişimini kullanın."
+        )
+
     permission.access_level = level
     permission.scope = scope
     await session.flush()

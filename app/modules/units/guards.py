@@ -26,7 +26,7 @@ from app.modules.projects.service import visible_projects
 from app.modules.sites import repository as sites_repository
 from app.modules.sites.models import Site
 from app.modules.units import repository
-from app.modules.units.models import Block, Unit, UnitOwnerSide
+from app.modules.units.models import Block, Unit, UnitOwnerSide, UnitSalesStatus
 from app.modules.users.models import User
 
 # 404 GOVDESI DE AYIRT EDICI OLMAMALIDIR (P2 `sites/service.py` dersi): gorunmeyen
@@ -56,6 +56,12 @@ SHAREHOLDER_WRONG_SIDE = "Hissedar yalnızca arsa payı ünitesine atanabilir"
 # elinde UUID olan kullanici kaydin var oldugunu ayirt edebilirdi.
 SHAREHOLDER_MISSING = "Hissedar bulunamadı"
 NET_GT_GROSS = "Net alan brüt alandan büyük olamaz"
+# P8 T3 (satis spec §3): `reserved`/`sold` SATIS KAYDINDAN turer
+# (`sales/service._UNIT_STATUS_BY_SALE_STATUS`). Acilis vitrininde elle
+# secilirlerse unite, `unit_sales`te SATIRI OLMADAN satilmis gorunur.
+OPENING_STATUS_NEEDS_SALE = (
+    'Ünite açılışında satış durumu "Satıldı"/"Rezerve" seçilemez; bu durumlar satış kaydından türer'
+)
 # Karar 9 (spec §4.2, §8.3): kume KODDA sabittir ve `schemas.VatRate` zorlar —
 # metin diger tum alan mesajlariyla birlikte BURADA durur.
 INVALID_VAT_RATE = "KDV oranı yalnızca %1, %10 veya %20 olabilir"
@@ -213,6 +219,22 @@ def ensure_owner_side_allowed(project: Project, owner_side: UnitOwnerSide | None
     """
     if owner_side is not None and project.project_type is not ProjectType.kat_karsiligi:
         raise ProjectTypeMismatchError(OWNER_SIDE_NOT_ALLOWED)
+
+
+def ensure_opening_sales_status(sales_status: UnitSalesStatus | None) -> None:
+    """Satis spec §3: unitenin vitrin durumu SATIS KAYDINDAN turetilir.
+
+    `UnitUpdate`ten alan cikarilirken (schemas.py "elle giris kilitlenir") bu
+    gerekce YALNIZ PATCH'e uygulanmisti; `UnitCreate` ikinci bir yazici olarak
+    kalmisti ve `sales_status="sold"` govdesi uniteyi `unit_sales`te SATIRI
+    OLMADAN satilmis gosteriyordu. Sema/DB ile zorlanamaz (kural baska tablonun
+    varligina bakar), bu yuzden `ensure_net_le_gross` gibi servis korkulugudur.
+
+    `closed` ("Satisa Kapali") kumenin DISINDADIR: satis kaydindan TUREMEZ
+    (haritada karsiligi yoktur) ve stok disi olmasi zaten kastedilendir.
+    """
+    if sales_status in (UnitSalesStatus.reserved, UnitSalesStatus.sold):
+        raise UnitValidationError(OPENING_STATUS_NEEDS_SALE)
 
 
 def ensure_net_le_gross(gross: Decimal | None, net: Decimal | None) -> None:

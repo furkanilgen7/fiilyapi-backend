@@ -286,7 +286,7 @@ async def _plan_rows(
     *,
     include_warnings: bool,
     dry_run: bool,
-) -> tuple[Project, dict[str, Block], list[Unit], list[_RowPlan]]:
+) -> tuple[Project, dict[str, Block], list[Unit], dict[uuid.UUID, str], list[_RowPlan]]:
     """`import` ve `import/validate` ucunun ORTAK cekirdegi (spec §6.2).
 
     Iki uc de BU fonksiyondan beslenir; kural KOPYALANMAZ. Ayrisan iki kopya,
@@ -303,12 +303,17 @@ async def _plan_rows(
         # Dosyanin TAMAMINI reddeden hata: satir listesi yok, tek Turkce mesaj.
         raise UnitValidationError(str(exc)) from exc
 
-    blocks = {
-        normalize_header(block.name): block
-        for block, _ in await repository.list_blocks_for_project(session, project.id)
-    }
+    block_rows = await repository.list_blocks_for_project(session, project.id)
+    blocks = {normalize_header(block.name): block for block, _ in block_rows}
     units = await repository.list_units_for_project(session, project.id)
-    by_block_id = {block.id: key for key, block in blocks.items()}
+    # `by_block_id` SOZLUKTEN DEGIL blok LISTESINDEN kurulur (kayit 433/434):
+    # `uq_blocks_project_name` TAM ESITLIKTIR, yani ayni projede "A Blok" ve
+    # "A BLOK" birlikte yasayabilir; `normalize_header` ikisini TEK anahtara
+    # cokertince sozlukte yalniz biri kalir ve golgelenen blogun id'si haritada
+    # BULUNMAZDI -> `KeyError` -> 500. Listeden kurunca iki id de ayni anahtara
+    # duser: golgelenen blogun unite numaralari da ALINMIS sayilir (muhafazakâr
+    # davranis — cakisan numara ice aktarmada reddedilir).
+    by_block_id = {block.id: normalize_header(block.name) for block, _ in block_rows}
     taken: dict[str, set[str]] = {key: set() for key in blocks}
     for unit in units:
         taken[by_block_id[unit.block_id]].add(unit.unit_no)
@@ -323,7 +328,7 @@ async def _plan_rows(
         plans.append(
             _row_plan(parsed, messages, importable=importable, imported=importable and not dry_run)
         )
-    return project, blocks, units, plans
+    return project, blocks, units, by_block_id, plans
 
 
 def _blocks_to_create(blocks: dict[str, Block], plans: list[_RowPlan]) -> list[str]:
@@ -362,7 +367,7 @@ async def validate_import(
     `site_id` burada da dogrulanir: kullanici aktarimdan ONCE, dogrulama
     adiminda ogrenmelidir ki hedef santiyesi gecersiz.
     """
-    _, blocks, _, plans = await _plan_rows(
+    _, blocks, _, _, plans = await _plan_rows(
         session, actor, project_id, content, include_warnings=include_warnings, dry_run=True
     )
     names = _blocks_to_create(blocks, plans)
@@ -404,7 +409,7 @@ async def import_units(
     yazan kullanici mevcut "A Blok"a yazar. Aksi hâlde `uq_blocks_project_name`
     ihlaline dusup anlamsiz bir 409 alirdi.
     """
-    project, blocks, units, plans = await _plan_rows(
+    project, blocks, units, by_block_id, plans = await _plan_rows(
         session, actor, project_id, content, include_warnings=include_warnings, dry_run=False
     )
     writable = [plan.data for plan in plans if plan.data is not None]
@@ -429,8 +434,10 @@ async def import_units(
     # Yeni satirlar blok icinde MEVCUTLARIN ARDINA eklenir (bulk ile ayni gerekce):
     # sifirdan baslasaydi yari dolu bir blokta eski ve yeni uniteler ic ice
     # gecerdi — `unit_no` metin oldugu icin ikincil sira "10 < 2" verir.
+    # `by_block_id` `_plan_rows`'tan gelir: `blocks` sozlugunden yeniden
+    # kurulsaydi harf varyantli iki blokta golgelenenin id'si dusup `KeyError`
+    # verirdi (kayit 433/434) — `_plan_rows`'taki ikiziyle ayni gerekce.
     next_sort: dict[str, int] = {}
-    by_block_id = {block.id: key for key, block in blocks.items()}
     for unit in units:
         key = by_block_id[unit.block_id]
         next_sort[key] = max(next_sort.get(key, 0), int(unit.sort_order) + 1)

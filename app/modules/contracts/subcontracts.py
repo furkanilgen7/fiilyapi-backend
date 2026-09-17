@@ -373,6 +373,24 @@ async def _ensure_source_item_in_project(
         raise NotFoundError(guards.ITEM_MISSING)
 
 
+def _ensure_price_allowed(contract: SubcontractorContract, unit_price: object) -> None:
+    """`guards.ITEM_PRICES_REQUIRED` YAYIN SONRASI da korunur (borç #141).
+
+    Kural `guards.validate_subcontract`te YALNIZ taslak→yayın geçişinde koşar;
+    kalem uçları o doğrulamadan geçmediği için yayındaki (is_draft=False) bir
+    sözleşmeye sonradan fiyatsız satır girilebiliyordu. O satır
+    `SubcontractorContractItemResponse.line_total`da 0 sayılır (bedel eksik
+    hesaplanır) ve `subcontractor_progress_payments/service.py` hakediş
+    üretimini 422 ile tıkar. Taslakta fiyatsız kalem YASAL kalır (spec §3.6:
+    "girilmedi" ile "0 TL" ayrımı) — kolon nullable KALIR, migration YOK.
+
+    İş kuralı serviste durur, şemada DEĞİL: zorunluluk kalemin kendi biçimine
+    değil, BAĞLI OLDUĞU sözleşmenin taslak olup olmadığına bakar.
+    """
+    if not contract.is_draft and unit_price is None:
+        raise SiteValidationError(guards.ITEM_PRICES_REQUIRED)
+
+
 async def create_subcontract_item(
     session: AsyncSession,
     actor: User,
@@ -382,6 +400,12 @@ async def create_subcontract_item(
     contract, project = await _visible_contract(session, actor, contract_id)
     await _ensure_source_item_in_project(session, data.source_contract_item_id, project.id)
     await _ensure_item_code_unique(session, contract.id, data.code)
+    # SIRA BİLİNÇLİ — fiyat kapısı EN SONDA. Önüne alınsaydı
+    # `_ensure_source_item_in_project`in IDOR 404'ünü 422 ile MASKELERDİ:
+    # `test_delete.py::test_source_item_baska_projeden_baglanamaz` (yayındaki
+    # sözleşme + fiyatsız gövde) bunu ölçtü ve kırmızıya döndü. Mevcut
+    # kapıların statü önceliği DEĞİŞMEZ.
+    _ensure_price_allowed(contract, data.unit_price)
     item = SubcontractorContractItem(
         contract_id=contract.id,
         source_contract_item_id=data.source_contract_item_id,
@@ -413,6 +437,12 @@ async def update_subcontract_item(
         await _ensure_item_code_unique(
             session, contract.id, updates["code"], exclude_item_id=item.id
         )
+    # `create_subcontract_item` ile AYNI sıra gerekçesi: fiyat kapısı mevcut
+    # 404/409 kapılarının ARKASINDA durur. `exclude_unset` şart — gövdede
+    # `unit_price` HİÇ yoksa kural koşmaz (yayındaki sözleşmenin zaten fiyatsız
+    # eski satırı `description` düzeltilerek güncellenebilir kalmalı).
+    if "unit_price" in updates:
+        _ensure_price_allowed(contract, updates["unit_price"])
     for field, value in updates.items():
         setattr(item, field, value)
     await session.flush()
@@ -460,6 +490,12 @@ async def load_items_from_employer(
         raise SiteValidationError(guards.NO_EMPLOYER_ITEMS)
 
     existing_codes = {item.code for item in contract.items}
+    # Bu uç fiyatı BİLİNÇLİ NULL yazar; yayındaki sözleşmede bu doğrudan
+    # `ITEM_PRICES_REQUIRED` ihlalidir (borç #141). Reddediliş YENİ satır
+    # yazılacaksa koşar: hepsi zaten varsa çağrı idempotent no-op'tur ve
+    # `test_ikinci_yukleme_idempotent`in sözleşmesi korunur.
+    if not contract.is_draft and any(k.code not in existing_codes for k in employer_items):
+        raise SiteValidationError(guards.ITEM_PRICES_REQUIRED)
     created_count = 0
     skipped_count = 0
     for index, employer_item in enumerate(employer_items):

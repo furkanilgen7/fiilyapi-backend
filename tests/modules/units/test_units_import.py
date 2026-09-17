@@ -643,3 +643,131 @@ def test_maliyet_okunur_ama_dondurulen_satirda_kolon_yok():
     assert [(w.row, w.message) for w in warnings] == [
         (3, "Fiyat maliyetin altında (₺860.000) — kontrol edin")
     ]
+
+
+# --- YÜKSEK/units-1: alan uzunlukları + harf varyantlı blok adı ---
+
+
+async def test_uzun_alanlar_satir_hatasi_uretir_500_degil(
+    client, db_session, user_factory, project_factory
+):
+    """Kayıt 427: `unit_no`/`layout`/blok adı uzunluk sınırları içe aktarmada da uygulanır.
+
+    Tekil `POST` şemada sınırlar: `UnitCreate.unit_no` max 30, `layout` max 20,
+    `BlockCreate.name` max 50 (schemas.py:386, 426, 428). İçe aktarmada YALNIZ
+    `floor` ölçülüyordu; aşırı uzun hücre Postgres `DataError`'una düşüyor ve
+    `DataError` için handler olmadığı için yanıt 422 değil 500 oluyordu — üstelik
+    aktarımın TAMAMI geri alınıyor ve hangi satırın sorumlu olduğu söylenmiyordu.
+    """
+    project = await project_factory("UZN-1", project_type="kendi_yatirim")
+    site = await _site(db_session, project)
+    await _block(db_session, project, site, name="A Blok")
+    token = await _login(client, user_factory, "system_admin")
+    content = _xlsx(
+        [
+            _row(unit_no="1"),
+            _row(unit_no="2", **{"Oda Tipi": "3+1 Dubleks Teraslı Bahçe"}),  # 25 > 20
+            _row(unit_no="U" * 31),  # 31 > 30
+            _row(unit_no="4", block="B" * 51),  # 51 > 50
+        ]
+    )
+
+    resp = await _post_import(client, project, content, token)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    rows = body["rows"]
+    assert [r["status"] for r in rows] == ["ok", "error", "error", "error"]
+    assert rows[1]["messages"] == ["Oda Tipi en fazla 20 karakter olabilir"]
+    assert rows[2]["messages"] == ["Ünite No en fazla 30 karakter olabilir"]
+    assert rows[3]["messages"] == ["Blok en fazla 50 karakter olabilir"]
+    assert [r["imported"] for r in rows] == [True, False, False, False]
+    # Hatalı satırların HİÇBİRİ yazılmadı ve geçerli satır KAYBOLMADI.
+    assert body["created"] == 1
+    assert await _count_units(db_session, project.id) == 1
+    assert await _count_blocks(db_session, project.id) == 1
+
+
+async def test_harf_varyantli_iki_blok_ice_aktarmayi_cokertmez(
+    client, db_session, user_factory, project_factory
+):
+    """Kayıt 433/434: `A Blok` + `A BLOK` aynı projede yaşayabilir.
+
+    `uq_blocks_project_name` ve `guards.ensure_block_name_unique` TAM EŞİTLİKTİR
+    (repository.py:55), ama içe aktarma blok sözlüğünü `normalize_header(name)`
+    ile anahtarlar — iki blok TEK anahtara çöker ve gölgede kalan bloğun id'si
+    `by_block_id` içinde BULUNMAZ, döngü `KeyError` atar → 500.
+    """
+    project = await project_factory("BLK-VAR", project_type="kendi_yatirim")
+    site = await _site(db_session, project)
+    ilk = await _block(db_session, project, site, name="A Blok")
+    golge = await _block(db_session, project, site, name="A BLOK")
+    # İKİ bloğa da ünite yazılır: sözlükte hangisinin sağ kaldığı sıralama
+    # kolasyonuna bağlıdır, test ona BAĞIMLI OLMAMALIDIR.
+    await _unit(db_session, project, ilk, unit_no="1")
+    await _unit(db_session, project, golge, unit_no="2")
+    token = await _login(client, user_factory, "system_admin")
+    content = _xlsx([_row(block="A Blok", unit_no="2")])
+
+    resp = await client.post(
+        f"/projects/{project.id}/units/import/validate",
+        files={"file": ("uniteler.xlsx", content, _XLSX_MIME)},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 200, resp.text
+    # Gölgelenen bloktaki `2` de ALINMIŞ sayılır: satır reddedilir, sessizce
+    # yanlış bloğa yazılmaz.
+    assert resp.json()["rows"][0]["status"] == "error"
+
+
+async def test_harf_varyantli_iki_blok_import_ucunu_de_cokertmez(
+    client, db_session, user_factory, project_factory
+):
+    """Aynı desen `import_units` içinde de var (batch.py:433-436)."""
+    project = await project_factory("BLK-VAR2", project_type="kendi_yatirim")
+    site = await _site(db_session, project)
+    ilk = await _block(db_session, project, site, name="A Blok")
+    golge = await _block(db_session, project, site, name="A BLOK")
+    await _unit(db_session, project, ilk, unit_no="1", sort_order=0)
+    await _unit(db_session, project, golge, unit_no="2", sort_order=7)
+    token = await _login(client, user_factory, "system_admin")
+    content = _xlsx([_row(block="A Blok", unit_no="3")])
+
+    resp = await _post_import(client, project, content, token)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["created"] == 1
+    # `sort_order` İKİ bloğun da mevcut ünitelerinin ARDINA gider (7 + 1).
+    yeni = (
+        await db_session.execute(
+            select(Unit).where(Unit.project_id == project.id, Unit.unit_no == "3")
+        )
+    ).scalar_one()
+    assert yeni.sort_order == 8
+
+
+def test_uzunluk_sinirlari_semayla_ayrismaz():
+    """İçe aktarma sınırları tekil `POST` şemasıyla ve DB kolonlarıyla KİLİTLİ.
+
+    Kayıt 427'nin kök sebebi iki otoritenin ayrışmasıydı. Sabitler elden
+    yazıldığı için bu test onları şemadan ve kolon genişliğinden okuyup
+    karşılaştırır: biri değişip öteki kalırsa KIRMIZI olur.
+    """
+    from app.modules.units.importer import _MAX_LENGTHS
+    from app.modules.units.schemas import BlockCreate, UnitCreate
+
+    def _sema_siniri(model, field: str) -> int:
+        return next(
+            meta.max_length
+            for meta in model.model_fields[field].metadata
+            if getattr(meta, "max_length", None) is not None
+        )
+
+    assert _MAX_LENGTHS["unit_no"] == _sema_siniri(UnitCreate, "unit_no")
+    assert _MAX_LENGTHS["layout"] == _sema_siniri(UnitCreate, "layout")
+    assert _MAX_LENGTHS["block_name"] == _sema_siniri(BlockCreate, "name")
+    assert _MAX_LENGTHS["unit_no"] == Unit.__table__.c.unit_no.type.length
+    assert _MAX_LENGTHS["layout"] == Unit.__table__.c.layout.type.length
+    assert _MAX_LENGTHS["floor"] == Unit.__table__.c.floor.type.length
+    assert _MAX_LENGTHS["block_name"] == Block.__table__.c.name.type.length

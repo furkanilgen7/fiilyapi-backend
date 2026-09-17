@@ -1,4 +1,5 @@
 import uuid
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -463,7 +464,17 @@ def _validate_project(data: ProjectCreate) -> None:
 
 
 def _apply_contract(project: Project, data: ProjectContractInput) -> None:
-    """project_contracts satırını yazar; contract_no/amount projeye anlık görüntü kopyalanır."""
+    """project_contracts satırını yazar; contract_no/amount projeye anlık görüntü kopyalanır.
+
+    🔴 PATCH yolundan da çağrılır. Satır ZATEN VARKEN yeniden atama SQLAlchemy'de
+    "row switch"tir: aynı kimlikli DELETE+INSERT tek bir UPDATE'e indirgenir
+    (ölçüldü — poz kalemleri ve gönderilmeyen `status` kolonu yerinde kalır).
+    Bu, gerçek bir DELETE'in `project_contracts.project_id`ye CASCADE ile bağlı
+    `employer_contract_groups`/`_items` (contracts/models.py:55,93) ve
+    `progress_payments` (progress_payments/models.py:83) satırlarını götürecek
+    olması yüzünden KRİTİKTİR: bu atama ile onu izleyen `flush` ARASINA başka bir
+    `flush` GİRMEMELİDİR, yoksa silme tek başına gider.
+    """
     project.contract = ProjectContract(
         contract_no=data.contract_no,
         signature_date=data.signature_date,
@@ -479,6 +490,23 @@ def _apply_contract(project: Project, data: ProjectContractInput) -> None:
     # contract_no/amount burada otoritedir; projeye kopyalanır (spec §2.4, §5).
     project.contract_no = data.contract_no
     project.contract_amount = data.amount
+
+
+def _validate_contract_update(project: Project, contract: ProjectContractInput) -> None:
+    """PATCH yolundaki sözleşme için create'in İKİ tutarlılık kuralı (spec §3.6).
+
+    Kural 7: taahhüt dışı tipte sözleşme yasak (create'te service.py:441-443).
+    Kural 5 (taslak-dışı): fiyat farkı açıksa endeks zorunlu (create'te :458-460).
+    Zorunluluk kuralları (kural 3) BURADA aranmaz: PATCH kısmi güncellemedir,
+    taslak bir projeyi tamamlamaya zorlamaz.
+    """
+    if project.project_type is not ProjectType.taahhut:
+        raise ProjectTypeMismatchError(
+            "Sözleşme ve işveren bilgileri yalnızca taahhüt projelerine girilebilir."
+        )
+    if not project.is_draft and contract.has_price_escalation:
+        if contract.index_type is None or contract.base_index_value is None:
+            raise ProjectValidationError("Endeks tipi ve baz endeks değeri zorunludur.")
 
 
 async def _write_inline_sites(
@@ -577,14 +605,49 @@ async def create_project(session: AsyncSession, data: ProjectCreate) -> Project:
     return project
 
 
+def _sync_contract_authority(project: Project, changes: dict[str, Any]) -> None:
+    """🔴 `project_contracts.contract_no/amount` OTORİTEDİR (models.py:199-200);
+
+    `projects.contract_no/contract_amount` onun ANLIK GÖRÜNTÜSÜDÜR. `_apply_contract`
+    bu kuralı yalnız `create_project`te uygular; PATCH yolunda uygulanmazsa iki
+    kaynak AYRIŞIR: `GET /projects/{id}/contract` ve `GET /contracts` otoriteyi
+    okuduğu için eskiyi basar, `?q=` süzgeci de otoriteye baktığından kullanıcının
+    ekranda GÖRDÜĞÜ numarayla arama SONUÇ VERMEZ, ve işveren hakediş yüzdesinin
+    paydası (`contract.amount`) hiçbir uçtan düzeltilemez hâle gelir.
+
+    Anahtarın VARLIĞI bakılır, değeri değil: `exclude_unset` sözlüğünde bir alan
+    yalnız istemci onu GÖNDERDİYSE bulunur — `None` göndermek "temizle" demektir
+    ve otoriteye de aynen yansımalıdır.
+
+    Sözleşme satırı YOKSA dokunulmaz: satırın PATCH'ten geç doğması (avans /
+    teminat / KDV oranları olmadan) ayrı bir ürün kararıdır, burada VERİLMEZ.
+    """
+    contract = project.contract
+    if contract is None:
+        return
+    if "contract_no" in changes:
+        contract.contract_no = changes["contract_no"]
+    if "contract_amount" in changes:
+        contract.amount = changes["contract_amount"]
+
+
 async def update_project(
     session: AsyncSession, actor: User, project_id: uuid.UUID, data: ProjectUpdate
 ) -> Project:
     project = await _visible_project(session, actor, project_id)
     _ensure_type_consistency(project.project_type, data.investment, data.land_share)
-    changes = data.model_dump(exclude_unset=True, exclude={"investment", "land_share"})
+    if data.contract is not None:
+        _validate_contract_update(project, data.contract)
+    # `contract` bir İLİŞKİdir: sözlükte kalırsa setattr döngüsü ORM alanının
+    # üstüne düz bir dict yazar. Sözleşme aşağıda `_apply_contract` ile işlenir.
+    changes = data.model_dump(exclude_unset=True, exclude={"investment", "land_share", "contract"})
     for field, value in changes.items():
         setattr(project, field, value)
+    _sync_contract_authority(project, changes)
+    if data.contract is not None:
+        # Tam sözleşme nesnesi gelmişse otorite ODUR: `contract_no`/`contract_amount`
+        # anlık görüntüsü de burada tazelenir (spec §2.4, §5).
+        _apply_contract(project, data.contract)
     if data.investment is not None:
         _apply_investment(project, data.investment)
     if data.land_share is not None:

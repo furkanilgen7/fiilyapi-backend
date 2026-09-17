@@ -662,5 +662,10 @@ class ProjectUpdate(BaseModel):
     contract_no: str | None = Field(default=None, max_length=100)
     contract_amount: Decimal | None = Field(default=None, ge=0)
     employer_name: str | None = Field(default=None, max_length=200)
+    # İşveren sözleşmesi KURULDUKTAN SONRA da düzeltilebilir olmalı: avans /
+    # teminat / KDV oranları yalnız create'ten yazılabildiği sürece yanlış girilen
+    # bir `advance_pct` o projedeki HER hakedişte kalıcı yanlış mahsup üretirdi
+    # (progress_payments/calculations.py:100) ve `DELETE /projects/{id}` ucu da yok.
+    contract: ProjectContractInput | None = None
     investment: ProjectInvestmentInput | None = None
     land_share: ProjectLandShareInput | None = None

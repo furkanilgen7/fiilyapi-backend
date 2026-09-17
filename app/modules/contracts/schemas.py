@@ -21,7 +21,7 @@ from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 # Serbest metin tavanı (TB4 S3) `boq` ailesiyle PAYLAŞILIR — tek kaynak.
 from app.core.text import FREE_TEXT_MAX_LENGTH
@@ -185,6 +185,17 @@ class EmployerContractItemUpdate(BaseModel):
     """`project_id` YOK. `group_id` verilirse aynı proje kontrolü servis
     katmanında tekrarlanır (`BoqItemUpdate` deseni)."""
 
+    # 🔴 `None` BURADA "alan gönderilmedi" demektir, "alanı boşalt" DEĞİL — kalemin
+    # yedi alanının yedisi de DB'de `NOT NULL`dır, boşaltılabilir alan YOKTUR.
+    # `Field(gt=0)` gibi kısıtlar union'ın `None` dalına uygulanmadığı için
+    # istemcinin AÇIKÇA gönderdiği `null` şemayı geçer ve
+    # `model_dump(exclude_unset=True)` sözlüğüne `None` olarak GİRER: servis onu
+    # bir DEĞER sanıp `None < Decimal(...)` karşılaştırır (`TypeError` → 500) ya da
+    # NOT NULL kolona yazıp veri bütünlüğü hatası aldırırdı. Ayrım aşağıdaki
+    # doğrulayıcıda kapatılır — biçim kuralı şemaya aittir ve `loc` alan adını
+    # taşır. Metin BİLEREK sınıf docstring'ine KONMADI: docstring OpenAPI
+    # `description`'ıdır ve sözleşme tabanını gereksiz yere kirletirdi (davranış
+    # değişikliği şemada görünmez, alanlar aynen kalır).
     group_id: uuid.UUID | None = None
     code: str | None = Field(default=None, min_length=1, max_length=50)
     description: str | None = Field(default=None, min_length=1, max_length=FREE_TEXT_MAX_LENGTH)
@@ -192,6 +203,27 @@ class EmployerContractItemUpdate(BaseModel):
     quantity: Decimal | None = Field(default=None, gt=0)
     unit_price: Decimal | None = Field(default=None, ge=0)
     sort_order: int | None = Field(default=None, ge=0)
+
+    @field_validator(
+        "group_id",
+        "code",
+        "description",
+        "unit",
+        "quantity",
+        "unit_price",
+        "sort_order",
+        mode="before",
+    )
+    @classmethod
+    def _acik_null_reddedilir(cls, value: object) -> object:
+        """Doğrulayıcı YALNIZ gövdede geçen alanlar için koşar — varsayılan
+
+        `None` doğrulanmaz. Bu yüzden "alan yok" hâli etkilenmez, yalnız AÇIK
+        `null` reddedilir.
+        """
+        if value is None:
+            raise ValueError("Alan boşaltılamaz; değiştirmemek için gövdeden çıkarın.")
+        return value
 
 
 class EmployerContractItemResponse(BaseModel):

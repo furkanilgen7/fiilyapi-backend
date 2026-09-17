@@ -1,9 +1,11 @@
 import uuid
+from decimal import Decimal
 
 from sqlalchemy import select
 
 from app.core.access import AccessLevel
 from app.modules.audit.models import AuditAction, AuditLog
+from app.modules.projects.models import ProjectContract
 from app.modules.roles.models import Module, Role, RolePermission
 from app.modules.users.models import UserProjectAccess
 
@@ -299,3 +301,54 @@ async def test_patch_ignores_project_type(client, db_session, user_factory, proj
 
     assert resp.status_code == 200
     assert resp.json()["project_type"] == "taahhut"
+
+
+async def test_sozlesme_no_patchi_otoriteyi_de_gunceller(
+    client, db_session, user_factory, project_factory
+):
+    """`project_contracts.contract_no/amount` OTORİTEDİR (projects/models.py:199-200);
+
+    `projects.contract_no/contract_amount` onun anlık görüntüsüdür. PATCH yalnız
+    anlık görüntüyü yazarsa iki kaynak ayrışır: sözleşme listesi ve `GET
+    /projects/{id}/contract` eskiyi basar, `?q=` süzgeci otoriteye baktığı için
+    kullanıcının ekranda GÖRDÜĞÜ numarayla arama SONUÇ VERMEZ ve işveren
+    hakediş yüzdesinin paydası (`contract.amount`) hiçbir uçtan düzeltilemez.
+    """
+    project = await project_factory(
+        "SZL-OTO",
+        name="Otorite Projesi",
+        contract_no="SZL-2026-001",
+        contract_amount="20000000.00",
+    )
+    db_session.add(
+        ProjectContract(
+            project_id=project.id,
+            contract_no="SZL-2026-001",
+            amount=Decimal("20000000.00"),
+            advance_pct=Decimal("20"),
+        )
+    )
+    await db_session.flush()
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.patch(
+        f"/projects/{project.id}",
+        json={"contract_no": "SZL-2026-009", "contract_amount": "25000000.00"},
+        headers=_auth(token),
+    )
+    assert resp.status_code == 200, resp.text
+
+    detay = await client.get(f"/projects/{project.id}/contract", headers=_auth(token))
+    assert detay.status_code == 200, detay.text
+    assert detay.json()["contract_no"] == "SZL-2026-009"
+    assert Decimal(detay.json()["amount"]) == Decimal("25000000.00")
+
+    liste = await client.get(
+        "/contracts", params={"type": "employer", "q": "SZL-2026-009"}, headers=_auth(token)
+    )
+    assert liste.status_code == 200, liste.text
+    assert [item["id"] for item in liste.json()["items"]] == [str(project.id)]
+    assert liste.json()["items"][0]["amount"] == "25000000.00"
+
+    detay_proje = await client.get(f"/projects/{project.id}", headers=_auth(token))
+    assert detay_proje.json()["contract_no"] == "SZL-2026-009"

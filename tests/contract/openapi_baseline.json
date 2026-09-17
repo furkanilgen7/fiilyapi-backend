@@ -18742,6 +18742,16 @@
             ],
             "title": "City"
           },
+          "contract": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectContractInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "contract_amount": {
             "anyOf": [
               {

@@ -8,6 +8,7 @@ DELETE bu task'ta DEĞİL (C12).
 """
 
 import uuid
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -280,3 +281,123 @@ async def test_var_olmayan_sozlesmeden_yukleme_404(client, admin_headers):
         headers=admin_headers,
     )
     assert yanit.status_code == 404
+
+
+# --- YAYIN SONRASI FİYAT INVARIANTI (borç #141 / contracts-2) ---
+#
+# `guards.ITEM_PRICES_REQUIRED` YALNIZ taslak→yayın geçişinde koşuyordu
+# (`subcontracts.update_subcontractor_contract`). Kalem uçları sözleşmenin
+# taslak olup olmadığına HİÇ bakmadığı için yayındaki bir sözleşmeye sonradan
+# fiyatsız kalem girilebiliyordu; o satır `contract_total`a 0 katkı verir ve
+# `subcontractor_progress_payments` hakediş üretimini 422 ile tıkar.
+
+
+@pytest.fixture
+async def yayindaki_sozlesme(
+    seeded_db, user_factory, proje_isveren_pozlu: uuid.UUID, taseron: uuid.UUID
+) -> uuid.UUID:
+    """`is_draft=False` — yayına alınmış, zorunlu alanları dolu sözleşme."""
+    owner = await user_factory(
+        email="yayinda-kalem@subcontracts.co", password="parola1234", role_key="system_admin"
+    )
+    contract = SubcontractorContract(
+        project_id=proje_isveren_pozlu,
+        subcontractor_id=taseron,
+        work_category="Betonarme",
+        contract_no="TSZ-2026-YAYIN",
+        signature_date=date(2026, 1, 1),
+        start_date=date(2026, 1, 5),
+        end_date=date(2026, 12, 31),
+        is_draft=False,
+        created_by=owner.id,
+    )
+    seeded_db.add(contract)
+    await seeded_db.flush()
+    return contract.id
+
+
+@pytest.mark.asyncio
+async def test_yayindaki_sozlesmeye_fiyatsiz_kalem_eklenemez(
+    client, admin_headers, yayindaki_sozlesme
+):
+    yanit = await client.post(
+        f"/subcontractor-contracts/{yayindaki_sozlesme}/items",
+        json={"code": "99.001", "description": "Ek iş", "unit": "m²", "quantity": 5},
+        headers=admin_headers,
+    )
+    assert yanit.status_code == 422, yanit.text
+    assert "birim fiyat" in yanit.text
+
+
+@pytest.mark.asyncio
+async def test_yayindaki_sozlesmeye_fiyatli_kalem_EKLENEBILIR(
+    client, admin_headers, yayindaki_sozlesme
+):
+    """Pozitif kontrol: kapı yalnız FİYATSIZ kalemi keser, kalem eklemeyi değil."""
+    yanit = await client.post(
+        f"/subcontractor-contracts/{yayindaki_sozlesme}/items",
+        json={
+            "code": "99.002",
+            "description": "Ek iş",
+            "unit": "m²",
+            "quantity": 5,
+            "unit_price": 120,
+        },
+        headers=admin_headers,
+    )
+    assert yanit.status_code == 201, yanit.text
+
+
+@pytest.mark.asyncio
+async def test_yayindaki_sozlesmede_kalem_fiyati_bosaltilamaz(
+    client, admin_headers, yayindaki_sozlesme
+):
+    olustur = await client.post(
+        f"/subcontractor-contracts/{yayindaki_sozlesme}/items",
+        json={
+            "code": "99.003",
+            "description": "Sıva",
+            "unit": "m²",
+            "quantity": 10,
+            "unit_price": 50,
+        },
+        headers=admin_headers,
+    )
+    assert olustur.status_code == 201, olustur.text
+    item_id = olustur.json()["id"]
+
+    yanit = await client.patch(
+        f"/subcontractor-contracts/items/{item_id}",
+        json={"unit_price": None},
+        headers=admin_headers,
+    )
+    assert yanit.status_code == 422, yanit.text
+    assert "birim fiyat" in yanit.text
+
+
+@pytest.mark.asyncio
+async def test_yayindaki_sozlesmeye_isverenden_yukleme_reddedilir(
+    client, admin_headers, yayindaki_sozlesme
+):
+    """`load-from-employer` fiyatı BİLİNÇLİ NULL yazar — yayındaki sözleşmede
+
+    bu doğrudan invariant ihlalidir, toplu fiyatsız yükleme reddedilir.
+    """
+    yanit = await client.post(
+        f"/subcontractor-contracts/{yayindaki_sozlesme}/items/load-from-employer",
+        headers=admin_headers,
+    )
+    assert yanit.status_code == 422, yanit.text
+    assert "birim fiyat" in yanit.text
+
+
+@pytest.mark.asyncio
+async def test_taslakta_fiyatsiz_kalem_HALA_serbest(client, admin_headers, taseron_sozlesmesi):
+    """Pozitif kontrol: taslakta fiyat girilmemiş kalem YASAL kalır (spec §3.6)."""
+    yanit = await client.post(
+        f"/subcontractor-contracts/{taseron_sozlesmesi}/items",
+        json={"code": "98.001", "description": "Kazı", "unit": "m³", "quantity": 3},
+        headers=admin_headers,
+    )
+    assert yanit.status_code == 201, yanit.text
+    assert yanit.json()["unit_price"] is None

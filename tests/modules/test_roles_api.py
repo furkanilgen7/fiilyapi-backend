@@ -76,3 +76,29 @@ async def test_roles_forbidden_for_non_admin(client, user_factory):
     token = await _login(client, user_factory, "patron")
     resp = await client.get("/roles", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 403
+
+
+async def test_uygulanmayan_kapsam_uctan_yazilamaz(client, user_factory, seeded_db):
+    """🔴 İzin Matrisi ekranı "Kendi / Sınırlı / Mali" kısıtını YAZIYLA vaat ediyor,
+
+    arkasında kod yok (`app/core/permissions.py` içinde `scope` geçmez). Uç 200
+    dönüp `role_permissions.scope`u KALICI yazarsa yönetici daraldığını sanır;
+    daralma olmaz. Vaat uygulanana kadar `all` dışı kapsam yazılamaz.
+    """
+    token = await _login(client, user_factory, "system_admin")
+    rid = await _rid(seeded_db, "site_chief")
+
+    resp = await client.put(
+        f"/roles/{rid}/permissions/personnel",
+        json={"access_level": "view", "scope": "own"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["detail"]
+
+    hucreler = await client.get(
+        f"/roles/{rid}/permissions", headers={"Authorization": f"Bearer {token}"}
+    )
+    personel = [c for c in hucreler.json() if c["module_key"] == "personnel"][0]
+    assert personel["scope"] == "all"

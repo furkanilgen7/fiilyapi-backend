@@ -11,11 +11,12 @@ veri tutarsızlığı olur.
 """
 
 import pytest
+from sqlalchemy import func, select
 
 from app.main import app
 from app.modules.sales import service
 from app.modules.sales.models import UnitSaleStatus
-from app.modules.units.models import UnitSalesStatus
+from app.modules.units.models import Unit, UnitSalesStatus
 from app.modules.units.schemas import UnitUpdate
 
 
@@ -69,3 +70,55 @@ async def test_patch_units_sales_status_gonderimi_degistirmez(
     assert resp.json()["sales_status"] == "listed"
     await db_session.refresh(unite)
     assert unite.sales_status is UnitSalesStatus.listed
+
+
+# --- P8 T3 körlüğü: ÜNİTE OLUŞTURMA yolu (yukarıdaki testler yalnız PATCH'i ölçüyordu) ---
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("durum", ["sold", "reserved"])
+async def test_unite_olusturulurken_satildi_rezerve_secilemez_422(
+    client, admin_headers, proje, blok, db_session, durum: str
+):
+    """`POST /projects/{id}/units` İKİNCİ bir yazma yoluydu: `UnitCreate.sales_status`
+
+    doğrudan sütuna yazılıyordu ve satış kaydı sorulmuyordu. Vitrin durumu satış
+    kaydından TÜRER (spec §3) — açılış vitrini yalnız `listed` olabilir.
+    """
+    resp = await client.post(
+        f"/projects/{proje.id}/units",
+        json={
+            "block_id": str(blok.id),
+            "unit_no": "99",
+            "unit_kind": "apartment",
+            "sales_status": durum,
+        },
+        headers=admin_headers,
+    )
+
+    assert resp.status_code == 422, resp.text
+    adet = await db_session.scalar(
+        select(func.count()).select_from(Unit).where(Unit.block_id == blok.id, Unit.unit_no == "99")
+    )
+    assert adet == 0
+
+
+@pytest.mark.asyncio
+async def test_unite_olusturulurken_listed_serbest(client, admin_headers, proje, blok):
+    """Kapı yalnız `sold`/`reserved`ı reddeder: açık `listed` gönderimi 201 kalır
+
+    (UE 94 açılır kutusunun varsayılan seçeneği) — alan şemadan DÜŞÜRÜLMEDİ.
+    """
+    resp = await client.post(
+        f"/projects/{proje.id}/units",
+        json={
+            "block_id": str(blok.id),
+            "unit_no": "98",
+            "unit_kind": "apartment",
+            "sales_status": "listed",
+        },
+        headers=admin_headers,
+    )
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["sales_status"] == "listed"

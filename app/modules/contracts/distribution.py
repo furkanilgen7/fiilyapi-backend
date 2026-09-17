@@ -29,8 +29,10 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import DuplicateError, NotFoundError, SiteValidationError
+from app.core.errors import ConflictError, DuplicateError, NotFoundError, SiteValidationError
+from app.modules.boq import repository as boq_repository
 from app.modules.boq.models import BoqGroup, BoqItem
+from app.modules.boq.service import _QUANTITY_BELOW_ALLOCATED
 from app.modules.contracts import distribution_quantity, repository
 from app.modules.contracts.distribution_quantity import AllocationKey
 from app.modules.contracts.guards import (
@@ -325,6 +327,55 @@ def _resolve_boq_group(
     return group
 
 
+async def _assert_quota_covers_section_allocations(
+    session: AsyncSession,
+    allocations: list[ContractAllocationInput],
+    existing_by_key: dict[_AllocKey, BoqItem],
+    relink_plan: dict[_AllocKey, BoqItem],
+) -> None:
+    """🔴 K3'ün (`SUM(bölüm tahsisi) <= boq_items.quantity`) ÜÇÜNCÜ yazma kapısı.
+
+    `boq/models.py:135-138` invariantın İKİ yazma kapısı olduğunu yazar
+    (`boq.service.replace_allocations` toplamı ARTIRIR, `boq.service.update_item`
+    kotayı DÜŞÜRÜR) — ama `_apply_allocations` mevcut bir BOQ satırının
+    `quantity`sini de düşürür (madde 3 ve relink dalı) ve aynı invariantı ters
+    yönden kırar: 1.200'ün 700'ü bölümlere tahsisliyken hücreyi 500'e çekmek
+    `SUM > quantity` bırakır, `unallocated_quantity` NEGATİF serileşir ve
+    hiçbir uç bunu bir daha fark etmez.
+
+    Eşik `update_item` ile BİREBİRDİR (`allocated > quantity` → 409, eşitlik
+    geçerli) ve aynı mesajı taşır — ikinci bir metin kopyası zamanla ayrışırdı.
+    `_assert_within_contract_quantity` bu boşluğu kapatmaz: o toplamı YUKARI
+    sınırlar, aşağı çekmeyi hiç ölçmez.
+
+    🔴 EŞİK = KİLİT (İK-2 dersi): kontrolden ÖNCE poz satırı `lock_item` ile
+    `FOR UPDATE` alınır, diğer iki kapının kullandığı kilidin AYNISI. Kilit
+    sırası `id` artan — `lock_employer_items`'ın `ORDER BY id` disipliniyle aynı
+    yönde, deadlock doğurmaz. YALNIZ kotası DÜŞEN satırlar kilitlenir: kotayı
+    yükseltmek invariantı kıramaz, dolayısıyla dokunulmamış hücre başına ek
+    sorgu YOKTUR.
+    """
+    dusurulen: dict[uuid.UUID, Decimal] = {}
+    for alloc in allocations:
+        if alloc.quantity is None:
+            continue
+        key = (alloc.contract_item_id, alloc.site_id)
+        row = existing_by_key.get(key)
+        if row is None:
+            row = relink_plan.get(key)
+        if row is None or alloc.quantity >= row.quantity:
+            continue
+        dusurulen[row.id] = alloc.quantity
+
+    for item_id in sorted(dusurulen):
+        locked = await boq_repository.lock_item(session, item_id)
+        if locked is None:  # pragma: no cover — satır bu işlemde okundu
+            continue
+        allocated = await boq_repository.allocated_total_for_item(session, item_id)
+        if allocated > dusurulen[item_id]:
+            raise ConflictError(_QUANTITY_BELOW_ALLOCATED)
+
+
 def _apply_allocations(
     session: AsyncSession,
     allocations: list[ContractAllocationInput],
@@ -434,6 +485,9 @@ async def save_distribution(
     existing_by_key = distribution_quantity.index_allocations(site_boq_items)
     _assert_within_contract_quantity(data.allocations, items_by_id, existing_by_key, body_keys)
     relink_plan = _plan_new_rows(data.allocations, items_by_id, existing_by_key, site_boq_items)
+    await _assert_quota_covers_section_allocations(
+        session, data.allocations, existing_by_key, relink_plan
+    )
 
     # --- 2. YAZMA (buradan sonra doğrulama YOK) ---
     boq_groups = await repository.list_boq_groups_for_sites(session, [s.id for s in sites])

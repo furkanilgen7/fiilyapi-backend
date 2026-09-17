@@ -44,6 +44,9 @@ IMPORT_ROW_ERRORS = "Dosya işlenemedi, {count} satırda hata var"
 # BIREBIRDIR; yalniz dosya yeri farklidir.
 IMPORT_ROW_GROSS_REQUIRED = "Brüt m² sıfır olamaz"
 IMPORT_ROW_FLOOR_TOO_LONG = "Kat bilgisi en fazla 20 karakter olabilir"
+# Kayit 427: `Kat` DISINDAKI uc metin sutunu icin ayni kural HIC yoktu. Metin
+# spec'te tek tek sayilmadigi icin etiket + sinir ile uretilir.
+IMPORT_ROW_TOO_LONG = "{label} en fazla {limit} karakter olabilir"
 # EI 173 — mockup'taki TEK uyari kurali. Uyari kumesi KAPALIDIR (spec §6.5):
 # `min_sale_price` karsilastirmasi, m² basina fiyat sapmasi gibi kurallar
 # ICAT EDILMEZ.
@@ -68,6 +71,28 @@ def _lira(amount: Decimal) -> str:
 # `units.floor` METINDIR (karar 4) ve sutun `String(20)`; sinir COZUMLEMEDE
 # uygulanir ki kullanici DB'nin anlamsiz hatasini degil Turkce mesaji gorsun.
 MAX_FLOOR_LENGTH = 20
+# AYNI gerekce metin tasiyan DIGER UC sutun icin de gecerlidir (kayit 427) ve
+# bunlar uzun sure OLCULMUYORDU: tekil `POST` semada sinirlar
+# (`UnitCreate.unit_no` 30, `UnitCreate.layout` 20, `BlockCreate.name` 50), ice
+# aktarma hic bakmiyordu. 31 karakterlik bir "Ünite No" hucresi Postgres
+# `DataError`'una duser; `DataError` icin handler YOKTUR, yani yanit 422 degil
+# 500 olur ve DOSYANIN TAMAMI geri alinir — kullaniciya hangi satirin sorumlu
+# oldugu SOYLENMEZ. Degerler `units.unit_no`/`units.layout`/`blocks.name` kolon
+# genisliklerinden gelir; `test_uzunluk_sinirlari_semayla_ayrismaz` ikisini
+# birbirine kilitler.
+MAX_UNIT_NO_LENGTH = 30
+MAX_LAYOUT_LENGTH = 20
+MAX_BLOCK_NAME_LENGTH = 50
+
+# Metin sutunu basina sinir. `_parse_row` bu sozlugu kullanir ki yeni bir metin
+# sutunu eklendiginde "sinir koymayi unutmak" tek satirlik bir atlama degil,
+# sozlukte gorunur bir eksiklik olsun.
+_MAX_LENGTHS: dict[str, int] = {
+    "block_name": MAX_BLOCK_NAME_LENGTH,
+    "floor": MAX_FLOOR_LENGTH,
+    "unit_no": MAX_UNIT_NO_LENGTH,
+    "layout": MAX_LAYOUT_LENGTH,
+}
 
 _XLSX_SUFFIX = ".xlsx"
 _MONEY = Decimal("0.01")
@@ -381,9 +406,17 @@ def _parse_row(number: int, row: tuple, index: dict[str, int]) -> ParsedRow:
         required = next(column.required for column in COLUMNS if column.field == field)
         if required and not text:
             errors.append(RowError(number, label, f"{label} boş olamaz"))
-        # KARAR 4: `Kat` METINDIR — sozluk YOKTUR, tek kural uzunluktur.
-        if field == "floor" and len(text) > MAX_FLOOR_LENGTH:
-            errors.append(RowError(number, label, IMPORT_ROW_FLOOR_TOO_LONG))
+        # KARAR 4: `Kat` METINDIR — sozluk YOKTUR, tek kural uzunluktur. Ayni
+        # kural dort metin sutununun HEPSINE uygulanir (kayit 427); `Kat`in
+        # mesaji spec §6.5'ten BIREBIR oldugu icin kendi metnini korur.
+        limit = _MAX_LENGTHS[field]
+        if len(text) > limit:
+            message = (
+                IMPORT_ROW_FLOOR_TOO_LONG
+                if field == "floor"
+                else IMPORT_ROW_TOO_LONG.format(label=label, limit=limit)
+            )
+            errors.append(RowError(number, label, message))
         values[field] = text or None
 
     try:
