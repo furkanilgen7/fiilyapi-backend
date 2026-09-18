@@ -386,6 +386,19 @@ async def test_onay_rolu_OLAN_aktorun_panel_MALIYETI_CAKILDI(seeded_db, aktor, p
     Üçü de SATIR SAYISINDAN bağımsızdır (bekçisi
     `test_risk1_uyari_akisi.py::test_kart_sorgu_sayisi_SATIR_SAYISINDAN_BAGIMSIZ`);
     izni olmayan aktör o kaynağın sorgusunu HİÇ ödemez.
+
+    🔴 **K4 KAPISI: +1 (46 -> 47, 34 -> 35).** Tavan SESSİZCE gevşemedi, SEBEBİ
+    şudur: proje kartları (`code` · `name` · `status` · **`budget`** ·
+    `progress_pct`) hiçbir ALAN kapısından geçmiyordu — tek kapı ucun
+    `dashboard:view` kapısıydı, oysa AYNI VERİ `GET /projects` ucundan
+    `require_permission("projects", ...)` ile korunuyor. `projects` hücresi
+    çalışma anında `none` yapılan bir rol şirketin proje BÜTÇELERİNİ panelden
+    okumaya devam ederdi (bekçisi:
+    `test_dashboard_api.py::test_projects_izni_KAPALIYKEN_panel_proje_karti_BASMAZ`).
+    Eklenen sorgu ÖLÇÜLDÜ ve TEKTİR: `can_read(..., "projects")`in
+    `role_permissions` okuması (aynı kurulumda 6 -> 7 izin okuması, toplam
+    34 -> 35). Satır sayısından BAĞIMSIZDIR — N+1 bekçisi (`:335`) dokunulmadan
+    yeşil kalır.
     """
     yaratan = await aktor("pyt2-y10@d.co", approval_roles=())
     sef = await aktor("pyt2-sef10@d.co", approval_roles=[ApprovalRole.site_chief])
@@ -395,8 +408,8 @@ async def test_onay_rolu_OLAN_aktorun_panel_MALIYETI_CAKILDI(seeded_db, aktor, p
         ozet = await build_summary(seeded_db, sef)
 
     assert ozet.pending_approvals.count == 2
-    assert len(sorgular) == 46, (
-        f"onay rolu tasiyan aktorun panel maliyeti {len(sorgular)} sorgu oldu (beklenen 46) — "
+    assert len(sorgular) == 47, (
+        f"onay rolu tasiyan aktorun panel maliyeti {len(sorgular)} sorgu oldu (beklenen 47) — "
         "rozet icin sayfa GOVDESI de cekiliyor olabilir (`limit` degisti mi?)"
     )
 
@@ -409,10 +422,11 @@ async def test_onay_rolu_YOKSA_panel_TEK_ek_sorgu_oder(seeded_db, aktor, project
     değişiklik (örneğin kapsamı rolden ÖNCE çözmek) tam burada kırılır.
 
     🔴 DASH-1: taban 8 + onay rolü 1 + **`portfolio` bağlandı 10** = 19.
-    🔴 RISK-1: + **`risks` bağlandı 15** = 34. Her iki kalemin dökümü
-    `test_onay_rolu_OLAN_aktorun_panel_MALIYETI_CAKILDI` docstring'inde tek tek
-    yazılıdır; onay rolünden BAĞIMSIZ oldukları için iki tavana da AYNI sayıyla
-    girerler."""
+    🔴 RISK-1: + **`risks` bağlandı 15** = 34.
+    🔴 K4 KAPISI: + **proje kartlarının `can_read("projects")` kapısı 1** = 35.
+    Her üç kalemin dökümü `test_onay_rolu_OLAN_aktorun_panel_MALIYETI_CAKILDI`
+    docstring'inde tek tek yazılıdır; onay rolünden BAĞIMSIZ oldukları için iki
+    tavana da AYNI sayıyla girerler."""
     rolsuz = await aktor("pyt2-rolsuz2@d.co", role_key="patron", approval_roles=())
     await project_factory("PYT2-J", name="Güneşkent J")
 
@@ -420,7 +434,7 @@ async def test_onay_rolu_YOKSA_panel_TEK_ek_sorgu_oder(seeded_db, aktor, project
         ozet = await build_summary(seeded_db, rolsuz)
 
     assert ozet.pending_approvals.count == 0
-    assert len(sorgular) == 34, (
+    assert len(sorgular) == 35, (
         f"rolsüz aktörün panel maliyeti {len(sorgular)} sorgu — "
-        "taban 8 + onay rolü 1 + portföy 10 + risk 15"
+        "taban 8 + onay rolü 1 + portföy 10 + risk 15 + proje kartı izin kapısı 1"
     )

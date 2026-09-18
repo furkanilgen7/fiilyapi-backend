@@ -51,6 +51,10 @@ _RECEIVABLES_MODULE = "invoicing"
 _MARGIN_MODULE = "progress_payments"
 _APPROVALS_MODULE = "approvals"
 
+#: Proje kartlarinin ALAN kapisi. `pending_module` anahtarlarindan farklidir:
+#: bu deger yanitin GOVDESINE yazilmaz, yalnizca `can_read` kapisini adlandirir.
+_PROJECTS_MODULE = "projects"
+
 #: 🔴 YALNIZ SAYIM ISTIYORUZ. `pending_for_user` sayfayi ve TOPLAMI ayri
 #: sorgulardan uretir; `limit=0` sayfayi bos birakir ve satir zenginlestirmesini
 #: (adimlar · kullanici adlari · UC EVRAK AILESI) HIC calistirmaz.
@@ -265,8 +269,34 @@ async def _risks(session: AsyncSession, user: User) -> RiskAlertsPlaceholder:
 
 
 async def build_summary(session: AsyncSession, user: User) -> DashboardSummaryResponse:
-    """Gosterge paneli ozeti. Projeler + ONAY + PORTFOY + RISK gercek, iki kart bos."""
-    projects = await list_projects_for_user(session, user.id)
+    """Gosterge paneli ozeti. Projeler + ONAY + PORTFOY + RISK gercek, iki kart bos.
+
+    🔴 PROJE KARTLARININ ALAN KAPISI (K4 — turev alan sizintisi). Ucun kapisi
+    `require_permission("dashboard", view)`tir ve o YETMEZ: kart `code` · `name`
+    · `status` · **`budget`** · `progress_pct` tasir, yani AYNI VERI
+    `GET /projects` ucundan da cikar ve orada `require_permission("projects",
+    ...)` ile korunur. Kapi olmadan `projects` hucresi `none` yapilmis bir rol
+    (`PUT /roles/{role_id}/permissions/{module_key}`) sirketin proje
+    BUTCELERINI panelden okumaya devam ederdi.
+
+    Bugune kadar kazara guvenliydi: tohum matrisinde `dashboard`
+    (`seed_data.py:183`) ve `projects` (`:187`) satirlari BIREBIR ayni ve
+    `test_seed_matrix.py` bunu kilitliyor — ama o kilit TOHUMUNDUR, CALISMA
+    ANININ degil.
+
+    Emsal ayni dosyadadir: `_portfolio` `can_read("progress_payments")` ile,
+    `build_risks` UC ayri `can_read` ile kapalidir. Bu kart ISTISNAYDI.
+
+    ⚠️ Kapi kapaliyken `projects=[]` doner ve `active_project_count` ondan
+    TURETILDIGI icin 0 olur — sema DEGISMEZ, alanlar yerinde durur. Bos liste
+    "proje yok" ile "yetkin yok"u ayirt etmez; ILR-1/2'nin ucuncu hâli AYRI bir
+    zarf isterdi ve o KIRICI olurdu, bu onarimin kapsami disindadir.
+    """
+    projects = (
+        await list_projects_for_user(session, user.id)
+        if await can_read(session, user, _PROJECTS_MODULE)
+        else []
+    )
     role = await session.get(Role, user.role_id)
 
     return DashboardSummaryResponse(

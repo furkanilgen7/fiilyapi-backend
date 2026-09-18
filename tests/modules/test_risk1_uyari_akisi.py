@@ -455,6 +455,50 @@ async def test_ODENMIS_hakedis_satir_URETMEZ(seeded_db, user_factory, project_fa
     assert _satirlar(kart["items"], _GECIKME_BASLIK) == []
 
 
+async def test_gecikme_satirlari_EN_GEC_KALAN_ILK_SIRADA(seeded_db, user_factory, project_factory):
+    """(8c) 🔴 GRUP ICI SIRA — `ORDER BY vade` NIHAI SIRA MIDIR?
+
+    `_overdue_payment_alerts` docstring'i (`risks.py:217`) "En gec kalan ilk
+    sirada (`ORDER BY vade`)" der. SQL bunu SAGLAR, ama `build_risks` sonundaki
+    `alerts.sort(...)` onu EZIYORDU: anahtarda `alert.detail` vardi ve gecikme
+    satirlarinin `title`i SABIT oldugu icin (`"Hakediş gecikmiş"`) ayni `danger`
+    grubunun ICINDEKI tek ayirt edici anahtar `detail` STRINGIYDI. String
+    siralamasinda once taseron ADI, sonra gun sayisi METIN olarak dizilir:
+    `"90 gün"` metin olarak `"14 gün"`den BUYUKTUR ama `"Ada Beton"`
+    `"Çelik OSB"`den ONCE gelir — yani EN AGIR gecikme listenin EN ALTINA
+    duserdi.
+
+    🔴 MEVCUT KUME BEKCISI KORDUR: `test_uyari_KUMESI_bagimsiz_beklentiyle_...`
+    `danger` grubunda TEK satir kurar (tek `_hakedis` cagrisi), grup ICI sirayi
+    olcmesi YAPISAL OLARAK imkansizdir.
+
+    Kurulum sirasi BILEREK 5 -> 90 -> 14'tur: eklenme sirasinin tesadufen
+    beklentiyi uretmesi engellenir, iddia SQL'in `vade` sirasina dayanir.
+    """
+    yazan = await _aktor(seeded_db, user_factory, "risk-yz11@d.co", role_key="system_admin")
+    user = await _aktor(seeded_db, user_factory, "risk-sira@d.co")
+    proje = await project_factory(code="RISK-SIRA")
+    # Vade = onay gunu (TR) + `payment_term_days`; gecikme = bugun - vade.
+    for gecikme, taseron in ((5, "Ada Beton"), (90, "Çelik OSB"), (14, "Çelik OSB")):
+        await _hakedis(
+            seeded_db,
+            proje,
+            yazan,
+            onay_gunu=today() - timedelta(days=30 + gecikme),
+            vade_gun=30,
+            taseron=taseron,
+        )
+
+    kart = await _kart(seeded_db, user)
+
+    ayrintilar = [satir["detail"] for satir in _satirlar(kart["items"], _GECIKME_BASLIK)]
+    assert ayrintilar == [
+        "Çelik OSB – 90 gün gecikme",
+        "Çelik OSB – 14 gün gecikme",
+        "Ada Beton – 5 gün gecikme",
+    ], ayrintilar
+
+
 # --------------------------------------------------------------------------- #
 # 3) TAKVIM — "Hedef asildi" (mockup'in IYI HABERI)
 # --------------------------------------------------------------------------- #
