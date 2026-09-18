@@ -39726,7 +39726,7 @@
     },
     "/equipment/documents/summary": {
       "get": {
-        "description": "K7 özeti: `expiring_soon` (30 gün) + `expired` + `missing` (zorunlu tip\neksikleri, yalnız AKTİF ekipman).",
+        "description": "K7 özeti: `expiring_soon` (30 gün) + `expired` + `missing` (zorunlu tip\neksikleri, yalnız AKTİF ekipman) — hepsi K20 kapsamından GEÇER.",
         "operationId": "equipment_documents_summary_endpoint_equipment_documents_summary_get",
         "responses": {
           "200": {

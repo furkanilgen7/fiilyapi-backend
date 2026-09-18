@@ -36,6 +36,7 @@ from app.modules.equipment.document_schemas import (
 )
 from app.modules.equipment.models import Equipment, EquipmentDocument, EquipmentDocumentType
 from app.modules.equipment.service import visible_equipment
+from app.modules.equipment.service.core import _visible_project_ids
 from app.modules.users.models import User
 
 PERMISSION_MODULE = "equipment"
@@ -164,20 +165,31 @@ async def delete_document(session: AsyncSession, actor: User, document_id: uuid.
 
 
 async def build_summary(
-    session: AsyncSession, *, today: date | None = None
+    session: AsyncSession, actor: User, *, today: date | None = None
 ) -> EquipmentDocumentsSummaryResponse:
     """K7 özeti — SABİT sorgu sayısı (İK-1 `build_hr_documents_summary` deseni).
 
     `today` ENJEKTE EDİLİR (servis sınırı `timezone.today()` verir, test sabit
     tarih kullanır): sınır günleri (bugün / +30 / +31 / dün) deterministik olsun.
+
+    🔴 `actor` K20 KAPSAMI İÇİNDİR ve imzada sonradan açıldı: bu fonksiyon
+    modülün kapsam süzgecinden geçmeyen TEK okuma yoluydu. Öteki her yol
+    (`list_documents`:57, `_visible_document`:137) `visible_equipment`ten geçer.
+    Sızan şey sayaçtan ibaret değildi — `expiring_documents`/`expired_documents`
+    dizileri `equipment_name` ve `type_name` taşır, yani görünmeyen projenin
+    makine adları doğrudan basılıyordu.
+
+    Depo istisnası (`site_id IS NULL`) `repository.scope` içinde korunur:
+    atanmamış makine HERKESE görünür, aksi hâlde hiç kimse göremezdi.
     """
     today = today or timezone.today()
     horizon = today + timedelta(days=EXPIRING_SOON_DAYS)
 
-    rows = await repository.list_active_document_rows_for_summary(session)
+    project_ids = await _visible_project_ids(session, actor)
+    rows = await repository.list_active_document_rows_for_summary(session, project_ids)
     required_types = [t for t in await repository.list_document_types(session) if t.is_required]
-    present_pairs = await repository.list_active_equipment_type_pairs(session)
-    active_equipment_ids = await repository.list_active_equipment_ids(session)
+    present_pairs = await repository.list_active_equipment_type_pairs(session, project_ids)
+    active_equipment_ids = await repository.list_active_equipment_ids(session, project_ids)
 
     expiring_soon = 0
     expired = 0

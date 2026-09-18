@@ -13,6 +13,7 @@ from sqlalchemy import Row, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.equipment.models import Equipment, EquipmentDocument, EquipmentDocumentType
+from app.modules.equipment.repository import scope
 
 # Liste/detay/özet uçlarının PAYLAŞTIĞI kolon kümesi — `content` HARİÇ.
 _DOCUMENT_LIST_COLUMNS = (
@@ -73,13 +74,21 @@ async def delete_document(session: AsyncSession, document: EquipmentDocument) ->
     await session.delete(document)
 
 
-async def list_active_equipment_ids(session: AsyncSession) -> list[uuid.UUID]:
-    """K7/İK-1 `missing` semantiği: yalnız AKTİF (`is_active=true`) ekipman."""
-    stmt = select(Equipment.id).where(Equipment.is_active.is_(True))
+async def list_active_equipment_ids(
+    session: AsyncSession, project_ids: list[uuid.UUID]
+) -> list[uuid.UUID]:
+    """K7/İK-1 `missing` semantiği: yalnız AKTİF (`is_active=true`) ekipman.
+
+    🔴 K20 kapsamı da uygulanır (`repository.scope`): özet, modülün kapsam
+    süzgecinden geçmeyen TEK okuma yoluydu.
+    """
+    stmt = scope(select(Equipment.id), project_ids).where(Equipment.is_active.is_(True))
     return list((await session.scalars(stmt)).all())
 
 
-async def list_active_document_rows_for_summary(session: AsyncSession) -> list[Row]:
+async def list_active_document_rows_for_summary(
+    session: AsyncSession, project_ids: list[uuid.UUID]
+) -> list[Row]:
     """Özet ucunun TEK toplu sorgusu — N+1 yok (İK-1 `build_hr_documents_summary`
     deseninin birebiri). Yalnız AKTİF ekipmanın belgeleri döner; `content` HARİÇ."""
     stmt = (
@@ -96,11 +105,14 @@ async def list_active_document_rows_for_summary(session: AsyncSession) -> list[R
         .join(EquipmentDocumentType, EquipmentDocumentType.id == EquipmentDocument.type_id)
         .where(Equipment.is_active.is_(True))
     )
+    # 🔴 K20 — satırlar `equipment_name`/`type_name` TAŞIR: süzgeçsiz bırakılınca
+    # sızan şey sayaç değil, görünmeyen projenin makine ADLARIdır.
+    stmt = scope(stmt, project_ids)
     return list((await session.execute(stmt)).all())
 
 
 async def list_active_equipment_type_pairs(
-    session: AsyncSession,
+    session: AsyncSession, project_ids: list[uuid.UUID]
 ) -> set[tuple[uuid.UUID, uuid.UUID]]:
     """`(equipment_id, type_id)` çiftleri — en az bir belgesi olan AKTİF ekipman.
 
@@ -113,4 +125,7 @@ async def list_active_equipment_type_pairs(
         .where(Equipment.is_active.is_(True))
         .distinct()
     )
+    # `missing` bu kümenin TÜMLEYENİdir; kapsam burada süzülmezse tümleyen
+    # görünmeyen ekipmanı da içerir ve `missing` şişerdi.
+    stmt = scope(stmt, project_ids)
     return {(row.equipment_id, row.type_id) for row in (await session.execute(stmt)).all()}

@@ -4,7 +4,7 @@ Kapı `equipment` iznidir; okuma `view`, yazma `full`. Görünmeyen ekipmanın
 belgesi 404'tür (K9/K20 — `tests/modules/equipment/conftest.py` fixture'ları).
 """
 
-from datetime import timedelta
+from datetime import date, timedelta
 
 from httpx import AsyncClient
 from sqlalchemy import select
@@ -765,3 +765,98 @@ async def test_patch_denetim_gunlugu_yazar(
         await seeded_db.scalars(select(AuditLog).where(AuditLog.action == AuditAction.update))
     ).all()
     assert any("Ekipman belgesi" in r.detail for r in rows), [r.detail for r in rows]
+
+
+# --- 🔴 K20 KAPSAMI: belge özeti (kayıt 181) --------------------------------
+#
+# `document_service.build_summary(session, *, today)` imzasında `actor` YOKTU ve
+# üç toplu sorgusunun hiçbiri `repository.scope()`tan geçmiyordu. Modülün öteki
+# HER okuma yolu kapsamdan geçerken (`list_documents`:57, `_visible_document`:137,
+# `visible_equipment` → K20) bu uç geçmiyordu.
+#
+# Sızıntı yalnız sayaç değildir: `expiring`/`expired` DİZİLERİ `equipment_name`
+# ve `type_name` taşır, yani görünmeyen projenin makine adları doğrudan basılır.
+#
+# ⚠️ `test_equipment_idor.py` kapsam bekçilerini toplar ama oradaki "summary"
+# testi `/equipment/summary` ucunundur (MK-1 özeti) — `/equipment/documents/
+# summary` BAŞKA bir uçtur ve bekçisi yoktu. Dosya docstring'inin "summary"
+# kelimesi bu ucu KAPSAMIYORDU.
+
+
+async def test_belge_ozeti_gorunmeyen_projenin_ekipmanini_SAYMAZ(
+    client: AsyncClient,
+    seeded_db: AsyncSession,
+    ekipman_fabrikasi,
+    admin_headers,
+    sef_headers,
+    gorunen_santiye,
+    gorunmeyen_santiye,
+) -> None:
+    types = await _seed_types(seeded_db)
+    manual_id = types["manual"].id
+    today = date.today()
+
+    gorunen = await ekipman_fabrikasi("Görünen Vinç", site=gorunen_santiye)
+    gizli = await ekipman_fabrikasi("Gizli Ekskavatör", site=gorunmeyen_santiye)
+    await _upload(
+        client,
+        gorunen.id,
+        manual_id,
+        admin_headers,
+        valid_until=(today - timedelta(days=1)).isoformat(),
+        filename="gorunen.pdf",
+    )
+    await _upload(
+        client,
+        gizli.id,
+        manual_id,
+        admin_headers,
+        valid_until=(today - timedelta(days=1)).isoformat(),
+        filename="gizli.pdf",
+    )
+
+    resp = await client.get("/equipment/documents/summary", headers=sef_headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["expired"] == 1, f"sayaç kapsamdan geçmedi: {body}"
+    adlar = [satir["equipment_name"] for satir in body["expired_documents"]]
+    assert "Gizli Ekskavatör" not in adlar, f"görünmeyen projenin makine ADI sızdı: {adlar}"
+    assert adlar == ["Görünen Vinç"], adlar
+
+
+async def test_belge_ozeti_eksikleri_de_kapsamdan_gecer(
+    client: AsyncClient,
+    seeded_db: AsyncSession,
+    ekipman_fabrikasi,
+    sef_headers,
+    gorunen_santiye,
+    gorunmeyen_santiye,
+) -> None:
+    """`missing` de süzülür: iki zorunlu tip × YALNIZ görünen ekipman = 2."""
+    await _seed_types(seeded_db)
+    await ekipman_fabrikasi("Görünen Vinç", site=gorunen_santiye)
+    await ekipman_fabrikasi("Gizli Ekskavatör", site=gorunmeyen_santiye)
+
+    resp = await client.get("/equipment/documents/summary", headers=sef_headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["missing"] == 2, resp.json()
+
+
+async def test_belge_ozeti_DEPODAKI_ekipmani_HERKESE_sayar(
+    client: AsyncClient,
+    seeded_db: AsyncSession,
+    ekipman_fabrikasi,
+    sef_headers,
+) -> None:
+    """K20 depo istisnası: `site_id IS NULL` makine kapsam süzgecine TABİ DEĞİL.
+
+    Bu iddia olmadan onarım "her şeyi süz" yönünde aşırıya kaçar ve henüz
+    şantiyeye atanmamış makineyi HİÇ KİMSE göremez.
+    """
+    await _seed_types(seeded_db)
+    await ekipman_fabrikasi("Depodaki Vinç", site=None)
+
+    resp = await client.get("/equipment/documents/summary", headers=sef_headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["missing"] == 2, resp.json()
