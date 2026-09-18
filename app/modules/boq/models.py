@@ -137,12 +137,20 @@ class BoqItemSectionAllocation(Base):
     (poz `quantity`si DUSER — kotayi tahsis toplaminin altina cekmek ayni
     invarianti ters yonden kirar).
 
-    ON DELETE CASCADE (K2). 🔴 OLCUM NOTU: emir bunu "yedi FK'lik `SET NULL`
-    emsalinden bilincli sapma" diye tanimliyordu; sayim yapildi ve `sections.id`
-    hedefleyen SEKIZ FK vardi — YEDISI `SET NULL`, BIRI (`section_milestones`)
-    ZATEN CASCADE. Yani bu bir sapma degil, VAR OLAN AYRIMIN dogru tarafina
+    ON DELETE CASCADE (K2). Bu bir SAPMA DEGIL, var olan AYRIMIN dogru tarafina
     yerlesmektir: bilgi bagi olan kayitlar `SET NULL`, bolumun bir PARCASI olan
-    kayitlar CASCADE. Gerekce: tahsis satirinin BAGIMSIZ VARLIGI YOKTUR;
+    kayitlar CASCADE.
+
+    🔴 BURADA ARTIK SAYI YOKTUR ve bu bilinclidir. Onceki iki metin (`emir`in
+    "yedi FK" iddiasi ve bu notun "sekiz FK" duzeltmesi) YAZILDIKLARI GUN
+    dogruydu; ikisi de curudu cunku sayi ELLE tutuluyordu ve yeni FK ekleyen
+    hicbir dilim onlari guncellemek ZORUNDA degildi. Sayiyi tazelemek kusuru
+    kapatmaz, yalniz saatini ileri alir. Yasayan harita ve onun BEKCISI
+    `tests/test_sections_fk_haritasi.py`dedir: harita `Base.metadata`dan
+    OLCULUR, yeni bir `sections.id` FK'si testi KIRAR ve yazarini iki kovadan
+    birini bilerek secmeye zorlar.
+
+    Gerekce: tahsis satirinin BAGIMSIZ VARLIGI YOKTUR;
     o satir "su poz, su bolume, su kadar" demekten ibarettir, bolum gidince cumle
     anlamsizlasir. `SET NULL` secilseydi kolon nullable olmak ZORUNDA kalirdi
     (NOT NULL kolona SET NULL calisma aninda FK hatasi verir), sahipsiz satirlar
