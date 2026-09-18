@@ -53575,6 +53575,8 @@
             "schema": {
               "anyOf": [
                 {
+                  "maximum": 2200,
+                  "minimum": 2000,
                   "type": "integer"
                 },
                 {
@@ -53750,6 +53752,8 @@
             "schema": {
               "anyOf": [
                 {
+                  "maximum": 2200,
+                  "minimum": 2000,
                   "type": "integer"
                 },
                 {

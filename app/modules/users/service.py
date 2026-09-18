@@ -126,7 +126,14 @@ async def delete_user(session: AsyncSession, user_id: uuid.UUID) -> None:
 async def set_project_access(
     session: AsyncSession, user_id: uuid.UUID, data: ProjectAccessInput
 ) -> list[UserProjectAccess]:
-    user = await repository.get_user(session, user_id)
+    # 🔴 TAM-DEĞİŞTİRME (`DELETE` + `INSERT`) KİLİT ALTINDA KOŞAR. Tabloda
+    # `(user_id, project_id)` UNIQUE kısıtı YOKTUR (migration `e274019416f6`
+    # yalnız PK + NON-UNIQUE indeks açar), yani kilitsiz iki eşzamanlı istek
+    # birbirinin `DELETE`iyle `INSERT`i arasına girip ya iki kümenin karışımını
+    # ya da AYNI projenin çift satırını bırakır. Erişim kararı
+    # (`projects.visible_projects`) bu satırlardan okunur — sapma SESSİZDİR.
+    # Kısıt yerine kilit seçildi: canlı satırlara dokunulmaz, migration gerekmez.
+    user = await repository.get_user_locked(session, user_id)
     if user is None:
         raise NotFoundError("Kullanıcı bulunamadı")
     if not data.all_projects and data.project_ids:

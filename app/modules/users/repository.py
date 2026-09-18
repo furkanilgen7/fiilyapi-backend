@@ -31,6 +31,18 @@ async def get_user(session: AsyncSession, user_id: uuid.UUID) -> User | None:
     return result.scalar_one_or_none()
 
 
+async def get_user_locked(session: AsyncSession, user_id: uuid.UUID) -> User | None:
+    """`SELECT … FOR UPDATE` — proje erişiminin TAM-DEĞİŞTİRME yolunun giriş kapısı.
+
+    `joinedload(User.role)` BİLEREK YOK: `FOR UPDATE` bir OUTER JOIN ile
+    birleştirilemez (PostgreSQL `FOR UPDATE cannot be applied to the nullable
+    side of an outer join` der). Kilidin işi rolü okumak değil, aynı kullanıcının
+    erişim satırlarını yazan iki isteği serileştirmektir.
+    """
+    result = await session.execute(select(User).where(User.id == user_id).with_for_update())
+    return result.scalar_one_or_none()
+
+
 async def get_user_by_email(session: AsyncSession, email: str) -> User | None:
     result = await session.execute(select(User).where(User.email == email))
     return result.scalar_one_or_none()

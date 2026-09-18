@@ -48,6 +48,18 @@ from app.modules.site_diary.schemas import (
 )
 from app.modules.users.models import User
 
+#: `year` sınırı — EMSALLERDEN alındı, icat EDİLMEDİ: `treasury/router.py:289`
+#: (`cash_flow.MIN_YEAR`/`MAX_YEAR`), `equipment/router.py:223,249,378`,
+#: `payroll/router.py:537`, `personnel/router.py:746` hepsi 2000-2200 kullanır.
+#: Sınırsız bırakılınca değer `period_conditions` → `_month_bounds`
+#: (repository.py:141-146) üzerinden doğrudan `datetime.date()`e gidiyordu ve
+#: `date(0,1,1)` / `date(10000,1,1)` `ValueError` fırlatıyordu; bu istisnanın
+#: `core/exception_handlers.py`de handler'ı YOK, yani kullanıcı girdisi 500
+#: üretiyordu. `month` zaten `Query(ge=1, le=12)` ile sınırlıydı.
+MIN_YEAR = 2000
+MAX_YEAR = 2200
+
+
 router = APIRouter(tags=["site-diary"], responses=COMMON_ERROR_RESPONSES)
 
 _VIEW = require_permission(service.PERMISSION_MODULE, AccessLevel.view)
@@ -63,7 +75,7 @@ async def list_site_diary_entries_endpoint(
     site_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
-    year: int | None = None,
+    year: Annotated[int | None, Query(ge=MIN_YEAR, le=MAX_YEAR)] = None,
     month: Annotated[int | None, Query(ge=1, le=12)] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -90,7 +102,7 @@ async def get_site_diary_summary_endpoint(
     site_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
-    year: int | None = None,
+    year: Annotated[int | None, Query(ge=MIN_YEAR, le=MAX_YEAR)] = None,
     month: Annotated[int | None, Query(ge=1, le=12)] = None,
 ) -> SiteDiarySummary:
     """Hakediş Özeti ekranının veri kaynağı — YALNIZ `submitted` günler (spec §3).
