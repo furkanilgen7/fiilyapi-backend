@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.access import AccessLevel, Scope
 from app.core.errors import DomainError, NotFoundError, PermissionLockedError
 from app.modules.roles.models import SYSTEM_ADMIN_KEY, Module, Role, RolePermission
-from app.modules.roles.repository import get_permission
+from app.modules.roles.repository import get_module, get_permission
 from app.modules.roles.schemas import RoleCreate
 
 
@@ -30,7 +30,23 @@ async def update_role_permission(
 
     permission = await get_permission(session, role_id, module_key)
     if permission is None:
-        raise NotFoundError("İzin satırı bulunamadı")
+        # 🔴 Satırın YOKLUĞU "böyle bir hücre olamaz" demek DEĞİLDİR: uzantı
+        # migration'ları izin satırlarını sabit `ROLE_ORDER` üzerinde yazar, o
+        # yüzden migration'dan önce açılmış her özel rol sonradan inen modülün
+        # hücresine sahip olmaz. Eskiden burada 404 atılıyordu ve yönetici o
+        # modülü ekrandan KALICI OLARAK açamıyordu. Hücre artık burada doğar;
+        # matris tarafı `repository.get_role_matrix` ile zaten görünür.
+        # 404 YALNIZ modül gerçekten yoksa kalır — uydurma anahtar satır açmaz.
+        module = await get_module(session, module_key)
+        if module is None:
+            raise NotFoundError("İzin satırı bulunamadı")
+        permission = RolePermission(
+            role_id=role_id,
+            module_id=module.id,
+            access_level=AccessLevel.none,
+            scope=Scope.all,
+        )
+        session.add(permission)
 
     # 🔴 `Scope` DEKORATİFTİR: `app/core/permissions.py` içinde `scope` kelimesi
     # GEÇMEZ, hiçbir uç `permission.scope`u okumaz (`projects.service`in
