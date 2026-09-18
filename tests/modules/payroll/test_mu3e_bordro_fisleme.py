@@ -336,3 +336,67 @@ async def test_FISLEME_YOLU_TAM_BIR_KEZ_CAGRILIR(
         "SAYIM ADAYIDIR ve idempotanlık onu SESSİZCE yutar — fiş sayan hiçbir "
         f"test bunu göremez. çağrılar={cagrilar}"
     )
+
+
+# --- 🔴 ORAN SETİ compute ile approve ARASINDA DEĞİŞİRSE (kayıt 221) ---------
+#
+# `_stamp_share` damgayı KESİNTİNİN KALANI olarak kurar:
+#     damga = deduction_amount − rate_share(brüt, sgk%) − rate_share(brüt, işsizlik%)
+#             − income_tax_amount
+# `deduction_amount` ve `income_tax_amount` compute anında DONDURULMUŞTUR ama
+# iki `rate_share` CANLI orandan türer. Oran seti compute ile approve arasında
+# değişirse farkın TAMAMI damga payına yazılır.
+#
+# 🔴 Belirti mizanda GÖRÜNMEZ: fiş cebirsel olarak DENGELİ kalır
+# (Σalacak = net + deduction + işveren = brüt + işveren), yalnız `360 Ödenecek
+# Vergi ve Fonlar` ile `361 Ödenecek Sosyal Güvenlik Kesintileri` ARASINDAKİ
+# dağılım kayar. Hiçbir kapı kırmızıya dönmez — bu dosyanın kendi docstring'i
+# tam da bu kusur sınıfını tarif eder ("361'e yazılması gerekeni 360'a yazan
+# bir kusur da yeşil kalırdı").
+#
+# `rates.py` kapısı yalnız ONAYLANMIŞ/ÖDENMİŞ dönem VARSA oran değişimini
+# kapatır; taslak dönem serbesttir, yani bu pencere CANLIDA AÇIKTIR.
+#
+# Oranları satıra dondurmak ÇÖZÜM DEĞİLDİR: `models.py:194` K1 kararı
+# "kesinti oranları satıra KOPYALANMAZ, tek gerçek kaynak `payroll_rates`" der
+# ve dondurmak migration isterdi. Onarım FAIL-CLOSED bir sınır kontrolüdür.
+
+
+async def test_ORAN_SETI_HESAPTAN_SONRA_DEGISIRSE_FAIL_CLOSED(
+    db_session, donem, dort_tip, kaydeden, oranlar
+) -> None:
+    """Donmuş kesinti ile canlı oran ayrışırsa fiş YAZILMAZ (422)."""
+    await service.compute_period(db_session, donem.id)
+    satir_listesi = await satirlar(db_session, donem.id)
+
+    # Fiş YAZILABİLİR olmalı — pozitif kontrol (kapı her şeyi reddetmiyor).
+    oran_haritasi = {r.personnel_source: r for r in oranlar}
+    posting.totals_for(satir_listesi, oran_haritasi)
+
+    # Şimdi oran seti compute'tan SONRA değişsin (SGK işçi payı %14 -> %10).
+    # `intern`/`freelance` oranı ZATEN 0'dır ve `ck_payroll_rates_non_negative`
+    # negatife inmeyi reddeder — yalnız sıfırdan büyük oran kaydırılır.
+    for r in oranlar:
+        if r.sgk_employee_pct > Decimal("4"):
+            r.sgk_employee_pct = r.sgk_employee_pct - Decimal("4")
+    await db_session.flush()
+
+    with pytest.raises(PayrollValidationError):
+        posting.totals_for(satir_listesi, {r.personnel_source: r for r in oranlar})
+
+
+async def test_ORAN_ARTISI_da_yakalanir(db_session, donem, dort_tip, kaydeden, oranlar) -> None:
+    """Kayma İKİ YÖNDE de yakalanır — yalnız negatif damga değil, ŞİŞMİŞ damga da.
+
+    Oran DÜŞERSE kalan büyür (damga tavanı aşılır), ARTARSA kalan küçülür ve
+    negatife düşer. Tek yönlü bir kontrol kusurun yarısını kaçırırdı.
+    """
+    await service.compute_period(db_session, donem.id)
+    satir_listesi = await satirlar(db_session, donem.id)
+
+    for r in oranlar:
+        r.sgk_employee_pct = r.sgk_employee_pct + Decimal("3")
+    await db_session.flush()
+
+    with pytest.raises(PayrollValidationError):
+        posting.totals_for(satir_listesi, {r.personnel_source: r for r in oranlar})

@@ -191,6 +191,7 @@ from app.modules.users.models import User
 
 __all__ = [
     "INCOMPLETE_LINES",
+    "RATES_CHANGED_SINCE_COMPUTE",
     "PAYROLL_POSTING_RULES",
     "ROLE_PERSONNEL_EXPENSE",
     "ROLE_PERSONNEL_PAYABLE",
@@ -258,6 +259,18 @@ INCOMPLETE_LINES = (
 )
 
 _ZERO = Decimal("0.00")
+
+#: Dört kesinti kaleminin AYRI yuvarlanmasından doğan kabul edilebilir sapma
+#: (`compute.Deductions` docstring'i bunu KASITLI ilan eder).
+_KURUS = Decimal("0.01")
+
+#: 422 — donmuş kesinti ile CANLI oran ayrışmış. Metin kullanıcıya YAPILACAK
+#: İŞİ söyler (`INCOMPLETE_LINES` deseni) ve SAYI taşımaz: bir bordro hatası
+#: mesajında tutar geçseydi yetkisiz okuyucuya ücret bilgisi sızardı.
+RATES_CHANGED_SINCE_COMPUTE = (
+    "Bordro fişi yazılamıyor: oran seti dönem hesaplandıktan sonra değişmiş "
+    "(dönemi yeniden hesaplayın)"
+)
 
 
 @dataclass(frozen=True)
@@ -333,13 +346,37 @@ def _stamp_share(line: PayrollLine, rate: PayrollRate) -> Decimal:
     fark KURUŞUNA KADAR damgadır **ve asgari ücret damga istisnasını
     KENDİLİĞİNDEN görür** — istisnalı bir satırda orandan türetilen damga
     gerçekte kesilmemiş bir vergiyi deftere yazardı ve fiş DENGESİZ çıkardı.
+
+    🔴 **KALANIN SINIRI DENETLENİR (fail-closed).** `deduction_amount` ve
+    `income_tax_amount` compute anında DONMUŞTUR ama iki `rate_share` CANLI
+    orandan türer. Oran seti compute ile approve ARASINDA değişirse farkın
+    TAMAMI bu kalana yazılır ve belirti mizanda GÖRÜNMEZ: fiş cebirsel olarak
+    dengeli kalır, yalnız `360`/`361` dağılımı kayar. `rates` kapısı yalnız
+    onaylanmış/ödenmiş dönem VARSA oran değişimini kapatır — taslak dönem
+    serbesttir, yani pencere canlıda AÇIKTIR.
+
+    Oranları satıra dondurmak çözüm DEĞİLDİR: K1 (`models.py:194`) "kesinti
+    oranları satıra KOPYALANMAZ, tek gerçek kaynak `payroll_rates`" der ve
+    dondurmak migration isterdi. Bunun yerine kalanın GEÇERLİ ARALIĞI ölçülür:
+    damga ne NEGATİF olabilir ne de `stamp_tax_pct × brüt`ü AŞABİLİR. Sınır iki
+    yönlüdür çünkü kayma iki yönlüdür — oran düşerse kalan şişer, artarsa
+    negatife düşer; tek yönlü bir kontrol kusurun yarısını kaçırırdı.
+
+    Tolerans BİR KURUŞTUR: `compute` dört kalemi AYRI AYRI yuvarlar ve bu
+    bilinçli olarak tek seferde yuvarlanmış toplamdan bir kuruş ayrışabilir
+    (`compute.Deductions` docstring'i). Tolerans olmasaydı sıradan bir dönem
+    yuvarlama yüzünden 422 alırdı.
     """
-    return (
+    kalan = (
         line.deduction_amount
         - compute.rate_share(line.gross_amount, rate.sgk_employee_pct)
         - compute.rate_share(line.gross_amount, rate.unemployment_employee_pct)
         - line.income_tax_amount
     )
+    tavan = compute.rate_share(line.gross_amount, rate.stamp_tax_pct) + _KURUS
+    if kalan < -_KURUS or kalan > tavan:
+        raise PayrollValidationError(RATES_CHANGED_SINCE_COMPUTE)
+    return kalan
 
 
 def _eksik(line: PayrollLine, rate: PayrollRate | None) -> bool:
