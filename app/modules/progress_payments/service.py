@@ -277,17 +277,26 @@ async def create(
 async def update(
     session: AsyncSession, actor: User, payment_id: uuid.UUID, data: ProgressPaymentUpdate
 ) -> tuple[ProgressPayment, Project]:
-    payment, project = await _visible_payment(session, actor, payment_id)
+    # 🔴 KRIT-HAKEDIS K5 — DURUM KAPISI KİLİT ALTINDA OKUNUR. Burası kilitsiz
+    # `_visible_payment` kullanıyordu; aynı dosyadaki `save_lines` (:342) ve
+    # `delete_payment` (:714) bu açığı K5 gerekçesiyle çoktan kapatmıştı, PATCH
+    # taşınmamıştı. Kilitsiz okunan durum üzerinde verilen karar TOCTOU'dur:
+    # eşzamanlı bir `approve` ile PATCH birbirini görmeden geçer ve dönem
+    # değişimi aşağıdaki `restamp_for_period` ile ONAYLANMIŞ satırların
+    # `quantity_source` damgasını yeniden yazar. Kilit sırası `create` /
+    # `transitions.perform` / `save_lines` ile AYNI: önce sözleşme, sonra hakediş.
+    payment, project, contract = await visible_payment_locked(session, actor, payment_id)
     if payment.status != ProgressPaymentStatus.draft:
         raise ConflictError(guards.INVALID_STATUS_TRANSITION)
 
     # `create` ile AYNI başlık kilidi (Y1): kural iki yazma yolunda da tek
     # kopyadan (`guards.validate_coefficient`) okunur — biri unutulursa PATCH
-    # sessiz bir arka kapı olurdu.
-    if project.contract is not None:
+    # sessiz bir arka kapı olurdu. Sözleşme artık KİLİTLİ okunan satırdır
+    # (`project.contract` lazy kopyası değil) — kapı bayat yüzdeyle karar vermez.
+    if contract is not None:
         guards.validate_coefficient(
             data.default_coefficient,
-            has_price_escalation=project.contract.has_price_escalation,
+            has_price_escalation=contract.has_price_escalation,
         )
 
     period_before = (payment.period_year, payment.period_month)
