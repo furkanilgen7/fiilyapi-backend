@@ -24,6 +24,7 @@ from pathlib import Path
 
 import asyncpg
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
 from app.modules.inventory.models import (
@@ -537,6 +538,117 @@ async def test_db_level_semantics():
             row = await conn.fetchrow("SELECT * FROM warehouses WHERE id = $1", warehouse_id)
             assert row is not None, "santiye silinince depo da silindi (CASCADE kacagi)"
             assert row["site_id"] is None
+        finally:
+            await conn.close()
+    finally:
+        await _drop_scratch_database(database)
+
+
+# --- 🔴 MERKEZ DEPO ADININ DB KATMANI (kayıt 193) ---------------------------
+#
+# `uq_warehouses_site_name` Postgres'in varsayılan `NULLS DISTINCT` semantiği
+# yüzünden `site_id IS NULL` dalında FİİLEN ÇALIŞMAZ: iki merkez depo AYNI adı
+# taşıyabilir. Kısıt bunu `models.py` ve `guards.py` docstring'lerinde "BİLİNEN
+# SINIR" diye YAZIYORDU ve tek savunma servis korkuluğuydu
+# (`_assert_warehouse_name_free`). Korkuluk TEK KATMANDIR: iki eşzamanlı istek
+# ikisi de "ad boş" okur ve ikisi de yazar — kardeş dal (şantiyeli depo) bu
+# yarışta DB tarafından korunurken merkez dalı korunmuyordu.
+#
+# Onarım KISMİ TEKİL İNDEKStir (`WHERE site_id IS NULL`), deponun `customers`
+# ve `subcontractor_progress_payments`ta zaten kullandığı desen.
+
+
+async def test_merkez_depo_AYNI_ADI_IKI_KEZ_ALAMAZ(db_session) -> None:
+    """DB katmanı — servis korkuluğu ATLANARAK doğrudan yazılır."""
+    db_session.add(Warehouse(name="Merkez Depo (Sincan)", site_id=None))
+    await db_session.flush()
+
+    db_session.add(Warehouse(name="Merkez Depo (Sincan)", site_id=None))
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+async def test_merkez_depo_FARKLI_ad_serbest(db_session) -> None:
+    """Pozitif kontrol: indeks ADA bakar, merkez dalını TOPTAN kilitlemez."""
+    db_session.add(Warehouse(name="Merkez Depo (Sincan)", site_id=None))
+    db_session.add(Warehouse(name="Merkez Depo (Etimesgut)", site_id=None))
+    await db_session.flush()
+
+
+async def test_SANTIYELI_depo_ayni_adi_BASKA_santiyede_alabilir(db_session, gorunen_proje) -> None:
+    """Pozitif kontrol: kısmi indeks YALNIZ merkez dalına uygulanır.
+
+    Bu iddia olmasaydı indeks yanlışlıkla `WHERE` süzgeci olmadan açıldığında
+    (yani ad GLOBAL tekil olduğunda) hiçbir test kırmızıya dönmezdi — iki
+    şantiyenin "Saha Deposu"nu aynı anda açamaması sessiz bir gerileme olurdu.
+    """
+    from app.modules.sites.models import Site
+
+    s1 = Site(project_id=gorunen_proje.id, code="DEP-S1", name="Şantiye 1")
+    s2 = Site(project_id=gorunen_proje.id, code="DEP-S2", name="Şantiye 2")
+    db_session.add_all([s1, s2])
+    await db_session.flush()
+
+    db_session.add(Warehouse(name="Saha Deposu", site_id=s1.id))
+    db_session.add(Warehouse(name="Saha Deposu", site_id=s2.id))
+    await db_session.flush()
+
+
+MERKEZ_INDEKS_REVISION = "a1b2c3d4e5f7"
+MERKEZ_INDEKS_ADI = "uq_warehouses_central_name"
+
+
+def test_merkez_indeksi_MODELDE_kismi_ve_tekil() -> None:
+    """Model katmanı — `create_all` ile kurulan test şeması bunu taşır."""
+    indeks = {i.name: i for i in Warehouse.__table__.indexes}
+    assert MERKEZ_INDEKS_ADI in indeks, f"kısmi indeks modelde yok: {list(indeks)}"
+    hedef = indeks[MERKEZ_INDEKS_ADI]
+    assert hedef.unique, "indeks TEKİL değil — çift merkez depo geçer"
+    suzgec = str(hedef.dialect_options["postgresql"]["where"])
+    assert "site_id IS NULL" in suzgec, (
+        f"süzgeç merkez dalını hedeflemiyor: {suzgec!r} — süzgeçsiz bir tekil "
+        "indeks adı GLOBAL tekil yapar ve iki şantiye aynı adı kullanamaz"
+    )
+
+
+async def test_merkez_indeksi_MIGRATION_ile_de_iner_ve_geri_alinir() -> None:
+    """🔴 Model katmanı CANLIYI KURMAZ: test şeması `create_all`den doğar,
+    canlı şema `alembic upgrade`den. İkisi ayrışırsa suite bunu HİÇ görmez
+    (bu dosyanın `test_upgrade_downgrade_upgrade_round_trip`inin dersi)."""
+    database = await _create_scratch_database()
+    try:
+        _run_alembic("upgrade", MERKEZ_INDEKS_REVISION, database=database)
+        conn = await asyncpg.connect(_asyncpg_dsn(database))
+        try:
+            satir = await conn.fetchrow(
+                "SELECT indexdef FROM pg_indexes WHERE tablename = 'warehouses' AND indexname = $1",
+                MERKEZ_INDEKS_ADI,
+            )
+            assert satir is not None, "migration kısmi indeksi AÇMADI"
+            tanim = satir["indexdef"]
+            assert "UNIQUE" in tanim, tanim
+            assert "site_id IS NULL" in tanim, tanim
+
+            # DB düzeyinde ısırıyor mu — ORM'siz, doğrudan.
+            await conn.execute(
+                "INSERT INTO warehouses (id, name, site_id) VALUES (gen_random_uuid(), 'M', NULL)"
+            )
+            with pytest.raises(asyncpg.exceptions.UniqueViolationError):
+                await conn.execute(
+                    "INSERT INTO warehouses (id, name, site_id) "
+                    "VALUES (gen_random_uuid(), 'M', NULL)"
+                )
+        finally:
+            await conn.close()
+
+        _run_alembic("downgrade", "f3a7c9e1d5b2", database=database)
+        conn = await asyncpg.connect(_asyncpg_dsn(database))
+        try:
+            kalan = await conn.fetchval(
+                "SELECT count(*) FROM pg_indexes WHERE tablename = 'warehouses' AND indexname = $1",
+                MERKEZ_INDEKS_ADI,
+            )
+            assert kalan == 0, "downgrade indeksi BIRAKMIŞ"
         finally:
             await conn.close()
     finally:
