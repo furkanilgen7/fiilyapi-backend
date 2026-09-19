@@ -33,6 +33,7 @@ __all__ = [
     "SECTION_MISSING",
     "SITE_MISSING",
     "person_day_conflict",
+    "personnel_not_payable",
 ]
 
 # 422 — bölüm sahipliği. `site_diary.guards.SECTION_MISMATCH` ile AYNI cümle:
@@ -79,6 +80,24 @@ def person_day_conflict(full_name: str, work_date: date) -> str:
     return (
         f"{full_name} adlı personelin {work_date.isoformat()} günü başka bir şantiyede "
         "kayıtlı; bir kişi aynı günde tek şantiyede puantaj alabilir."
+    )
+
+
+def personnel_not_payable(full_name: str) -> str:
+    """422 — pasif ya da taslak personele YENİ/DEĞİŞEN adam-gün (2026-09-19).
+
+    Bordro bu kişilere satır AÇMAZ (`payroll.compute_flow`: taslak kartın ücreti
+    doğrulanmamış, pasif kişi ayrılmıştır). Puantaj süzmeseydi iki modül sessizce
+    ayrışır ve ödenmeyecek bir adam-gün maliyete girerdi.
+
+    🔴 Metin "yazılamaz" DEĞİL "değiştirilemez" der, çünkü kapı DEĞİŞİME
+    bağlıdır: dokunulmamış geçmiş hücre aynen geçer (kullanıcı kararı (b)).
+    Kullanıcı aksini okusaydı geçmiş haftayı hiç göndermeyi denemez ve gerçekte
+    açık olan yolu kapalı sanırdı.
+    """
+    return (
+        f"{full_name} aktif personel değil (ayrılmış ya da kartı taslak); "
+        "puantajı değiştirilemez. Mevcut kayıtları olduğu gibi gönderilebilir."
     )
 
 
