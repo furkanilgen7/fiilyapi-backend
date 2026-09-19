@@ -158,10 +158,11 @@ _N = (AccessLevel.none, Scope.all)  # —
 _V = (AccessLevel.view, Scope.all)  # Görüntüle
 _LIM = (AccessLevel.view, Scope.limited)  # Sınırlı
 _FIN = (AccessLevel.view, Scope.finance)  # Mali
-_OWN = (AccessLevel.view, Scope.own)  # Kendi
-_PRJ = (AccessLevel.view, Scope.project)  # Proje
-_STK = (AccessLevel.view, Scope.stock)  # Stok
-_DRF = (AccessLevel.draft, Scope.project)  # Taslak
+#: 🔴 Kapsam 2026-09-19'da `project` → `all` oldu: proje kapsamı
+#: `UserProjectAccess`ten sürülür ve `progress_payments/repository.py` onu
+#: ZATEN uygular. İki mekanizmanın aynı kısıtı iki yerden söylemesi, bir gün
+#: ayrışmaları demekti.
+_DRF = (AccessLevel.draft, Scope.all)  # Taslak
 _REQ = (AccessLevel.request, Scope.all)  # Talep
 _APR = (AccessLevel.approve, Scope.all)  # Onay
 
@@ -181,7 +182,13 @@ ROLE_ORDER = [
 MATRIX: dict[str, list[tuple[AccessLevel, Scope]]] = {
     #                    sysadmin patron  şef    saha   İK     muhasebe  PM     satınalma
     "dashboard": [_A, _F, _LIM, _LIM, _LIM, _FIN, _F, _N],
-    "approvals": [_A, _F, _OWN, _OWN, _OWN, _FIN, _PRJ, _STK],
+    # 🔴 2026-09-19 (kullanıcı kararı): bu satır ESKİDEN `_OWN`/`_FIN`/`_PRJ`/
+    #    `_STK` taşıyordu ve DÖRDÜ DE UYGULANMIYORDU. Ölçüldü: `GET /approvals`
+    #    bilerek kapısızdır ve dönen küme zaten "bu adım SANA düştü" olgusuyla
+    #    sınırlıdır; `own`u satır süzgeci yapmak `_pending_filter`in "Bekçi 5"ini
+    #    (kendi evrakını onaylayamazsın) TERS ÇEVİRİRDİ. Bekçisi
+    #    `tests/modules/test_izin_kapsami_bekcisi.py`.
+    "approvals": [_A, _F, _V, _V, _V, _V, _V, _V],
     # dashboard satirinin aynisi: proje kartlari ayni gorunurluk yuzeyi,
     # asil suzgec user_project_access (spec §4).
     "projects": [_A, _F, _LIM, _LIM, _LIM, _FIN, _F, _N],

@@ -3,7 +3,7 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.access import AccessLevel, Scope
+from app.core.access import DROPPED_SCOPES, AccessLevel, Scope
 from app.core.errors import DomainError, NotFoundError, PermissionLockedError
 from app.modules.roles.models import SYSTEM_ADMIN_KEY, Module, Role, RolePermission
 from app.modules.roles.repository import get_module, get_permission
@@ -56,6 +56,14 @@ async def update_role_permission(
     # 200 dönmek yöneticiye olmayan bir kısıtı kalıcı olarak onaylatırdı.
     # Seed satırları (roles/seed_data.py:183-227) AYNEN kalır — mevcut kapsam
     # geri gönderildiğinde seviye değişimi geçer, `all`a çekmek hep serbesttir.
+    # 🔴 DÜŞEN kapsamlar MEVCUT OLSA BİLE geri yazılamaz (2026-09-19). Alttaki
+    #    "mevcudu geri göndermek serbesttir" muafiyeti burada GEÇMEZ: geçseydi
+    #    migration canlıyı temizledikten sonra bile uygulanmayan bir kapsam
+    #    ekrandan YENİDEN doğabilirdi.
+    if scope in DROPPED_SCOPES:
+        raise PermissionLockedError(
+            "Bu kapsam kaldırıldı; erişimi daraltmak için proje erişimini kullanın."
+        )
     if scope is not Scope.all and scope != permission.scope:
         raise PermissionLockedError(
             "Kapsam kısıtı henüz uygulanmıyor; erişimi daraltmak için proje erişimini kullanın."

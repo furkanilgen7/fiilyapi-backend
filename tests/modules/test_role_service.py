@@ -142,3 +142,42 @@ async def test_kapsam_all_a_cekilebilir(seeded_db):
     )
 
     assert updated.scope is Scope.all
+
+
+# --------------------------------------------------------------------------- #
+# DÜŞEN KAPSAMLAR — kullanıcı kararı 2026-09-19 (bkz. test_izin_kapsami_bekcisi)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("dusen", [Scope.own, Scope.project, Scope.stock])
+async def test_DUSEN_kapsam_MEVCUT_OLSA_BILE_geri_yazilamaz(seeded_db, dusen: Scope):
+    """🔴 KAÇAĞIN TAM YERİ — ve bu test bir SAHTE-YEŞİLDEN doğdu.
+
+    İlk hâlinde satırın kapsamı `all` iken `own` göndermeyi deniyordum; o yolu
+    ESKİ fren de (`scope is not all and scope != mevcut`) zaten reddediyordu,
+    yani test kodu değiştirmeden YEŞİL geçti ve hiçbir şey ölçmedi.
+
+    Gerçek açık, satırın kapsamı ZATEN düşen bir kapsam olduğunda ortaya çıkar:
+    eski fren *"mevcut kapsamı geri göndermek serbesttir"* dediği için
+    `own → own` isteği GEÇİYORDU. Migration canlı satırları `all`a çekse bile bu
+    yol açık kalsaydı, uygulanmayan kapsam ekrandan YENİDEN doğardı.
+    """
+    role = await _role(seeded_db, "site_chief")
+    permission = await get_permission(seeded_db, role.id, "progress_payments")
+    permission.scope = dusen  # canlıda migration ÖNCESİ hâl
+    await seeded_db.flush()
+
+    with pytest.raises(PermissionLockedError):
+        await update_role_permission(
+            seeded_db, role.id, "progress_payments", AccessLevel.view, dusen
+        )
+
+
+async def test_ALL_kapsami_HER_ZAMAN_serbesttir(seeded_db):
+    """🔴 POZİTİF KONTROL — fren "her kapsamı reddet" hâline gelirse yönetici
+    hiçbir izni değiştiremez olurdu."""
+    role = await _role(seeded_db, "site_chief")
+    updated = await update_role_permission(
+        seeded_db, role.id, "progress_payments", AccessLevel.view, Scope.all
+    )
+    assert updated.scope is Scope.all
