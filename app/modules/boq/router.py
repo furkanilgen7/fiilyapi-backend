@@ -11,7 +11,7 @@ from app.core.deps import get_current_user
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import kapsam_kapisi, require_permission
 from app.core.ratelimit import client_ip
-from app.core.scoped_route import kapsam_rotasi, kapsamdan_oku
+from app.core.scoped_route import kapsam_rotasi, kapsamdan_oku, kapsamla_maskele
 from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
@@ -102,9 +102,31 @@ async def export_boq_endpoint(
     BOQ-SEC K5: `section_id` ekran ucuyla AYNI cagriyi besler
     (`get_boq_export_for_site`) — ikinci bir suzme kodu yazilmaz, yoksa Excel
     ile ekran zamanla ayrisirdi.
+
+    🔴 **MASKE BURADA ELLE UYGULANIR** (2026-09-19 kacak-uc onarimi). Rota
+    sarmalayicisi yalnizca `BaseModel` donuslerini maskeler ve bu uc `Response`
+    (xlsx baytlari) doner — yani sarmalayici onu AYNEN geciriyordu. Sonuc:
+    `boq = view/limited` olan rol (santiye sefi, satinalma) ekranda `—` gordugu
+    birim fiyati ve tutari AYNI KAPIDAN (`boq:view`) dosya olarak tam degeriyle
+    indiriyordu. Maskenin en buyuk tek deligi buydu.
+
+    🔴 **Neden 403 DEGIL, MASKE.** Iki secenek de kacagi kapatirdi; olculdu ve
+    maske secildi:
+      * Dosyanin ISI kisitli rol icin de gecerlidir: `limited` rolde metraj ve
+        poz kimligi GORUNURDUR (kova tablosu), yani santiye sefinin sahada
+        kullandigi metraj listesi maskeden sonra da calisir. 403 vermek onu
+        bugun yapabildigi isi yapamaz hale getirirdi — kapsam kisiti bir
+        GIZLEME karari, bir IS DURDURMA karari degildir.
+      * Ekran ile dosya AYNI zarftan uretilir (yukaridaki K5 gerekcesi); ekranda
+        gorunen kume ile dosyada gorunen kume de boylece AYNI kalir. 403,
+        "ekranda var ama indiremiyorum" diye aciklanamaz bir ayrisma yaratirdi.
+
+    Zarf **build_boq_workbook'a girmeden ONCE** maskelenir: kitaba ham deger
+    yazip sonra hucre silmek iki ayri gizleme kuralı uretir ve zamanla ayrisirdi.
+    Bekcisi `tests/core/test_kapsam_kacak_uclar.py`.
     """
     site, boq = await service.get_boq_export_for_site(session, user, site_id, section_id)
-    buffer = build_boq_workbook(boq)
+    buffer = build_boq_workbook(kapsamla_maskele(boq, "boq"))
     filename = f"is-kalemleri-{site.code}.xlsx"
     return Response(
         content=buffer.getvalue(),

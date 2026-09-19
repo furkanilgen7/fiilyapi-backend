@@ -6,6 +6,13 @@ from typing import Annotated
 
 from pydantic import AfterValidator, BaseModel, Field, computed_field, model_validator
 
+# 🔴 KAPSAM MASKESI (kullanici karari 2026-09-19). `units` YENI IZIN MODULU
+# ACMAZ — uclari `projects` izniyle korunur (spec §8), dolayisiyla `projects`
+# satirinin KAPSAMINA da tabidir. Etiketsiz kalan her `Decimal` alani
+# `field_scope` KIMLIK sayar ve `limited` rolde SIZAR; bu semadaki para
+# alanlari aylarca oyle sizdi (denetim 2026-09-19).
+from app.core.field_scope import Gorunurluk
+
 # Yer tutucu sozlesmesi TEK yerde tanimlidir (B6/P1, spec §6): kopyalanmaz,
 # projects modulunden import edilir (BOQ `schemas.py:8` deseninin aynisi).
 from app.modules.projects.schemas import CountPlaceholder, MetricPlaceholder, metric
@@ -173,7 +180,9 @@ class BlockResponse(BaseModel):
     units_per_floor: int | None  # BE 81
     ground_floor_usage: BlockGroundUsage | None  # BE 82
     shop_count: int | None  # BE 83
-    construction_area_m2: Decimal | None  # BE 84
+    # Insaat alani METRAJDIR, para degil: muhasebe (`finance`) onu gormez,
+    # santiye sefi (`limited`) gorur — kovalarin tam tersi tarafi.
+    construction_area_m2: Annotated[Decimal | None, Gorunurluk.operasyonel]  # BE 84
     elevator_count: int | None  # BE 85
     parking_type: BlockParkingType | None  # BE 86
     estimated_delivery_date: date | None  # BE 100
@@ -222,26 +231,30 @@ class UnitResponse(BaseModel):
     unit_no: str
     unit_kind: UnitKind
     layout: str | None  # KY 272 "Tip"
-    gross_area_m2: Decimal | None
-    net_area_m2: Decimal | None
-    list_price: Decimal | None  # KY 274 "Liste Fiyati"
-    appraisal_value: Decimal | None  # KKP 89 "Rayic Deger"
+    gross_area_m2: Annotated[Decimal | None, Gorunurluk.operasyonel]
+    net_area_m2: Annotated[Decimal | None, Gorunurluk.operasyonel]
+    list_price: Annotated[Decimal | None, Gorunurluk.para]  # KY 274 "Liste Fiyati"
+    appraisal_value: Annotated[Decimal | None, Gorunurluk.para]  # KKP 89 "Rayic Deger"
     owner_side: UnitOwnerSide | None  # KKP 90 "Sahip"
     sort_order: int
     # --- Unite formu (UE), spec §4.1 ---
     floor: str | None  # UE 66 — METIN (karar 4)
     facing: UnitFacing | None  # UE 78
-    balcony_area_m2: Decimal | None  # UE 79
+    balcony_area_m2: Annotated[Decimal | None, Gorunurluk.operasyonel]  # UE 79
     bathroom_count: int | None  # UE 80
     parking_right: UnitParkingRight | None  # UE 81
-    min_sale_price: Decimal | None  # UE 92
-    vat_rate: Decimal | None  # UE 93
+    min_sale_price: Annotated[Decimal | None, Gorunurluk.para]  # UE 92
+    # 🔴 KDV ORANI `para` kovasindadir, `kimlik` DEGIL: bir TUTAR olmasa da
+    # satisin MALI parametresidir ve muhasebenin (`finance`) gormesi gereken,
+    # santiye sefinin (`limited`) gormesine gerek olmayan taraftadir. Kovasiz
+    # birakilsaydi `field_scope` onu kimlik sayip HER kapsamda gosterirdi.
+    vat_rate: Annotated[Decimal | None, Gorunurluk.para]  # UE 93
     # UE 94 — ARTIK YER TUTUCU DEGIL (kullanici karari 2, spec §4.4). P8
     # geldiginde OTOMATIKLESECEK ve elle giris kilitlenecektir.
     sales_status: UnitSalesStatus | None
     # KY 275/277 — P8 T5'te YER TUTUCU DEGIL: acik satis kaydindan gelir
     # (`unit_sales`). Satisi olmayan unitede `None`dir; uydurma deger uretilmez.
-    sale_price: Decimal | None  # P8 (KY 275)
+    sale_price: Annotated[Decimal | None, Gorunurluk.para]  # P8 (KY 275)
     buyer_name: str | None  # P8 (KY 277)
     # KKP 91 "Hissedar / Alici" — hissedar YARISI P9 T3'te YER TUTUCU DEGIL:
     # `units.shareholder_id` gercek kolondur, ad tek JOIN/sorgudan gelir
@@ -260,8 +273,10 @@ class UnitResponse(BaseModel):
     # sessizce baska bir sey olcerdi — kâr projeksiyonu (`expected_profit`)
     # butce tabanindan turer ve iki taban tek alanda karisamaz.
     # Bekci: `tests/modules/test_pyt4_unite_maliyet_tabani.py`.
-    unit_cost: MetricPlaceholder  # UE 91 / FDS 62
-    expected_profit: MetricPlaceholder  # UE 97-99
+    # Zarfli alan `None`a CEKILMEZ, `kisitli()` halini alir (`field_scope._gizle`):
+    # sema kirilmaz ve ekran "veri yok" ile "yetkin yok"u ayirt edebilir.
+    unit_cost: Annotated[MetricPlaceholder, Gorunurluk.para]  # UE 91 / FDS 62
+    expected_profit: Annotated[MetricPlaceholder, Gorunurluk.para]  # UE 97-99
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -288,9 +303,14 @@ class UnitSideSummary(BaseModel):
 
     side: UnitOwnerSide | None  # None = henuz atanmamis (spec §5.3)
     counts: UnitKindBreakdown
-    total_value: Decimal  # value_basis sutununun toplami (NULL'lar 0 sayilir)
-    average_value: Decimal | None  # KK 121 "Ortalama ₺1,32M"
-    share_pct: Decimal | None  # turev adet orani (spec §5.2)
+    # 🔴 `Decimal` IKEN `Decimal | None` OLDU (kapsam maskesi, 2026-09-19).
+    # Maske zorunlu bir alana da `None` yazar (FastAPI bunu REDDETMEZ, olculdu);
+    # tipi `Decimal` birakmak sozlesmeyi YALANCI yapardi — istemci `number`
+    # bekler, `null` alir ve `Number(null) === 0` ile "0 TL" basardi.
+    total_value: Annotated[Decimal | None, Gorunurluk.para]  # value_basis toplami
+    average_value: Annotated[Decimal | None, Gorunurluk.para]  # KK 121 "Ortalama ₺1,32M"
+    # Adet ORANIDIR (para degil): `sold`/`reserved` gibi SAYAC ailesindendir.
+    share_pct: Annotated[Decimal | None, Gorunurluk.operasyonel]  # turev adet orani (spec §5.2)
     # P3'te yer tutucuydular; `totals`'taki sayaclarla AYNI veriden (`sales_status`
     # sutunu) beslendikleri icin onlarla birlikte GERCEK sayaca dondular (spec
     # §8.2). Ayri kalsalardi ekran proje toplaminda "34 satildi" gorup taraf
@@ -304,12 +324,21 @@ class UnitSideSummary(BaseModel):
 class UnitTotals(BaseModel):
     counts: UnitKindBreakdown  # KKP 67, KY 71/88
     value_basis: UnitValueBasis  # spec §4.4
-    total_value: Decimal  # KKP 69 "Toplam Deger"
-    average_value: Decimal | None  # KY 168 "Ort. ₺927K"
+    # 🔴 Dort toplam da `Decimal` IKEN `Decimal | None` OLDU — gerekcesi
+    # `UnitSideSummary.total_value`in yanindadir.
+    #
+    # 🔴 TOPLAMLARIN MASKELENMESI YAN HASAR DEGIL, ISIN TA KENDISIDIR: kalem
+    # fiyatlari gizlenip toplam acikta birakilsaydi maske hicbir sey gizlememis
+    # olurdu (BOQ'ta ayni hata bulundu: "kalem Tutar'i bos ama GENEL TOPLAM
+    # gercek sayi"). Toplami ATLAYIP gostermek de kotudur — eksik bir toplam
+    # gercek gibi okunur.
+    total_value: Annotated[Decimal | None, Gorunurluk.para]  # KKP 69 "Toplam Deger"
+    average_value: Annotated[Decimal | None, Gorunurluk.para]  # KY 168 "Ort. ₺927K"
     # Iki sutun da AYRICA doner ki ekran ihtiyaci olani sorgusuz alabilsin.
-    total_list_price: Decimal
-    total_appraisal_value: Decimal
-    total_gross_area_m2: Decimal  # KKP 68'in (insaat alani) YERINE GECMEZ
+    total_list_price: Annotated[Decimal | None, Gorunurluk.para]
+    total_appraisal_value: Annotated[Decimal | None, Gorunurluk.para]
+    # METRAJ toplami: `finance` kapsaminda gizlenir, `limited`te GORUNUR.
+    total_gross_area_m2: Annotated[Decimal | None, Gorunurluk.operasyonel]  # KKP 68 YERINE GECMEZ
     sides: list[UnitSideSummary]  # contractor / landowner / atanmamis
     # KY 258-259 "34 satildi · 5 rezerve · 13 bos", KKP 161-163 tfoot kirilimi.
     # DORT deger de her zaman doner (sifir olsa bile): eksik anahtar, ekranda
@@ -324,8 +353,8 @@ class UnitTotals(BaseModel):
     # P8 T5'te GERCEK degere dondu: ciro artik `unit_sales`ten toplanir ve
     # yalniz GERCEKLESEN satislari (`active`/`deed_transferred`) sayar —
     # rezervasyon ciro DEGILDIR. Satis yoksa ortalama `None`dir, 0 degil.
-    sales_revenue: Decimal  # P8 (KY 93)
-    average_sale_price: Decimal | None  # P8 (KY 267)
+    sales_revenue: Annotated[Decimal | None, Gorunurluk.para]  # P8 (KY 93)
+    average_sale_price: Annotated[Decimal | None, Gorunurluk.para]  # P8 (KY 267)
 
 
 class UnitBlockGroup(BaseModel):
@@ -584,10 +613,10 @@ class UnitBulkPreviewRow(BaseModel):
     floor: int  # TU 152
     floor_label: str  # karar 4 — `units.floor` sutununa yazilacak deger
     layout: str | None  # TU 153 "Tip"
-    gross_area_m2: Decimal | None  # TU 154 "Brut/Net m²"
-    net_area_m2: Decimal | None
+    gross_area_m2: Annotated[Decimal | None, Gorunurluk.operasyonel]  # TU 154 "Brut/Net m²"
+    net_area_m2: Annotated[Decimal | None, Gorunurluk.operasyonel]
     facing: UnitFacing | None  # TU 155
-    list_price: Decimal | None  # TU 156
+    list_price: Annotated[Decimal | None, Gorunurluk.para]  # TU 156
     conflict: bool  # TU 177 — cakisma UYARIDIR, hata degil (spec §5.6)
 
 
@@ -602,7 +631,8 @@ class UnitBulkPreview(BaseModel):
     """
 
     total_units: int  # TU 73, 146, 171
-    total_list_value: Decimal  # TU 146, 172 — SATIRLARDAN toplanir (karar 5)
+    # `Decimal | None`: satir fiyatlari maskeliyken toplam GERCEK sayi basamaz.
+    total_list_value: Annotated[Decimal | None, Gorunurluk.para]  # TU 146, 172 (karar 5)
     conflicting_unit_nos: list[str]  # TU 177
     # TUM satirlar doner, 500 bile olsa: TU 166 "… 17 unite daha" bir FRONTEND
     # kirpmasidir. Sunucu kirpsaydi ekran "hangi satir cakisiyor" sorusunu
@@ -640,8 +670,8 @@ class UnitImportRowReport(BaseModel):
     block_name: str | None  # EI 121
     floor: str | None  # EI 122 — METIN (karar 4)
     layout: str | None  # EI 123
-    gross_area_m2: Decimal | None  # EI 124
-    list_price: Decimal | None  # EI 125
+    gross_area_m2: Annotated[Decimal | None, Gorunurluk.operasyonel]  # EI 124
+    list_price: Annotated[Decimal | None, Gorunurluk.para]  # EI 125
     messages: list[str]  # EI 126
     # Satirin GERCEKTEN yazilip yazilmadigi. Dogrulama ucunda DAIMA `False`:
     # "gecerli" ile "yazildi" ayri sorulardir ve tek alana indirilseydi

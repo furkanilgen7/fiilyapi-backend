@@ -17366,12 +17366,19 @@
         "type": "string"
       },
       "ProgressPaymentSummary": {
-        "description": "`GET /projects/{project_id}/progress-payments/summary` yanıtı (E14\nsekmesi + SHK kartları, spec §9.6). Eksik sözleşme bedeli → `progress_pct`/\n`remaining` `None` (zarif düşüş, §8 deseninin aynısı).",
+        "description": "`GET /projects/{project_id}/progress-payments/summary` yanıtı (E14\nsekmesi + SHK kartları, spec §9.6). Eksik sözleşme bedeli → `progress_pct`/\n`remaining` `None` (zarif düşüş, §8 deseninin aynısı).\n\n## 🔴 Bu şema İKİ uçtan döner ve İKİNCİSİ KAPSAM KISITLIDIR\n\nKendi ucunun yanında `contracts.schemas.EmployerContractDetail.\nprogress_payment_summary` olarak E14 detayına GÖMÜLÜR. `contracts` kapsam\nkısıtlı bir modüldür; `field_scope.maskele()` iç içe `BaseModel`lere İNER,\nyani maske buraya ULAŞIR. 2026-09-19 denetimine kadar alanlar ETİKETSİZDİ ve\netiketsiz alan `kimlik` sayıldığı için (fail-OPEN, gerekçe\n`core/field_scope.py`) hiçbir kapsamda gizlenmiyordu: `limited` kapsamda\n`EmployerContractDetail.amount` `null` dönerken AYNI sözleşme bedeli gömülü\n`contract_amount`ta AÇIKTA kalıyordu. Bekçisi\n`tests/modules/test_kapsam_capraz_sizinti.py`.\n\n🔴 **Etiketler KENDİ ucunu DEĞİŞTİRMEZ** ve bu ölçüldü: `progress_payments`\nmatriste kısıtlı değildir (bütün hücreleri `Scope.all`) ve routerı\n`kapsam_rotasi`ya bağlı değildir — o uçta maske hiç koşmaz. Yani etiketler\nburada ATIL durur, yalnız gömüldükleri bağlamda iş görürler. Bağlamdan\nbağımsız olarak doğrudurlar da: `contract_amount`/`net_total` HER iki uçta\nda paradır, `progress_pct` HER iki uçta da ilerlemedir.\n\n## 🔴 Neden dört alan `| None` OLDU (şema değişikliği)\n\n`cumulative_gross`/`advance_deduction_total`/`retention_total`/`net_total`\nüretimde ASLA `None` dönmez — `build_summary` her yolda sayı üretir. `None`\nhâli YALNIZ maskenin yazdığı hâldir. Tip `Decimal` KALSAYDI OpenAPI\nsözleşmesi \"bu alan hep sayıdır\" derken gövde `null` taşırdı: frontend'in\nüretilmiş tipi alanı sayı sanıp üzerinde aritmetik yapar ve ekran\nmaskelenmiş rolde ÇÖKERDİ. `contracts.EmployerContractDetail.items_total`\naynı gerekçeyle `Decimal` → `Decimal | None` oldu (2026-09-19); bu onun\nemsalidir, yeni bir desen değildir.",
         "properties": {
           "advance_deduction_total": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Advance Deduction Total",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Advance Deduction Total"
           },
           "contract_amount": {
             "anyOf": [
@@ -17386,14 +17393,28 @@
             "title": "Contract Amount"
           },
           "cumulative_gross": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Cumulative Gross",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cumulative Gross"
           },
           "net_total": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Net Total",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Total"
           },
           "payment_count": {
             "title": "Payment Count",
@@ -17428,9 +17449,16 @@
             "title": "Remaining"
           },
           "retention_total": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Retention Total",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retention Total"
           }
         },
         "required": [
@@ -28469,7 +28497,7 @@
         "type": "object"
       },
       "SubcontractorContractItemResponse": {
-        "description": "`FORM`/`TSD` kalem satırı. `line_total` türevdir, saklanmaz — `unit_price`\nNULL olan satır toplama 0 katkı verir (spec §3.6).",
+        "description": "`FORM`/`TSD` kalem satırı. `line_total` türevdir, saklanmaz.\n\n`unit_price` NULL olan satır SÖZLEŞME BEDELİNE 0 katkı verir (spec §3.6) —\nama satırın KENDİ `line_total`ı `null`dır, `0` değil; gerekçesi türevin\ndocstring'indedir. Toplama kuralı `service._subcontractor_amount`ta yaşar.",
         "properties": {
           "code": {
             "title": "Code",
@@ -28500,10 +28528,18 @@
             "type": "string"
           },
           "line_total": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Girdilerinden HERHANGİ BİRİ yoksa `None` — 0 DEĞİL.\n\n🔴 **Neden `Decimal(\"0\")` değil** (eski hâli buydu ve İKİ kusur\nüretiyordu):\n\n* `quantity` `operasyonel` etiketlidir ve `finance` kapsamında maske onu\n  `None`a çeker. Korumasız çarpım `None * Decimal` → `TypeError` verir ve\n  maske SERİLEŞTİRMEDEN ÖNCE uygulandığı için hata yanıt yolunda patlar:\n  muhasebe rolü taşeron sözleşme detayını **500** ile karşılardı.\n* `unit_price` `para` etiketlidir ve `limited` kapsamında gizlenir. `0`\n  dönen bir türev, GİZLENMİŞ bir bedeli ekrana `\"0,00 TL\"` diye basardı\n  (`frontend/src/lib/format.ts` yalnız `null` görünce `—` yazar). Yanlış\n  bir sayı göstermek, hiç göstermemekten daha kötüdür.\n\n🔴 **Neden maskeli bileşeni ATLAYIP hesaplamıyoruz:** eksik bir toplamı\ngerçek gibi basmak da aynı yalanı söylerdi (`boq/schemas.py::group_total`\naynı kararı aynı gerekçeyle verir).\n\n🔴 **Spec §3.6'nın \"fiyatsız satır toplama 0 katkı verir\" kuralı DEĞİŞMEDİ**\nve burada YAŞAMIYOR: sözleşme bedelini `service._subcontractor_amount`\nhesaplar, fiyatsız satırı kendisi eler. O kural bir TOPLAMA kuralıdır;\nsatırın kendi tutarı \"girilmedi\" iken `0 TL` DEĞİLDİR (spec §3.6 bu iki\nhâli zaten ayırır).",
             "readOnly": true,
-            "title": "Line Total",
-            "type": "string"
+            "title": "Line Total"
           },
           "quantity": {
             "anyOf": [
@@ -32105,9 +32141,16 @@
             "type": "array"
           },
           "total_list_value": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Total List Value",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total List Value"
           },
           "total_units": {
             "title": "Total Units",
@@ -34136,9 +34179,16 @@
             "type": "integer"
           },
           "total_value": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Total Value",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Value"
           }
         },
         "required": [
@@ -34202,9 +34252,16 @@
             "type": "integer"
           },
           "sales_revenue": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Sales Revenue",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sales Revenue"
           },
           "sides": {
             "items": {
@@ -34218,24 +34275,52 @@
             "type": "integer"
           },
           "total_appraisal_value": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Total Appraisal Value",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Appraisal Value"
           },
           "total_gross_area_m2": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Total Gross Area M2",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Gross Area M2"
           },
           "total_list_price": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Total List Price",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total List Price"
           },
           "total_value": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Total Value",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Value"
           },
           "value_basis": {
             "$ref": "#/components/schemas/UnitValueBasis"
@@ -53919,7 +54004,7 @@
     },
     "/sites/{site_id}/boq/export": {
       "get": {
-        "description": "Spec §5.3: BOQ'yu xlsx olarak indirir. Okuma ucudur — `record_audit`\ncagirmaz (T7 kurali: okumalar denetim gunlugune yazmaz).\n\nBOQ-SEC K5: `section_id` ekran ucuyla AYNI cagriyi besler\n(`get_boq_export_for_site`) — ikinci bir suzme kodu yazilmaz, yoksa Excel\nile ekran zamanla ayrisirdi.",
+        "description": "Spec §5.3: BOQ'yu xlsx olarak indirir. Okuma ucudur — `record_audit`\ncagirmaz (T7 kurali: okumalar denetim gunlugune yazmaz).\n\nBOQ-SEC K5: `section_id` ekran ucuyla AYNI cagriyi besler\n(`get_boq_export_for_site`) — ikinci bir suzme kodu yazilmaz, yoksa Excel\nile ekran zamanla ayrisirdi.\n\n🔴 **MASKE BURADA ELLE UYGULANIR** (2026-09-19 kacak-uc onarimi). Rota\nsarmalayicisi yalnizca `BaseModel` donuslerini maskeler ve bu uc `Response`\n(xlsx baytlari) doner — yani sarmalayici onu AYNEN geciriyordu. Sonuc:\n`boq = view/limited` olan rol (santiye sefi, satinalma) ekranda `—` gordugu\nbirim fiyati ve tutari AYNI KAPIDAN (`boq:view`) dosya olarak tam degeriyle\nindiriyordu. Maskenin en buyuk tek deligi buydu.\n\n🔴 **Neden 403 DEGIL, MASKE.** Iki secenek de kacagi kapatirdi; olculdu ve\nmaske secildi:\n  * Dosyanin ISI kisitli rol icin de gecerlidir: `limited` rolde metraj ve\n    poz kimligi GORUNURDUR (kova tablosu), yani santiye sefinin sahada\n    kullandigi metraj listesi maskeden sonra da calisir. 403 vermek onu\n    bugun yapabildigi isi yapamaz hale getirirdi — kapsam kisiti bir\n    GIZLEME karari, bir IS DURDURMA karari degildir.\n  * Ekran ile dosya AYNI zarftan uretilir (yukaridaki K5 gerekcesi); ekranda\n    gorunen kume ile dosyada gorunen kume de boylece AYNI kalir. 403,\n    \"ekranda var ama indiremiyorum\" diye aciklanamaz bir ayrisma yaratirdi.\n\nZarf **build_boq_workbook'a girmeden ONCE** maskelenir: kitaba ham deger\nyazip sonra hucre silmek iki ayri gizleme kuralı uretir ve zamanla ayrisirdi.\nBekcisi `tests/core/test_kapsam_kacak_uclar.py`.",
         "operationId": "export_boq_endpoint_sites__site_id__boq_export_get",
         "parameters": [
           {

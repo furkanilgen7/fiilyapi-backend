@@ -14,6 +14,29 @@ kendi `response_model`ının kopyası da DEĞİLDİR: araç, ucun döndürdüğ�
 🔴 **`MetricPlaceholder`ın ÜÇ HÂLİ DÜZLEŞTİRİLMEZ** (S25/B18). `value or 0`
 yazmak üç ayrı gerçeği ("değer 12", "modül henüz yazılmadı", "yetkin yok") tek
 sayıya indirir. Burada üçü **üç ayrı sabit dizeye** çevrilir.
+
+## 🔴 KAPSAM MASKESİ — daraltma şeması ucun NULL'ını KABUL ETMEK ZORUNDADIR
+
+2026-09-19'dan beri altı modülde alan düzeyi kapsam maskesi vardır
+(`core/field_scope`): `limited` PARA kovasını, `finance` OPERASYONEL kovayı
+`null`a çeker. **Bu maske AI hattında da koşar** — araçlar servisi değil UCU
+sarar (`ReadOnlyTransport`) ve `build_read_plane` ana uygulamanın ORİJİNAL
+rota nesnelerini taşır, yani `kapsam_rotasi` sarmalayıcısı da gelir.
+
+Sonuç bağlayıcıdır: **üst kaynakta `Decimal | None` olan bir alan burada
+`Decimal` ZORUNLU olamaz.** Olursa maskeli rolde `ValidationError` doğar,
+huninin son dalı (`registry.invoke`, 6a) onu `ust_kaynak_hatasi`na düşürür ve
+kullanıcı gizlenmiş bir alan yüzünden "sistem hatası" görür. Ürünün kararı
+alanı GİZLEMEKTİ, aracı öldürmek değil.
+
+🔴 Ve boşluk `0` ile DOLDURULMAZ: sıfır "bilinmiyor" demez, "sıfır" der —
+sessizce yanlış bir sayıdır ve gizlemekten kötüdür. Maskeli bir bileşeni
+ATLAYIP toplam hesaplamak da yasaktır: eksik bir toplamı gerçek gibi basmak
+aynı yalanın kart hâlidir.
+
+Bekçisi `tests/modules/ai/test_p8_kapsam_maskesi.py`dir ve araç listesini ELLE
+DEĞİL rota tablosundan çıkarır: yedinci modül kısıtlandığı gün yeni araç
+kendiliğinden ölçüme girer.
 """
 
 from __future__ import annotations
@@ -165,9 +188,22 @@ class AiGostergeOzeti(BaseModel):
 
 class AiYetkilerim(BaseModel):
     role_key: str
-    #: modül anahtarı → erişim seviyesi. 🔴 `Scope` TAŞIMAZ: enum dekoratiftir
-    #: (14 isabet, hepsi `roles/`, hiçbir süzgeç okumaz) ve kapsam etiketini
-    #: yetki gerekçesi diye sunmak ekranın bugünkü yalanını AI'a taşırdı (S1).
+    #: modül anahtarı → erişim seviyesi.
+    #:
+    #: 🔴 **ESKİ GEREKÇE BAYATTI, KARAR AYNI KALDI.** Burada *"`Scope` enum'u
+    #: dekoratiftir, hiçbir süzgeç `permission.scope` okumaz"* yazıyordu. Bu
+    #: 2026-09-19'dan beri YANLIŞTIR: kapsam altı modülde ALAN DÜZEYİNDE
+    #: uygulanır (`core/field_scope` + `core/scoped_route`) ve AI hattında da
+    #: koşar — araçlar servisi değil UCU sarar, ölçümü
+    #: `tests/modules/ai/test_p8_kapsam_maskesi.py`dedir.
+    #:
+    #: Alan yine de `Scope` TAŞIMAZ ve gerekçesi artık ŞUDUR: bu harita
+    #: `/auth/me`nin verdiği SEVİYE haritasıdır ve kapsam SEVİYEYLE aynı soruyu
+    #: cevaplamaz. "`projects=view`" ucun açık olduğunu söyler; "`limited`" o
+    #: uçtan hangi ALANLARIN geleceğini söyler. İkisini tek sözlükte
+    #: birleştirmek modeli, göremeyeceği bir alanı "yetkim var" diye istemeye
+    #: iterdi. Kapsamın AI'daki doğru ifadesi bir etiket değil, alanın KENDİSİNİN
+    #: `null` gelmesidir — model boş alanı zaten "bilmiyorum" diye okur.
     permissions: dict[str, str]
     #: 🔴 `/auth/me` INNER JOIN ile beslenir (`get_role_matrix`): izin satırı
     #: OLMAYAN modülün anahtarı yanıtta HİÇ BULUNMAZ. Bu alan o eksikliği
@@ -292,9 +328,17 @@ class AiProjeDetayi(BaseModel):
     end_date: str | None
     contract_no: str | None
     contract_amount: Decimal | None
-    budget: Decimal
+    #: 🔴 `| None` KAPSAM MASKESİNİN SONUCUDUR, kozmetik bir gevşetme DEĞİL.
+    #: `ProjectListItem.budget` `Annotated[Decimal | None, Gorunurluk.para]`tır
+    #: ve `projects=limited` rolünde uç `null` döner (araç UCU sarar, servisi
+    #: değil — maske AI hattında da koşar). `Decimal` ZORUNLU kalsaydı
+    #: `ValidationError` doğar, huninin son dalı onu `ust_kaynak_hatasi`na
+    #: düşürür ve maskeli rol AI'dan "sistem hatası" alırdı; oysa ürünün kararı
+    #: alanı GİZLEMEKTİ, aracı öldürmek değil.
+    budget: Decimal | None
     #: 🔴 MALİ ilerleme (`AiProje.progress_pct` ile aynı sözleşme), fiziksel DEĞİL.
-    progress_pct: Decimal
+    #: `| None`: `Gorunurluk.operasyonel` → `projects=finance` rolünde gizlenir.
+    progress_pct: Decimal | None
     site_count: int
     is_draft: bool
 
@@ -344,11 +388,22 @@ class AiSantiyeDetayi(BaseModel):
 
 
 class AiPozKalemi(BaseModel):
+    """🔴 İKİ SAYI DA `| None` ve ikisi AYRI kapsamda kaybolur.
+
+    `BoqItemResponse.quantity` `Gorunurluk.operasyonel` (→ `boq=finance`
+    gizler), `unit_price` `Gorunurluk.para` (→ `boq=limited` gizler). Tek bir
+    kapsamı düşünüp öbürünü zorunlu bırakmak, aracı öteki rolde patlatırdı.
+
+    🔴 **`?? 0` / `or Decimal(0)` YAZILAMAZ.** Sıfır burada "birim fiyat yok"
+    demez, "birim fiyat SIFIR" der — sessizce YANLIŞ bir sayıdır ve maskeli
+    rol onu gerçek sanıp hesabına katardı. Gizlemekten kötüdür.
+    """
+
     code: str
     description: str
     unit: str
-    quantity: Decimal
-    unit_price: Decimal
+    quantity: Decimal | None
+    unit_price: Decimal | None
 
 
 class AiPozGrubu(BaseModel):
@@ -368,7 +423,10 @@ class AiIsKalemleri(BaseModel):
     site_id: uuid.UUID
     gruplar: list[AiPozGrubu]
     kalem_sayisi: int
-    grand_total: Decimal
+    #: 🔴 `| None`: `BoqTotals.grand_total` `Gorunurluk.para`dır ve
+    #: `boq=limited` rolünde uç `null` döner. Kalem fiyatları gizliyken
+    #: toplamı basmak, maskeyi bölmeyle geri hesaplanabilir kılardı.
+    grand_total: Decimal | None
     sozlesme_toplami: str
     gerceklesen_toplam: str
     kalan_toplam: str
@@ -392,6 +450,13 @@ class AiHissedar(BaseModel):
     """
 
     shareholder_name: str
+    #: 🔴 BİLEREK ZORUNLU KALDI (`| None` DEĞİL) ve gerekçesi ölçülmüştür:
+    #: `LandShareShareholderRow.share_pct` `Annotated[Decimal,
+    #: Gorunurluk.kimlik]`tır — pay ORANI bir tutar değil, hissedarın
+    #: kimliğinin parçasıdır ve HİÇBİR kapsamda gizlenmez. Onu da `| None`
+    #: yapmak "her `Decimal`ı gevşet" refleksi olurdu ve şema, gerçekte var
+    #: olan bir güvenceyi anlatmayı bırakırdı. Etiket bir gün `para`ya
+    #: çekilirse `test_p8_kapsam_maskesi.py` bu aracı KIRMIZIYA çevirir.
     share_pct: Decimal
     unit_count: int
 
@@ -420,12 +485,18 @@ class AiArsaPayi(BaseModel):
     contract_no: str | None
     delivery_date: str | None
     toplam_unite: int
-    toplam_deger: Decimal
+    #: 🔴 ÜÇ DEĞER TOPLAMI DA `| None`: üçü de `LandSharePartition.value_total`
+    #: (`Gorunurluk.para`) kaynaklıdır ve `projects=limited` rolünde `null`
+    #: gelir. ADET sayaçları (`*_unite`) etiketsizdir → `kimlik` → hiçbir
+    #: kapsamda gizlenmez; bu yüzden onlar `int` kalır. İkisini aynı kefeye
+    #: koymak, K2'nin *"adet dengesi ile değer dengesi AYRI iki olgudur"*
+    #: kararını şema düzeyinde siler.
+    toplam_deger: Decimal | None
     bizim_unite: int
-    bizim_deger: Decimal
+    bizim_deger: Decimal | None
     satilan_adet: int
     arsa_sahibi_unite: int
-    arsa_sahibi_deger: Decimal
+    arsa_sahibi_deger: Decimal | None
     atanmamis_unite: int
     hissedarlar: list[AiHissedar]
     #: 🔴 İKİ DENGE TEK SAYIYA İNDİRGENMEZ (K2): bir proje ADET olarak dengede
@@ -483,7 +554,9 @@ class AiSozlesme(BaseModel):
     #: `KISI_ADI_ANAHTARLARI` üyesidir ama bu araç AGREGA modül BEYAN ETMEZ,
     #: dolayısıyla kayıt anındaki kişi-adı kapısı bu araçta HİÇ KOŞMAZ.
     counterparty_name: str | None
-    amount: Decimal
+    #: 🔴 `| None`: `ContractListItem.amount` `Gorunurluk.para`dır,
+    #: `contracts=limited` rolünde `null` gelir.
+    amount: Decimal | None
     start_date: str | None
     end_date: str | None
     progress_pct: Decimal | None
@@ -494,7 +567,10 @@ class AiSozlesmeListesi(BaseModel):
     contract_type: str
     items: list[AiSozlesme]
     total: int
-    total_amount: Decimal
+    #: 🔴 `| None`: `ContractSummary.total_amount` `Gorunurluk.para`dır.
+    #: Maske kanonu: maskeli bileşeni ATLAYIP toplamı yeniden hesaplamak
+    #: YASAK — eksik bir toplamı gerçek gibi basmak, gizlemekten kötüdür.
+    total_amount: Decimal | None
     active_count: int
     expiring_this_month_count: int
 

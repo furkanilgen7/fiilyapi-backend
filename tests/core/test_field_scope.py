@@ -206,3 +206,53 @@ def test_ZARFLI_alan_NONE_yerine_KISITLI_hale_cekilir() -> None:
     mali = maskele(kart, Scope.finance)
     assert mali.ilerleme.available is False, "operasyonel zarf kısıtlanmadı"
     assert mali.butce.value == Decimal("500"), "para zarfı YANLIŞLIKLA kısıtlandı"
+
+
+# --------------------------------------------------------------------------- #
+# İKİ KOVADAN türeyen alan — HER İKİ maske de gizler
+# --------------------------------------------------------------------------- #
+
+
+class _IkiKova(BaseModel):
+    """Bazı değerler hem paradan hem operasyonelden türer."""
+
+    ad: str
+    # `Σ(metraj × birim fiyat)` — girdilerinden BİRİ gizlenince değer anlamsızdır.
+    genel_toplam: Annotated[Decimal | None, _PARA, _OP] = Decimal("5000")
+    yalniz_para: Annotated[Decimal | None, _PARA] = Decimal("100")
+    yalniz_op: Annotated[Decimal | None, _OP] = Decimal("12")
+
+
+def test_IKI_KOVALI_alan_HER_IKI_kapsamda_da_gizlenir() -> None:
+    """🔴 KULLANICI KARARI 2026-09-19 — BOQ `finance` tutarsızlığının onarımı.
+
+    BOQ'ta satır tutarları `quantity` (operasyonel) gizlenince türev olarak
+    düşüyordu, ama `grand_total` DÜZ bir `para` alanı olduğu ve serviste maskeden
+    ÖNCE hesaplandığı için GERÇEK kalıyordu. Sonuç: muhasebenin ekranında hiçbir
+    satır tutara katkı vermezken altta gerçek bir genel toplam yazılıydı —
+    üstelik `quantity = amount / unit_price` ile gizlenen metraj GERİ
+    HESAPLANABİLİYORDU.
+
+    Doğru model: bu değer İKİ girdiden türer (`Σ metraj × birim fiyat`), yani
+    girdilerinden HERHANGİ BİRİ gizlendiğinde değer anlamını yitirir. Alan bu
+    yüzden İKİ kova birden taşır ve her iki maske de onu düşürür.
+
+    🔴 Alternatif ("iki kovadan hangisi baskın" diye tek kova seçmek) YANLIŞTI:
+    hangi kovayı seçersek seçelim öteki kapsamda tutarsızlık kalırdı.
+    """
+    kayit = _IkiKova(ad="A Blok")
+
+    sinirli = maskele(kayit, Scope.limited)
+    assert sinirli.genel_toplam is None, "`limited` iki kovalı alanı gizlemedi"
+    assert sinirli.yalniz_op == Decimal("12"), "operasyonel alan yanlışlıkla gizlendi"
+
+    mali = maskele(kayit, Scope.finance)
+    assert mali.genel_toplam is None, "`finance` iki kovalı alanı gizlemedi"
+    assert mali.yalniz_para == Decimal("100"), "para alanı yanlışlıkla gizlendi"
+
+
+def test_IKI_KOVALI_alan_ALL_kapsaminda_DURUR() -> None:
+    """🔴 POZİTİF KONTROL — iki kova taşımak "her zaman gizli" demek DEĞİLDİR."""
+    sonuc = maskele(_IkiKova(ad="A Blok"), Scope.all)
+
+    assert sonuc.genel_toplam == Decimal("5000")

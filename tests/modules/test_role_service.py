@@ -3,8 +3,9 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from app.core.access import AccessLevel, Scope
+from app.core.access import DROPPED_SCOPES, AccessLevel, Scope
 from app.core.errors import NotFoundError, PermissionLockedError
+from app.core.field_scope import gizlenen_kova
 from app.modules.roles.models import SYSTEM_ADMIN_KEY, Module, Role, RolePermission
 from app.modules.roles.repository import get_permission
 from app.modules.roles.service import rename_role, update_role_permission
@@ -98,14 +99,15 @@ async def _non_all_scope_cell(session) -> tuple[Role, str, Scope]:
     return row[0], row[1], row[2]
 
 
-async def test_uygulanmayan_kapsam_YAZILAMAZ(seeded_db):
-    """🔴 `Scope` karar mekanizmasına HİÇ bağlı değil: `app/core/permissions.py`de
+async def test_DUSEN_kapsam_ALL_hucreye_YAZILAMAZ(seeded_db):
+    """Düşen bir kapsam (`own`) `all` taşıyan bir hücreye de yazılamaz.
 
-    `scope` kelimesi GEÇMEZ ve `projects.service.visible_projects` yalnız
-    `AccessLevel.admin` + `user_project_access` satırlarına bakar. Buna rağmen
-    İzin Matrisi ekranı "Kendi / Sınırlı / Mali" etiketlerini yazıyla vaat eder.
-    Yeni bir yalan KALICI olarak yazılamamalı: `all` dışı bir kapsam yazma
-    denemesi reddedilir ve satır DEĞİŞMEDEN kalır.
+    🔴 Docstring 2026-09-19 akşamı DÜZELTİLDİ: eski hâli "`Scope` karar
+    mekanizmasına HİÇ bağlı değil, `permissions.py`de `scope` kelimesi geçmez"
+    diyordu. O cümle artık YANLIŞ — `core/permissions.actor_scope` tam olarak
+    `permission.scope`u okur. Testin ÖLÇTÜĞÜ şey değişmedi ama GEREKÇESİ değişti:
+    `own` reddedilir çünkü uygulanmıyor değil, matristen DÜŞÜRÜLDÜ
+    (`DROPPED_SCOPES`); uygulanan `limited`/`finance` ise artık serbestçe atanır.
     """
     role = await _role(seeded_db, "site_chief")
     before = await get_permission(seeded_db, role.id, "personnel")
@@ -119,10 +121,14 @@ async def test_uygulanmayan_kapsam_YAZILAMAZ(seeded_db):
 
 
 async def test_seed_kapsami_korunurken_seviye_degistirilebilir(seeded_db):
-    """Seed satırları AYNEN kalır (veri göçü yok): mevcut kapsam geri gönderilirse
+    """Seed satırları AYNEN kalır: `all` dışı kapsam taşıyan bir hücrenin seviyesi
 
-    seviye değişimi geçer. Aksi hâlde `all` dışı kapsam taşıyan hücrelerin
-    seviyesi hiçbir yerden düzenlenemez hâle gelirdi.
+    düzenlenebilmeli. 🔴 Bu test eskiden kapının "mevcut kapsamı geri göndermek
+    serbesttir" MUAFİYETİNİ ölçüyordu; o muafiyet kaldırıldı (kapı artık mevcut
+    değere hiç bakmaz, kapsamın UYGULANIP uygulanmadığına bakar). Ölçtüğü davranış
+    aynı kaldığı için test de kaldı — ama gerekçesi artık `limited`/`finance`in
+    uygulanmış olmasıdır. Gönderilen seviye `none`: yazan seviye + maskeleyen
+    kapsam bileşimi ayrıca reddedilir (bkz. `test_MASKELEYEN_kapsam_*`).
     """
     role, module_key, mevcut_kapsam = await _non_all_scope_cell(seeded_db)
 
@@ -134,7 +140,11 @@ async def test_seed_kapsami_korunurken_seviye_degistirilebilir(seeded_db):
 
 
 async def test_kapsam_all_a_cekilebilir(seeded_db):
-    """Yalanı GERİ ALMAK her zaman serbesttir: `all` yazmak reddedilmez."""
+    """`all` HER ZAMAN serbesttir: kısıtı geri almak hiçbir kapıya takılmaz.
+
+    (Eski docstring "yalanı geri almak" diyordu — kapsam uygulanmadığı dönemin
+    dili. Kısıt artık gerçek; kaldırılması yine de serbest kalmalı.)
+    """
     role, module_key, _ = await _non_all_scope_cell(seeded_db)
 
     updated = await update_role_permission(
@@ -181,3 +191,143 @@ async def test_ALL_kapsami_HER_ZAMAN_serbesttir(seeded_db):
         seeded_db, role.id, "progress_payments", AccessLevel.view, Scope.all
     )
     assert updated.scope is Scope.all
+
+
+# --------------------------------------------------------------------------- #
+# UYGULANAN KAPSAMLAR — `limited` / `finance` (2026-09-19, alan maskesi kurulduktan SONRA)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("seviye", [AccessLevel.none, AccessLevel.view])
+@pytest.mark.parametrize("uygulanan", [Scope.limited, Scope.finance])
+async def test_UYGULANAN_kapsam_ATANABILIR(seeded_db, uygulanan: Scope, seviye: AccessLevel):
+    """🔴 POZİTİF KONTROL — kapsam artık UYGULANIYOR, o hâlde ATANABİLMELİ.
+
+    Eski fren `scope is not all and scope != permission.scope` diyordu; yani
+    kapsamı `all` olan bir hücreye `limited`/`finance` HİÇ yazılamıyordu ve
+    mekanizma yalnız seed'deki hücrelerde yaşayabiliyordu. Bu test o tek yönlü
+    kapıyı çakar: daraltma da genişletme kadar mümkün olmalı.
+    """
+    role = await _role(seeded_db, "site_chief")
+    before = await get_permission(seeded_db, role.id, "personnel")
+    assert before.scope is Scope.all, "Testin dayanağı: bu hücre seed'de `all`"
+
+    updated = await update_role_permission(seeded_db, role.id, "personnel", seviye, uygulanan)
+
+    assert updated.scope is uygulanan
+    okunan = await get_permission(seeded_db, role.id, "personnel")
+    assert (okunan.access_level, okunan.scope) == (seviye, uygulanan), "Yazma KALICI olmalı"
+
+
+async def test_UYGULANAN_kapsamlar_BIRBIRINE_cevrilebilir(seeded_db):
+    """Seed'li bir `limited` hücresi `finance`a (ya da tersi) çevrilebilmeli.
+
+    Eski fren yalnızca MEVCUT kapsamın geri gönderilmesine izin verdiği için
+    iki uygulanan kapsam arasındaki geçiş de kapalıydı.
+    """
+    role, module_key, mevcut = await _non_all_scope_cell(seeded_db)
+    hedef = Scope.finance if mevcut is Scope.limited else Scope.limited
+
+    updated = await update_role_permission(seeded_db, role.id, module_key, AccessLevel.view, hedef)
+
+    assert updated.scope is hedef
+
+
+@pytest.mark.parametrize(
+    "yazan",
+    [
+        AccessLevel.draft,
+        AccessLevel.request,
+        AccessLevel.approve,
+        AccessLevel.full,
+        AccessLevel.admin,
+    ],
+)
+@pytest.mark.parametrize("maskeleyen", [Scope.limited, Scope.finance])
+async def test_MASKELEYEN_kapsam_YAZAN_seviyeyle_BIRLESEMEZ(
+    seeded_db, maskeleyen: Scope, yazan: AccessLevel
+):
+    """🔴 Maskeli veri YAZMA yüzeyine DÜŞEMEZ — bekçisi buydu ve yoktu.
+
+    `frontend/src/lib/masked.ts` şunu YAZILI olarak varsayar: *"o ekranlar `full`
+    yetki ister ve `full` izin matrisinde yalnız `Scope.all` ile gelir"*. Bu
+    varsayımı hiçbir şey uygulamıyordu: kapı yalnız KAPSAM değişimine bakıyordu,
+    SEVİYE serbestti. `full` + `finance` hücresi oluşturulduğunda maskelenmiş
+    (`None`) metraj yazma formuna düşer ve `maskesiz()` RENDER anında atar —
+    React ağacı çöker, sayfa beyaz kalır.
+
+    `none`/`view` serbest kalır (pozitif kontrolü üstteki testtedir): salt-okuma
+    yüzeyi maskeli değeri zaten "—" diye basar.
+    """
+    role = await _role(seeded_db, "site_chief")
+    before = await get_permission(seeded_db, role.id, "personnel")
+    eski = (before.access_level, before.scope)
+
+    with pytest.raises(PermissionLockedError):
+        await update_role_permission(seeded_db, role.id, "personnel", yazan, maskeleyen)
+
+    after = await get_permission(seeded_db, role.id, "personnel")
+    assert (after.access_level, after.scope) == eski, "Reddedilen istek satırı DEĞİŞTİRMEMELİ"
+
+
+def test_ATANABILIR_kapsam_listesi_IKI_KAYNAKTAN_TURETILIR() -> None:
+    """🔴 SAYI değil BEKÇİ: "uygulanan kapsamlar" üçüncü bir elle yazılmış liste OLAMAZ.
+
+    İki gerçek kaynak var ve birbirini tamamlamalı: `core.access.DROPPED_SCOPES`
+    (matristen DÜŞEN) ve `core.field_scope` maskesi (UYGULANAN). `Scope`a yeni
+    bir üye eklenip ikisinden birine yazılmazsa bu test kırılır ve ekleyeni
+    seçim yapmaya zorlar: ya maskeyi yaz ya düşenlere koy. Aksi hâlde
+    `update_role_permission` ya uygulanmayan bir kapsamı atattırır (bugün
+    onarılan kusurun aynısı) ya da uygulanan bir kapsamı sessizce reddeder.
+    """
+    maskeleyen = {kapsam for kapsam in Scope if gizlenen_kova(kapsam) is not None}
+
+    assert set(Scope) - DROPPED_SCOPES - {Scope.all} == maskeleyen, (
+        "`Scope` üyeleri ile maske/düşen listeleri ayrıştı: her üye ya "
+        "`DROPPED_SCOPES` içinde ya `field_scope` maskesinde olmalı (`all` hariç)."
+    )
+
+
+async def test_MASKESI_KALDIRILAN_kapsam_ANINDA_ATANAMAZ(seeded_db, monkeypatch):
+    """🔴 Kapı `field_scope`u GERÇEKTEN okuyor mu — yoksa elle yazılmış bir liste mi?
+
+    Üstteki `test_ATANABILIR_kapsam_listesi_*` iki kaynağın tümleyen kalmasını
+    çakar ama kapının o kaynağa BAĞLI olduğunu ölçmez: gövdede
+    `scope in {limited, finance}` yazsaydı o test de bu testin pozitif kontrolü de
+    yeşil kalırdı. Burada maske ÇALIŞMA ANINDA kaldırılır; kapı türetiyorsa
+    kapsam aynı anda atanamaz olur, elle listeliyorsa 200 dönmeye devam eder.
+
+    Özel (`_`) sözlüğe dokunmak bilinçlidir: ölçülen şey tam olarak o bağlantıdır.
+    """
+    from app.core import field_scope
+
+    monkeypatch.delitem(field_scope._GIZLENEN, Scope.limited)
+    role = await _role(seeded_db, "site_chief")
+
+    with pytest.raises(PermissionLockedError):
+        await update_role_permission(
+            seeded_db, role.id, "personnel", AccessLevel.view, Scope.limited
+        )
+
+
+async def test_RED_METINLERI_HENUZ_UYGULANMIYOR_DEMEZ(seeded_db):
+    """🔴 Metin de bir sözleşmedir: "Kapsam kısıtı HENÜZ UYGULANMIYOR" artık YALAN.
+
+    Kapsam 2026-09-19'da uygulandı; o cümleyi okuyan yönetici (ve bir sonraki
+    geliştirici) mekanizmanın hiç olmadığına inanırdı. Ayrıca bu test DÜŞEN
+    kapsamın KENDİ metnini çakar: iki ret dalı (düşen / maskesi yok) aynı
+    gerekçeye çökerse yönetici "kaldırıldı" yerine "maske tanımlı değil" okur ve
+    yanlış yere bakar.
+    """
+    role = await _role(seeded_db, "site_chief")
+
+    with pytest.raises(PermissionLockedError) as dusen:
+        await update_role_permission(seeded_db, role.id, "personnel", AccessLevel.view, Scope.own)
+    with pytest.raises(PermissionLockedError) as seviye:
+        await update_role_permission(
+            seeded_db, role.id, "personnel", AccessLevel.full, Scope.finance
+        )
+
+    metinler = [str(dusen.value), str(seviye.value)]
+    assert not any("henüz uygulanmıyor" in metin for metin in metinler), metinler
+    assert "kaldırıldı" in str(dusen.value), "Düşen kapsamın kendi gerekçesi kalmalı"

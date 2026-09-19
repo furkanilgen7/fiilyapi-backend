@@ -89,3 +89,18 @@ async def test_ACCOUNTING_finance_METRAJI_goremez_PARAYI_gorur(
     assert kalem["unit_price"] == "280.00", "PARA YANLIŞLIKLA GİZLENDİ"
     assert kalem["code"] == "01.001", "KİMLİK GİZLENDİ"
     assert kalem["description"] == "Kazı (Makine ile)"
+
+    # 🔴 TUTAR TUTARLILIĞI (kullanıcı kararı 2026-09-19) — bu bölüm bir KÖR
+    #    BEKÇİNİN onarımıdır. Test eskiden YALNIZ `unit_price`ı ölçüyordu ve
+    #    tutarlar hakkında TEK İDDİASI YOKTU; o yüzden şu tutarsızlığı hiç
+    #    görmedi: metraj gizlenince satır tutarları türev olarak düşerken
+    #    `grand_total` DÜZ bir alan olduğu için GERÇEK kalıyordu. Muhasebenin
+    #    ekranında hiçbir satır tutara katkı vermezken altta gerçek bir genel
+    #    toplam yazılıydı — ve gizlenen metraj `tutar / birim fiyat` ile GERİ
+    #    HESAPLANABİLİYORDU.
+    assert kalem["amount"] is None, "metraj gizliyken SATIR TUTARI sızdı"
+    assert govde["groups"][0]["group_total"] is None, "metraj gizliyken GRUP TOPLAMI sızdı"
+    assert govde["totals"]["grand_total"] is None, (
+        "GENEL TOPLAM sızdı: metraj gizliyken toplam hayatta kalırsa ekran "
+        "TUTARSIZDIR ve metraj `tutar / birim fiyat` ile geri hesaplanır"
+    )

@@ -173,3 +173,73 @@ async def test_kapsam_bagimliligi_YOKSA_maske_HICBIR_SEY_gizlemez() -> None:
 
     govde = await _oku(app)
     assert govde["fiyat"] == "500"
+
+
+# --------------------------------------------------------------------------- #
+# ContextVar SIZINTISI — istekten isteğe taşınma
+# --------------------------------------------------------------------------- #
+
+
+async def test_kapsam_BIR_SONRAKI_ISTEGE_SIZMAZ() -> None:
+    """🔴 ÖLÇÜLMÜŞ KUSUR (2026-09-19 denetimi) — köprü değeri TEMİZLENMİYORDU.
+
+    `ContextVar.set()` çağrıldığı BAĞLAMI kalıcı olarak değiştirir. İstekler ayrı
+    task'larda koşarsa bu zararsızdır; ama **HTTP keep-alive bağlantısındaki
+    ardışık istekler AYNI task'ta koşar** (ve `httpx.ASGITransport` ile koşan her
+    test de öyle). Yani bir istekte yazılan kapsam, köprüsü olmayan bir sonraki
+    isteğe TAŞINIYORDU.
+
+    Ölçüldü (onarım öncesi):
+        B (köprü yok) → 500   · A (limited) → None · B (yine köprü yok) → None
+    yani A'nın `limited`i B'ye sızdı.
+
+    🔴 Bugün her kısıtlı router köprü taşıdığı için değer her istekte ÜZERİNE
+    yazılıyordu, yani kusur fiilen zararsızdı. Ama bir MAYINDI: köprüsü unutulan
+    bir router, belgelenen fail-open `all`a değil ÖNCEKİ İSTEĞİN kapsamına
+    düşerdi — `limited` de olabilir `all` da, yani davranış BELİRSİZDİ. Ayrıca
+    `BackgroundTasks` yanıttan sonra aynı bağlamda koşar.
+
+    ⚠️ Bu kusur, üç bağımsız çürütücünün İKİSİ tarafından "çürütüldü" sayılmıştı;
+    ölçüm onları yanlışladı. Çoğunluk oyu bir ölçüm değildir.
+    """
+    from fastapi import Depends
+
+    from app.core.access import Scope
+    from app.core.scoped_route import kapsam_bagimligi_kur, kapsamdan_oku
+
+    async def _limited() -> Scope:
+        return Scope.limited
+
+    kopru_var = APIRouter(route_class=kapsam_rotasi("boq", kapsamdan_oku))
+
+    @kopru_var.get(
+        "/kopru-var",
+        response_model=_Yanit,
+        dependencies=[Depends(kapsam_bagimligi_kur(_limited))],
+    )
+    async def kv() -> _Yanit:
+        return _Yanit(ad="A", fiyat=Decimal("500"), metraj=Decimal("12"))
+
+    # Köprüsü OLMAYAN, ama maskeli bir router: varsayılanı `all` OLMALIDIR.
+    kopru_yok = APIRouter(route_class=kapsam_rotasi("sales", kapsamdan_oku))
+
+    @kopru_yok.get("/kopru-yok", response_model=_Yanit)
+    async def ky() -> _Yanit:
+        return _Yanit(ad="B", fiyat=Decimal("500"), metraj=Decimal("12"))
+
+    app = FastAPI()
+    app.include_router(kopru_var)
+    app.include_router(kopru_yok)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://t") as client:
+        once = (await client.get("/kopru-yok")).json()
+        maskeli = (await client.get("/kopru-var")).json()
+        sonra = (await client.get("/kopru-yok")).json()
+
+    assert once["fiyat"] == "500", "kurulum: köprüsüz router zaten maskeliymiş"
+    assert maskeli["fiyat"] is None, "kurulum: köprülü router maskelemedi"
+    assert sonra["fiyat"] == "500", (
+        "🔴 KAPSAM SIZDI: köprülü istekte yazılan kapsam, köprüsüz bir sonraki "
+        "isteğe taşındı. ContextVar `reset` edilmiyor."
+    )

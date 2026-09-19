@@ -93,12 +93,22 @@ def gizlenen_kova(kapsam: Scope) -> Gorunurluk | None:
     return _GIZLENEN.get(kapsam)
 
 
-def _kova(alan: Any) -> Gorunurluk:
-    """Alanın kovası — etiketsiz alan KİMLİKTİR (gerekçe modül docstring'inde)."""
-    for meta in alan.metadata:
-        if isinstance(meta, Gorunurluk):
-            return meta
-    return Gorunurluk.kimlik
+def _kovalar(alan: Any) -> frozenset[Gorunurluk]:
+    """Alanın kovaları — etiketsiz alan KİMLİKTİR (gerekçe modül docstring'inde).
+
+    🔴 BİR ALAN BİRDEN ÇOK KOVA TAŞIYABİLİR (kullanıcı kararı 2026-09-19).
+    Bazı değerler İKİ girdiden türer: BOQ'un genel toplamı `Σ(metraj × birim
+    fiyat)`tır, yani girdilerinden HERHANGİ BİRİ gizlendiğinde değer anlamını
+    yitirir. Böyle bir alan `Annotated[..., Gorunurluk.para, Gorunurluk.operasyonel]`
+    yazılır ve HER İKİ maske de onu düşürür.
+
+    Tek kova seçmek YANLIŞTI: hangisini seçersek seçelim öteki kapsamda
+    tutarsızlık kalırdı — muhasebenin ekranında hiçbir satır tutara katkı
+    vermezken altta gerçek bir genel toplam duruyordu ve gizlenen metraj
+    `tutar / birim fiyat` ile geri hesaplanabiliyordu.
+    """
+    kovalar = frozenset(meta for meta in alan.metadata if isinstance(meta, Gorunurluk))
+    return kovalar or frozenset({Gorunurluk.kimlik})
 
 
 def _deger(deger: Any, gizle: Gorunurluk) -> Any:
@@ -133,7 +143,7 @@ def _maskele[TModel: BaseModel](model: TModel, gizle: Gorunurluk) -> TModel:
     yeni: dict[str, Any] = {}
     for ad, alan in type(model).model_fields.items():
         mevcut = getattr(model, ad)
-        yeni[ad] = _gizle(mevcut) if _kova(alan) is gizle else _deger(mevcut, gizle)
+        yeni[ad] = _gizle(mevcut) if gizle in _kovalar(alan) else _deger(mevcut, gizle)
     # `model_copy` YENİ nesne üretir ve türev alanlar (`computed_field`)
     # okunduklarında YENİ girdilerden yeniden hesaplanır — maske böylece
     # türevlere kendiliğinden yayılır.

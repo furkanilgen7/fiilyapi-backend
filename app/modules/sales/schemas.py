@@ -343,7 +343,12 @@ class CollectionKpi(BaseModel):
 
     collected_amount: Annotated[Decimal | None, Gorunurluk.para]
     contracted_amount: Annotated[Decimal | None, Gorunurluk.para]
-    collection_pct: Annotated[Decimal | None, Gorunurluk.operasyonel]
+    # 🔴 PARA — kullanıcı kararı 2026-09-19. `tahsil edilen × 100 ÷ sözleşmeye
+    #    bağlanan` (summary.py): İKİ girdisi de `para` etiketli, o hâlde türevi de
+    #    paradır. `sales` satırında kapsam taşıyan TEK rol `accounting`tir, yani
+    #    `operasyonel` etiketi pratikte YALNIZCA zarar üretiyordu: muhasebe
+    #    "Tahsil Edilen" kartında ₺ tutarı görüyor ama oranı "—" görüyordu.
+    collection_pct: Annotated[Decimal | None, Gorunurluk.para]
 
 
 class OverdueKpi(BaseModel):

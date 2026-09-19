@@ -128,7 +128,15 @@ class ContractListItem(BaseModel):
     amount: Annotated[Decimal | None, Gorunurluk.para]
     start_date: date | None
     end_date: date | None
-    progress_pct: Annotated[Decimal | None, Gorunurluk.operasyonel] = None
+    # 🔴 PARA — kullanıcı kararı 2026-09-19. Bu oran §8 "finansal ilerleme"dir
+    #    (`kümülatif brüt ÷ sözleşme bedeli × 100`, üreticisi
+    #    `progress_payments/summary.py`) ve TAMAMEN paradan türer; `projects`teki
+    #    FİZİKSEL ilerlemeden KASTEN ayrıdır. `operasyonel` etiketliyken iki
+    #    kusur birden üretiyordu: `limited` rol bedeli göremezken ORANI görüyor ve
+    #    bedeli dolaylı ele veriyordu; muhasebe ise kendi asıl metriğini
+    #    göremiyordu. Emsali `land_share_schemas`taki `our_actual_pct`/
+    #    `deviation_pct` — üçü de `para`.
+    progress_pct: Annotated[Decimal | None, Gorunurluk.para] = None
     """§8 finansal ilerleme: `kümülatif brüt / bedel × 100` (P7/H9, spec §9.6).
 
     **İKİ SEKMEDE DE GERÇEK DEĞER** (P-YT4, 2026-08-23). Eski not "taşeron
@@ -485,8 +493,12 @@ class SubcontractorContractItemGroup(BaseModel):
 
 
 class SubcontractorContractItemResponse(BaseModel):
-    """`FORM`/`TSD` kalem satırı. `line_total` türevdir, saklanmaz — `unit_price`
-    NULL olan satır toplama 0 katkı verir (spec §3.6)."""
+    """`FORM`/`TSD` kalem satırı. `line_total` türevdir, saklanmaz.
+
+    `unit_price` NULL olan satır SÖZLEŞME BEDELİNE 0 katkı verir (spec §3.6) —
+    ama satırın KENDİ `line_total`ı `null`dır, `0` değil; gerekçesi türevin
+    docstring'indedir. Toplama kuralı `service._subcontractor_amount`ta yaşar.
+    """
 
     id: uuid.UUID
     contract_id: uuid.UUID
@@ -502,9 +514,33 @@ class SubcontractorContractItemResponse(BaseModel):
 
     @computed_field  # type: ignore[prop-decorator]
     @property
-    def line_total(self) -> Decimal:
-        if self.unit_price is None:
-            return Decimal("0")
+    def line_total(self) -> Decimal | None:
+        """Girdilerinden HERHANGİ BİRİ yoksa `None` — 0 DEĞİL.
+
+        🔴 **Neden `Decimal("0")` değil** (eski hâli buydu ve İKİ kusur
+        üretiyordu):
+
+        * `quantity` `operasyonel` etiketlidir ve `finance` kapsamında maske onu
+          `None`a çeker. Korumasız çarpım `None * Decimal` → `TypeError` verir ve
+          maske SERİLEŞTİRMEDEN ÖNCE uygulandığı için hata yanıt yolunda patlar:
+          muhasebe rolü taşeron sözleşme detayını **500** ile karşılardı.
+        * `unit_price` `para` etiketlidir ve `limited` kapsamında gizlenir. `0`
+          dönen bir türev, GİZLENMİŞ bir bedeli ekrana `"0,00 TL"` diye basardı
+          (`frontend/src/lib/format.ts` yalnız `null` görünce `—` yazar). Yanlış
+          bir sayı göstermek, hiç göstermemekten daha kötüdür.
+
+        🔴 **Neden maskeli bileşeni ATLAYIP hesaplamıyoruz:** eksik bir toplamı
+        gerçek gibi basmak da aynı yalanı söylerdi (`boq/schemas.py::group_total`
+        aynı kararı aynı gerekçeyle verir).
+
+        🔴 **Spec §3.6'nın "fiyatsız satır toplama 0 katkı verir" kuralı DEĞİŞMEDİ**
+        ve burada YAŞAMIYOR: sözleşme bedelini `service._subcontractor_amount`
+        hesaplar, fiyatsız satırı kendisi eler. O kural bir TOPLAMA kuralıdır;
+        satırın kendi tutarı "girilmedi" iken `0 TL` DEĞİLDİR (spec §3.6 bu iki
+        hâli zaten ayırır).
+        """
+        if self.quantity is None or self.unit_price is None:
+            return None
         return _quantize_money(self.quantity * self.unit_price)
 
 

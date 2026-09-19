@@ -16,8 +16,9 @@ K-IKIZ1 geregi olumlu kontrolun (1) yaninda DORT KARSIT KANIT durur:
 3. KUME     — `draft` / `pending_approval` eklemek sayiyi OYNATMAZ.
 4. BOS      — gorunur projesi olmayan aktor: `available=false` + modul adi
               (soru hic sorulmadi), UYDURMA `0.00` DEGIL.
-5. IZIN     — `hr_manager` (dashboard=view, progress_payments=none):
-              `available=false` + `pending_module is None` (`restricted()`).
+5. IZIN     — `hr_manager` (dashboard=view/KAPSAM `all`, progress_payments=none):
+              `available=false` + `pending_module is None` (`restricted()`) ve
+              hucre ACILINCA sayinin GELDIGI — ayni aktorde CIFT YON.
 
 Tum iddialar `GET /dashboard/summary` HTTP ucundan gecer: bekci KULLANICININ
 gordugunu olcmelidir.
@@ -25,10 +26,12 @@ gordugunu olcmelidir.
 
 from decimal import Decimal
 
+from app.core.access import AccessLevel, Scope
 from app.modules.progress_payments.models import ProgressPaymentStatus
 from app.modules.users.models import UserProjectAccess
 
 from . import _ilr
+from ._boq import _set_permission
 
 #: Zarf tek fiyatla kurulur ki testteki carpim GOZLE dogrulanabilsin.
 _BIRIM = "1000.00"
@@ -246,12 +249,36 @@ async def test_portfoy_hakedis_izni_OLMAYAN_role_SAYIYI_SIZDIRMAZ(
         status=ProgressPaymentStatus.approved,
         sequence_no=1,
     )
+    # 🔴 Bu bekci K4 ALAN KAPISINI olcer, KAPSAM MASKESINI DEGIL. `hr_manager`
+    #    seed'de `dashboard = _LIM` (limited) tasir ve `portfolio` PARA kovasinda
+    #    etiketlidir (`dashboard/schemas.py:171`) — maske TEK BASINA asagidaki
+    #    `(False, None, None)` uclusunu uretir, yani K4 kapisi TAMAMEN kaldirilsa
+    #    bile test YESIL kalirdi. OLCULDU (2026-09-19): `dashboard/service.py`
+    #    icindeki `can_read` kapisi silinip test kosuldu, YESIL kaldi. Kapsam
+    #    ACIKCA `all`a cekilir ki deneyin tek degiskeni izin hucresi olsun;
+    #    hucrenin KENDISI de seed'e birakilmaz (`_set_permission` kanonu: matris
+    #    degistiginde test sessizce anlamsizlasmasin).
+    await _set_permission(db_session, "hr_manager", "dashboard", AccessLevel.view, Scope.all)
+    await _set_permission(db_session, "hr_manager", "progress_payments", AccessLevel.none)
     headers = await _login_kapsamli(client, db_session, user_factory, "hr_manager", "pf5@d1.co")
 
-    portfoy = await _portfoy(client, headers)
+    kisitli = await _portfoy(client, headers)
 
-    assert portfoy["available"] is False
-    assert portfoy["value"] is None
-    assert portfoy["pending_module"] is None, (
+    assert kisitli["available"] is False
+    assert kisitli["value"] is None
+    assert kisitli["pending_module"] is None, (
         "izin yoklugu `restricted()` ile anlatilir; `pending_module` IZIN anlamiyla yuklenmez"
     )
+
+    # 🔴 AYNI AKTORDE OLUMLU KONTROL (K-IKIZ1): hucre CALISMA ANINDA acilir,
+    #    uc acik kalir ve sayi GELIR. Iki isi birden yapar: (a) "her seyi
+    #    kisitla" mutasyonunu yakalar, (b) kapsamin gercekten `all` oldugunu
+    #    KANITLAR — maske hâlâ isleseydi izin acilsa bile deger `None` kalirdi,
+    #    yani yukaridaki kapsam satiri curuse bu yari KIRILIR.
+    await _set_permission(db_session, "hr_manager", "progress_payments", AccessLevel.view)
+
+    acik = await _portfoy(client, headers)
+
+    assert acik["available"] is True, acik
+    # 300 × 1000.00 — kapinin tuttugu sayinin TA KENDISI.
+    assert Decimal(acik["value"]) == Decimal("300000.00"), acik

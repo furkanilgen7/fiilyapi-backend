@@ -181,7 +181,13 @@ class BoqTotals(BaseModel):
     realized_total: Annotated[MetricPlaceholder, Gorunurluk.para]
     remaining_total: Annotated[MetricPlaceholder, Gorunurluk.para]
     revision_total: Annotated[MetricPlaceholder, Gorunurluk.para]
-    grand_total: Annotated[Decimal | None, Gorunurluk.para]
+    # 🔴 İKİ KOVA — kullanıcı kararı 2026-09-19. `grand_total` `Σ(metraj × birim
+    #    fiyat)`tır: girdilerinden HERHANGİ BİRİ gizlenince değer anlamını yitirir.
+    #    Yalnız `para` etiketliyken `finance` kapsamında HAYATTA KALIYORDU ve ekran
+    #    TUTARSIZLAŞIYORDU: her satırın tutarı "—" iken altta gerçek bir genel
+    #    toplam duruyordu. Dahası `tutar / birim fiyat` ile gizlenen metraj GERİ
+    #    HESAPLANABİLİYORDU (ölçüldü: 5000000.00 / 12500.00 = 400).
+    grand_total: Annotated[Decimal | None, Gorunurluk.para, Gorunurluk.operasyonel]
     grand_progress_pct: Annotated[MetricPlaceholder, Gorunurluk.operasyonel]
 
 

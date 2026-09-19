@@ -1,3 +1,4 @@
+import pytest
 from sqlalchemy import select
 
 from app.modules.roles.models import Role
@@ -78,12 +79,13 @@ async def test_roles_forbidden_for_non_admin(client, user_factory):
     assert resp.status_code == 403
 
 
-async def test_uygulanmayan_kapsam_uctan_yazilamaz(client, user_factory, seeded_db):
-    """🔴 İzin Matrisi ekranı "Kendi / Sınırlı / Mali" kısıtını YAZIYLA vaat ediyor,
+async def test_DUSEN_kapsam_uctan_yazilamaz(client, user_factory, seeded_db):
+    """Düşen kapsam (`own`) uçtan da yazılamaz; satır DEĞİŞMEDEN kalır.
 
-    arkasında kod yok (`app/core/permissions.py` içinde `scope` geçmez). Uç 200
-    dönüp `role_permissions.scope`u KALICI yazarsa yönetici daraldığını sanır;
-    daralma olmaz. Vaat uygulanana kadar `all` dışı kapsam yazılamaz.
+    🔴 Docstring düzeltildi (2026-09-19 akşamı): eski hâli "arkasında kod yok,
+    `permissions.py` içinde `scope` geçmez" diyordu — artık geçiyor. `own`
+    reddedilir çünkü matristen DÜŞÜRÜLDÜ; uygulanan `limited`/`finance` ise
+    aşağıdaki pozitif kontrolde 200 alır.
     """
     token = await _login(client, user_factory, "system_admin")
     rid = await _rid(seeded_db, "site_chief")
@@ -102,3 +104,52 @@ async def test_uygulanmayan_kapsam_uctan_yazilamaz(client, user_factory, seeded_
     )
     personel = [c for c in hucreler.json() if c["module_key"] == "personnel"][0]
     assert personel["scope"] == "all"
+
+
+@pytest.mark.parametrize("uygulanan", ["limited", "finance"])
+async def test_UYGULANAN_kapsam_UCTAN_atanabilir(client, user_factory, seeded_db, uygulanan: str):
+    """🔴 POZİTİF KONTROL — ekranın sunduğu "Sınırlı"/"Mali" düğmesi 200 almalı.
+
+    `permission-presets.ts` bu iki preset'i HER hücrede sunuyor ve kendi kuralı
+    "UI, backend'in reddedeceği bir düğme sunmamalı" diyor. Kapsam 2026-09-19'da
+    gerçekten uygulandığı hâlde uç 403 döndürüyordu; ekran çalışmayan bir düğme
+    gösteriyordu. Bu bekçi servis testinin AYNISI değildir: uçta `PermissionUpdate`
+    şeması ve 403 eşlemesi de araya girer.
+    """
+    token = await _login(client, user_factory, "system_admin")
+    h = {"Authorization": f"Bearer {token}"}
+    rid = await _rid(seeded_db, "site_chief")
+
+    resp = await client.put(
+        f"/roles/{rid}/permissions/personnel",
+        json={"access_level": "view", "scope": uygulanan},
+        headers=h,
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["scope"] == uygulanan
+    hucreler = await client.get(f"/roles/{rid}/permissions", headers=h)
+    personel = [c for c in hucreler.json() if c["module_key"] == "personnel"][0]
+    assert personel["scope"] == uygulanan, "Yazma KALICI olmalı"
+
+
+async def test_MASKELEYEN_kapsam_YAZAN_seviyeyle_UCTAN_reddedilir(client, user_factory, seeded_db):
+    """Maskeli veri yazma yüzeyine düşemez (gerekçe `test_role_service.py`de).
+
+    Ekranın dokuz preset'inin hiçbiri bu çifti üretmez; kapı, uca doğrudan
+    gönderilen gövdeye karşıdır.
+    """
+    token = await _login(client, user_factory, "system_admin")
+    h = {"Authorization": f"Bearer {token}"}
+    rid = await _rid(seeded_db, "site_chief")
+
+    resp = await client.put(
+        f"/roles/{rid}/permissions/personnel",
+        json={"access_level": "full", "scope": "finance"},
+        headers=h,
+    )
+
+    assert resp.status_code == 403, resp.text
+    hucreler = await client.get(f"/roles/{rid}/permissions", headers=h)
+    personel = [c for c in hucreler.json() if c["module_key"] == "personnel"][0]
+    assert (personel["access_level"], personel["scope"]) == ("view", "all")
