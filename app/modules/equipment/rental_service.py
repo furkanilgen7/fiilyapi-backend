@@ -42,6 +42,7 @@ from app.core.errors import (
 )
 from app.core.slug import allocate_slug
 from app.modules.equipment import (
+    rental_para_gercek,
     rental_posting,
     rental_repository,
     rental_transitions,
@@ -102,6 +103,7 @@ LINE_DELETE_ONLY_DRAFT = "Kira hakedişi satırı yalnız taslak hakedişte sili
 
 NOT_APPROVABLE = "Bu kira hakedişi onaylanamaz."
 NOT_REJECTABLE = "Yalnız onaylanmış bir kira hakedişinin onayı geri alınabilir."
+
 
 SUPPLIER_MISMATCH = (
     "Bu hakedişteki kiralık ekipmanlar seçilen kiralama firmasına ait değil. "
@@ -749,6 +751,10 @@ async def pay_invoice(
     await rental_repository.lock_invoice_lines(session, invoice.id)
 
     rental_transitions.assert_transition(invoice.status, RentalInvoiceStatus.paid)
+    # 🔴 PARA-GERCEK (kullanıcı kararı 2026-09-19) — gövdesi `rental_para_gercek`
+    #    modülündedir. Geçiş denetiminden SONRA koşar: yanlış durumdaki bir
+    #    hakediş önce "onaylanmamış" demelidir, "parası gelmemiş" değil.
+    await rental_para_gercek.assert_para_gercek(session, invoice)
     invoice.status = RentalInvoiceStatus.paid
     invoice.paid_at = datetime.now(UTC)
     await session.flush()

@@ -20,6 +20,7 @@ from app.modules.equipment.models import (
 )
 from app.modules.sites.models import Site
 
+from ._mk2_para_gercek import kira_parasini_yatir
 from ._mk2_rental_invoice import (
     _AY,
     _BEDEL,
@@ -42,6 +43,7 @@ async def test_K6_fark_sunucu_damgasidir_ve_odemeyi_BLOKE_ETMEZ(
     admin_headers: dict[str, str],
     ekipman_fabrikasi,
     gorunen_santiye: Site,
+    kira_eslemesi,
 ) -> None:
     """K6 — `variance_status` SUNUCUDAN gelir; fark varken de onay/ödeme AKAR."""
     supplier = await _tedarikci(seeded_db, "Liebherr Türkiye A.Ş.")
@@ -53,7 +55,7 @@ async def test_K6_fark_sunucu_damgasidir_ve_odemeyi_BLOKE_ETMEZ(
         rate_amount=_BEDEL,
     )
     await _kayit(seeded_db, kiralik, hours="152", ilk_gun=1, site=gorunen_santiye)
-    fatura = await _fatura_kur(client, admin_headers, supplier)
+    fatura = await _fatura_kur(client, admin_headers, supplier, invoice_amount="48640.00")
     satir = _satir(await _detay(client, admin_headers, fatura["id"]), "rented", kiralik.id)
     assert satir["variance_status"] == "unknown"
 
@@ -67,6 +69,9 @@ async def test_K6_fark_sunucu_damgasidir_ve_odemeyi_BLOKE_ETMEZ(
     assert Decimal(resp.json()["hours_variance"]) == Decimal("6.00")
 
     await _durum_ilerlet(client, admin_headers, fatura["id"], 2)
+    # PARA-GERCEK (2026-09-19) — fark rozeti ödemeyi bloke ETMEZ, ama para
+    # kapısı ayrı bir olgudur ve o da sağlanmalıdır.
+    await kira_parasini_yatir(seeded_db, fatura["id"])
     resp = await client.post(
         f"/equipment/rental-invoices/{fatura['id']}/pay", headers=admin_headers
     )
@@ -146,12 +151,15 @@ async def test_K5_dogrulama_bekleyen_fatura_ODENEMEZ(
 
 async def test_K5_odenmis_fatura_IKINCI_KEZ_odenemez(
     client: AsyncClient,
+    seeded_db: AsyncSession,
     admin_headers: dict[str, str],
     akis_faturasi: dict,
     kira_eslemesi,
 ) -> None:
     """🔴 `paid` bir UÇ DAMGADIR: ikinci çağrı 409 (çift ödeme kapısı)."""
     await _durum_ilerlet(client, admin_headers, akis_faturasi["id"], 2)
+    # PARA-GERCEK (2026-09-19): `paid` damgası artık gerçekleşmiş para ister.
+    await kira_parasini_yatir(seeded_db, akis_faturasi["id"])
     resp = await client.post(
         f"/equipment/rental-invoices/{akis_faturasi['id']}/pay", headers=admin_headers
     )
@@ -231,6 +239,7 @@ async def test_K5_taslak_fatura_REDDEDILEMEZ(
 
 async def test_K5_odenmis_fatura_REDDEDILEMEZ(
     client: AsyncClient,
+    seeded_db: AsyncSession,
     admin_headers: dict[str, str],
     akis_faturasi: dict,
     kira_eslemesi,
@@ -238,6 +247,7 @@ async def test_K5_odenmis_fatura_REDDEDILEMEZ(
     """Banka çıkışı olmuş bir kaydı geri sarmak, kayıt ile para hareketi
     arasındaki bağı koparırdı."""
     await _durum_ilerlet(client, admin_headers, akis_faturasi["id"], 2)
+    await kira_parasini_yatir(seeded_db, akis_faturasi["id"])
     await client.post(
         f"/equipment/rental-invoices/{akis_faturasi['id']}/pay", headers=admin_headers
     )

@@ -261,7 +261,7 @@ async def test_G8_YANLIS_YONLU_fatura_REDDEDILIR(
         seeded_db, payment_id, taseron=False, direction=InvoiceDirection.incoming
     )
     assert ters.total > 0
-    await odeme_yaz(seeded_db, ters, taseron=False, tutar=ters.total)
+    await odeme_yaz(seeded_db, ters, tutar=ters.total)
 
     yanit = await client.post(f"/progress-payments/{payment_id}/mark-paid", headers=admin_headers)
 
@@ -280,7 +280,7 @@ async def test_G8_POZITIF_KONTROL_GIDEN_fatura_GECER(
     dogru = await fatura_kes(
         seeded_db, payment_id, taseron=False, direction=InvoiceDirection.outgoing
     )
-    await odeme_yaz(seeded_db, dogru, taseron=False, tutar=dogru.total)
+    await odeme_yaz(seeded_db, dogru, tutar=dogru.total)
 
     yanit = await client.post(f"/progress-payments/{payment_id}/mark-paid", headers=admin_headers)
 
@@ -308,7 +308,7 @@ async def test_ODENMIS_hakedisin_ODEMESI_SILINEMEZ(
     """
     payment_id = await hakedis_fabrikasi(ProgressPaymentStatus.approved)
     fatura = await fatura_kes(seeded_db, payment_id, taseron=False)
-    odeme = await odeme_yaz(seeded_db, fatura, taseron=False, tutar=fatura.total)
+    odeme = await odeme_yaz(seeded_db, fatura, tutar=fatura.total)
 
     gecis = await client.post(f"/progress-payments/{payment_id}/mark-paid", headers=admin_headers)
     assert gecis.status_code == 200, gecis.text
@@ -340,7 +340,7 @@ async def test_POZITIF_KONTROL_ODENMEMIS_hakedisin_odemesi_SILINEBILIR(
     """
     payment_id = await hakedis_fabrikasi(ProgressPaymentStatus.approved)
     fatura = await fatura_kes(seeded_db, payment_id, taseron=False)
-    odeme = await odeme_yaz(seeded_db, fatura, taseron=False, tutar=fatura.total)
+    odeme = await odeme_yaz(seeded_db, fatura, tutar=fatura.total)
 
     silme = await client.delete(f"/payments/{odeme.id}", headers=admin_headers)
 

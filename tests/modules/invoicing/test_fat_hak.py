@@ -93,15 +93,38 @@ def test_TOLERANS_SABITI_bir_kurustur() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_TUTAR_evreni_YON_evreniyle_AYNIDIR() -> None:
+def test_TUTAR_evreni_YON_evreninin_ALT_KUMESIDIR() -> None:
     """🔴 Üçüncü bir hakediş ailesi eklendiğinde biri güncellenip öteki
     unutulursa, o ailede YA yön YA tutar bekçisiz kalırdı ve açık YALNIZ o
     ailede, yalnız canlıda görünürdü.
 
     İki tablo AYRI durur (biri `invoicing`de, biri `treasury`de) çünkü ayrı
-    soruları cevaplar; ama kapsamları aynı olmak ZORUNDADIR.
+    soruları cevaplar.
+
+    ## 🔴 EŞİTLİK 2026-09-19'da ALT KÜMEYE DÖNDÜ — ve bu bir GEVŞEME DEĞİLDİR
+
+    Kira ailesi o gün `SOURCE_DIRECTION`a girdi (kullanıcı kararı: KK-ODM kirayı
+    da kapsar) ama `SOURCE_GROSS_MODELS`e GİREMEZ, çünkü bu tablo brütü
+    `gross_total(payment.lines)` ile SATIRLARDAN türeten bir yolun haritasıdır
+    ve kira hakedişinin brütü bir KOLONDUR (`invoice_amount`), satır toplamı
+    değil — `our_total` ise bir DOĞRULAMA büyüklüğüdür, ödenecek tutar değil.
+
+    🔴 Kiranın TUTARI YİNE DE BEKÇİLİDİR ve bu ölçülmüştür: `pay` kapısı brütü
+    `assert_realized_covers`a AÇIKÇA verir (`source_gross=invoice_amount`) ve
+    `source_gross` ZORUNLU bir anahtar kelimedir — yani yeni bir aile bu kapıya
+    brütünü vermeden BAĞLANAMAZ. Bekçisi
+    `tests/modules/equipment/test_mk2_para_gercek.py`
+    ::`test_fatura_ARA_TOPLAMI_invoice_amounti_tasimazsa_odetmez`tir.
+
+    Kalan iddia: tutar evreninde YÖN evreninde OLMAYAN bir aile bulunamaz —
+    yönsüz bir tutar kapısı `.get()` → `None` ile zaten her şeyi reddederdi.
     """
-    assert set(SOURCE_GROSS_MODELS) == set(SOURCE_DIRECTION)
+    assert set(SOURCE_GROSS_MODELS) <= set(SOURCE_DIRECTION)
+    assert set(SOURCE_DIRECTION) - set(SOURCE_GROSS_MODELS) == {"equipment_rental_invoice_id"}, (
+        "YÖN evreninde, tutarı SATIRLARDAN türemeyen YENİ bir aile var. Brütünü "
+        "`assert_realized_covers`a açıkça veren bir kapısı olduğunu ÖLÇÜP bu "
+        "listeye ekleyin; yoksa o ailede tutar bekçisiz kalır."
+    )
 
 
 def test_TUTAR_evreni_KIRA_ve_SIPARIS_kaynaklarini_TASIMAZ() -> None:
@@ -171,11 +194,18 @@ def test_migration_TOLERANSI_urun_sabitiyle_AYNIDIR() -> None:
     assert f'TOLERANS = "{SOURCE_AMOUNT_TOLERANCE}"' in _migration_kaynagi()
 
 
-def test_migration_AILE_kumesi_YON_evreniyle_AYNIDIR() -> None:
-    """Ölçüm, kapının bağladığı İKİ aileyi de saymalıdır — birini atlayan bir
-    ölçüm "ihlal yok" der ve kullanıcı canlıda kilitli hakedişle karşılaşır."""
+def test_migration_AILE_kumesi_TUTAR_evreniyle_AYNIDIR() -> None:
+    """Ölçüm, kapının bağladığı her aileyi saymalıdır — birini atlayan bir ölçüm
+    "ihlal yok" der ve kullanıcı canlıda kilitli hakedişle karşılaşır.
+
+    🔴 Ölçüt `SOURCE_DIRECTION` DEĞİL `SOURCE_GROSS_MODELS`tir ve bu 2026-09-19'da
+    bilerek değiştirildi: **migration yazıldığı günün FOTOĞRAFIDIR.** O gün kira
+    ailesi kapının dışındaydı; migration'ı bugün düzeltmek, geçmişte koşmuş bir
+    ölçümün ne ölçtüğü hakkında yalan söylemek olurdu. Kiranın canlı taraması
+    gerekiyorsa KENDİ migration'ıyla yapılır.
+    """
     kaynak = _migration_kaynagi()
-    for kolon in SOURCE_DIRECTION:
+    for kolon in SOURCE_GROSS_MODELS:
         assert f'"{kolon}",' in kaynak, f"migration ölçümünde eksik aile: {kolon}"
 
 

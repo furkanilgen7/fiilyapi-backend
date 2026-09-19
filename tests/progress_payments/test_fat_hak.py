@@ -65,7 +65,7 @@ async def _sapmali_faturali_hakedis(seeded_db: AsyncSession, hakedis_fabrikasi, 
     payment_id = await hakedis_fabrikasi(ProgressPaymentStatus.approved)
     brut = await hakedis_bruttu(seeded_db, payment_id, taseron=False)
     fatura = await fatura_kes(seeded_db, payment_id, taseron=False, brut=brut + sapma)
-    await odeme_yaz(seeded_db, fatura, taseron=False, tutar=fatura.total)
+    await odeme_yaz(seeded_db, fatura, tutar=fatura.total)
     return payment_id, brut, fatura
 
 
@@ -87,7 +87,7 @@ async def test_FH1_BIR_TL_lik_fatura_hakedisi_ODETEMEZ(
     assert brut > Decimal("1.00"), "kurulum: brüt 1 ₺'den büyük olmalı"
     fatura = await fatura_kes(seeded_db, payment_id, taseron=False, brut=Decimal("1.00"))
     assert fatura.total > 0, "kurulum: `total > 0` şartı BU testte elenmiş olmalı"
-    await odeme_yaz(seeded_db, fatura, taseron=False, tutar=fatura.total)
+    await odeme_yaz(seeded_db, fatura, tutar=fatura.total)
 
     yanit = await client.post(f"{_HAKEDIS}/{payment_id}/mark-paid", headers=admin_headers)
 

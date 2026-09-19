@@ -529,7 +529,7 @@ async def test_BULGU6_IADE_odemesi_gerceklesen_tutari_DUSURUR(
         brut=brut / 2,
         document_type=InvoiceDocumentType.refund,
     )
-    await odeme_yaz(seeded_db, iade, taseron=True, tutar=iade.total)
+    await odeme_yaz(seeded_db, iade, tutar=iade.total)
 
     yanit = await client.post(f"{_UC}/{ikinci.id}/mark-paid", headers=admin_headers)
 
@@ -611,7 +611,7 @@ async def test_kapi_hakedisin_KENDI_odemesine_bakar(
     contract, _, _ = taseron_sozlesmesi
     payment = await _onayli_hakedis(seeded_db, hakedis_fabrikasi, contract, admin_kullanicisi)
     bagimsiz = await fatura_kes(seeded_db, payment.id, taseron=True, kaynaga_bagla=False)
-    await odeme_yaz(seeded_db, bagimsiz, taseron=True, tutar=bagimsiz.total)
+    await odeme_yaz(seeded_db, bagimsiz, tutar=bagimsiz.total)
 
     toplam = await realized_total_for_source(
         seeded_db, Invoice.subcontractor_progress_payment_id, payment.id
@@ -776,7 +776,7 @@ async def test_G8_YANLIS_YONLU_fatura_REDDEDILIR(
         seeded_db, payment.id, taseron=True, direction=InvoiceDirection.outgoing
     )
     assert ters.total > 0, "kurulum: yon testi tutar yuzunden reddedilmemeli"
-    await odeme_yaz(seeded_db, ters, taseron=True, tutar=ters.total)
+    await odeme_yaz(seeded_db, ters, tutar=ters.total)
 
     yanit = await client.post(f"{_UC}/{payment.id}/mark-paid", headers=admin_headers)
 
@@ -801,29 +801,36 @@ async def test_G8_POZITIF_KONTROL_dogru_yon_GECER(
     dogru = await fatura_kes(
         seeded_db, payment.id, taseron=True, direction=InvoiceDirection.incoming
     )
-    await odeme_yaz(seeded_db, dogru, taseron=True, tutar=dogru.total)
+    await odeme_yaz(seeded_db, dogru, tutar=dogru.total)
 
     yanit = await client.post(f"{_UC}/{payment.id}/mark-paid", headers=admin_headers)
 
     assert yanit.status_code == 200, yanit.text
 
 
-def test_G8_yon_tablosu_IKI_kaynak_kolonunu_da_KAPSAR() -> None:
+def test_G8_yon_tablosu_UC_kaynak_kolonunu_da_KAPSAR() -> None:
     """`SOURCE_DIRECTION` eksik kalırsa `.get()` `None` döner ve o aile TAMAMEN
     kilitlenirdi (fail-closed ama sessiz). Tablo kolon adlarıyla kurulduğu için
-    bir yazım hatası da ancak burada görünür."""
+    bir yazım hatası da ancak burada görünür.
+
+    🔴 Kira ailesi 2026-09-19'da EKLENDİ (kullanıcı kararı — KK-ODM kirayı da
+    kapsar). Bu iddia ÜYELİĞİ çiviler, sayıyı değil: yeni bir kaynak kolonu
+    ekleyen, yönünü BİLEREK sınıflandırmak zorunda kalsın."""
     from app.modules.invoicing.models import Invoice
     from app.modules.treasury.realized import SOURCE_DIRECTION
 
     assert set(SOURCE_DIRECTION) == {
         "progress_payment_id",
         "subcontractor_progress_payment_id",
+        "equipment_rental_invoice_id",
     }
     for kolon in SOURCE_DIRECTION:
         assert hasattr(Invoice, kolon), f"{kolon} Invoice'ta yok"
-    # Iki aile TERS yonlerdedir; esitlenirse biri sessizce yanlis olurdu.
+    # İşveren ailesi ÖTEKİ İKİSİNE TERS yöndedir; eşitlenirse biri sessizce
+    # yanlış olurdu. Taşeron ve kira firması BİZE fatura keser (para ÇIKAR).
     assert SOURCE_DIRECTION["progress_payment_id"] is InvoiceDirection.outgoing
     assert SOURCE_DIRECTION["subcontractor_progress_payment_id"] is InvoiceDirection.incoming
+    assert SOURCE_DIRECTION["equipment_rental_invoice_id"] is InvoiceDirection.incoming
 
 
 # --------------------------------------------------------------------------- #
@@ -849,7 +856,7 @@ async def test_ODENMIS_hakedisin_ODEMESI_SILINEMEZ(
     contract, _, _ = taseron_sozlesmesi
     hakedis = await _onayli_hakedis(seeded_db, hakedis_fabrikasi, contract, admin_kullanicisi)
     fatura = await fatura_kes(seeded_db, hakedis.id, taseron=True)
-    odeme = await odeme_yaz(seeded_db, fatura, taseron=True, tutar=fatura.total)
+    odeme = await odeme_yaz(seeded_db, fatura, tutar=fatura.total)
 
     gecis = await client.post(f"{_UC}/{hakedis.id}/mark-paid", headers=admin_headers)
     assert gecis.status_code == 200, gecis.text
@@ -880,7 +887,7 @@ async def test_POZITIF_KONTROL_ODENMEMIS_hakedisin_odemesi_SILINEBILIR(
     contract, _, _ = taseron_sozlesmesi
     hakedis = await _onayli_hakedis(seeded_db, hakedis_fabrikasi, contract, admin_kullanicisi)
     fatura = await fatura_kes(seeded_db, hakedis.id, taseron=True)
-    odeme = await odeme_yaz(seeded_db, fatura, taseron=True, tutar=fatura.total)
+    odeme = await odeme_yaz(seeded_db, fatura, tutar=fatura.total)
 
     silme = await client.delete(f"/payments/{odeme.id}", headers=admin_headers)
 
