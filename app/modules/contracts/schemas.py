@@ -19,11 +19,12 @@ mockup kendi etiketiyle çelişiyor).
 import uuid
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 # Serbest metin tavanı (TB4 S3) `boq` ailesiyle PAYLAŞILIR — tek kaynak.
+from app.core.field_scope import Gorunurluk
 from app.core.text import FREE_TEXT_MAX_LENGTH
 from app.modules.contracts.models import ContractStatus, PaymentPeriod
 
@@ -110,9 +111,9 @@ class ContractSummary(BaseModel):
     yenilenmeden tüketilemez.
     """
 
-    total_amount: Decimal
+    total_amount: Annotated[Decimal | None, Gorunurluk.para]
     active_count: int
-    progress_payment_total: Decimal | None = None
+    progress_payment_total: Annotated[Decimal | None, Gorunurluk.para] = None
     expiring_this_month_count: int
 
 
@@ -124,10 +125,10 @@ class ContractListItem(BaseModel):
     title: str
     contract_no: str | None
     counterparty_name: str | None
-    amount: Decimal
+    amount: Annotated[Decimal | None, Gorunurluk.para]
     start_date: date | None
     end_date: date | None
-    progress_pct: Decimal | None = None
+    progress_pct: Annotated[Decimal | None, Gorunurluk.operasyonel] = None
     """§8 finansal ilerleme: `kümülatif brüt / bedel × 100` (P7/H9, spec §9.6).
 
     **İKİ SEKMEDE DE GERÇEK DEĞER** (P-YT4, 2026-08-23). Eski not "taşeron
@@ -235,11 +236,11 @@ class EmployerContractItemResponse(BaseModel):
     code: str
     description: str
     unit: str
-    quantity: Decimal
-    unit_price: Decimal
+    quantity: Annotated[Decimal | None, Gorunurluk.operasyonel]
+    unit_price: Annotated[Decimal | None, Gorunurluk.para]
     sort_order: int
-    distributed_quantity: Decimal
-    remaining_quantity: Decimal
+    distributed_quantity: Annotated[Decimal | None, Gorunurluk.operasyonel]
+    remaining_quantity: Annotated[Decimal | None, Gorunurluk.operasyonel]
 
 
 class EmployerContractGroupItems(BaseModel):
@@ -270,11 +271,11 @@ class EmployerContractDetail(BaseModel):
     project_id: uuid.UUID
     contract_no: str | None
     signature_date: date | None
-    amount: Decimal | None
-    advance_pct: Decimal
-    retainage_pct: Decimal
-    vat_pct: Decimal
-    late_penalty_daily: Decimal | None
+    amount: Annotated[Decimal | None, Gorunurluk.para]
+    advance_pct: Annotated[Decimal, Gorunurluk.kimlik]
+    retainage_pct: Annotated[Decimal, Gorunurluk.kimlik]
+    vat_pct: Annotated[Decimal, Gorunurluk.kimlik]
+    late_penalty_daily: Annotated[Decimal | None, Gorunurluk.para]
     has_price_escalation: bool
     index_type: PriceIndexType | None
     """T5 (spec §6 ek task, P7 bulgusu): fiyat farkı endeks tipi additive olarak
@@ -288,9 +289,9 @@ class EmployerContractDetail(BaseModel):
     end_date: date | None
     employer_name: str | None
     contractor_name: str | None
-    items_total: Decimal
-    items_total_diff: Decimal
-    advance_amount: Decimal
+    items_total: Annotated[Decimal | None, Gorunurluk.para]
+    items_total_diff: Annotated[Decimal | None, Gorunurluk.para]
+    advance_amount: Annotated[Decimal | None, Gorunurluk.para]
     progress_payment_summary: ProgressPaymentSummary
     """E14 127-147 "Hakediş Özeti" kartı — P7/H9'da GERÇEK veriye bağlandı
     (spec §9.6). ZORUNLU alan (H9 denetim O2): tek üretici
@@ -356,7 +357,7 @@ class ContractDistributionSite(BaseModel):
 
 class ContractDistributionAllocation(BaseModel):
     site_id: uuid.UUID
-    quantity: Decimal
+    quantity: Annotated[Decimal | None, Gorunurluk.operasyonel]
     boq_item_id: uuid.UUID
 
 
@@ -365,10 +366,10 @@ class ContractDistributionItem(BaseModel):
     code: str
     description: str
     unit: str
-    quantity: Decimal
-    unit_price: Decimal
+    quantity: Annotated[Decimal | None, Gorunurluk.operasyonel]
+    unit_price: Annotated[Decimal | None, Gorunurluk.para]
     allocations: list[ContractDistributionAllocation]
-    remaining_quantity: Decimal
+    remaining_quantity: Annotated[Decimal | None, Gorunurluk.operasyonel]
 
 
 class ContractDistributionGroup(BaseModel):
@@ -383,16 +384,16 @@ class ContractDistributionSiteItem(BaseModel):
 
     code: str
     description: str
-    quantity: Decimal
-    unit_price: Decimal
-    amount: Decimal
+    quantity: Annotated[Decimal | None, Gorunurluk.operasyonel]
+    unit_price: Annotated[Decimal | None, Gorunurluk.para]
+    amount: Annotated[Decimal | None, Gorunurluk.para]
 
 
 class ContractDistributionSiteSummary(BaseModel):
     site_id: uuid.UUID
     site_name: str
     items: list[ContractDistributionSiteItem]
-    total_amount: Decimal
+    total_amount: Annotated[Decimal | None, Gorunurluk.para]
 
 
 class ContractDistributionResponse(BaseModel):
@@ -493,8 +494,8 @@ class SubcontractorContractItemResponse(BaseModel):
     code: str
     description: str
     unit: str
-    quantity: Decimal
-    unit_price: Decimal | None
+    quantity: Annotated[Decimal | None, Gorunurluk.operasyonel]
+    unit_price: Annotated[Decimal | None, Gorunurluk.para]
     sort_order: int
     # Bağsız kalemler `group: null` ile döner (spec §3.6).
     group: SubcontractorContractItemGroup | None = None
@@ -593,10 +594,10 @@ class SubcontractorContractDetail(BaseModel):
     is_notarized: bool
     start_date: date | None
     end_date: date | None
-    late_penalty_daily: Decimal | None
-    advance_pct: Decimal
-    retainage_pct: Decimal
-    vat_pct: Decimal
+    late_penalty_daily: Annotated[Decimal | None, Gorunurluk.para]
+    advance_pct: Annotated[Decimal, Gorunurluk.kimlik]
+    retainage_pct: Annotated[Decimal, Gorunurluk.kimlik]
+    vat_pct: Annotated[Decimal, Gorunurluk.kimlik]
     payment_period: PaymentPeriod
     payment_term_days: int
     materials_by_contractor: bool
@@ -605,7 +606,7 @@ class SubcontractorContractDetail(BaseModel):
     status: ContractStatus
     is_draft: bool
     items: list[SubcontractorContractItemResponse]
-    contract_total: Decimal
+    contract_total: Annotated[Decimal | None, Gorunurluk.para]
     items_missing_price: int
     progress_payment_summary: None = None
     documents: None = None

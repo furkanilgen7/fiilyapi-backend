@@ -23,6 +23,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
+from app.core.field_scope import Gorunurluk
 from app.modules.customers.models import CustomerType
 from app.modules.projects.schemas import MetricPlaceholder
 from app.modules.sales.models import (
@@ -72,10 +73,12 @@ def unit_label(block_name: str, unit_no: str) -> str:
 class _SaleFormFields(BaseModel):
     """F56-F163'ün ortak gövdesi — `Create` ve `Update` için TEK kopya."""
 
-    discount_amount: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=2)
+    discount_amount: Annotated[Decimal | None, Gorunurluk.para] = Field(
+        default=None, ge=0, max_digits=18, decimal_places=2
+    )
     vat_pct: VatRate = None  # F87 — küme {1, 10, 20} (karar 9)
     advisor_user_id: uuid.UUID | None = None  # F75
-    reservation_deposit: Decimal | None = Field(
+    reservation_deposit: Annotated[Decimal | None, Gorunurluk.para] = Field(
         default=None, ge=0, max_digits=18, decimal_places=2
     )  # S188
     reservation_due_date: date | None = None  # S188 "15 gün süre"
@@ -86,12 +89,18 @@ class _SaleFormFields(BaseModel):
     has_mortgage: bool = False  # F162
     # DOLU = gecikme faizi uygulanır, NULL = uygulanmaz (F163). Ayrı bir
     # `has_late_fee` bayrağı AÇILMAZ — iki alan birbiriyle çelişebilirdi.
-    late_fee_monthly_pct: Decimal | None = Field(default=None, ge=0, max_digits=5, decimal_places=2)
+    late_fee_monthly_pct: Annotated[Decimal | None, Gorunurluk.kimlik] = Field(
+        default=None, ge=0, max_digits=5, decimal_places=2
+    )
     payment_plan_type: PaymentPlanType | None = None  # F99
-    down_payment: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=2)
+    down_payment: Annotated[Decimal | None, Gorunurluk.para] = Field(
+        default=None, ge=0, max_digits=18, decimal_places=2
+    )
     installment_count: int | None = Field(default=None, ge=0)  # F104
     first_installment_date: date | None = None  # F105
-    term_interest_pct: Decimal | None = Field(default=None, ge=0, max_digits=5, decimal_places=2)
+    term_interest_pct: Annotated[Decimal | None, Gorunurluk.kimlik] = Field(
+        default=None, ge=0, max_digits=5, decimal_places=2
+    )
 
 
 # Servis, form alanlarını TEK TEK yazmak yerine bu kümeyi kullanır.
@@ -136,28 +145,28 @@ class UnitSaleResponse(BaseModel):
     customer_type: CustomerType
     customer_national_id: str | None
     customer_tax_number: str | None
-    list_price_snapshot: Decimal | None
-    discount_amount: Decimal | None
-    sale_price: Decimal
-    vat_pct: Decimal | None
+    list_price_snapshot: Annotated[Decimal | None, Gorunurluk.para]
+    discount_amount: Annotated[Decimal | None, Gorunurluk.para]
+    sale_price: Annotated[Decimal | None, Gorunurluk.para]
+    vat_pct: Annotated[Decimal | None, Gorunurluk.kimlik]
     advisor_user_id: uuid.UUID | None
     advisor_name: str | None
-    reservation_deposit: Decimal | None
+    reservation_deposit: Annotated[Decimal | None, Gorunurluk.para]
     reservation_due_date: date | None
     deed_condition: DeedCondition | None
     planned_deed_date: date | None
     delivery_date: date | None
     has_condominium_easement: bool
     has_mortgage: bool
-    late_fee_monthly_pct: Decimal | None
+    late_fee_monthly_pct: Annotated[Decimal | None, Gorunurluk.kimlik]
     payment_plan_type: PaymentPlanType | None
-    down_payment: Decimal | None
+    down_payment: Annotated[Decimal | None, Gorunurluk.para]
     installment_count: int | None
     first_installment_date: date | None
-    term_interest_pct: Decimal | None
+    term_interest_pct: Annotated[Decimal | None, Gorunurluk.kimlik]
     # --- Tahsilat türevleri (S153-155, S180) — KOLON DEĞİL ---
-    paid_amount: Decimal
-    remaining_amount: Decimal
+    paid_amount: Annotated[Decimal | None, Gorunurluk.para]
+    remaining_amount: Annotated[Decimal | None, Gorunurluk.para]
     installment_total: int
     installment_paid_count: int
     overdue_installment_count: int
@@ -178,8 +187,8 @@ class UnitSaleResponse(BaseModel):
     # ⚠️ SÖZLEŞME ETKİSİ (K5): iki alan artık OpenAPI'de `required`.
     # `openapi-typescript` onları zorunlu üretir — sunucu zaten HER yanıtta
     # gönderdiği için bu, sözleşmenin gerçeğe UYDURULMASIDIR.
-    unit_cost: MetricPlaceholder
-    sale_profit: MetricPlaceholder
+    unit_cost: Annotated[MetricPlaceholder, Gorunurluk.para]
+    sale_profit: Annotated[MetricPlaceholder, Gorunurluk.para]
     # F168-202 satış belgeleri + F206-207 peşinat faturası. İki modül de CANLI;
     # eksik olan MODÜL değil satışa giden BAĞdır (gerekçeler `PENDING_MODULES`
     # sabitlerinin yanında ölçüldü). `contracts` şemalarındaki desenin aynısı.
@@ -228,9 +237,9 @@ class SaleInstallmentResponse(BaseModel):
     sequence_no: int
     label: str
     due_date: date
-    amount: Decimal
+    amount: Annotated[Decimal | None, Gorunurluk.para]
     payment_method: InstallmentPaymentMethod | None
-    paid_amount: Decimal
+    paid_amount: Annotated[Decimal | None, Gorunurluk.para]
     paid_at: datetime | None
     # TÜREVLER (kolon DEĞİL): satırın kalanı ve S180'in "gecikmiş" göstergesi.
     # `is_overdue` T5'te EKLENDİ: satış düzeyindeki sayaç
@@ -238,7 +247,7 @@ class SaleInstallmentResponse(BaseModel):
     # plan tablosu (F110-147) satır satır boyanır. Sunucu tarafında üretilir ki
     # "bugün" tanımı TEK yerde kalsın — istemci saati ile sunucu saati ayrışırsa
     # aynı taksit iki ekranda farklı renkte görünürdü.
-    remaining_amount: Decimal
+    remaining_amount: Annotated[Decimal | None, Gorunurluk.para]
     is_overdue: bool = False
 
 
@@ -250,11 +259,11 @@ class SalePlanResponse(BaseModel):
     """
 
     sale_id: uuid.UUID
-    sale_price: Decimal
-    total_amount: Decimal
-    paid_amount: Decimal
+    sale_price: Annotated[Decimal | None, Gorunurluk.para]
+    total_amount: Annotated[Decimal | None, Gorunurluk.para]
+    paid_amount: Annotated[Decimal | None, Gorunurluk.para]
     # F106 vade farkının GÖSTERİM tutarı — plana YAZILMAZ (bkz. `plan.py` kararı).
-    term_interest_amount: Decimal
+    term_interest_amount: Annotated[Decimal | None, Gorunurluk.para]
     items: list[SaleInstallmentResponse]
 
 
@@ -262,9 +271,9 @@ class UnitSaleTotals(BaseModel):
     """S205-215 TOPLAM satırı — satır türevleriyle AYNI kaynaktan toplanır."""
 
     count: int
-    sale_price_total: Decimal
-    paid_total: Decimal
-    remaining_total: Decimal
+    sale_price_total: Annotated[Decimal | None, Gorunurluk.para]
+    paid_total: Annotated[Decimal | None, Gorunurluk.para]
+    remaining_total: Annotated[Decimal | None, Gorunurluk.para]
 
 
 class UnitSaleListResponse(BaseModel):
@@ -300,7 +309,7 @@ class SoldKpi(BaseModel):
 
     count: int
     deed_transferred_count: int
-    amount: Decimal  # Σ `sale_price`
+    amount: Annotated[Decimal | None, Gorunurluk.para]  # Σ `sale_price`
 
 
 class ReservedKpi(BaseModel):
@@ -308,7 +317,7 @@ class ReservedKpi(BaseModel):
 
     count: int
     expired_count: int  # S188 "15 gün süre" — OTOMATİK İPTAL YOK, yalnız gösterge
-    amount: Decimal
+    amount: Annotated[Decimal | None, Gorunurluk.para]
 
 
 class AvailableUnitsKpi(BaseModel):
@@ -320,7 +329,7 @@ class AvailableUnitsKpi(BaseModel):
     """
 
     count: int
-    list_price_total: Decimal
+    list_price_total: Annotated[Decimal | None, Gorunurluk.para]
 
 
 class CollectionKpi(BaseModel):
@@ -332,9 +341,9 @@ class CollectionKpi(BaseModel):
     aynı ekrana düşürürdü.
     """
 
-    collected_amount: Decimal
-    contracted_amount: Decimal
-    collection_pct: Decimal | None
+    collected_amount: Annotated[Decimal | None, Gorunurluk.para]
+    contracted_amount: Annotated[Decimal | None, Gorunurluk.para]
+    collection_pct: Annotated[Decimal | None, Gorunurluk.operasyonel]
 
 
 class OverdueKpi(BaseModel):
@@ -346,8 +355,8 @@ class OverdueKpi(BaseModel):
     """
 
     installment_count: int
-    amount: Decimal
-    late_fee_amount: Decimal
+    amount: Annotated[Decimal | None, Gorunurluk.para]
+    late_fee_amount: Annotated[Decimal | None, Gorunurluk.para]
 
 
 class UpcomingCollection(BaseModel):
@@ -360,12 +369,14 @@ class UpcomingCollection(BaseModel):
     sequence_no: int
     label: str
     due_date: date
-    amount: Decimal
-    paid_amount: Decimal
-    remaining_amount: Decimal
+    amount: Annotated[Decimal | None, Gorunurluk.para]
+    paid_amount: Annotated[Decimal | None, Gorunurluk.para]
+    remaining_amount: Annotated[Decimal | None, Gorunurluk.para]
     is_overdue: bool
     days_overdue: int  # S222 "Vadesi 15 gün geçti"
-    late_fee_amount: Decimal  # S223 "Gecikme faizi: ₺4.200" — GÖSTERİM türevi
+    late_fee_amount: Annotated[
+        Decimal | None, Gorunurluk.para
+    ]  # S223 "Gecikme faizi: ₺4.200" — GÖSTERİM türevi
 
 
 class ExpiredReservation(BaseModel):
@@ -380,7 +391,7 @@ class ExpiredReservation(BaseModel):
     customer_name: str
     reservation_due_date: date
     days_expired: int
-    reservation_deposit: Decimal | None
+    reservation_deposit: Annotated[Decimal | None, Gorunurluk.para]
 
 
 class SalesSummaryResponse(BaseModel):

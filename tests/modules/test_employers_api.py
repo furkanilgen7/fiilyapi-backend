@@ -1,12 +1,14 @@
 from sqlalchemy import select
 
-from app.core.access import AccessLevel
+from app.core.access import AccessLevel, Scope
 from app.modules.audit.models import AuditAction, AuditLog
 from app.modules.projects.models import Employer
 from app.modules.roles.models import Module, Role, RolePermission
 
 
-async def _set_permission(session, role_key: str, module_key: str, level: AccessLevel) -> None:
+async def _set_permission(
+    session, role_key: str, module_key: str, level: AccessLevel, scope: Scope = Scope.all
+) -> None:
     role_id = (await session.execute(select(Role.id).where(Role.key == role_key))).scalar_one()
     module_id = (
         await session.execute(select(Module.id).where(Module.key == module_key))
@@ -19,6 +21,7 @@ async def _set_permission(session, role_key: str, module_key: str, level: Access
         )
     ).scalar_one()
     permission.access_level = level
+    permission.scope = scope
     await session.flush()
 
 

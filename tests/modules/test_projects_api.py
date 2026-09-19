@@ -3,14 +3,16 @@ from decimal import Decimal
 
 from sqlalchemy import select
 
-from app.core.access import AccessLevel
+from app.core.access import AccessLevel, Scope
 from app.modules.audit.models import AuditAction, AuditLog
 from app.modules.projects.models import ProjectContract
 from app.modules.roles.models import Module, Role, RolePermission
 from app.modules.users.models import UserProjectAccess
 
 
-async def _set_permission(session, role_key: str, module_key: str, level: AccessLevel) -> None:
+async def _set_permission(
+    session, role_key: str, module_key: str, level: AccessLevel, scope: Scope = Scope.all
+) -> None:
     """Bir rolun modul iznini dogrudan ayarlar.
 
     Yetki kapisi testleri seed degerine BAGIMLI olmamali: matris degistiginde
@@ -28,6 +30,7 @@ async def _set_permission(session, role_key: str, module_key: str, level: Access
         )
     ).scalar_one()
     permission.access_level = level
+    permission.scope = scope
     await session.flush()
 
 

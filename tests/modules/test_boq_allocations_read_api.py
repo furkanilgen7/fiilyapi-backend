@@ -19,7 +19,7 @@ from decimal import Decimal
 from sqlalchemy import event, func, select
 from sqlalchemy.engine import Engine
 
-from app.core.access import AccessLevel
+from app.core.access import AccessLevel, Scope
 from app.modules.audit.models import AuditLog
 from app.modules.boq.models import BoqGroup, BoqItem, BoqItemSectionAllocation
 from app.modules.roles.models import Module, Role, RolePermission
@@ -29,7 +29,9 @@ from app.modules.users.models import UserProjectAccess
 # --- Kurulum yardimcilari (test_boq_allocations_api.py deseniyle birebir) ----
 
 
-async def _set_permission(session, role_key: str, module_key: str, level: AccessLevel) -> None:
+async def _set_permission(
+    session, role_key: str, module_key: str, level: AccessLevel, scope: Scope = Scope.all
+) -> None:
     role_id = (await session.execute(select(Role.id).where(Role.key == role_key))).scalar_one()
     module_id = (
         await session.execute(select(Module.id).where(Module.key == module_key))
@@ -42,6 +44,7 @@ async def _set_permission(session, role_key: str, module_key: str, level: Access
         )
     ).scalar_one()
     permission.access_level = level
+    permission.scope = scope
     await session.flush()
 
 

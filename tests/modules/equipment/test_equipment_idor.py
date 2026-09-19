@@ -13,11 +13,13 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from app.core.access import AccessLevel
+from app.core.access import AccessLevel, Scope
 from app.modules.roles.models import Module, Role, RolePermission
 
 
-async def _set_permission(session, role_key: str, module_key: str, level: AccessLevel) -> None:
+async def _set_permission(
+    session, role_key: str, module_key: str, level: AccessLevel, scope: Scope = Scope.all
+) -> None:
     """İzin kapısını seed matrisinden BAĞIMSIZ kılar (ST IDOR deseni)."""
     role_id = (await session.execute(select(Role.id).where(Role.key == role_key))).scalar_one()
     module_id = (
@@ -31,6 +33,7 @@ async def _set_permission(session, role_key: str, module_key: str, level: Access
         )
     ).scalar_one()
     permission.access_level = level
+    permission.scope = scope
     await session.flush()
 
 

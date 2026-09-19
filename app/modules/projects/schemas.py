@@ -2,10 +2,11 @@ import re
 import uuid
 from datetime import date
 from decimal import Decimal
-from typing import Self
+from typing import Annotated, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.core.field_scope import Gorunurluk
 from app.modules.projects.models import PriceIndexType, ProjectStatus, ProjectType
 
 # sites.models, projects.models'i import eder; projects.models hicbir sey geri
@@ -57,23 +58,23 @@ class ProjectContractResponse(BaseModel):
 
     contract_no: str | None
     signature_date: date | None
-    amount: Decimal | None
-    advance_pct: Decimal
-    retainage_pct: Decimal
-    vat_pct: Decimal
-    late_penalty_daily: Decimal | None
+    amount: Annotated[Decimal | None, Gorunurluk.para]
+    advance_pct: Annotated[Decimal, Gorunurluk.kimlik]
+    retainage_pct: Annotated[Decimal, Gorunurluk.kimlik]
+    vat_pct: Annotated[Decimal, Gorunurluk.kimlik]
+    late_penalty_daily: Annotated[Decimal | None, Gorunurluk.para]
     has_price_escalation: bool
     index_type: PriceIndexType | None
-    base_index_value: Decimal | None
+    base_index_value: Annotated[Decimal | None, Gorunurluk.kimlik]
 
 
 class ProjectBudgetLines(BaseModel):
     """Dört bütçe kalemi okuma yanıtı (spec §3.3). Toplam `budget` ayrı alanda durur."""
 
-    material: Decimal
-    labor: Decimal
-    subcontractor: Decimal
-    overhead: Decimal
+    material: Annotated[Decimal | None, Gorunurluk.para]
+    labor: Annotated[Decimal | None, Gorunurluk.para]
+    subcontractor: Annotated[Decimal | None, Gorunurluk.para]
+    overhead: Annotated[Decimal | None, Gorunurluk.para]
 
 
 # --- B6 yer tutucu deseni (dashboard spec §2.3; bu ekran icin spec §5.3) ---
@@ -113,6 +114,18 @@ class MetricPlaceholder(BaseModel):
         if self.available and self.pending_module is not None:
             raise ValueError("Dolu zarf pending_module taşımaz (available=True ⇒ None).")
         return self
+
+    def kisitli(self) -> "MetricPlaceholder":
+        """🔴 `core.field_scope`in ZARF PROTOKOLÜ — kapsam maskesi bunu çağırır.
+
+        Maske gizlediği alana `None` yazsaydı bu zarfın bulunduğu alanlarda
+        ŞEMA KIRILIRDI (alan zorunlu bir nesnedir) ve ekran *"veri yok"* ile
+        *"yetkin yok"*u ayırt edemezdi. Üçüncü hâl ZATEN bunun için var
+        (kullanıcı kararı 2026-08-27); maske onu yeniden icat etmez, buradan
+        ALIR — böylece anlam zarfın yanında TEK KOPYA kalır ve `core` bir ürün
+        modülünü ithal etmek zorunda kalmaz.
+        """
+        return restricted()
 
 
 def metric(value: Decimal | None, pending_module: str) -> MetricPlaceholder:
@@ -173,8 +186,8 @@ class CountPlaceholder(BaseModel):
 class ContractingCard(BaseModel):
     """Taahhut karti — sozlesme bedeli/isveren ustte gercek, gerisi bos durum."""
 
-    spent: MetricPlaceholder
-    physical_progress: MetricPlaceholder
+    spent: Annotated[MetricPlaceholder, Gorunurluk.para]
+    physical_progress: Annotated[MetricPlaceholder, Gorunurluk.operasyonel]
     # 🔴 ILR-2'DE EKLENDI — **OPSIYONEL** (`| None`, varsayilan `None`).
     # `required` yapmak frontend `typecheck`ini KIRARDI (K-DEVIR2): yol ve
     # operasyon sayisinin sabit kalmasi "kirici degil"in KANITI DEGILDIR.
@@ -183,8 +196,8 @@ class ContractingCard(BaseModel):
     # onaylanmis isveren hakedisinden (onay) turer. Mockup'in tek "Fiziksel
     # İlerleme" karosu ASLINDA mali bir sayi basiyordu (`Harcanan / Sözleşme
     # Bedeli`) — ONAYLI SAPMA, geri alinmaz.
-    financial_progress: MetricPlaceholder | None = None
-    final_progress_payment: MetricPlaceholder
+    financial_progress: Annotated[MetricPlaceholder | None, Gorunurluk.para] = None
+    final_progress_payment: Annotated[MetricPlaceholder, Gorunurluk.para]
     worker_count: CountPlaceholder
     subcontractor_count: CountPlaceholder
 
@@ -197,14 +210,14 @@ class InvestmentCard(BaseModel):
     `estimated_profit`/`margin` ise BUTCE tabanlidir. Ayrinti: `_investment_card`.
     """
 
-    sales_target: Decimal | None
-    land_cost: Decimal | None
-    sold_amount: MetricPlaceholder
-    sales_ratio: MetricPlaceholder
+    sales_target: Annotated[Decimal | None, Gorunurluk.para]
+    land_cost: Annotated[Decimal | None, Gorunurluk.para]
+    sold_amount: Annotated[MetricPlaceholder, Gorunurluk.para]
+    sales_ratio: Annotated[MetricPlaceholder, Gorunurluk.operasyonel]
     unit_summary: CountPlaceholder
-    total_cost: MetricPlaceholder
-    estimated_profit: MetricPlaceholder
-    margin: MetricPlaceholder
+    total_cost: Annotated[MetricPlaceholder, Gorunurluk.para]
+    estimated_profit: Annotated[MetricPlaceholder, Gorunurluk.para]
+    margin: Annotated[MetricPlaceholder, Gorunurluk.para]
 
 
 class ShareholderResponse(BaseModel):
@@ -212,30 +225,32 @@ class ShareholderResponse(BaseModel):
 
     id: uuid.UUID
     name: str
-    share_pct: Decimal
+    share_pct: Annotated[Decimal, Gorunurluk.kimlik]
 
 
 class LandShareCard(BaseModel):
     landowner_name: str
-    our_share_pct: Decimal
-    owner_share_pct: Decimal
-    land_cost: Decimal  # daima 0 — tanim geregi, saklanmaz (spec §3.3)
+    our_share_pct: Annotated[Decimal, Gorunurluk.kimlik]
+    owner_share_pct: Annotated[Decimal, Gorunurluk.kimlik]
+    land_cost: Annotated[
+        Decimal | None, Gorunurluk.para
+    ]  # daima 0 — tanim geregi, saklanmaz (spec §3.3)
     contract_no: str | None
     notary_date: date | None
-    land_area_m2: Decimal | None
-    construction_area_m2: Decimal | None
+    land_area_m2: Annotated[Decimal | None, Gorunurluk.operasyonel]
+    construction_area_m2: Annotated[Decimal | None, Gorunurluk.operasyonel]
     delivery_date: date | None
-    daily_penalty: Decimal | None
-    guarantee_amount: Decimal | None
+    daily_penalty: Annotated[Decimal | None, Gorunurluk.para]
+    guarantee_amount: Annotated[Decimal | None, Gorunurluk.para]
     shareholder_count: int
     shareholders: list[ShareholderResponse]
     our_unit_count: CountPlaceholder
     owner_unit_count: CountPlaceholder
-    our_share_value: MetricPlaceholder
-    construction_cost: MetricPlaceholder
-    estimated_profit: MetricPlaceholder
-    margin: MetricPlaceholder
-    construction_progress: MetricPlaceholder
+    our_share_value: Annotated[MetricPlaceholder, Gorunurluk.para]
+    construction_cost: Annotated[MetricPlaceholder, Gorunurluk.para]
+    estimated_profit: Annotated[MetricPlaceholder, Gorunurluk.para]
+    margin: Annotated[MetricPlaceholder, Gorunurluk.para]
+    construction_progress: Annotated[MetricPlaceholder, Gorunurluk.operasyonel]
 
 
 # --- Maliyet/kâr yanıtı (P10 spec §3; `GET /projects/{id}/costs`) ---
@@ -261,19 +276,19 @@ class ProjectCostBreakdown(BaseModel):
     `_ACCOUNTING`/`_TREASURY` notundadır — tek kopya orada yaşar.
     """
 
-    land_cost: Decimal | None
+    land_cost: Annotated[Decimal | None, Gorunurluk.para]
     # KY 127-132 "İnşaat Maliyeti ₺10.240.000 / %68 harcandı · Bütçe: ₺15,1M".
     # `spent` taşeron hakedişlerinden (approved+paid BRÜT, S1/S2), `budget` dört
     # bütçe kaleminden gelir — arsa bütçeye DAHİL DEĞİLDİR, ayrı satırdır.
-    construction_spent: Decimal
-    construction_budget: Decimal
-    permits: MetricPlaceholder
-    financing: MetricPlaceholder
-    marketing: MetricPlaceholder
+    construction_spent: Annotated[Decimal | None, Gorunurluk.para]
+    construction_budget: Annotated[Decimal | None, Gorunurluk.para]
+    permits: Annotated[MetricPlaceholder, Gorunurluk.para]
+    financing: Annotated[MetricPlaceholder, Gorunurluk.para]
+    marketing: Annotated[MetricPlaceholder, Gorunurluk.para]
     # KY 156-159 "Toplam Harcanan": yalnız KAYNAĞI OLAN kalemlerin toplamı
     # (arsa + inşaat). Yer tutucu üç kalem toplama GİRMEZ — bilinmeyeni 0
     # sayıp toplama katmak, ekranda eksik olduğu belli olmayan bir sayı üretir.
-    total_spent: Decimal
+    total_spent: Annotated[Decimal | None, Gorunurluk.para]
 
 
 class ProjectProfitProjection(BaseModel):
@@ -301,12 +316,12 @@ class ProjectProfitProjection(BaseModel):
     `None`dır, çünkü ünite/satış kavramı yoktur.
     """
 
-    revenue: Decimal | None
-    cost: Decimal | None
-    profit: Decimal | None
-    margin_pct: Decimal | None
-    realized_sales: Decimal | None
-    remaining_stock_value: Decimal | None
+    revenue: Annotated[Decimal | None, Gorunurluk.para]
+    cost: Annotated[Decimal | None, Gorunurluk.para]
+    profit: Annotated[Decimal | None, Gorunurluk.para]
+    margin_pct: Annotated[Decimal | None, Gorunurluk.para]
+    realized_sales: Annotated[Decimal | None, Gorunurluk.para]
+    remaining_stock_value: Annotated[Decimal | None, Gorunurluk.para]
 
 
 class SubcontractorCostRow(BaseModel):
@@ -360,11 +375,11 @@ class SubcontractorCostRow(BaseModel):
     work_category: str | None
     # Sözleşme bedeli TÜREVDİR: `subcontractor_contracts`ta `amount` kolonu
     # yoktur, bedel `Σ kalem quantity × unit_price`tır (contracts K3 ilkesi).
-    contract_amount: Decimal
-    paid: Decimal
-    pending: Decimal
+    contract_amount: Annotated[Decimal | None, Gorunurluk.para]
+    paid: Annotated[Decimal | None, Gorunurluk.para]
+    pending: Annotated[Decimal | None, Gorunurluk.para]
     # "İlerleme" sütunu (KY 214/222/230 · KK 217/223/229). Payda tanımsızsa None.
-    progress_pct: Decimal | None
+    progress_pct: Annotated[Decimal | None, Gorunurluk.para]
 
 
 class SubcontractorCostSummary(BaseModel):
@@ -381,9 +396,9 @@ class SubcontractorCostSummary(BaseModel):
     Sütun SATIR düzeyinde yaşar.
     """
 
-    contract_amount: Decimal
-    paid: Decimal
-    pending: Decimal
+    contract_amount: Annotated[Decimal | None, Gorunurluk.para]
+    paid: Annotated[Decimal | None, Gorunurluk.para]
+    pending: Annotated[Decimal | None, Gorunurluk.para]
 
 
 class ProjectCostsResponse(BaseModel):
@@ -454,7 +469,7 @@ class TimelineProject(BaseModel):
     status: ProjectStatus
     start_date: date | None
     end_date: date | None
-    contract_amount: Decimal | None
+    contract_amount: Annotated[Decimal | None, Gorunurluk.para]
     sections: list[TimelineSection]
 
 
@@ -493,7 +508,7 @@ class ProjectListItem(BaseModel):
     start_date: date | None
     end_date: date | None
     contract_no: str | None
-    contract_amount: Decimal | None
+    contract_amount: Annotated[Decimal | None, Gorunurluk.para]
     # employer_name anlık görüntüsü KALIR (spec §2.3): join'siz okunur, kırılmasın.
     employer_name: str | None
     # B6: işveren/sözleşme ilişki nesneleri + bütçe kalemleri + taslak bayrağı (ekleme,
@@ -502,8 +517,8 @@ class ProjectListItem(BaseModel):
     contract: ProjectContractResponse | None
     budget_lines: ProjectBudgetLines
     is_draft: bool
-    budget: Decimal
-    progress_pct: Decimal
+    budget: Annotated[Decimal | None, Gorunurluk.para]
+    progress_pct: Annotated[Decimal | None, Gorunurluk.operasyonel]
     contracting: ContractingCard | None
     investment: InvestmentCard | None
     land_share: LandShareCard | None

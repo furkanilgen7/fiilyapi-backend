@@ -39,7 +39,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import func, select
 
-from app.core.access import AccessLevel
+from app.core.access import AccessLevel, Scope
 from app.modules.audit.messages import section_created
 from app.modules.audit.models import AuditAction, AuditLog
 from app.modules.roles.models import Module, Role, RolePermission
@@ -89,7 +89,9 @@ async def _login(client, session, user_factory, role_key: str, *, grant_all: boo
     return resp.json()["access_token"]
 
 
-async def _set_permission(session, role_key: str, module_key: str, level: AccessLevel) -> None:
+async def _set_permission(
+    session, role_key: str, module_key: str, level: AccessLevel, scope: Scope = Scope.all
+) -> None:
     role_id = (await session.execute(select(Role.id).where(Role.key == role_key))).scalar_one()
     module_id = (
         await session.execute(select(Module.id).where(Module.key == module_key))
@@ -102,6 +104,7 @@ async def _set_permission(session, role_key: str, module_key: str, level: Access
         )
     ).scalar_one()
     permission.access_level = level
+    permission.scope = scope
     await session.flush()
 
 

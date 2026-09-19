@@ -1,13 +1,15 @@
 import uuid
 from decimal import ROUND_HALF_UP, Decimal
+from typing import Annotated
 
 from pydantic import BaseModel, Field, computed_field
 
-# Serbest metin tavani (TB4 S3) `contracts` ailesiyle PAYLASILIR — tek kaynak.
-from app.core.text import FREE_TEXT_MAX_LENGTH
-
 # Yer tutucu sozlesmesi TEK yerde tanimlidir (B6/P1, spec §3/§5.1): kopyalanmaz,
 # projects modulunden import edilir (plan T2 notu).
+from app.core.field_scope import Gorunurluk
+
+# Serbest metin tavani (TB4 S3) `contracts` ailesiyle PAYLASILIR — tek kaynak.
+from app.core.text import FREE_TEXT_MAX_LENGTH
 from app.modules.projects.schemas import MetricPlaceholder
 
 __all__ = [
@@ -91,9 +93,9 @@ class BoqItemResponse(BaseModel):
     code: str
     description: str
     unit: str
-    quantity: Decimal
-    unit_price: Decimal
-    progress_pct: MetricPlaceholder
+    quantity: Annotated[Decimal | None, Gorunurluk.operasyonel]
+    unit_price: Annotated[Decimal | None, Gorunurluk.para]
+    progress_pct: Annotated[MetricPlaceholder, Gorunurluk.operasyonel]
     sort_order: int
     # --- BOQ-SEC (K6) — MEVCUT alanlarin hicbiri degismedi, ikisi EKLENDI ---
     #
@@ -103,12 +105,20 @@ class BoqItemResponse(BaseModel):
     # `unallocated_quantity != quantity - allocated_quantity`'dir ve bu bir kusur
     # degil tanimdir. Mockup'in "Santiye Kotasi" sutunu (BoqAssignmentCard.tsx:17)
     # suzulmus yanitta `allocated_quantity + unallocated_quantity`den okunur.
-    allocated_quantity: Decimal
-    unallocated_quantity: Decimal
+    allocated_quantity: Annotated[Decimal | None, Gorunurluk.operasyonel]
+    unallocated_quantity: Annotated[Decimal | None, Gorunurluk.operasyonel]
 
     @computed_field  # type: ignore[prop-decorator]
     @property
-    def amount(self) -> Decimal:
+    def amount(self) -> Decimal | None:
+        """🔴 Girdisi maskelenmisse TUREV DE DUSER (`core.field_scope` kanonu).
+
+        `unit_price` `limited` kapsaminda gizlenir; `amount` maskelenmeseydi
+        birim fiyat `amount / quantity` ile GERI HESAPLANIRDI — maske hicbir sey
+        gizlememis olurdu.
+        """
+        if self.unit_price is None or self.quantity is None:
+            return None
         return quantize_money(self.quantity * self.unit_price)
 
 
@@ -122,8 +132,16 @@ class BoqGroupResponse(BaseModel):
 
     @computed_field  # type: ignore[prop-decorator]
     @property
-    def group_total(self) -> Decimal:
-        return quantize_money(sum((item.amount for item in self.items), Decimal("0")))
+    def group_total(self) -> Decimal | None:
+        """Kalem tutarlarinin toplami; kalemlerden biri bile MASKELIYSE `None`.
+
+        Maskeli kalemleri ATLAYIP toplasaydi ekran EKSIK bir toplami GERCEK
+        gibi basardi — bu, gizlemekten daha kotudur.
+        """
+        tutarlar = [item.amount for item in self.items]
+        if any(tutar is None for tutar in tutarlar):
+            return None
+        return quantize_money(sum(tutarlar, Decimal("0")))
 
 
 class BoqTotals(BaseModel):
@@ -159,12 +177,12 @@ class BoqTotals(BaseModel):
     dogru kalir ama bekleyen sey MODUL degil **KAVRAMDIR**.
     """
 
-    contract_total: MetricPlaceholder
-    realized_total: MetricPlaceholder
-    remaining_total: MetricPlaceholder
-    revision_total: MetricPlaceholder
-    grand_total: Decimal
-    grand_progress_pct: MetricPlaceholder
+    contract_total: Annotated[MetricPlaceholder, Gorunurluk.para]
+    realized_total: Annotated[MetricPlaceholder, Gorunurluk.para]
+    remaining_total: Annotated[MetricPlaceholder, Gorunurluk.para]
+    revision_total: Annotated[MetricPlaceholder, Gorunurluk.para]
+    grand_total: Annotated[Decimal | None, Gorunurluk.para]
+    grand_progress_pct: Annotated[MetricPlaceholder, Gorunurluk.operasyonel]
 
 
 class BoqListResponse(BaseModel):
@@ -231,7 +249,7 @@ class BoqItemAllocation(BaseModel):
 
     section_id: uuid.UUID
     section_name: str
-    quantity: Decimal
+    quantity: Annotated[Decimal | None, Gorunurluk.operasyonel]
 
 
 class BoqItemAllocationsResponse(BaseModel):

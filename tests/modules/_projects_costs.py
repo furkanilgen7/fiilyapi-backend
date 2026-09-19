@@ -12,7 +12,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.access import AccessLevel
+from app.core.access import AccessLevel, Scope
 from app.modules.contracts.models import SubcontractorContract, SubcontractorContractItem
 from app.modules.customers.models import Customer, CustomerType
 from app.modules.projects.models import Project
@@ -58,7 +58,9 @@ async def _scoped_login(client, db_session, user_factory, project: Project | Non
     return resp.json()["access_token"]
 
 
-async def _set_permission(session: AsyncSession, role_key: str, level: AccessLevel) -> None:
+async def _set_permission(
+    session: AsyncSession, role_key: str, level: AccessLevel, scope: Scope = Scope.all
+) -> None:
     role_id = (await session.execute(select(Role.id).where(Role.key == role_key))).scalar_one()
     module_id = (
         await session.execute(select(Module.id).where(Module.key == "projects"))
@@ -71,6 +73,7 @@ async def _set_permission(session: AsyncSession, role_key: str, level: AccessLev
         )
     ).scalar_one()
     permission.access_level = level
+    permission.scope = scope
     await session.flush()
 
 
