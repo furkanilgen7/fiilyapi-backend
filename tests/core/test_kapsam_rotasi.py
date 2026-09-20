@@ -2,10 +2,15 @@
 
 ## Neden ROTA düzeyinde, uç uç DEĞİL
 
-Altı modülde **66 uç** var. Her ucu tek tek maskelemek ("dönüşü `maskele()` ile
-sar") çalışırdı ama bir ucu UNUTMAK sessiz bir para sızıntısıdır ve unutulan uç
-hiçbir yerde kırmızı vermezdi. Rota sınıfı tek noktadır: routerdaki HER uç,
-sonradan eklenenler DÂHİL, maskeden geçer. Unutulacak bir şey yoktur.
+Kısıtlı modüllerde onlarca uç var. Her ucu tek tek maskelemek ("dönüşü
+`maskele()` ile sar") çalışırdı ama bir ucu UNUTMAK sessiz bir para sızıntısıdır
+ve unutulan uç hiçbir yerde kırmızı vermezdi. Rota sınıfı tek noktadır:
+routerdaki HER uç, sonradan eklenenler DÂHİL, maskeden geçer.
+
+🔴 *"Unutulacak bir şey yoktur"* CÜMLESİ BURADA YAZIYORDU VE YANLIŞTI: gövdesini
+kendi üreten uçlar (dosya indirme, `Response`, `list[...]`) sarmalayıcıya bir
+`BaseModel` vermez ve MASKESİZ geçer. Gerekçesi `core/scoped_route.py::_sarili`
+içindedir, bekçisi `tests/core/test_kapsam_kacak_uclar.py`.
 
 ## Bekçiler
 
@@ -87,14 +92,40 @@ async def test_FINANCE_kapsaminda_OPERASYONEL_alan_gizlenir() -> None:
     assert govde["fiyat"] == "500"
 
 
-async def test_YAZMA_ucu_da_maskeden_gecer() -> None:
-    """🔴 Yazma ucunun yanıtı OKUMA ucuyla AYNI zarfı taşımalıdır — `boq`un
-    `item_response` docstring'indeki kanonun aynısı. Yalnız GET'i maskeleyen bir
-    kurulum, PATCH yanıtından tutarı sızdırırdı."""
+async def test_MASKELEYEN_kapsam_YAZMA_ucunde_403_alir() -> None:
+    """🔴 BU TEST BİR İDDİANIN ÖLÇÜLMESİNDEN DOĞDU (2026-09-20).
+
+    Önceki hâli `test_YAZMA_ucu_da_maskeden_gecer` idi ve şunu savunuyordu:
+    *"yazma ucunun yanıtı okuma ucuyla aynı zarfı taşımalı; yalnız GET'i
+    maskeleyen bir kurulum PATCH yanıtından tutarı sızdırırdı."* Gerekçe
+    ÖLÇÜLDÜ ve fazla genişti: aynı depo o bileşimi (maskeleyen kapsam + yazan
+    seviye) `roles/service.py::update_permission` ile ZATEN yasaklıyor, yani
+    "PATCH yanıtından sızma" senaryosunun bir AKTÖRÜ yoktu.
+
+    İddia kapatılırken seçim maskelemek DEĞİL **kapıyı kapatmak** oldu: maske
+    bir GÖSTERİM aracıdır, yazma bir YETKİ sorusudur. Maskelenmiş bir aktörün
+    yazma ucuna girip *"maskelenmiş bir yanıt"* alması, kaydı DEĞİŞTİRDİKTEN
+    sonra ne yazdığını göremediği bir hâl üretirdi — bu, sızıntıdan daha kötü
+    bir yarı-durumdur.
+
+    Uçtan uca ikizi: `tests/core/test_kapsam_yazma_kapisi.py` (gerçek rol,
+    gerçek uç).
+    """
     from app.core.access import Scope
 
-    govde = await _oku(_uygulama(lambda *_a, **_k: Scope.limited), metod="post")
-    assert govde["fiyat"] is None
+    transport = ASGITransport(app=_uygulama(lambda *_a, **_k: Scope.limited))
+    async with AsyncClient(transport=transport, base_url="http://t") as client:
+        resp = await client.post("/kart")
+
+    assert resp.status_code == 403, resp.text
+
+
+async def test_POZITIF_KONTROL_ALL_kapsaminda_YAZMA_ucu_CALISIR() -> None:
+    """🔴 Üstteki kapı *"her yazmayı reddet"* hâline gelirse burası kırmızı olur."""
+    from app.core.access import Scope
+
+    govde = await _oku(_uygulama(lambda *_a, **_k: Scope.all), metod="post")
+    assert govde["fiyat"] == "500"
 
 
 async def test_kapsam_MODUL_ANAHTARIYLA_sorulur() -> None:
