@@ -37,6 +37,36 @@ Yan etkisi: istek (request) gövdeleri kendiliğinden dışarıda kalır — hi�
 ad süzgeci bir yanıt şemasını yanlışlıkla muaf tutabilirdi, erişilebilirlik ise
 tutamaz.
 
+## 🔴 `str` ALANLAR BU BEKÇİNİN DIŞINDADIR — ÖLÇÜLDÜ, BUGÜN SIFIR ÖRNEK
+
+2026-09-20'de şu iddia soruldu: *"Bir olgu serbest metne gömülürse (ör. bir
+açıklama alanında tutar geçerse) ne maskelenir ne bekçi görür."*
+
+**MEKANİZMA GERÇEK:** `_siniflandirma_gerektirir` yalnız `Decimal` ve
+`MetricPlaceholder` arar; `field_scope._kovalar` etiketsiz alanı `kimlik` sayar;
+dolayısıyla etiketsiz bir `str` maskeden AYNEN geçer (sentetik modelle ölçüldü:
+`limited` kapsamda `mesaj="Fiyat: 860.000 TL"` sağ salim döndü).
+
+**SONUÇ ÇÜRÜK:** maskeli yüzeyin 179 `str` alanı tek tek sınıflandırıldı.
+Sunucunun bir tutarı biçimleyip bir yanıt şemasına gömdüğü **TEK** yer
+`units/importer.py::UnitImportRowReport.messages`tir ve orası maskeli hiçbir rol
+tarafından AÇILAMAZ (uç `projects >= full` ister; o seviyedeki üç rolün üçü de
+`Scope.all` taşır). Üstelik gömülen tutar kullanıcının KENDİ yüklediği dosyadan
+gelir, DB'den değil. `dict`/`Any` alanları: maskeli yüzeyde tek bir tane var ve
+o bir sayaç sözlüğü. Etiketsiz `Decimal` sayısı: **sıfır**.
+
+Yani bu, bir KUSUR değil bir SINIRDIR ve kaydı burada durur ki bir sonraki tur
+aynı soruyu sıfırdan araştırmasın. Sınırın bir gün ısırması için şu ÜÇÜ birden
+gerekir: (1) sunucu bir tutarı metne gömmeye başlar, (2) o alan maskeli bir
+yanıt ağacına girer, (3) maskeleyen bir rol o ucu açabilir.
+
+🔴 Bir "onarım" cazip görünür ama ÖLÇÜLDÜ ve YANLIŞTIR: metin alanını
+`Annotated[str, Gorunurluk.para]` ile etiketlemek maskeyi ZORUNLU bir alana
+`None` YAZDIRIR — `model_copy(update=...)` pydantic v2'de doğrulama KOŞTURMAZ,
+yani nesne hatasız serileşir ve OpenAPI'de `string` (required) bildirilen alan
+gövdede `null` taşır. Metin alanı maskelenecekse tipi de `str | None` olmalıdır;
+bu bir sözleşme değişikliğidir.
+
 ## 🔴 TÜREV (computed_field) alanlar AYRI BİR SORU SORAR
 
 `model_fields` pydantic v2'de `computed_field`'ları İÇERMEZ (ölçüldü:
