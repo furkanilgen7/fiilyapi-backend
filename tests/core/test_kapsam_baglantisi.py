@@ -63,6 +63,7 @@ karar (uç başına kapsam) o gün gerçekten zorunlu olur.
 """
 
 import importlib
+import inspect
 import pkgutil
 from decimal import Decimal
 
@@ -422,3 +423,157 @@ def test_router_taramasi_BOS_DEGILDIR() -> None:
     kisitli = _kisitli_moduller()
     korunan = [ad for ad, r in routerlar.values() if _kullanilan_izinler(r) & kisitli]
     assert len(korunan) >= 8, f"Kısıtlı izinle korunan router sayısı şüpheli az: {korunan}"
+
+
+# --------------------------------------------------------------------------- #
+# ROTA DÜZEYİ BEKÇİ — router düzeyinin ÖLÇÜLMÜŞ kör noktası
+# --------------------------------------------------------------------------- #
+#
+# 🔴 Yukarıdaki bekçilerin hepsi ROUTER başına çalışır ve girişleri
+# `_kullanilan_izinler(router)`dır. Bu, ÖLÇÜLMÜŞ bir kör nokta taşır
+# (2026-09-20, sentetik mutasyonla kanıtlandı):
+#
+#   Kapsamlı bir ANA routera, KENDİ `require_permission`ı OLMAYAN bir alt-router
+#   `include_router` ile eklenirse:
+#     * alt-routerın rotaları ALT-ROUTERIN `route_class`ıyla kurulur — yani düz
+#       `APIRoute`, maskesiz;
+#     * alt-router ayrı taranırken kısıtlı bir izin anahtarı taşımadığı için
+#       `_kopru_sorunlari` hiç şart uygulamadan `[]` döner;
+#     * ana router taranırken `router.routes` yalnız DOĞRUDAN rotaları görür,
+#       `_IncludedRouter` içindekileri GÖRMEZ.
+#   Üç bekçi birden yeşil kalır ve maskesiz uçlar canlıya çıkar.
+#
+# Bugün böyle bir alt-router YOK (ölçüldü) — yani bu, açık bir sızıntının değil,
+# bir BEKÇİ BOŞLUĞUNUN kapatılmasıdır. Aşağıdaki test rota tablosunu GERÇEKTEN
+# gezer ve soruyu ucun KENDİSİNE sorar: *"bu uç kısıtlı bir izinle korunuyorsa
+# sınıfı `_KapsamRotasi` mi ve anahtarı doğru mu?"*
+
+
+def _rota_agaci(router, miras: frozenset[str] = frozenset()):
+    """(rota, o rotaya ULAŞAN izin anahtarları) — üst routerların izinleri MİRAS alınır.
+
+    🔴 Miras ŞART: alt-router kendi `require_permission`ını taşımayıp izni ana
+    routerın `dependencies`inden alabilir. Yalnız ucun kendi bağımlılıklarına
+    bakan bir tarama tam da kapatmaya çalıştığımız hâli kaçırırdı.
+    """
+    miras = miras | {a for b in getattr(router, "dependencies", ()) if (a := _izin_anahtari(b))}
+    for rota in getattr(router, "routes", ()):
+        if isinstance(rota, APIRoute):
+            yield rota, miras | {a for b in rota.dependencies if (a := _izin_anahtari(b))}
+        elif hasattr(rota, "original_router"):
+            yield from _rota_agaci(rota.original_router, miras)
+        elif hasattr(rota, "routes"):
+            yield from _rota_agaci(rota, miras)
+
+
+def _rota_sorunlari(kisitli: set[str]) -> dict[str, str]:
+    from app.core.router_registry import ROUTERS
+
+    sorunlar: dict[str, str] = {}
+    for router in ROUTERS:
+        for rota, izinler in _rota_agaci(router):
+            hedef = izinler & kisitli
+            if len(hedef) != 1:
+                continue
+            (anahtar,) = hedef
+            kimlik = f"{sorted(rota.methods)} {rota.path}"
+
+            if type(rota).__name__ == "_KapsamRotasi":
+                # Maskeli sınıftaysa geriye TEK soru kalır: anahtar doğru mu?
+                # Gövdesini kendi üreten maskeli uçlar (xlsx, şablon) AYRI bir
+                # bekçinin konusudur ve orada GEREKÇELİ bir izin listesi tutulur
+                # (`test_kapsam_kacak_uclar.py`); burada tekrar sorulmaz —
+                # iki bekçi aynı soruyu sorarsa biri gevşetildiğinde öteki
+                # sessizce onu maskeler.
+                rota_anahtari = _kapanis(type(rota).__init__).get("modul_key")
+                if rota_anahtari != anahtar:
+                    sorunlar[kimlik] = (
+                        f"rota sınıfı {rota_anahtari!r} anahtarıyla kurulmuş (beklenen {anahtar!r})"
+                    )
+                continue
+
+            # --- Buradan sonrası MASKESİZ sınıftaki uçlar ---
+            model = rota.response_model
+            if isinstance(model, type) and issubclass(model, BaseModel):
+                # 🔴 MUAFİYET, router düzeyi bekçinin ÖLÇÜTÜYLE AYNI ve elle
+                #    yazılmış bir liste DEĞİL: maskelenecek ALAN DÖNDÜRMEYEN uç
+                #    hiçbir şey sızdıramaz. `documents/link_router` tam bu
+                #    hâldedir — DÖRT ayrı sahibin (`sites`, `projects`, `sales`,
+                #    `contracts`) uçlarını tek routerda toplar ve TEK kapsam
+                #    anahtarına bağlanamaz. Yanıt şemalarına bir `Decimal`
+                #    eklendiği gün şart kendiliğinden geri gelir.
+                if not _maskelenecek_alanlar(model):
+                    continue
+                sorunlar[kimlik] = f"kısıtlı izin {anahtar!r} ama rota sınıfı MASKESİZ"
+                continue
+
+            # `response_model` YOK: yalnız YAPISAL olarak gövdesiz uç (204 +
+            # dönüşü `None`) muaftır — sızdıracak bir gövdesi yoktur. Ölçüt
+            # `test_kapsam_kacak_uclar.py::_govdesiz` ile AYNI; kopya bilinçlidir
+            # (iki bekçi birbirinin özel yardımcısını ithal etseydi biri yeniden
+            # yazıldığında öteki sessizce ölürdü).
+            govdesiz = rota.status_code == 204 and inspect.signature(
+                rota.endpoint
+            ).return_annotation in (None, "None")
+            if not govdesiz:
+                sorunlar[kimlik] = (
+                    f"kısıtlı izin {anahtar!r}, maskesiz sınıf, `response_model` YOK "
+                    "ve uç 204 değil — gövdesini kendi üretiyorsa maskeden GEÇMEZ"
+                )
+    return sorunlar
+
+
+def test_KISITLI_izinle_korunan_her_ROTA_maskeli_siniftadir() -> None:
+    sorunlar = _rota_sorunlari(_kisitli_moduller())
+
+    assert not sorunlar, (
+        "Kısıtlı bir izinle korunan uç MASKESİZ bir rota sınıfı taşıyor. Router "
+        "düzeyi bekçiler bu hâli GÖREMEZ (alt-router mirası); gerekçe bu bölümün "
+        f"başında: {sorunlar}"
+    )
+
+
+def test_ROTA_bekcisi_ALT_ROUTER_kor_noktasini_YAKALAR() -> None:
+    """🔴 POZİTİF/NEGATİF ÇİFT — bekçinin var olma sebebini ölçer.
+
+    Sentetik bir kurulum: kapsamlı bir ana routera, kendi izni OLMAYAN bir
+    alt-router eklenir. Router düzeyi bekçi (`_kopru_sorunlari`) İKİSİNİ DE
+    temiz bulur; rota düzeyi bekçi alt-routerın ucunu ÇAKAR.
+    """
+    from decimal import Decimal
+    from typing import Annotated
+
+    from app.core.access import AccessLevel
+    from app.core.permissions import kapsam_kapisi, require_permission
+
+    class _Para(BaseModel):
+        tutar: Annotated[Decimal | None, Gorunurluk.para] = None
+
+    alt = APIRouter()  # 🔴 kendi izni YOK, kendi route_class'ı YOK
+
+    @alt.get("/alt/kacak", response_model=_Para)
+    async def _kacak() -> _Para: ...
+
+    ana = APIRouter(
+        route_class=kapsam_rotasi("boq", kapsamdan_oku),
+        dependencies=[require_permission("boq", AccessLevel.view), kapsam_kapisi("boq")],
+    )
+    ana.include_router(alt)
+
+    kisitli = _kisitli_moduller()
+
+    # 1) Router düzeyi bekçi İKİSİNİ DE temiz bulur — kör noktanın kanıtı.
+    assert _kopru_sorunlari(ana, kisitli) == [], "ana router zaten bağlı olmalıydı"
+    assert _kopru_sorunlari(alt, kisitli) == [], (
+        "alt router kısıtlı izin taşımaz; router düzeyi bekçi onu HİÇ denetlemez"
+    )
+
+    # 2) Rota düzeyi bekçi ucu YAKALAR.
+    yakalanan = {
+        f"{sorted(rota.methods)} {rota.path}"
+        for rota, izinler in _rota_agaci(ana)
+        if izinler & kisitli and type(rota).__name__ != "_KapsamRotasi"
+    }
+    assert yakalanan == {"['GET'] /alt/kacak"}, (
+        f"rota düzeyi tarama alt-router kaçağını görmedi: {yakalanan}"
+    )
