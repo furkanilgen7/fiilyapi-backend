@@ -190,6 +190,47 @@ async def test_taahhut_disi_projeye_patch_ile_sozlesme_yazilamaz(
     assert resp.status_code == 422, resp.text
 
 
+async def test_sozlesme_satiri_yokken_duz_alanla_patch_reddedilir(
+    client, user_factory, project_factory
+):
+    """Kayit #14/#28 acik bacagi: sozlesme SATIRI yokken duz `contract_no`/
+    `contract_amount` PATCH'i 200 donup yalniz `projects` anlik goruntusune
+    yaziyordu; `_sync_contract_authority` (service.py:625-627) `contract is
+    None` oldugunda sessizce donuyor, otorite hic dogmuyordu. `project_factory`
+    varsayilani taahhut ama SOZLESME SATIRI ACMAZ (bkz. conftest.py:310-343).
+    """
+    project = await project_factory("SZL-BOS", name="Sozlesmesiz Taahhut")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.patch(
+        f"/projects/{project.id}",
+        json={"contract_no": "SZL-2026-099", "contract_amount": "25000000.00"},
+        headers=_auth(token),
+    )
+    assert resp.status_code == 422, resp.text
+
+
+async def test_taahhut_disi_projeye_duz_alanla_patch_ile_sozlesme_yazilamaz(
+    client, user_factory, project_factory
+):
+    """Kayit #14/#28 acik bacagi: `update_project` govdesinde ust duzey
+    `contract_no`/`contract_amount` icin Kural 7 kapisi HIC yoktu —
+    `_validate_contract_update` yalniz `data.contract is not None` dalinda
+    cagriliyordu (service.py:639-640). Ic ice `{"contract": ...}` govdesi
+    zaten `test_taahhut_disi_projeye_patch_ile_sozlesme_yazilamaz` ile
+    kapali; bu test AYNI kapiyi DUZ alanlarla dener.
+    """
+    project = await project_factory("SZL-YAT2", name="Yatirim", project_type="kendi_yatirim")
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.patch(
+        f"/projects/{project.id}",
+        json={"contract_no": "SZL-2026-098", "contract_amount": "5000000.00"},
+        headers=_auth(token),
+    )
+    assert resp.status_code == 422, resp.text
+
+
 async def test_fiyat_farki_acikken_endekssiz_sozlesme_patchi_reddedilir(
     client, db_session, user_factory, project_factory
 ):

@@ -30,6 +30,7 @@ from app.modules.payroll.service.core import (
     has_payable_line,
     rates_by_source,
 )
+from app.modules.payroll.service.tax_context import _minimum_wage_gross
 from app.modules.users.models import User
 
 # --- T4: onay + ödeme yolu -------------------------------------------------
@@ -240,6 +241,7 @@ async def approve_period(
             period,
             satirlar,
             await rates_by_source(session, period.year),
+            await _minimum_wage_gross(session, period.year),
         )
 
     await session.flush()

@@ -631,6 +631,38 @@ def _sync_contract_authority(project: Project, changes: dict[str, Any]) -> None:
         contract.amount = changes["contract_amount"]
 
 
+_FLAT_CONTRACT_FIELDS = ("contract_no", "contract_amount")
+
+
+def _validate_flat_contract_fields(project: Project, changes: dict[str, Any]) -> None:
+    """`_validate_contract_update`in düz-alan ikizi (Kayıt #14/#28 açık bacağı).
+
+    `ProjectUpdate.contract` gövdesi Kural 7'den (taahhüt dışı tipte sözleşme
+    yasak) `_validate_contract_update` ile geçer, ama üst düzey `contract_no`/
+    `contract_amount` aynı kapıdan HİÇ geçmiyordu: `_ensure_type_consistency`
+    yalnız `investment`/`land_share` imzasını taşır (service.py:303-307).
+    Ayrıca sözleşme SATIRI yokken (taahhüt dışı proje YAPISAL OLARAK asla
+    satır açamaz — Kural 7, create'te service.py:441-444; taslak taahhüt
+    projesi de sözleşmesiz doğabilir — service.py:452) bu alanlar
+    `_sync_contract_authority`nin `contract is None` erken dönüşü yüzünden
+    yalnız `projects` anlık görüntüsüne yazılıp otoriteyi hiç doğurmuyordu.
+    Otoritenin GEÇ DOĞMASI ayrı bir ürün kararıdır (bkz. `_sync_contract_authority`
+    docstring'i) — burada VERİLMEZ; bunun yerine create'in reddettiği durum
+    PATCH'le de aynı şekilde reddedilir.
+    """
+    if not any(field in changes for field in _FLAT_CONTRACT_FIELDS):
+        return
+    if project.project_type is not ProjectType.taahhut:
+        raise ProjectTypeMismatchError(
+            "Sözleşme ve işveren bilgileri yalnızca taahhüt projelerine girilebilir."
+        )
+    if project.contract is None:
+        raise ProjectValidationError(
+            "Sözleşme numarası/bedeli düzenlenemedi: bu projede henüz bir sözleşme "
+            "satırı yok. Önce tam sözleşme nesnesini (`contract`) gönderin."
+        )
+
+
 async def update_project(
     session: AsyncSession, actor: User, project_id: uuid.UUID, data: ProjectUpdate
 ) -> Project:
@@ -641,6 +673,7 @@ async def update_project(
     # `contract` bir İLİŞKİdir: sözlükte kalırsa setattr döngüsü ORM alanının
     # üstüne düz bir dict yazar. Sözleşme aşağıda `_apply_contract` ile işlenir.
     changes = data.model_dump(exclude_unset=True, exclude={"investment", "land_share", "contract"})
+    _validate_flat_contract_fields(project, changes)
     for field, value in changes.items():
         setattr(project, field, value)
     _sync_contract_authority(project, changes)

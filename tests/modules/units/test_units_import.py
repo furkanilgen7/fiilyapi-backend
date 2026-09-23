@@ -688,22 +688,24 @@ async def test_uzun_alanlar_satir_hatasi_uretir_500_degil(
     assert await _count_blocks(db_session, project.id) == 1
 
 
-async def test_harf_varyantli_iki_blok_ice_aktarmayi_cokertmez(
+async def test_harf_varyantli_iki_blok_validate_ucunda_tumuyle_reddedilir(
     client, db_session, user_factory, project_factory
 ):
-    """Kayıt 433/434: `A Blok` + `A BLOK` aynı projede yaşayabilir.
+    """Kayıt 49/50: `A Blok` + `A BLOK` aynı projede yaşayabilir.
 
     `uq_blocks_project_name` ve `guards.ensure_block_name_unique` TAM EŞİTLİKTİR
     (repository.py:55), ama içe aktarma blok sözlüğünü `normalize_header(name)`
-    ile anahtarlar — iki blok TEK anahtara çöker ve gölgede kalan bloğun id'si
-    `by_block_id` içinde BULUNMAZ, döngü `KeyError` atar → 500.
+    ile anahtarlar — iki blok TEK anahtara çöker. Kayıt 433/434'ün KeyError/500
+    bacağı `84c87ff`'te kapandı, ama "çakışmayan satır sessizce hayatta kalan
+    bloğa yazılır" bacağı AÇIK kalmıştı (satır asla `golge` bloğuna gidemez,
+    o blok içe aktarma yoluyla erişilemez hale gelirdi). Bugünkü davranış:
+    çakışma varsa dosyanın o bloğa hiç değinmediği satırlar dahil TÜM içe
+    aktarma reddedilir — sessiz seçim yerine kullanıcı adları ayrıştırır.
     """
     project = await project_factory("BLK-VAR", project_type="kendi_yatirim")
     site = await _site(db_session, project)
     ilk = await _block(db_session, project, site, name="A Blok")
     golge = await _block(db_session, project, site, name="A BLOK")
-    # İKİ bloğa da ünite yazılır: sözlükte hangisinin sağ kaldığı sıralama
-    # kolasyonuna bağlıdır, test ona BAĞIMLI OLMAMALIDIR.
     await _unit(db_session, project, ilk, unit_no="1")
     await _unit(db_session, project, golge, unit_no="2")
     token = await _login(client, user_factory, "system_admin")
@@ -715,36 +717,51 @@ async def test_harf_varyantli_iki_blok_ice_aktarmayi_cokertmez(
         headers=_auth(token),
     )
 
-    assert resp.status_code == 200, resp.text
-    # Gölgelenen bloktaki `2` de ALINMIŞ sayılır: satır reddedilir, sessizce
-    # yanlış bloğa yazılmaz.
-    assert resp.json()["rows"][0]["status"] == "error"
+    assert resp.status_code == 422, resp.text
+    assert "A Blok" in resp.json()["detail"] and "A BLOK" in resp.json()["detail"]
 
 
-async def test_harf_varyantli_iki_blok_import_ucunu_de_cokertmez(
+async def test_harf_varyantli_iki_blok_import_ucunda_da_tumuyle_reddedilir(
     client, db_session, user_factory, project_factory
 ):
-    """Aynı desen `import_units` içinde de var (batch.py:433-436)."""
+    """Aynı desen `import_units` içinde de var (batch.py `_plan_rows` ortak).
+
+    Dosya `golge` bloğuna hiç değinmese ("A Blok" dışına yazmasa) bile proje
+    içinde çakışan iki blok VARSA içe aktarma reddedilir — sessizce hayatta
+    kalan bloğa (`blocks[key].id`, batch.py) yazma yolu böylece hiç açılmaz.
+    """
     project = await project_factory("BLK-VAR2", project_type="kendi_yatirim")
     site = await _site(db_session, project)
     ilk = await _block(db_session, project, site, name="A Blok")
-    golge = await _block(db_session, project, site, name="A BLOK")
+    await _block(db_session, project, site, name="A BLOK")
     await _unit(db_session, project, ilk, unit_no="1", sort_order=0)
-    await _unit(db_session, project, golge, unit_no="2", sort_order=7)
     token = await _login(client, user_factory, "system_admin")
     content = _xlsx([_row(block="A Blok", unit_no="3")])
 
     resp = await _post_import(client, project, content, token)
 
+    assert resp.status_code == 422, resp.text
+    assert "A Blok" in resp.json()["detail"] and "A BLOK" in resp.json()["detail"]
+    # Reddedilen istek HİÇBİR ŞEY yazmadı.
+    assert await _count_units(db_session, project.id) == 1
+
+
+async def test_harf_varyantli_olmayan_iki_blok_ice_aktarmayi_etkilemez(
+    client, db_session, user_factory, project_factory
+):
+    """Kontrol: normalize sonrası ÇAKIŞMAYAN iki blok yeni bekçiden etkilenmez."""
+    project = await project_factory("BLK-OK", project_type="kendi_yatirim")
+    site = await _site(db_session, project)
+    a = await _block(db_session, project, site, name="A Blok")
+    await _block(db_session, project, site, name="B Blok")
+    await _unit(db_session, project, a, unit_no="1", sort_order=0)
+    token = await _login(client, user_factory, "system_admin")
+    content = _xlsx([_row(block="A Blok", unit_no="2")])
+
+    resp = await _post_import(client, project, content, token)
+
     assert resp.status_code == 200, resp.text
     assert resp.json()["created"] == 1
-    # `sort_order` İKİ bloğun da mevcut ünitelerinin ARDINA gider (7 + 1).
-    yeni = (
-        await db_session.execute(
-            select(Unit).where(Unit.project_id == project.id, Unit.unit_no == "3")
-        )
-    ).scalar_one()
-    assert yeni.sort_order == 8
 
 
 def test_uzunluk_sinirlari_semayla_ayrismaz():

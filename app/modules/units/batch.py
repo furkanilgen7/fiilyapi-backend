@@ -304,6 +304,12 @@ async def _plan_rows(
         raise UnitValidationError(str(exc)) from exc
 
     block_rows = await repository.list_blocks_for_project(session, project.id)
+    # Kayit 49/50: golgelenen blok (harf/bosluk varyanti) KeyError/500 bacagi
+    # asagidaki `by_block_id` ile kapandi, ama "sessizce yanlis/hayatta kalan
+    # bloga yazma" bacagi ACIKTI — `blocks` sozlugu iki varyanti TEK anahtara
+    # cokertip yazma yolunu (asagida + import_units) o tek bloga yonlendirirdi.
+    # Cakisma varsa ice aktarmayi baslamadan TUMUYLE reddet (guards.py).
+    guards.ensure_no_normalized_block_collision([block for block, _ in block_rows])
     blocks = {normalize_header(block.name): block for block, _ in block_rows}
     units = await repository.list_units_for_project(session, project.id)
     # `by_block_id` SOZLUKTEN DEGIL blok LISTESINDEN kurulur (kayit 433/434):
@@ -312,7 +318,9 @@ async def _plan_rows(
     # cokertince sozlukte yalniz biri kalir ve golgelenen blogun id'si haritada
     # BULUNMAZDI -> `KeyError` -> 500. Listeden kurunca iki id de ayni anahtara
     # duser: golgelenen blogun unite numaralari da ALINMIS sayilir (muhafazakâr
-    # davranis — cakisan numara ice aktarmada reddedilir).
+    # davranis — cakisan numara ice aktarmada reddedilir). Yukaridaki collision
+    # bekcisi artik bu duruma HIC ULASILMASINI engelliyor; bu blok bekcisiz
+    # kalmasin diye BILEREK yerinde birakildi (savunma derinligi).
     by_block_id = {block.id: normalize_header(block.name) for block, _ in block_rows}
     taken: dict[str, set[str]] = {key: set() for key in blocks}
     for unit in units:

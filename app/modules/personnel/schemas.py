@@ -25,7 +25,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.iban import iban_field_validator
 from app.modules.personnel import guards
@@ -105,6 +105,20 @@ class PersonnelUpdate(BaseModel):
     is_draft: bool | None = None
 
     _iban_dogrula = iban_field_validator()
+
+    # KARARLAR.md §1.10 (kullanıcı kararı 2026-09-23): NOT NULL kolona AÇIK
+    # `null` -> 422 alan adıyla (`EmployerContractItemUpdate._acik_null_reddedilir`
+    # emsali). `mode="before"` doğrulayıcı YALNIZ gövdede GEÇEN alan için
+    # koşar — "alan gönderilmedi" hâli (varsayılan `None`) ETKİLENMEZ; bugüne
+    # kadar bu dört alana açık `null` gönderilince ya opak 409 "Veri bütünlüğü
+    # hatası" (IntegrityError) ya da — `is_draft` taslakta iken — YANLIŞ
+    # gerekçeli bir 422 ("yayın için eksik alanlar") dönüyordu.
+    @field_validator(*guards.PERSONNEL_NULLABLE_OLMAYAN_ALANLAR, mode="before")
+    @classmethod
+    def _acik_null_reddedilir(cls, value: object) -> object:
+        if value is None:
+            raise ValueError(guards.PERSONNEL_FIELD_NOT_NULL)
+        return value
 
 
 class PersonnelResponse(BaseModel):

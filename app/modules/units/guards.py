@@ -26,6 +26,7 @@ from app.modules.projects.service import visible_projects
 from app.modules.sites import repository as sites_repository
 from app.modules.sites.models import Site
 from app.modules.units import repository
+from app.modules.units.importer import normalize_header
 from app.modules.units.models import Block, Unit, UnitOwnerSide, UnitSalesStatus
 from app.modules.users.models import User
 
@@ -74,6 +75,17 @@ IMPORT_NOTHING_TO_WRITE = "Aktarılabilecek geçerli satır yok"
 # zorlanir; METIN diger tum alan mesajlariyla birlikte BURADA durur.
 SLOT_COUNT_MISMATCH = "Kat şablonu satır sayısı kat başına daire sayısıyla eşleşmiyor"
 SLOT_SEQUENCE_INVALID = "Kat şablonunda sıra numaraları geçersiz veya tekrarlı"
+# Kayıt 49/50: `uq_blocks_project_name` TAM EŞİTLİKTİR (repository.get_block_by_name
+# de öyle), yani "A Blok" ve "A BLOK" aynı projede birlikte yaşayabilir. İçe
+# aktarma blok sözlüğünü `normalize_header(name)` ile anahtarladığı için iki
+# blok TEK anahtara çöker ve çakışmayan satırlar SESSİZCE hayatta kalan bloğa
+# yazılırdı (KeyError/500 kaydı 84c87ff'te kapandı, bu sessiz-yazma kaydı AÇIK
+# kalmıştı). Kökten çözüm (fonksiyonel unique index) migration ister; burada
+# UCUZ VE YETERLİ seçenek: çakışma varsa içe aktarmayı TÜMÜYLE reddet.
+DUPLICATE_BLOCK_NORMALIZED = (
+    "Projede yalnız büyük/küçük harf ya da boşlukla ayrılan iki blok var: "
+    "'{a}' / '{b}' — içe aktarmadan önce blok adlarını ayrıştırın"
+)
 
 
 # --- Gorunurluk (spec §8) ---
@@ -178,6 +190,25 @@ async def ensure_block_name_unique(
     """`uq_blocks_project_name` — acik SELECT ile ONDEN (spec §4.3, P4 deseni)."""
     if await repository.get_block_by_name(session, project_id, name, exclude_block_id) is not None:
         raise DuplicateError(DUPLICATE_BLOCK)
+
+
+def ensure_no_normalized_block_collision(blocks: list[Block]) -> None:
+    """Kayıt 49/50: içe aktarma blok sözlüğü `normalize_header(name)` ile anahtarlanır.
+
+    `uq_blocks_project_name` TAM EŞİTLİK olduğu için "A Blok" ve "A BLOK" aynı
+    projede birlikte yaşayabilir; ikisi normalizasyonda TEK anahtara çöker ve
+    çakışmayan satırlar sessizce hayatta kalan bloğa yazılırdı (kaydı gölgelenen
+    blok içe aktarma yoluyla ERİŞİLEMEZ hâle gelirdi). Fonksiyonel unique index
+    (migration gerektirir) yerine UCUZ VE YETERLİ çözüm: çakışma varsa dosyanın
+    o bloğa hiç değinmediği durumlar dâhil, içe aktarma TÜMÜYLE reddedilir —
+    sessiz seçim yerine kullanıcı adları ayrıştırıp yeniden dener.
+    """
+    seen: dict[str, str] = {}
+    for block in blocks:
+        key = normalize_header(block.name)
+        if key in seen and seen[key] != block.name:
+            raise UnitValidationError(DUPLICATE_BLOCK_NORMALIZED.format(a=seen[key], b=block.name))
+        seen[key] = block.name
 
 
 async def ensure_block_code_unique(

@@ -63,3 +63,28 @@ async def test_project_access_forbidden_for_non_admin(client, user_factory):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 403
+
+
+async def test_set_project_access_dedupes_duplicate_project_ids(
+    client, user_factory, project_factory
+):
+    """Kayıt #51 (kalan bacak): (user_id, project_id) üzerinde UNIQUE kısıt yok,
+    şema/servis de tekilleştirmiyordu — aynı proje ID'si tekrar gönderilince
+    iki AYNI satır yazılıyordu. `project_ids` tekilleştirilmeli."""
+    token = await _login(client, user_factory, "system_admin")
+    p1 = await project_factory("GK-A")
+    target = await user_factory(email="dup@t.co", password="parola1234", role_key="site_chief")
+
+    resp = await client.put(
+        f"/users/{target.id}/project-access",
+        json={"all_projects": False, "project_ids": [str(p1.id), str(p1.id)]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["project_ids"] == [str(p1.id)]
+
+    get_resp = await client.get(
+        f"/users/{target.id}/project-access",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert get_resp.json()["project_ids"] == [str(p1.id)]

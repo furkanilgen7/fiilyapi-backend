@@ -136,15 +136,20 @@ async def set_project_access(
     user = await repository.get_user_locked(session, user_id)
     if user is None:
         raise NotFoundError("Kullanıcı bulunamadı")
-    if not data.all_projects and data.project_ids:
+    # Kayıt #51 (kalan bacak): tabloda (user_id, project_id) üzerinde UNIQUE
+    # kısıt YOK ve `ProjectAccessInput.project_ids` tekilleştirme yapmıyor —
+    # tek istekte aynı proje ID'si birden fazla gönderilirse eşzamanlılık
+    # gerekmeden AYNI projeye iki satır yazılır. Sırayı koruyarak burada
+    # tekilleştir; giriş sırası mockup/UI için anlamlı olabileceğinden
+    # `set()` yerine sıra-koruyan tekilleştirme kullanılır.
+    project_ids = list(dict.fromkeys(data.project_ids))
+    if not data.all_projects and project_ids:
         found = (
-            (await session.execute(select(Project.id).where(Project.id.in_(data.project_ids))))
+            (await session.execute(select(Project.id).where(Project.id.in_(project_ids))))
             .scalars()
             .all()
         )
-        missing = set(data.project_ids) - set(found)
+        missing = set(project_ids) - set(found)
         if missing:
             raise NotFoundError("Proje bulunamadı")
-    return await repository.replace_project_access(
-        session, user_id, data.all_projects, data.project_ids
-    )
+    return await repository.replace_project_access(session, user_id, data.all_projects, project_ids)

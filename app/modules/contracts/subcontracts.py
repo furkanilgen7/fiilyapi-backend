@@ -564,9 +564,12 @@ async def update_subcontractor_contract(
     await _ensure_site_in_project(session, merged_site_id, contract.project_id)
 
     is_publishing = contract.is_draft and changes.get("is_draft") is False
-    guards.validate_subcontract(
-        _merged_for_validation(contract, changes), is_draft=not is_publishing
-    )
+    # 🔴 no=15 açık bacak: BİRLEŞİK `is_draft` (`changes`te yoksa mevcut satırın
+    # değeri) kullanılmalı — `not is_publishing` yalnız taslak→yayın GEÇİŞİNİ
+    # ölçer, zaten yayında olan bir kayda dokunan bir PATCH'te (is_draft gövdede
+    # yokken) hep `True` (taslak) döner ve zorunluluk kuralları atlanırdı.
+    merged_is_draft = changes.get("is_draft", contract.is_draft)
+    guards.validate_subcontract(_merged_for_validation(contract, changes), is_draft=merged_is_draft)
 
     if "contract_no" in changes and changes["contract_no"] != contract.contract_no:
         await _ensure_contract_no_unique(session, changes["contract_no"], exclude_id=contract.id)

@@ -22322,7 +22322,7 @@
         "type": "object"
       },
       "SalePlanResponse": {
-        "description": "F110-147 tablosu + F143 TOPLAM satırı.\n\n`total_amount` HER ZAMAN `sale_price`a eşittir (sunucu doğrular, spec §2);\nyine de yanıtta durur ki ekran toplamı kendisi toplamak zorunda kalmasın.",
+        "description": "F110-147 tablosu + F143 TOPLAM satırı.\n\nEşitlik `total_amount == sale_price` yalnız PLAN YAZAN uçlarda zorlanır\n(`POST generate-plan` ve `PUT installments` → `INSTALLMENT_TOTAL_MISMATCH`,\nspec §2). Ardından gelen bir `PATCH /sales/{id}` bedel değişimi (kapı yalnız\nbedeli TAHSİLATA bağlar, plan toplamına değil — bkz.\n`guards.SALE_PRICE_BELOW_COLLECTED` gerekçesi) planı GEÇİCİ olarak hizasız\nbırakabilir; kullanıcı `generate-plan`/`PUT installments` ile yeniden\nhizalar. `total_amount` satırlardan CANLI toplanır, yanıtta durur ki ekran\ntoplamı kendisi toplamak zorunda kalmasın.",
         "properties": {
           "items": {
             "items": {
@@ -49504,6 +49504,8 @@
             "schema": {
               "anyOf": [
                 {
+                  "maximum": 2200,
+                  "minimum": 2000,
                   "type": "integer"
                 },
                 {
@@ -56742,6 +56744,8 @@
             "schema": {
               "anyOf": [
                 {
+                  "maximum": 2200,
+                  "minimum": 2000,
                   "type": "integer"
                 },
                 {

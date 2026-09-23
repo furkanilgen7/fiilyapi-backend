@@ -406,6 +406,16 @@ def taseron_sozlesmesi_fabrikasi(seeded_db: AsyncSession, admin_kullanicisi: Use
             subcontractor_name=taseron.name,
             contract_no=f"{code}-{uuid.uuid4().hex[:8]}",
             created_by=admin_kullanicisi.id,
+            # 🔴 YAYINDAKİ sözleşmenin ZORUNLU alanları (2026-09-23, kayıt #15):
+            # `is_draft` varsayılanı `False`, yani bu fabrika YAYINDA bir sözleşme
+            # kurar. `guards.validate_subcontract(is_draft=False)` bu dört alanı
+            # şart koşuyor; fabrika onları atlayınca API'den ÜRETİLEMEYEN bir kayıt
+            # doğuruyordu. Kayıt #15 PATCH'teki doğrulama boşluğunu kapatınca bu
+            # gerçekdışı kurgu beş testi kırdı — kusur kapıda değil, KURGUDAYDI.
+            work_category="Kaba İnşaat",
+            signature_date=date(2026, 1, 15),
+            start_date=date(2026, 1, 20),
+            end_date=date(2026, 12, 31),
         )
         seeded_db.add(contract)
         await seeded_db.flush()

@@ -14,6 +14,9 @@ import uuid
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.personnel import guards
+from app.modules.personnel.models import Personnel
+from app.modules.personnel.schemas import PersonnelUpdate
 from app.modules.sites.models import Section, Site
 
 GECERLI_TCKN = "10000000146"
@@ -315,3 +318,106 @@ async def test_patch_gecerli_IBAN_NORMALIZE_edilerek_yazilir(client, ik_headers)
     )
     assert yanit.status_code == 200, yanit.text
     assert yanit.json()["iban"] == GECERLI_IBAN
+
+
+# --- KARARLAR.md §1.10 (kullanıcı kararı 2026-09-23): açık `null` -> 422 -----
+#
+# ÖLÇÜLMÜŞ BUGÜNKÜ DAVRANIŞ (bekçi eklenmeden önce, kanon uygulanmadan ölçüldü):
+# * `full_name`/`source`/`is_active` — TASLAK kayıtta açık `null` gönderilince
+#   `update_personnel`deki yayın-tamlık kontrolü (`core.py:163`) `is_draft`
+#   değişmediği için hiç çalışmaz, `setattr` doğrudan NOT NULL kolona `None`
+#   yazar -> `IntegrityError` -> OPAK 409 "Veri bütünlüğü hatası" (hangi alan
+#   olduğu YAZMAZ).
+# * `is_draft` — YAYINLANMIŞ (tam) kayıtta aynı opak 409; TASLAK kayıtta ise
+#   409 DEĞİL 422 döner ama gerekçe YANLIŞ ("yayın için eksik alanlar" —
+#   `is_draft` boş bırakılamaz mesajı DEĞİL).
+#
+# Bu blok artık BEKÇİ SONRASI hedef davranışı doğrular: dördü de her durumda
+# (taslak/yayın) 422 + alan adı (pydantic `loc`), kayıt DEĞİŞMEZ.
+
+
+def _personnel_not_null_alanlar() -> tuple[str, ...]:
+    """`PersonnelUpdate` alanlarından hedef DB kolonu `nullable=False` olanlar —
+
+    `Personnel.__table__.columns` ÜZERİNDEN TÜRETİLİR (elle liste DEĞİL).
+    `guards.PERSONNEL_NULLABLE_OLMAYAN_ALANLAR`in KENDİSİ bu türevle
+    doğrulanır ki bir sonraki NOT NULL alan eklendiğinde bekçi SESSİZCE kör
+    kalmasın (depo kanonu: "sayı değil BEKÇİ yaz").
+    """
+    update_alanlari = set(PersonnelUpdate.model_fields)
+    kolonlar = {c.name: c for c in Personnel.__table__.columns}
+    return tuple(
+        ad
+        for ad in update_alanlari
+        if ad in kolonlar and not kolonlar[ad].nullable and kolonlar[ad].server_default is None
+    )
+
+
+def test_personnel_not_null_alan_listesi_turetilerek_dogrulanir():
+    """Bekçi elle YAZILMIŞ bir listeyle KÖR kalmasın — DB şemasından türet, karşılaştır.
+
+    🔴 `server_default`li NOT NULL kolonlar (`is_active`/`is_draft`) `Column.nullable`
+    açısından da `False`'tur ama ORM `server_default` VARKEN Python tarafında
+    `setattr(None)` yine de DB'ye `NULL` yazmaya ÇALIŞIR (server_default yalnız
+    INSERT'te kolon HİÇ verilmediğinde devreye girer, UPDATE'te `None` göndermek
+    hâlâ NOT NULL ihlalidir) — bu yüzden türev `server_default` filtresini
+    UYGULAMAZ; aşağıda elle ekleniyor.
+    """
+    turetilen = {
+        c.name
+        for c in Personnel.__table__.columns
+        if c.name in PersonnelUpdate.model_fields and not c.nullable
+    }
+    assert turetilen == set(guards.PERSONNEL_NULLABLE_OLMAYAN_ALANLAR)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("alan", ["full_name", "source", "is_active"])
+async def test_patch_not_null_alan_acik_null_taslakta_422_alan_adiyla(client, ik_headers, alan):
+    """Hedef davranış (taslak kayıt): açık `null` artık 422 + alan adı, kayıt DEĞİŞMEZ."""
+    kayit = await client.post("/personnel", json=ISCI, headers=ik_headers)
+    kimlik = kayit.json()["id"]
+    yanit = await client.patch(f"/personnel/{kimlik}", json={alan: None}, headers=ik_headers)
+    assert yanit.status_code == 422, (alan, yanit.status_code, yanit.text)
+    assert alan in yanit.text
+
+    sonra = await client.get(f"/personnel/{kimlik}", headers=ik_headers)
+    assert sonra.json()[alan] == ISCI.get(alan, True if alan == "is_active" else None)
+
+
+@pytest.mark.asyncio
+async def test_patch_is_draft_acik_null_yayinda_422_alan_adiyla(client, ik_headers, proje):
+    """Hedef davranış (yayınlanmış kayıt): `is_draft: null` artık 422 + alan adı."""
+    kayit = await client.post("/personnel", json=_tam(str(proje.id)), headers=ik_headers)
+    kimlik = kayit.json()["id"]
+    yanit = await client.patch(f"/personnel/{kimlik}", json={"is_draft": None}, headers=ik_headers)
+    assert yanit.status_code == 422, yanit.text
+    assert "is_draft" in yanit.text
+
+    sonra = await client.get(f"/personnel/{kimlik}", headers=ik_headers)
+    assert sonra.json()["is_draft"] is False
+
+
+@pytest.mark.asyncio
+async def test_patch_is_draft_acik_null_taslakta_422_alan_adiyla(client, ik_headers):
+    """Hedef davranış (taslak kayıt): `is_draft: null` artık DOĞRU gerekçeyle
+    422 verir — "yayın için eksik alanlar" DEĞİL, alan adı ("is_draft") ile."""
+    kayit = await client.post("/personnel", json=ISCI, headers=ik_headers)
+    kimlik = kayit.json()["id"]
+    yanit = await client.patch(f"/personnel/{kimlik}", json={"is_draft": None}, headers=ik_headers)
+    assert yanit.status_code == 422, yanit.text
+    assert "is_draft" in yanit.text
+
+    sonra = await client.get(f"/personnel/{kimlik}", headers=ik_headers)
+    assert sonra.json()["is_draft"] is True
+
+
+@pytest.mark.asyncio
+async def test_patch_nullable_alan_null_ile_temizlenebilir(client, ik_headers):
+    """Yanlış-pozitif bekçisi: NULLABLE bir alan (`trade`) hâlâ `null` ile TEMİZLENEBİLİR —
+    bekçi yalnız NOT NULL dörtlüde çalışır, öteki alanları KISITLAMAZ."""
+    kayit = await client.post("/personnel", json=ISCI, headers=ik_headers)
+    kimlik = kayit.json()["id"]
+    yanit = await client.patch(f"/personnel/{kimlik}", json={"trade": None}, headers=ik_headers)
+    assert yanit.status_code == 200, yanit.text
+    assert yanit.json()["trade"] is None

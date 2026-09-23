@@ -202,6 +202,33 @@ LEAVE_APPROVE_OWN_REQUEST = (
 LEAVE_WITHDRAW_NOT_PENDING = "Yalnız bekleyen izin talebi geri çekilebilir"
 
 
+# --- KARARLAR.md §1.10 (kullanıcı kararı 2026-09-23): açık `null` -> 422 ------
+#
+# NOT NULL kolona PATCH gövdesinde AÇIKÇA `null` gönderilirse alan adıyla
+# (pydantic `loc` üzerinden) 422 verilir — DB'ye düşüp opak 409 "Veri bütünlüğü
+# hatası" olmaz. Emsal `contracts/schemas.py::EmployerContractItemUpdate.
+# _acik_null_reddedilir`: `field_validator(..., mode="before")` YALNIZ gövdede
+# GEÇEN alan için çalışır (pydantic'in "before" doğrulayıcı davranışı);
+# "alan hiç gönderilmedi" hâli ETKİLENMEZ, yalnız AÇIK `null` reddedilir.
+#
+# Metin BİLEREK sabittir (alan adını TEKRARLAMAZ): field adı zaten pydantic
+# hata gövdesinin `loc`unda vardır, mesajın kendisi jenerik kalır (kanon metni
+# birebir).
+PERSONNEL_FIELD_NOT_NULL = "Alan boşaltılamaz; değiştirmemek için gövdeden çıkarın."
+
+# Hedef kolonu DB'de `nullable=False` olan `PersonnelUpdate` alanları.
+# 🔴 ELLE YAZILMIŞ bir liste bir sonraki NOT NULL alan eklendiğinde SESSİZCE
+# kör kalır (depo kanonu: "sayı değil BEKÇİ yaz") — bu yüzden bu tuple
+# `tests/personnel/test_personnel_ik_api.py`de `Personnel.__table__.columns`
+# ÜZERİNDEN TÜRETİLİP doğrulanır; elle kopya DEĞİL, DB şemasının izdüşümüdür.
+PERSONNEL_NULLABLE_OLMAYAN_ALANLAR: tuple[str, ...] = (
+    "full_name",
+    "source",
+    "is_active",
+    "is_draft",
+)
+
+
 def validate_personnel_source(source: WorkerSource, subcontractor_id: uuid.UUID | None) -> None:
     """Kural BİRLEŞİK kayıt üzerinde koşar.
 

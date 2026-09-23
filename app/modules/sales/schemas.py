@@ -254,8 +254,14 @@ class SaleInstallmentResponse(BaseModel):
 class SalePlanResponse(BaseModel):
     """F110-147 tablosu + F143 TOPLAM satırı.
 
-    `total_amount` HER ZAMAN `sale_price`a eşittir (sunucu doğrular, spec §2);
-    yine de yanıtta durur ki ekran toplamı kendisi toplamak zorunda kalmasın.
+    Eşitlik `total_amount == sale_price` yalnız PLAN YAZAN uçlarda zorlanır
+    (`POST generate-plan` ve `PUT installments` → `INSTALLMENT_TOTAL_MISMATCH`,
+    spec §2). Ardından gelen bir `PATCH /sales/{id}` bedel değişimi (kapı yalnız
+    bedeli TAHSİLATA bağlar, plan toplamına değil — bkz.
+    `guards.SALE_PRICE_BELOW_COLLECTED` gerekçesi) planı GEÇİCİ olarak hizasız
+    bırakabilir; kullanıcı `generate-plan`/`PUT installments` ile yeniden
+    hizalar. `total_amount` satırlardan CANLI toplanır, yanıtta durur ki ekran
+    toplamı kendisi toplamak zorunda kalmasın.
     """
 
     sale_id: uuid.UUID

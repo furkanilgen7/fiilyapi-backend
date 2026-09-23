@@ -847,3 +847,30 @@ async def test_tahsilatin_ustundeki_bedel_degisimi_gecer_ve_plan_onarilabilir(
 
     assert onarim.status_code == 200, onarim.text
     assert onarim.json()["total_amount"] == "1200000.00"
+
+
+async def test_patch_bedel_degisimi_plani_gecici_hizasiz_birakir(
+    client, admin_headers, proje, unite, musteri
+):
+    """BEKÇİ — `total_amount != sale_price` PATCH sonrası ULAŞILABİLİR bir hâldir.
+
+    `SalePlanResponse` docstring'i eşitliği "HER ZAMAN" diye tanımlarsa yalan
+    söyler: kapı (`guards.SALE_PRICE_BELOW_COLLECTED`) bedeli yalnız TAHSİLATA
+    bağlar, plan TOPLAMINA değil (bkz. `guards.py:173-178`). PATCH'ten sonra
+    `GET /sales/{id}/installments` yeni bedeli, plan ise ESKİ toplamı taşır —
+    kullanıcı `PUT installments`/`generate-plan` ile hizalayana kadar.
+    """
+    satis = await _satis(client, admin_headers, proje, unite, musteri)
+    await _plan_uret(client, admin_headers, satis["id"])
+
+    resp = await client.patch(
+        f"/sales/{satis['id']}", json={"sale_price": "1300000.00"}, headers=admin_headers
+    )
+    assert resp.status_code == 200, resp.text
+
+    plan = await client.get(f"/sales/{satis['id']}/installments", headers=admin_headers)
+    assert plan.status_code == 200, plan.text
+    body = plan.json()
+    assert body["sale_price"] == "1300000.00"
+    assert body["total_amount"] == "1440000.00"
+    assert body["total_amount"] != body["sale_price"]
