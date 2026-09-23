@@ -265,8 +265,11 @@ async def update_account(
 
     if verilen.get("name") is not None:
         account.name = verilen["name"].strip()
-    if verilen.get("account_type") is not None:
-        account.account_type = verilen["account_type"]
+    yeni_tur = verilen.get("account_type")
+    if yeni_tur is not None and yeni_tur != account.account_type:
+        if await repository.count_journal_lines_for_account(session, account.id):
+            raise ConflictError(guards.ACCOUNT_TYPE_LOCKED)
+        account.account_type = yeni_tur
     if verilen.get("is_active") is not None:
         account.is_active = verilen["is_active"]
     # 🔑 MT-1/KK-1: kontra bayrağı da düzeltilebilir olmalıdır — bir hesap

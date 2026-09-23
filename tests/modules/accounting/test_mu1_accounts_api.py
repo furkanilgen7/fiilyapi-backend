@@ -38,6 +38,7 @@ from decimal import Decimal
 
 from sqlalchemy import event, select
 
+from app.modules.accounting import guards
 from app.modules.accounting.models import ChartAccount, ChartAccountType
 from app.modules.audit.models import AuditAction, AuditLog
 from tests.conftest import test_engine
@@ -554,6 +555,62 @@ async def test_patch_kodu_SATIRLI_ebeveynin_altina_tasimak_409(
     )
 
     assert resp.status_code == 409, resp.text
+
+
+async def test_patch_tur_degisimi_SATIRSIZ_hesapta_serbesttir(
+    client, muhasebe_headers, hesap_fabrikasi
+) -> None:
+    """Kilit SATIRA bakar, türün kendisine değil: hiç yevmiyesi olmayan hesabın
+    türü düzeltilebilmelidir (yanlış açılmış hesabın tek geri dönüş yolu)."""
+    hesap = await hesap_fabrikasi("100")
+
+    resp = await client.patch(
+        f"{_YOL}/{hesap.id}", json={"account_type": "liability"}, headers=muhasebe_headers
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["account_type"] == "liability"
+
+
+async def test_patch_tur_degisimi_FIS_SATIRI_OLAN_hesapta_409(
+    client, muhasebe_headers, hesap_fabrikasi, fis_fabrikasi
+) -> None:
+    """🔴 `code` kilidinin İKİZİ. `balance.SIGN[tür]` bakiyenin İŞARETİNİ,
+    `balance_sheet._etkin_yon` kalemin BİLANÇO TARAFINI türden okur; tür
+    değişseydi geçmiş TÜM yevmiyenin yönü mizanda, bilançoda ve gelir
+    tablosunda GERİYE DÖNÜK ters dönerdi. Bakiye SAKLANMADIĞI için (K3 türev)
+    hiçbir kolon farkı bunu ele vermez."""
+    hesap = await hesap_fabrikasi("100")
+    karsi = await hesap_fabrikasi("320", account_type=ChartAccountType.liability)
+    await fis_fabrikasi([(hesap, "10.00", "0.00"), (karsi, "0.00", "10.00")])
+
+    resp = await client.patch(
+        f"{_YOL}/{hesap.id}", json={"account_type": "liability"}, headers=muhasebe_headers
+    )
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == guards.ACCOUNT_TYPE_LOCKED
+
+
+async def test_patch_AYNI_turu_yeniden_gondermek_satirli_hesapta_da_gecer(
+    client, muhasebe_headers, hesap_fabrikasi, fis_fabrikasi
+) -> None:
+    """Kapı DEĞİŞİME bakar, gönderilmiş olmaya değil (`code` dalının aynısı);
+    aksi hâlde kullanıcı adı düzeltirken formun taşıdığı türü geri gönderdiği
+    için 409 alırdı."""
+    hesap = await hesap_fabrikasi("100")
+    karsi = await hesap_fabrikasi("320", account_type=ChartAccountType.liability)
+    await fis_fabrikasi([(hesap, "10.00", "0.00"), (karsi, "0.00", "10.00")])
+
+    resp = await client.patch(
+        f"{_YOL}/{hesap.id}",
+        json={"account_type": "asset", "name": "Merkez Kasa"},
+        headers=muhasebe_headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["name"] == "Merkez Kasa"
+    assert resp.json()["account_type"] == "asset"
 
 
 async def test_patch_TUREV_alan_govdede_422(client, muhasebe_headers, hesap_fabrikasi) -> None:

@@ -184,6 +184,49 @@ async def is_kalemleri(ctx: AracBaglami, girdi: Any) -> AracSonucu:
     return _kart_sonucu(veri.model_dump(mode="json"), toplam=len(tum_kalemler), donen=len(dilim))
 
 
+def _deger_dengesi_notu(sapma: Any, vb: dict[str, Any], *, para_gizli: bool) -> str:
+    """Değer dengesi cümlesi — 🔴 MASKE SAYIYI GİZLERSE CÜMLE DE DEĞİŞİR.
+
+    Eski hâl sapma hesaplanamadığında İKİ sebep sayıyor ve kullanıcıyı
+    `toplam_deger` ile `atanmamis_unite`ye baktırıyordu. `projects=limited`
+    rolünde o cümlenin İKİ YALANI birden vardı: (1) üçüncü bir sebep — değerin
+    GİZLENMİŞ olması — hiç anılmıyordu, (2) yönlendirdiği `toplam_deger` alanı
+    da maskeliydi, yani talimat İZLENEMEZDİ.
+
+    🔴 Cümle `para_gizli` DOLAYIMIYLA seçilir, aktörün kapsamıyla DEĞİL:
+    handler kapsamı okuyamaz (`ActorContext.scope` YOKTUR, S1) ve okuyabilseydi
+    bile kapsam bilgisini metne taşımak S1'in reddettiği şeyin ta kendisi
+    olurdu. Burada taşınan şey KAPSAM değil, GÖZLEMDİR: "değer toplamı boş".
+
+    🔴 Ve "yetkin yok" DİYE KESİLMEZ, "olabilir" denir: değer toplamı gerçekten
+    boş da olabilir. Kesin konuşmak, rayiç girmeyi unutmuş bir yöneticiyi var
+    olmayan bir yetki sorununa baktırırdı.
+    """
+    if sapma is not None:
+        return (
+            f"Sapma %{sapma}, tolerans %{vb['tolerance_pct']}. "
+            f"Tolerans {'içinde' if vb.get('is_within_tolerance') else 'DIŞINDA'}. "
+            "Adet dengesi ile değer dengesi AYRI kararlardır."
+        )
+    if para_gizli:
+        return (
+            "Değer sapması HESAPLANAMADI ve bunun ÜÇ sebebi olabilir: (1) bu "
+            "değerleri görme YETKİNİZ olmayabilir — rolünüzün veri kapsamı para "
+            "alanlarını gizliyorsa `toplam_deger` de boş gelir, (2) rayiç değer "
+            "hiç girilmemiş olabilir, (3) hiçbir ünite bir tarafa ATANMAMIŞ "
+            "olabilir (payda ATANMIŞ değerdir). 🔴 `toplam_deger` BOŞ olduğu "
+            "için bu üç hâl BURADAN AYIRT EDİLEMEZ; adet tarafı (`atanmamis_"
+            "unite`) yalnız üçüncüyü eler. Bu 'denge uygun' DEMEK DEĞİLDİR."
+        )
+    return (
+        "Değer sapması HESAPLANAMADI ve bunun İKİ sebebi olabilir: rayiç "
+        "değer hiç girilmemiş olabilir, ya da hiçbir ünite bir tarafa "
+        "ATANMAMIŞ olabilir (payda ATANMIŞ değerdir). Hangisi olduğunu "
+        "`toplam_deger` ile `atanmamis_unite` birlikte söyler. Bu 'denge "
+        "uygun' DEMEK DEĞİLDİR."
+    )
+
+
 async def arsa_payi(ctx: AracBaglami, girdi: Any) -> AracSonucu:
     """`GET /projects/{project_id}/land-share/summary` — ÖZET ucu (kararlı seçim).
 
@@ -207,6 +250,15 @@ async def arsa_payi(ctx: AracBaglami, girdi: Any) -> AracSonucu:
     cb = g["balance"]["count_balance"]
     vb = g["balance"]["value_balance"]
     sapma = vb.get("deviation_pct")
+    # 🔴 PARA MASKESİNİN ÇIKARIMI — tahmin DEĞİL, gözlem.
+    #
+    # `ActorContext` `scope` ALANI TAŞIMAZ (S1, bekçisi `test_ai0b_yapisal.py`),
+    # yani handler aktörün kapsamını SORAMAZ. Ama sormasına gerek de yok: kapsam
+    # maskesi `para` kovasının TAMAMINI birden `null`a çeker, dolayısıyla
+    # `value_total` DOLUYSA para kesinlikle maskeli DEĞİLDİR. Boşsa iki hâl
+    # ayrışmaz (gerçekten rayiç yok ya da maskeli) ve aşağıdaki cümle bu
+    # belirsizliği İTİRAF EDER — yanlış bir kesinlik uydurmaz.
+    para_gizli = t["value_total"] is None
     veri = schemas.AiArsaPayi(
         project_id=g["project_id"],
         project_name=g["project_name"],
@@ -241,19 +293,7 @@ async def arsa_payi(ctx: AracBaglami, girdi: Any) -> AracSonucu:
         # rayiç toplamıdır, yani (a) rayiç hiç girilmemiş ya da (b) hiçbir ünite
         # bir tarafa atanmamış olabilir. Tek sebep yazmak ikinci hâlde
         # kullanıcıyı yanlış yere baktırırdı.
-        deger_dengesi_notu=(
-            "Değer sapması HESAPLANAMADI ve bunun İKİ sebebi olabilir: rayiç "
-            "değer hiç girilmemiş olabilir, ya da hiçbir ünite bir tarafa "
-            "ATANMAMIŞ olabilir (payda ATANMIŞ değerdir). Hangisi olduğunu "
-            "`toplam_deger` ile `atanmamis_unite` birlikte söyler. Bu 'denge "
-            "uygun' DEMEK DEĞİLDİR."
-            if sapma is None
-            else (
-                f"Sapma %{sapma}, tolerans %{vb['tolerance_pct']}. "
-                f"Tolerans {'içinde' if vb.get('is_within_tolerance') else 'DIŞINDA'}. "
-                "Adet dengesi ile değer dengesi AYRI kararlardır."
-            )
-        ),
+        deger_dengesi_notu=_deger_dengesi_notu(sapma, vb, para_gizli=para_gizli),
     )
     return Ok(data=veri.model_dump(mode="json"), row_count=1)
 

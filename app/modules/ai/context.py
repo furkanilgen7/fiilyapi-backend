@@ -11,8 +11,10 @@ Bu modül o bağlamı üç işe koşar:
    `BaglamGorunmuyor` (router bunu **404**a çevirir, 403'e DEĞİL: S14 varlık
    sızıntısı, `conversation_id` emsali).
 2. **Modele giden bağlam bloğu** — yalnız **AD**, kimlik YOK. (🔴 Blok
-   üzerinde KVKK **alan maskesi koşmaz**: maske ANAHTAR tarar, blok ise iki
-   sabit anahtar taşır — gerekçe `baglam_mesaji_govdeden` docstring'inde.)
+   üzerinde KVKK **ANAHTAR maskesi koşmaz**: maske anahtar tarar, blok ise iki
+   sabit anahtar taşır — gerekçe `baglam_mesaji_govdeden` docstring'inde.
+   🔴 **DEĞER maskesi ise KOŞAR** ve `_kisalt` içindedir: adın İÇİNE yazılmış
+   bir TCKN/IBAN/telefon buradan da çıkar ve blok `invoke` hunisinden GEÇMEZ.)
 3. **Araçlara varsayılan kapsam** — `ToolRegistry.invoke` hunisinde **TEK
    YERDE** uygulanır (`varsayilan_kapsam`).
 
@@ -51,6 +53,7 @@ from typing import Final
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
+from app.modules.ai import exposure
 
 # 🔴 MODÜL DÜZEYİNDE — ve bu ÖLÇÜLDÜ, varsayılmadı. `readplane`in tembel import
 # gerekçesi (`build_read_plane` → `app.main` → bu router → döngü) buraya
@@ -204,8 +207,20 @@ def varsayilan_kapsam(baglam: SohbetBaglami) -> Mapping[str, str]:
 
 
 def _kisalt(ad: str) -> str:
-    """Adı tek satıra indirir, zarf karakterlerini **çıkarır**, tavana kırpar."""
+    """Adı tek satıra indirir, zarf karakterlerini **çıkarır**, DEĞER
+    maskesini uygular, tavana kırpar.
+
+    🔴 Maske bu üç adımın ORTASINDADIR, tesadüfen değil: boşluklar
+    normalleştirilmeden gruplu bir IBAN yakalanamaz, kırpmadan SONRA
+    koşulsaydı tavana denk gelen bir IBAN yarım (ve maskesiz) kalırdı.
+
+    🔴 Bu, aşağıdaki docstring'in reddettiği ANAHTAR maskesi DEĞİLDİR: o
+    dekoratifti (`{proje, santiye} & YASAK_ALAN_ANAHTARLARI == ∅`), bu ise
+    değerin içine bakar ve bağlam bloğu `ToolRegistry.invoke`tan GEÇMEZ —
+    yani araç zarfındaki kapı bu metni hiç görmez.
+    """
     temiz = "".join(k for k in " ".join(ad.split()) if k not in _YASAK_KARAKTERLER)
+    temiz = exposure.deger_maskesi(temiz)
     return temiz if len(temiz) <= AD_TAVANI else temiz[:AD_TAVANI] + "…"
 
 

@@ -139,6 +139,10 @@ BINDING_INVOICE_INVALID = (
 SOURCE_DIRECTION: dict[str, InvoiceDirection] = {
     "progress_payment_id": InvoiceDirection.outgoing,
     "subcontractor_progress_payment_id": InvoiceDirection.incoming,
+    # Kira firması BİZE fatura keser, para bizden ÇIKAR (kullanıcı kararı
+    # 2026-09-19 — KK-ODM kirayı da kapsar). Bu satır OLMADAN kapı kira için
+    # `.get()` → None döner ve HER kira ödemesini reddederdi (fail-closed).
+    "equipment_rental_invoice_id": InvoiceDirection.incoming,
 }
 
 #: 🔴 409 — FAT-HAK: bağlayıcı fatura VAR, tutarı sıfır DEĞİL, yönü DOĞRU — ama

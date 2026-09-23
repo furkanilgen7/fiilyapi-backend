@@ -26,14 +26,19 @@ from sqlalchemy import select
 from app.core import timezone
 from app.modules.audit.models import AuditLog
 from app.modules.sales.guards import (
+    INSTALLMENT_AMOUNT_NOT_POSITIVE,
     INSTALLMENT_MISSING,
     INSTALLMENT_TOTAL_MISMATCH,
     PAID_INSTALLMENT_BELOW_PAID,
     PAID_INSTALLMENT_REMOVED,
     PAYMENT_EXCEEDS_INSTALLMENT,
+    PLAN_BALANCE_UNCOVERED,
     PLAN_HAS_PAYMENTS,
     PLAN_INPUT_MISSING,
+    PLAN_INSTALLMENT_TOO_SMALL,
+    SALE_CANCELLED_NOT_WRITABLE,
     SALE_MISSING,
+    SALE_PRICE_BELOW_COLLECTED,
 )
 from app.modules.sales.models import SaleInstallment
 
@@ -610,3 +615,262 @@ async def test_gecikme_faizi_tahakkuk_kaydi_uretmez(
         .all()
     )
     assert len(satirlar) == 1
+
+
+# --- 6) Sıfır tutarlı plan satırı DOĞMAZ (Σ == sale_price yapısal olarak) ---
+
+
+async def test_sifir_tutarli_taksit_satiri_kabul_edilmez_422(
+    client, admin_headers, proje, unite, musteri
+):
+    """0,00 tutarlı satır DOĞDUĞU ANDA "tam ödendi" sayılır — gövdeden reddedilir.
+
+    `repository.installment_stats` "ödenmiş"i `paid_amount >= amount` ile ölçer;
+    sıfır tutarlı satırda `0 >= 0` DOĞRUDUR, dolayısıyla satır hiç tahsilat
+    yokken hem `installment_paid_count`a girer hem de `_sync_paid_at` ile
+    `paid_at` damgası alır (toplam yine `sale_price`a eşit olduğu için
+    `INSTALLMENT_TOTAL_MISMATCH` bu gövdeyi GEÇİRİR).
+    """
+    satis = await _satis(client, admin_headers, proje, unite, musteri)
+
+    resp = await client.put(
+        f"/sales/{satis['id']}/installments",
+        json={
+            "items": [
+                _satir(0, "1440000.00", "2026-08-01"),
+                _satir(1, "0.00", "2026-09-01"),
+            ]
+        },
+        headers=admin_headers,
+    )
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"] == INSTALLMENT_AMOUNT_NOT_POSITIVE
+
+
+async def test_pesinat_bedelin_tamamiysa_taksit_uretilmez_422(
+    client, admin_headers, proje, unite, musteri
+):
+    """`down_payment == sale_price` + taksit sayısı > 0 → taksitlendirilecek bakiye 0.
+
+    `build_plan` bu hâlde `installment_count` adet 0,00 tutarlı satır üretir;
+    satış listesi "12/12 ödendi · 0 gecikmiş" derken kalan borç 1.440.000'dir.
+    """
+    satis = await _satis(client, admin_headers, proje, unite, musteri, down_payment="1440000.00")
+
+    resp = await client.post(f"/sales/{satis['id']}/generate-plan", headers=admin_headers)
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"] == PLAN_INSTALLMENT_TOO_SMALL
+
+
+async def test_taksitsiz_planda_pesinat_bedelin_tamamini_karsilamalidir_422(
+    client, admin_headers, proje, unite, musteri
+):
+    """Peşinat var, taksit YOK, peşinat bedelin ALTINDA → plan eksik kalırdı.
+
+    `plan.build_plan` bu hâlde `financed` bakiyesini DAĞITMADAN döner ve
+    `total_amount` `sale_price`ın altında çıkar; oysa `PUT installments` aynı
+    gövdeyi `INSTALLMENT_TOTAL_MISMATCH` ile reddeder — iki yazma yolu AYRIŞIR.
+    """
+    satis = await _satis(
+        client,
+        admin_headers,
+        proje,
+        unite,
+        musteri,
+        down_payment="440000.00",
+        installment_count=0,
+        first_installment_date=None,
+    )
+
+    resp = await client.post(f"/sales/{satis['id']}/generate-plan", headers=admin_headers)
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"] == PLAN_BALANCE_UNCOVERED
+
+
+# --- 7) Satış durumu kapısı: iptal edilmiş satışa plan/tahsilat YAZILMAZ ---
+
+
+async def _iptal_et(client, headers, sale_id) -> None:
+    resp = await client.post(
+        f"/sales/{sale_id}/cancel", json={"reason": "Alıcı vazgeçti"}, headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+
+
+async def test_iptal_edilmis_satista_plan_uretilemez_409(
+    client, admin_headers, proje, unite, musteri
+):
+    """İptal ünitenin vitrinini serbest bırakır (`listed`) — kayıt artık yazılabilir değil."""
+    satis = await _satis(client, admin_headers, proje, unite, musteri)
+    await _iptal_et(client, admin_headers, satis["id"])
+
+    resp = await client.post(f"/sales/{satis['id']}/generate-plan", headers=admin_headers)
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == SALE_CANCELLED_NOT_WRITABLE
+
+
+async def test_iptal_edilmis_satisin_plani_degistirilemez_409(
+    client, admin_headers, proje, unite, musteri
+):
+    satis = await _satis(client, admin_headers, proje, unite, musteri)
+    await _plan_uret(client, admin_headers, satis["id"])
+    await _iptal_et(client, admin_headers, satis["id"])
+
+    resp = await client.put(
+        f"/sales/{satis['id']}/installments",
+        json={"items": [_satir(1, "1440000.00", "2026-09-01")]},
+        headers=admin_headers,
+    )
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == SALE_CANCELLED_NOT_WRITABLE
+
+
+async def test_iptal_edilmis_satisa_tahsilat_islenemez_409(
+    client, admin_headers, proje, unite, musteri
+):
+    """Özet KPI'sı iptalleri SAYMAZ (`list_sale_rows(exclude_cancelled=True)`),
+
+    dolayısıyla iptal edilmiş kayda işlenen para `collection.collected_amount`a
+    hiç girmez — tahsil edilmiş ama hiçbir özete girmeyen para doğar.
+    """
+    satis = await _satis(client, admin_headers, proje, unite, musteri)
+    plan = await _plan_uret(client, admin_headers, satis["id"])
+    await _iptal_et(client, admin_headers, satis["id"])
+
+    resp = await client.post(
+        f"/sales/installments/{plan['items'][0]['id']}/pay",
+        json={"amount": "50000.00"},
+        headers=admin_headers,
+    )
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == SALE_CANCELLED_NOT_WRITABLE
+
+
+async def test_tapusu_devredilmis_satista_tahsilat_islenmeye_DEVAM_eder(
+    client, admin_headers, proje, unite, musteri
+):
+    """KASITLI İSTİSNA — kapı `deed_transferred`i KAPSAMAZ.
+
+    F156 `at_contract`/`after_down_payment` tapu devir koşullarında tapu
+    taksitler bitmeden devredilir; kalan taksitlerin tahsilatı MEŞRUDUR. Bu test
+    durum kapısının fazla geniş kurulmadığını bekçiler.
+    """
+    satis = await _satis(client, admin_headers, proje, unite, musteri)
+    plan = await _plan_uret(client, admin_headers, satis["id"])
+    devir = await client.post(f"/sales/{satis['id']}/transfer-deed", headers=admin_headers)
+    assert devir.status_code == 200, devir.text
+
+    resp = await client.post(
+        f"/sales/installments/{plan['items'][0]['id']}/pay",
+        json={"amount": "50000.00"},
+        headers=admin_headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+
+
+# --- 8) `PATCH /sales/{id}` bedeli tahsilatın altına indiremez ---
+
+
+async def test_bedel_tahsil_edilenin_altina_indirilemez_422(
+    client, admin_headers, proje, unite, musteri
+):
+    """440.000 tahsil edilmiş bir satışta bedel 1,00'e çekilemez (422).
+
+    Kapı yoksa `remaining_amount` −439.999,00 döner ve kayıt ÇIKIŞSIZ kalır:
+    `generate-plan` 409 `PLAN_HAS_PAYMENTS`, `PUT installments` ise toplamı
+    1,00'e indirmek için tahsilatlı satırı düşürmek (409) ya da tahsilatın
+    altına çekmek (422) zorunda kalır.
+    """
+    satis = await _satis(client, admin_headers, proje, unite, musteri)
+    plan = await _plan_uret(client, admin_headers, satis["id"])
+    odeme = await client.post(
+        f"/sales/installments/{plan['items'][0]['id']}/pay",
+        json={"amount": "440000.00"},
+        headers=admin_headers,
+    )
+    assert odeme.status_code == 200, odeme.text
+
+    resp = await client.patch(
+        f"/sales/{satis['id']}", json={"sale_price": "1.00"}, headers=admin_headers
+    )
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"] == SALE_PRICE_BELOW_COLLECTED
+
+    oku = await client.get(f"/sales/{satis['id']}", headers=admin_headers)
+    assert oku.json()["sale_price"] == "1440000.00"
+    assert Decimal(oku.json()["remaining_amount"]) >= Decimal("0.00")
+
+
+async def test_tahsilatin_ustundeki_bedel_degisimi_gecer_ve_plan_onarilabilir(
+    client, admin_headers, proje, unite, musteri
+):
+    """POZİTİF KONTROL — kapı BEDELİ tahsilata bağlar, plan TOPLAMINA değil.
+
+    Tahsilatın (440.000) üstünde kalan her bedel PATCH'ten geçer ve plan
+    ardından `PUT installments` ile yeni bedele hizalanabilir. Kapı plan
+    toplamına bağlansaydı bu gövde 422 olurdu ve satışın bedeli bir daha
+    değiştirilemezdi.
+    """
+    satis = await _satis(client, admin_headers, proje, unite, musteri)
+    plan = await _plan_uret(client, admin_headers, satis["id"])
+    await client.post(
+        f"/sales/installments/{plan['items'][0]['id']}/pay",
+        json={"amount": "440000.00"},
+        headers=admin_headers,
+    )
+
+    resp = await client.patch(
+        f"/sales/{satis['id']}", json={"sale_price": "1200000.00"}, headers=admin_headers
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["remaining_amount"] == "760000.00"
+
+    onarim = await client.put(
+        f"/sales/{satis['id']}/installments",
+        json={
+            "items": [
+                _satir(0, "440000.00", timezone.today().isoformat()),
+                _satir(1, "760000.00", "2026-09-01"),
+            ]
+        },
+        headers=admin_headers,
+    )
+
+    assert onarim.status_code == 200, onarim.text
+    assert onarim.json()["total_amount"] == "1200000.00"
+
+
+async def test_patch_bedel_degisimi_plani_gecici_hizasiz_birakir(
+    client, admin_headers, proje, unite, musteri
+):
+    """BEKÇİ — `total_amount != sale_price` PATCH sonrası ULAŞILABİLİR bir hâldir.
+
+    `SalePlanResponse` docstring'i eşitliği "HER ZAMAN" diye tanımlarsa yalan
+    söyler: kapı (`guards.SALE_PRICE_BELOW_COLLECTED`) bedeli yalnız TAHSİLATA
+    bağlar, plan TOPLAMINA değil (bkz. `guards.py:173-178`). PATCH'ten sonra
+    `GET /sales/{id}/installments` yeni bedeli, plan ise ESKİ toplamı taşır —
+    kullanıcı `PUT installments`/`generate-plan` ile hizalayana kadar.
+    """
+    satis = await _satis(client, admin_headers, proje, unite, musteri)
+    await _plan_uret(client, admin_headers, satis["id"])
+
+    resp = await client.patch(
+        f"/sales/{satis['id']}", json={"sale_price": "1300000.00"}, headers=admin_headers
+    )
+    assert resp.status_code == 200, resp.text
+
+    plan = await client.get(f"/sales/{satis['id']}/installments", headers=admin_headers)
+    assert plan.status_code == 200, plan.text
+    body = plan.json()
+    assert body["sale_price"] == "1300000.00"
+    assert body["total_amount"] == "1440000.00"
+    assert body["total_amount"] != body["sale_price"]

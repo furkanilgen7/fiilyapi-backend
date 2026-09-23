@@ -21,6 +21,9 @@ tam olarak o dalı çakar.
 from datetime import date
 from decimal import Decimal
 
+import pytest
+
+from app.core.errors import EquipmentValidationError, InvoicingValidationError, SiteValidationError
 from app.modules.accounting.models import JournalSourceType
 from app.modules.invoicing import service as invoicing_service
 from app.modules.invoicing import state_service as invoicing_state
@@ -28,8 +31,10 @@ from app.modules.invoicing.models import InvoiceDirection, InvoiceDocumentType, 
 from app.modules.invoicing.schemas import InvoiceCreate, InvoiceLineCreate
 from app.modules.invoicing.transitions import InvoiceAction
 from app.modules.progress_payments import transitions as isveren_transitions
+from app.modules.progress_payments.models import ProgressPaymentStatus
 from app.modules.progress_payments.transitions import PaymentAction
 from app.modules.subcontractor_progress_payments import transitions as taseron_transitions
+from app.modules.subcontractor_progress_payments.models import SubcontractorPaymentStatus
 from tests.modules.posting._mu3d import (
     KOD_GIDER,
     KOD_IND_KDV,
@@ -236,6 +241,241 @@ async def test_ISVEREN_hakedisinde_de_TAKAS_calisir_ve_HASILAT_TEK_KEZ_sayilir(
 
     assert await canli_fis(seeded_db, JournalSourceType.progress_payment, payment.id) is None
     assert await hesap_neti(seeded_db, KOD_SATIS) == once, "HASILAT İKİ KEZ sayıldı"
+
+
+async def test_KESINTI_ORANLARI_TASINMAYAN_fatura_TAKASI_KAYDIRAMAZ(seeded_db, user_factory):
+    """🔴 TAKAS TUTAR-KORUMALI OLMALIDIR — ürün bunu ZORLAMALI, test BESLEMEMELİ.
+
+    Bu dosyanın öteki testleri faturayı `advance_rate="10"`, `retention_rate="5"`
+    ile ELLE kuruyor ve `_gelen_fatura` docstring'i tehlikeyi yazılı olarak
+    itiraf ediyor: *"kesinti oranları faturaya taşınmasaydı `tax_base` brüte eşit
+    olur ve takas avans + teminat kadar KAYARDI"*. Ama ÜRÜNDE o şartı zorlayan
+    HİÇBİR ŞEY yoktu: oranlar YALNIZ gövdeden gelir (`service.py:434-435`) ve
+    kaynaktan HİÇ kopyalanmaz; FAT-HAK kapısı (`validation.source_amount_matches`)
+    yalnız `subtotal == brüt` denetler, TABANLARI karşılaştırmaz.
+
+    Ölçülen zincir (oranlar GÖNDERİLMEZSE):
+
+        approve   → hakediş fişi: 740 borç 8.500 (= brüt 10.000 − 1.000 − 500)
+        create    → FAT-HAK GEÇER (subtotal 10.000 == brüt 10.000), tax_base 10.000
+        approve   → hakediş fişi STORNO, faturanın fişi 740'a 10.000 borç
+
+    Sonuç: gider 1.500 ₺ ARTAR. 🔴 Her fiş kendi içinde dengeli olduğu için
+    MİZAN DENK KALIR ve hiçbir kolon farkı bunu ele vermez — ölçülmesi gereken
+    şey `740`ın NETİDİR.
+
+    İDDİA MEKANİZMA DEĞİL DEĞİŞMEZDİR: bu zincirin sonunda `740`ın neti
+    DEĞİŞMEMİŞ olmalıdır. Kapı ister oluşturmada ister geçişte olsun, defter
+    kaymamalıdır.
+    """
+    await esleme_kur(seeded_db)
+    kullanici = await aktor(seeded_db, user_factory)
+    payment, _c = await taseron_hakedisi(seeded_db, kullanici)
+    await taseron_transitions.perform(seeded_db, kullanici, payment.id, PaymentAction.approve)
+    once = await hesap_neti(seeded_db, KOD_GIDER)
+    assert once == Decimal("8500.00")
+
+    try:
+        invoice = await _gelen_fatura(
+            seeded_db,
+            kullanici,
+            kaynak_alani="subcontractor_progress_payment_id",
+            kaynak_id=payment.id,
+            tutar="10000.00",  # FAT-HAK: hakedişin BRÜTÜ — kapıdan GEÇER
+            advance_rate=None,  # 🔴 kesintiler faturaya TAŞINMADI
+            retention_rate=None,
+        )
+    except InvoicingValidationError:
+        pass  # kapı kapandı: kayıt hiç doğmadı
+    else:
+        await invoicing_state.perform_transition(
+            seeded_db, kullanici, invoice.id, InvoiceAction.approve
+        )
+
+    assert await hesap_neti(seeded_db, KOD_GIDER) == once == Decimal("8500.00"), (
+        "TAKAS GİDERİ KAYDIRDI: faturanın `tax_base`i hakediş fişinin tabanından "
+        "AYRIŞTI ve storno + yeni fiş sonrası 740'ın neti değişti"
+    )
+
+
+async def test_GIDEN_faturada_da_TAKAS_TABANI_KAPISI_GECISTE_KOSAR(seeded_db, user_factory):
+    """🔴 KAPININ İKİNCİ ÇAĞRI YERİ — `state_service` geçiş kapısı.
+
+    Kardeş test (`..._TASINMAYAN_...`) GELEN faturayı ölçer ve kapısı
+    `create_invoice`tedir (gelen fatura `pending` DOĞAR, sonradan
+    düzeltilemez). GİDEN faturada oluşturmada kapı YOKTUR ve OLMAMALIDIR:
+    `draft` yarım formu saklayabilmelidir (K6'nın taslak-farkındalığı) ve
+    kalemler `PUT lines` ile sonradan gelir. Orada kapı `send` GEÇİŞİNDEDİR.
+
+    İki çağrı yeri AYRI mutantlardır: yalnız biri yazılsaydı öteki yüzeyde
+    takas hâlâ kayardı ve hiçbir sayı bunu ele vermezdi.
+
+    Taslak SİLİNEBİLİR / PATCH'lenebilir olduğu için burada kalıcı bir kilit
+    doğmaz: kullanıcı oranları girip yeniden gönderir.
+    """
+    from tests.modules.posting._mu3d import KOD_SATIS
+
+    await esleme_kur(seeded_db)
+    kullanici = await aktor(seeded_db, user_factory)
+    payment, _contract, _project = await isveren_hakedisi(seeded_db, kullanici)
+    await isveren_transitions.perform(seeded_db, kullanici, payment.id, PaymentAction.approve)
+    once = await hesap_neti(seeded_db, KOD_SATIS)
+    assert once == Decimal("-45000.00")
+
+    data = InvoiceCreate(
+        direction=InvoiceDirection.outgoing,
+        document_type=InvoiceDocumentType.einvoice,
+        issue_date=TARIH,
+        party_name="Güneşkent İnşaat A.Ş.",
+        progress_payment_id=payment.id,
+        # 🔴 FAT-HAK GEÇER (60.000 == brüt) ama kesintiler faturaya TAŞINMADI:
+        #    `tax_base` 60.000, hakediş fişinin tabanı 45.000.
+        lines=[
+            InvoiceLineCreate(
+                description="Hakediş bedeli",
+                quantity=Decimal("1"),
+                unit="Ad",
+                unit_price=Decimal("60000.00"),
+                vat_rate=Decimal("20"),
+            )
+        ],
+    )
+    invoice, _m = await invoicing_service.create_invoice(seeded_db, kullanici, data)
+
+    with pytest.raises(InvoicingValidationError):
+        await invoicing_state.perform_transition(
+            seeded_db, kullanici, invoice.id, InvoiceAction.send
+        )
+
+    assert await hesap_neti(seeded_db, KOD_SATIS) == once, (
+        "TAKAS HASILATI KAYDIRDI: geçiş kapısı faturanın matrahını hakediş "
+        "fişinin tabanına kilitlemedi"
+    )
+    assert await canli_fis(seeded_db, JournalSourceType.progress_payment, payment.id) is not None, (
+        "kapı 422 verdiği hâlde hakediş fişi STORNOLANDI"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 🔴 KİRA HAKEDİŞİ — TAKASIN ÜÇÜNCÜ AİLESİ, KAPILARIN İKİSİNİN DE DIŞINDAYDI
+# --------------------------------------------------------------------------- #
+
+
+async def test_KIRA_hakedisine_bagli_SAHTE_TUTARLI_fatura_GIDERI_KAYDIRAMAZ(
+    seeded_db, user_factory
+):
+    """🔴 TAKAS ÜÇ AİLEDE KOŞAR, TUTAR KAPISI YALNIZ İKİSİNDEYDİ.
+
+    `source_posting.SOURCE_REVERSERS` ÜÇ aile taşır (işveren · taşeron ·
+    **KİRA**) ve fatura fişlenince üçünün de fişini storno eder. Ama takasın
+    tutar kapıları (FAT-HAK `source_gross_for_invoice` ve TAKAS-TABAN
+    `source_posting_base_for_invoice`) kira hakedişini DIŞARIDA bırakıyordu:
+    `equipment_rental_invoice_id` taşıyan bir fatura, kaynağın
+    `invoice_amount`ıyla HİÇ İLGİSİ OLMAYAN bir tutarla kesilebiliyordu.
+
+    Ölçülen zincir:
+
+        approve  → kira fişi: 740 borç 100.000 / 320 alacak 100.000
+        create   → 5.000'lik GELEN fatura, HİÇBİR kapı koşmaz
+        approve  → kira fişi STORNO, faturanın fişi 740'a 5.000 yazar
+
+    Sonuç: kira gideri 100.000'den 5.000'e DÜŞER. 🔴 İki fiş de kendi içinde
+    dengeli olduğu için MİZAN DENK KALIR ve hiçbir kolon farkı bunu ele
+    vermez — ölçülmesi gereken şey `740`ın NETİDİR.
+
+    İDDİA MEKANİZMA DEĞİL DEĞİŞMEZDİR: kapı ister oluşturmada ister geçişte
+    olsun, bu zincirin sonunda defter KAYMAMALIDIR.
+    """
+    from app.modules.equipment import rental_service
+    from tests.modules.posting._mu3d import kira_hakedisi
+
+    await esleme_kur(seeded_db)
+    kullanici = await aktor(seeded_db, user_factory)
+    kira, _supplier = await kira_hakedisi(seeded_db)  # invoice_amount 100.000,00
+    await rental_service.approve_invoice(seeded_db, kullanici, kira.id)
+    once = await hesap_neti(seeded_db, KOD_GIDER)
+    assert once == Decimal("100000.00")
+
+    try:
+        invoice = await _gelen_fatura(
+            seeded_db,
+            kullanici,
+            kaynak_alani="equipment_rental_invoice_id",
+            kaynak_id=kira.id,
+            tutar="5000.00",  # 🔴 kaynağın `invoice_amount`ıyla İLGİSİ YOK
+        )
+    except InvoicingValidationError:
+        pass  # kapı kapandı: kayıt hiç doğmadı
+    else:
+        await invoicing_state.perform_transition(
+            seeded_db, kullanici, invoice.id, InvoiceAction.approve
+        )
+
+    assert await hesap_neti(seeded_db, KOD_GIDER) == once == Decimal("100000.00"), (
+        "TAKAS KİRA GİDERİNİ KAYDIRDI: kira hakedişinin fişi stornolandı ve "
+        "yerine faturayı yazan kişinin girdiği tutar geçti"
+    )
+    assert await hesap_neti(seeded_db, KOD_SATICILAR) == Decimal("-100000.00")
+
+
+async def test_SIFIR_TOPLAMLI_fatura_KAYNAGIN_fisini_STORNO_ETMEZ(seeded_db, user_factory):
+    """🔴 TAKASIN İKİ YARISI AYRILABİLİYORDU — `post_invoice`in `None`ı ATILIYORDU.
+
+    `posting.post_invoice` `PostingOutcome | None` döner ve `None` *"fiş HİÇ
+    AÇILMADI"* demektir (dört bacağın dördü de sıfır ⇒ `len(lines) < 2`). Ama
+    `state_service` dönüş değerini ATIYOR ve hemen ardından KOŞULSUZ
+    `reverse_source_entry` çağırıyordu: kaynağın CANLI fişi, yerine HİÇBİR ŞEY
+    geçmeden storno ediliyordu.
+
+    Ölçülen zincir (kira hakedişi — kapıların dışındaki aile):
+
+        approve  → kira fişi: 740 borç 100.000
+        create   → GELEN fatura, subtotal 100.000 (kaynağın tutarıyla AYNI)
+                   ama `advance_rate = 100` ⇒ tax_base 0 · KDV 0 · total 0
+        approve  → `post_invoice` → **None** (fiş hiç doğmaz),
+                   ardından kira fişi STORNO
+
+    Sonuç: 100.000 ₺'lik kira gideri defterden TAMAMEN DÜŞER — kaynağın fişi
+    `reversed`, faturanın fişi hiç doğmadı. 🔴 Her fiş kendi içinde dengeli
+    olduğu için MİZAN DENK KALIR.
+
+    `advance_rate = 100` bir istismar DEĞİL, ürünün MEŞRU ilan ettiği hâldir
+    (`validation.body_blockers`: *"tam %100 SERBESTTİR: matrahı sıfırlayan
+    fatura anlamlıdır"*), yani hiçbir kapı onu reddetmez.
+    """
+    from app.modules.equipment import rental_service
+    from tests.modules.posting._mu3d import kira_hakedisi
+
+    await esleme_kur(seeded_db)
+    kullanici = await aktor(seeded_db, user_factory)
+    kira, _supplier = await kira_hakedisi(seeded_db)  # invoice_amount 100.000,00
+    await rental_service.approve_invoice(seeded_db, kullanici, kira.id)
+    once = await hesap_neti(seeded_db, KOD_GIDER)
+    assert once == Decimal("100000.00")
+
+    try:
+        invoice = await _gelen_fatura(
+            seeded_db,
+            kullanici,
+            kaynak_alani="equipment_rental_invoice_id",
+            kaynak_id=kira.id,
+            tutar="100000.00",  # kaynağın tutarı — brüt kapısı olsa BİLE geçer
+            advance_rate="100",  # 🔴 matrah 0 ⇒ faturanın fişi HİÇ DOĞMAZ
+        )
+    except InvoicingValidationError:
+        pass  # kapı kapandı: kayıt hiç doğmadı
+    else:
+        await invoicing_state.perform_transition(
+            seeded_db, kullanici, invoice.id, InvoiceAction.approve
+        )
+
+    assert await hesap_neti(seeded_db, KOD_GIDER) == once == Decimal("100000.00"), (
+        "GİDER DEFTERDEN DÜŞTÜ: faturanın fişi hiç açılmadığı hâlde kaynağın "
+        "CANLI fişi storno edildi"
+    )
+    assert (
+        await canli_fis(seeded_db, JournalSourceType.equipment_rental_invoice, kira.id) is not None
+    ), "yerine HİÇBİR fiş geçmeden kira hakedişinin fişi STORNOLANDI"
 
 
 async def test_ITIRAZ_EDILEN_fatura_hakedis_fisine_DOKUNMAZ(seeded_db, user_factory):
@@ -484,3 +724,137 @@ async def test_FATURASI_SILINMIS_hakedis_yeniden_onaylandiginda_FIS_YAZAR(seeded
         is not None
     ), "yeni kapı MEŞRU yeniden fişlemeyi de engelledi — gider kalıcı olarak kayboldu"
     assert await hesap_neti(seeded_db, KOD_GIDER) == Decimal("8500.00")
+
+
+# --------------------------------------------------------------------------- #
+# 🔴 KAYIT 53/54 — TERS SIRA: fatura KAYNAKTAN ÖNCE fişlenirse ne olur
+# --------------------------------------------------------------------------- #
+
+
+async def test_TERS_SIRA_isveren_ONCE_kesilen_fatura_TABAN_UYUSMAZLIGINDA_ONAYI_REDDEDER(
+    seeded_db, user_factory
+):
+    """🔴 KAYIT 53 — taban kapısı (`source_posting_base_blockers`) kaynak henüz
+    fişlenmemişken (`source_base is None`) SESSİZCE GEÇER (gerekçe
+    `source_amounts.py`de) — bu MEŞRUDUR, TAKAS henüz yoktur. Delik bunun
+    KENDİSİ değil, kaynak SONRADAN onaylandığında hiçbir şeyin bunu
+    ÖLÇMEMESİYDİ: `source_replaced_by_invoice` yalnız VARLIĞA bakardı ve
+    hakediş SESSİZCE hiç fişlenmezdi — 600'ün neti faturayı yazan kişinin
+    girdiği tutara göre kalıcı olarak KAYARDI, hiçbir hata doğmadan.
+
+    Bu test TERS SIRAYI (fatura ÖNCE, hakediş SONRA) çalıştırır ve artık
+    onayın REDDEDİLDİĞİNİ, kaynağın SESSİZCE atlanmadığını ölçer.
+    """
+    from tests.modules.posting._mu3d import KOD_SATIS
+
+    await esleme_kur(seeded_db)
+    kullanici = await aktor(seeded_db, user_factory)
+    payment, _contract, _project = await isveren_hakedisi(seeded_db, kullanici)
+    assert payment.status is ProgressPaymentStatus.pending_approval, (
+        "kurulum bozuk: hakediş ONAYLANMADAN önce fatura kesilmeli"
+    )
+
+    data = InvoiceCreate(
+        direction=InvoiceDirection.outgoing,
+        document_type=InvoiceDocumentType.einvoice,
+        issue_date=TARIH,
+        party_name="Güneşkent İnşaat A.Ş.",
+        progress_payment_id=payment.id,
+        # 🔴 kesintiler TAŞINMADI: subtotal == brüt (FAT-HAK geçer), gerçek
+        #    taban (brüt − avans %20 − teminat %5) 45.000'dir, fatura 60.000
+        #    yazacak.
+        lines=[
+            InvoiceLineCreate(
+                description="Hakediş bedeli",
+                quantity=Decimal("1"),
+                unit="Ad",
+                unit_price=Decimal("60000.00"),
+                vat_rate=Decimal("20"),
+            )
+        ],
+    )
+    invoice, _m = await invoicing_service.create_invoice(seeded_db, kullanici, data)
+    await invoicing_state.perform_transition(seeded_db, kullanici, invoice.id, InvoiceAction.send)
+    assert await canli_fis(seeded_db, JournalSourceType.invoice, invoice.id) is not None, (
+        "kurulum bozuk: faturanın KENDİ fişi henüz doğmadı"
+    )
+
+    with pytest.raises(SiteValidationError):
+        await isveren_transitions.perform(seeded_db, kullanici, payment.id, PaymentAction.approve)
+
+    assert await canli_fis(seeded_db, JournalSourceType.progress_payment, payment.id) is None, (
+        "hakediş SESSİZCE fişlenmeden atlandı — kapı geçişi engellemedi"
+    )
+    assert await hesap_neti(seeded_db, KOD_SATIS) == Decimal("-60000.00"), (
+        "onay reddedildiği hâlde hasılat DEĞİŞTİ — beklenmedik ikinci bir fiş yazıldı"
+    )
+
+
+async def test_TERS_SIRA_taseron_ONCE_kesilen_fatura_TABAN_UYUSMAZLIGINDA_ONAYI_REDDEDER(
+    seeded_db, user_factory
+):
+    """🔴 KAYIT 53 — AYNASI: taşeron ailesinde de ters sıra artık SESSİZ değil."""
+    await esleme_kur(seeded_db)
+    kullanici = await aktor(seeded_db, user_factory)
+    payment, _c = await taseron_hakedisi(seeded_db, kullanici)
+    assert payment.status is SubcontractorPaymentStatus.pending_approval
+
+    invoice = await _gelen_fatura(
+        seeded_db,
+        kullanici,
+        kaynak_alani="subcontractor_progress_payment_id",
+        kaynak_id=payment.id,
+        tutar="10000.00",  # FAT-HAK: hakedişin BRÜTÜ — kesintiler TAŞINMADI
+        advance_rate=None,
+        retention_rate=None,
+    )
+    await invoicing_state.perform_transition(
+        seeded_db, kullanici, invoice.id, InvoiceAction.approve
+    )
+    assert await canli_fis(seeded_db, JournalSourceType.invoice, invoice.id) is not None
+
+    with pytest.raises(SiteValidationError):
+        await taseron_transitions.perform(seeded_db, kullanici, payment.id, PaymentAction.approve)
+
+    assert (
+        await canli_fis(seeded_db, JournalSourceType.subcontractor_progress_payment, payment.id)
+        is None
+    ), "hakediş SESSİZCE fişlenmeden atlandı — kapı geçişi engellemedi"
+    assert await hesap_neti(seeded_db, KOD_GIDER) == Decimal("10000.00"), (
+        "onay reddedildiği hâlde gider DEĞİŞTİ — beklenmedik ikinci bir fiş yazıldı"
+    )
+
+
+async def test_TERS_SIRA_kira_ONCE_kesilen_fatura_TABAN_UYUSMAZLIGINDA_ONAYI_REDDEDER(
+    seeded_db, user_factory
+):
+    """🔴 KAYIT 54 — kirada delik DAHA GENİŞTİ (brüt kapısı hiç yoktu); artık
+    ters sırada da onay REDDEDİLİR."""
+    from app.modules.equipment import rental_service
+    from tests.modules.posting._mu3d import kira_hakedisi
+
+    await esleme_kur(seeded_db)
+    kullanici = await aktor(seeded_db, user_factory)
+    kira, _supplier = await kira_hakedisi(seeded_db)  # invoice_amount 100.000,00
+
+    invoice = await _gelen_fatura(
+        seeded_db,
+        kullanici,
+        kaynak_alani="equipment_rental_invoice_id",
+        kaynak_id=kira.id,
+        tutar="5000.00",  # 🔴 kaynağın invoice_amount'ıyla İLGİSİ YOK
+    )
+    await invoicing_state.perform_transition(
+        seeded_db, kullanici, invoice.id, InvoiceAction.approve
+    )
+    assert await canli_fis(seeded_db, JournalSourceType.invoice, invoice.id) is not None
+
+    with pytest.raises(EquipmentValidationError):
+        await rental_service.approve_invoice(seeded_db, kullanici, kira.id)
+
+    assert (
+        await canli_fis(seeded_db, JournalSourceType.equipment_rental_invoice, kira.id) is None
+    ), "kira hakedişi SESSİZCE fişlenmeden atlandı — kapı geçişi engellemedi"
+    assert await hesap_neti(seeded_db, KOD_GIDER) == Decimal("5000.00"), (
+        "onay reddedildiği hâlde gider DEĞİŞTİ — beklenmedik ikinci bir fiş yazıldı"
+    )

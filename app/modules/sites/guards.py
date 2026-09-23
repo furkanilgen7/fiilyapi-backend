@@ -131,6 +131,16 @@ SITE_HAS_CONTRACTS = "Bu şantiyede taşeron sözleşmesi var, önce sözleşmel
 # gerekçesinin aynısı: DB zaten korur ama korkuluksuz bırakılırsa kullanıcı
 # `IntegrityError` → 409 emniyet ağının eyleme dönük OLMAYAN metnini görür).
 SITE_HAS_PROGRESS_PAYMENTS = "Bu şantiyede hakediş satırı var, önce hakedişleri silin"
+# 59/60 — ALTINCI-DOKUZUNCU korkuluk. İlk beşi `sites.id`'ye bağlı FK'lerin
+# yarısını kapsıyordu; CASCADE'li yedi bacak (`timesheet_entries`,
+# `site_diary_entries`, `documents`, `document_folders`, `site_plan_rows`,
+# `site_plan_goals`, `site_plan_sprints`) korkuluksuzdu. Bu tabloların hepsinde
+# `section_id` NULLABLE'dır, yani BÖLÜMSÜZ bir şantiye ilk beş korkuluğun
+# beşini de geçer ve tek `DELETE` onları sessizce yok eder.
+SITE_HAS_TIMESHEET = "Bu şantiyede puantaj kaydı var, önce puantaj kayıtlarını silin"
+SITE_HAS_DIARY = "Bu şantiyede şantiye günlüğü var, önce günlükleri silin"
+SITE_HAS_DOCUMENTS = "Bu şantiyede belge arşivi kaydı var, önce belge ve klasörleri silin"
+SITE_HAS_PLAN = "Bu şantiyede plan ızgarası var, önce planı temizleyin"
 
 # GPS BICIM HATASI SABITI YOKTUR (§3.5 revize karari): sunucu GPS metnini
 # dogrulamaz, dolayisiyla boyle bir hata uretmez.

@@ -414,28 +414,36 @@ def test_MASKENIN_BU_BLOKTA_YUZEYI_YOKTUR_ve_bu_OLCULDU() -> None:
     assert set(yazilanlar) & exposure.YASAK_ALAN_ANAHTARLARI == set()
 
 
-def test_ACIK_BORC_deger_duzeyi_PII_maskesiz_ve_bu_bloga_OZGU_DEGIL() -> None:
-    """🔴 AÇIK BORCU **GÖRÜNÜR** kılar — sessizce gömmek en kötü seçenekti.
+def test_KAPANAN_BORC_deger_maskesi_KOSAR_ama_KISI_ADI_KAPSAM_DISI() -> None:
+    """🔴 Bu test bir zamanlar AÇIK BİR BORCU belgeliyordu; borç kapandı ve
+    test artık onun BEKÇİSİDİR.
 
-    `exposure.yasak_anahtarlar` **ANAHTAR** tarar, DEĞER taramaz. Serbest metin
-    bir proje adına TCKN/IBAN yazılırsa maske onu göremez.
+    `exposure.yasak_anahtarlar` hâlâ yalnız **ANAHTAR** tarar (ve bu doğrudur:
+    blok iki sabit anahtar taşır). Değerin İÇİNE bakan kapı ayrıdır —
+    `exposure.deger_maskesi`, `_kisalt` içinden koşar.
 
-    🔴 Ama bu **bu bloğun regresyonu DEĞİLDİR**: aynı ad, 22 aracın **14'ünün**
-    yanıt şemasında (`name` · `project_name` · `site_name`) sağlayıcıya zaten
-    gidiyor. Değer düzeyi tarama `exposure.py`ye — tek yere, hepsine — aittir.
-    Bu testin işi o gerçeği ÖLÇÜLMÜŞ hâlde tutmaktır: sayı düşerse (ya da
-    `exposure` bir gün değere de bakarsa) burası konuşur.
+    🔴 Kapanmayan yarısı ölçülmüş hâlde duruyor: kişi ADI regex'lenemez ve K1
+    kararıyla zaten açıktır — aynı ad, 22 aracın **14'ünün** yanıt şemasında
+    (`name` · `project_name` · `site_name`) sağlayıcıya gidiyor. Sayı düşerse
+    burası konuşur.
     """
     from app.modules.ai import exposure
     from app.modules.ai.tools.catalog import READ_TOOLS
 
+    # 🔴 ÇİFT YÖNLÜ: `12345678901` 11 hanedir ama TCKN SAĞLAMASI TUTMAZ (fiş
+    # numarası emsali) — maskelenmemelidir; IBAN mod-97 tutar — maskelenmelidir.
     zehir = "Ahmet Yilmaz TC 12345678901 IBAN TR330006100519786457841326"
-    # (a) Maske değere BAKMIYOR — blok düşmüyor.
+    # (a) Anahtar kapısı bu gövdede hâlâ hiçbir şey görmez…
     assert exposure.yasak_anahtarlar({"proje": zehir}) == []
     blok = context.baglam_mesaji(context.SohbetBaglami(project_id=uuid.uuid4(), proje_adi=zehir))
-    assert blok is not None and "12345678901" in blok
+    assert blok is not None
+    # …ama DEĞER kapısı IBAN'ı yutar, sağlaması tutmayan 11 haneyi BIRAKIR.
+    assert "TR330006100519786457841326" not in blok
+    assert exposure.MASKE_JETONU in blok
+    assert "12345678901" in blok
+    assert "Ahmet Yilmaz" in blok
 
-    # (b) …ve aynı metin bu bloktan BAĞIMSIZ olarak zaten sağlayıcıya gidiyor.
+    # (b) Kişi ADI bu bloktan BAĞIMSIZ olarak zaten sağlayıcıya gidiyor.
     # 🔴 `model_fields` YETMEZ — YÜZEYSEL tarama 14 yerine 6 der (ölçüldü):
     # `AiProje.name` `AiProjeListesi.items`in İÇİNDE yaşar. `exposure`ın kendi
     # iç içe tarayıcısı kullanılır; yoksa bu test borcu OLDUĞUNDAN KÜÇÜK
@@ -447,6 +455,28 @@ def test_ACIK_BORC_deger_duzeyi_PII_maskesiz_ve_bu_bloga_OZGU_DEGIL() -> None:
     }
     assert len(ad_tasiyan) == 14, sorted(ad_tasiyan)
     assert {"projeleri_listele", "santiye_detayi", "puantaj_haftasi"} <= ad_tasiyan
+
+
+def test_BAGLAM_BLOGU_DEGERDEKI_TCKN_ve_IBANI_MASKELER() -> None:
+    """🔴 Bağlam bloğu `ToolRegistry.invoke`tan GEÇMEZ — değer maskesi bu yola
+    AYRICA uygulanmalıdır, yoksa aynı ad araç zarfında maskeli, bağlam
+    bloğunda ÇIPLAK giderdi.
+
+    ÇİFT YÖNLÜ: kişi ADI **kapsam dışıdır** (K1) ve maskelenmemelidir; tek yön
+    yazılsaydı "her şeyi yut" mutantı yeşil geçerdi.
+    """
+    from app.modules.ai import exposure
+
+    tckn = "11111111110"
+    iban = "TR330006100519786457841326"
+    zehir = f"Ahmet Yilmaz TC {tckn} IBAN {iban}"
+    blok = context.baglam_mesaji(context.SohbetBaglami(project_id=uuid.uuid4(), proje_adi=zehir))
+
+    assert blok is not None
+    assert tckn not in blok
+    assert iban not in blok
+    assert blok.count(exposure.MASKE_JETONU) == 2
+    assert "Ahmet Yilmaz" in blok
 
 
 def test_AD_zarfi_KAPATAMAZ_ve_SAHTE_BASLIK_kuramaz() -> None:

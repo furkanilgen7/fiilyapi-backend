@@ -252,6 +252,21 @@ async def invoice_lines(
     return list((await session.execute(stmt)).all())
 
 
+async def visible_site_ids(session: AsyncSession, project_ids: list[uuid.UUID]) -> set[uuid.UUID]:
+    """`invoice_scope`/`scope`taki `gorunen_santiyeler` alt sorgusunun TEKİL
+    kayıt için okunuşu — SQL'de süzemediğimiz bir kümeyi Python'da süzmek için.
+
+    Satır kümesi `invoice_id`ye göre KAPSAMSIZ kilitlenir (kilit sırası sabittir,
+    deadlock kapısı); kapsam bu yüzden sorguya değil, kararın kendisine
+    uygulanır. Kayıt başına sorgu (N+1) AÇILMAZ: küme bir kez okunur.
+    """
+    return set(
+        (await session.execute(select(Site.id).where(Site.project_id.in_(project_ids))))
+        .scalars()
+        .all()
+    )
+
+
 async def lock_invoice_lines(
     session: AsyncSession, invoice_id: uuid.UUID
 ) -> list[EquipmentRentalInvoiceLine]:

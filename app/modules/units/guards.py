@@ -26,7 +26,8 @@ from app.modules.projects.service import visible_projects
 from app.modules.sites import repository as sites_repository
 from app.modules.sites.models import Site
 from app.modules.units import repository
-from app.modules.units.models import Block, Unit, UnitOwnerSide
+from app.modules.units.importer import normalize_header
+from app.modules.units.models import Block, Unit, UnitOwnerSide, UnitSalesStatus
 from app.modules.users.models import User
 
 # 404 GOVDESI DE AYIRT EDICI OLMAMALIDIR (P2 `sites/service.py` dersi): gorunmeyen
@@ -56,6 +57,12 @@ SHAREHOLDER_WRONG_SIDE = "Hissedar yalnızca arsa payı ünitesine atanabilir"
 # elinde UUID olan kullanici kaydin var oldugunu ayirt edebilirdi.
 SHAREHOLDER_MISSING = "Hissedar bulunamadı"
 NET_GT_GROSS = "Net alan brüt alandan büyük olamaz"
+# P8 T3 (satis spec §3): `reserved`/`sold` SATIS KAYDINDAN turer
+# (`sales/service._UNIT_STATUS_BY_SALE_STATUS`). Acilis vitrininde elle
+# secilirlerse unite, `unit_sales`te SATIRI OLMADAN satilmis gorunur.
+OPENING_STATUS_NEEDS_SALE = (
+    'Ünite açılışında satış durumu "Satıldı"/"Rezerve" seçilemez; bu durumlar satış kaydından türer'
+)
 # Karar 9 (spec §4.2, §8.3): kume KODDA sabittir ve `schemas.VatRate` zorlar —
 # metin diger tum alan mesajlariyla birlikte BURADA durur.
 INVALID_VAT_RATE = "KDV oranı yalnızca %1, %10 veya %20 olabilir"
@@ -68,6 +75,17 @@ IMPORT_NOTHING_TO_WRITE = "Aktarılabilecek geçerli satır yok"
 # zorlanir; METIN diger tum alan mesajlariyla birlikte BURADA durur.
 SLOT_COUNT_MISMATCH = "Kat şablonu satır sayısı kat başına daire sayısıyla eşleşmiyor"
 SLOT_SEQUENCE_INVALID = "Kat şablonunda sıra numaraları geçersiz veya tekrarlı"
+# Kayıt 49/50: `uq_blocks_project_name` TAM EŞİTLİKTİR (repository.get_block_by_name
+# de öyle), yani "A Blok" ve "A BLOK" aynı projede birlikte yaşayabilir. İçe
+# aktarma blok sözlüğünü `normalize_header(name)` ile anahtarladığı için iki
+# blok TEK anahtara çöker ve çakışmayan satırlar SESSİZCE hayatta kalan bloğa
+# yazılırdı (KeyError/500 kaydı 84c87ff'te kapandı, bu sessiz-yazma kaydı AÇIK
+# kalmıştı). Kökten çözüm (fonksiyonel unique index) migration ister; burada
+# UCUZ VE YETERLİ seçenek: çakışma varsa içe aktarmayı TÜMÜYLE reddet.
+DUPLICATE_BLOCK_NORMALIZED = (
+    "Projede yalnız büyük/küçük harf ya da boşlukla ayrılan iki blok var: "
+    "'{a}' / '{b}' — içe aktarmadan önce blok adlarını ayrıştırın"
+)
 
 
 # --- Gorunurluk (spec §8) ---
@@ -174,6 +192,25 @@ async def ensure_block_name_unique(
         raise DuplicateError(DUPLICATE_BLOCK)
 
 
+def ensure_no_normalized_block_collision(blocks: list[Block]) -> None:
+    """Kayıt 49/50: içe aktarma blok sözlüğü `normalize_header(name)` ile anahtarlanır.
+
+    `uq_blocks_project_name` TAM EŞİTLİK olduğu için "A Blok" ve "A BLOK" aynı
+    projede birlikte yaşayabilir; ikisi normalizasyonda TEK anahtara çöker ve
+    çakışmayan satırlar sessizce hayatta kalan bloğa yazılırdı (kaydı gölgelenen
+    blok içe aktarma yoluyla ERİŞİLEMEZ hâle gelirdi). Fonksiyonel unique index
+    (migration gerektirir) yerine UCUZ VE YETERLİ çözüm: çakışma varsa dosyanın
+    o bloğa hiç değinmediği durumlar dâhil, içe aktarma TÜMÜYLE reddedilir —
+    sessiz seçim yerine kullanıcı adları ayrıştırıp yeniden dener.
+    """
+    seen: dict[str, str] = {}
+    for block in blocks:
+        key = normalize_header(block.name)
+        if key in seen and seen[key] != block.name:
+            raise UnitValidationError(DUPLICATE_BLOCK_NORMALIZED.format(a=seen[key], b=block.name))
+        seen[key] = block.name
+
+
 async def ensure_block_code_unique(
     session: AsyncSession,
     project_id: uuid.UUID,
@@ -213,6 +250,22 @@ def ensure_owner_side_allowed(project: Project, owner_side: UnitOwnerSide | None
     """
     if owner_side is not None and project.project_type is not ProjectType.kat_karsiligi:
         raise ProjectTypeMismatchError(OWNER_SIDE_NOT_ALLOWED)
+
+
+def ensure_opening_sales_status(sales_status: UnitSalesStatus | None) -> None:
+    """Satis spec §3: unitenin vitrin durumu SATIS KAYDINDAN turetilir.
+
+    `UnitUpdate`ten alan cikarilirken (schemas.py "elle giris kilitlenir") bu
+    gerekce YALNIZ PATCH'e uygulanmisti; `UnitCreate` ikinci bir yazici olarak
+    kalmisti ve `sales_status="sold"` govdesi uniteyi `unit_sales`te SATIRI
+    OLMADAN satilmis gosteriyordu. Sema/DB ile zorlanamaz (kural baska tablonun
+    varligina bakar), bu yuzden `ensure_net_le_gross` gibi servis korkulugudur.
+
+    `closed` ("Satisa Kapali") kumenin DISINDADIR: satis kaydindan TUREMEZ
+    (haritada karsiligi yoktur) ve stok disi olmasi zaten kastedilendir.
+    """
+    if sales_status in (UnitSalesStatus.reserved, UnitSalesStatus.sold):
+        raise UnitValidationError(OPENING_STATUS_NEEDS_SALE)
 
 
 def ensure_net_le_gross(gross: Decimal | None, net: Decimal | None) -> None:

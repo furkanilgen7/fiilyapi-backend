@@ -26,8 +26,9 @@ from app.core.access import AccessLevel
 from app.core.db import get_db
 from app.core.deps import get_current_user
 from app.core.openapi import COMMON_ERROR_RESPONSES
-from app.core.permissions import require_permission
+from app.core.permissions import kapsam_kapisi, require_permission
 from app.core.ratelimit import client_ip
+from app.core.scoped_route import kapsam_rotasi, kapsamdan_oku
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
 from app.modules.sales import installments, service, transitions
@@ -45,7 +46,16 @@ from app.modules.sales.schemas import (
 )
 from app.modules.users.models import User
 
-router = APIRouter(tags=["sales"], responses=COMMON_ERROR_RESPONSES)
+# 🔴 KAPSAM MASKESİ — İKİ PARÇA DA GEREKLİ (kullanıcı kararı 2026-09-19):
+#    `route_class` dönen modeli maskeler, `dependencies` aktörün kapsamını
+#    köprüye yazar. Biri eksikse maske SESSİZCE `all` görür ve hiçbir şey
+#    gizlemez. Çifti `tests/core/test_kapsam_baglantisi.py` çakar.
+router = APIRouter(
+    tags=["sales"],
+    responses=COMMON_ERROR_RESPONSES,
+    route_class=kapsam_rotasi("sales", kapsamdan_oku),
+    dependencies=[kapsam_kapisi("sales")],
+)
 
 # Spec §8 S1 (kullanıcı kararı): satış yetkisi proje yetkisinden AYRILIR —
 # `sales` kendi izin modülüdür (matris 19). Kapsam (`visible_projects`) yine

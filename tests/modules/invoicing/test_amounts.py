@@ -217,6 +217,55 @@ def test_tam_kesinti_matrahi_sifirlar_kdv_de_sifirdir():
     assert sonuc.total == Decimal("0.00")
 
 
+def test_tam_kesinti_TEK_KURUSLUK_tutarda_da_matrahi_sifirlar():
+    """🔴 ÇİFT YUVARLAMA — `tax_base` NEGATİF DOĞAMAZ.
+
+    Kardeş test (`..._kdv_de_sifirdir`) KÖRDÜR: `1000.00` ile `60/40` seçtiği
+    için iki bölüm de TAM bölünür ve yuvarlama artığı HİÇ doğmaz. Artık, iki
+    kesinti bacağı AYRI AYRI `ROUND_HALF_UP` ile yuvarlandığında doğar:
+
+        12345.67 × %50 = 6172.835 → 6172.84   (yukarı)
+        12345.67 × %50 = 6172.835 → 6172.84   (yukarı)
+        toplam 12345.68 > subtotal 12345.67   ⇒ tax_base = −0,01
+
+    Oranların toplamı TAM %100'dür, yani `validation.body_blockers` HİÇBİR
+    engel döndürmez (kural ihlal edilmiyor: "matrahı sıfırlayan fatura
+    anlamlıdır"). Sonuç DB'ye gider ve `ck_invoices_amounts_non_negative`in
+    `total >= 0` dalından OPAK bir 409 doğar.
+    """
+    sonuc = compute(
+        [_kalem("1", "12345.67", "20")],
+        advance_rate=Decimal("50"),
+        retention_rate=Decimal("50"),
+    )
+    assert sonuc.tax_base == Decimal("0.00")
+    assert sonuc.vat_amount == Decimal("0.00")
+    assert sonuc.total == Decimal("0.00")
+    # Artık KAYBOLMAZ: kesinti bacaklarının toplamı `subtotal`a BİREBİR eşittir.
+    assert sonuc.advance_amount + sonuc.retention_amount == sonuc.subtotal
+    # 4. adımın değişmezi KORUNUR (`tax_base` doğrudan kırpılmadı).
+    assert sonuc.tax_base == sonuc.subtotal - sonuc.advance_amount - sonuc.retention_amount
+
+
+def test_kesinti_bacaklarinin_toplami_subtotali_ASLA_ASMAZ():
+    """Yukarıdaki kusurun KAPSAMI: tek bir tutar değil, bir AİLE.
+
+    Toplamı tam %100 olan her oran çifti × tek kuruşlu her ara toplam aynı
+    açığı üretir. Değişmez TEK cümledir: kesintilerin toplamı `subtotal`ı
+    aşamaz, dolayısıyla `tax_base` negatif olamaz.
+    """
+    for fiyat in ("0.01", "0.03", "0.05", "100.01", "999.99", "1500.55", "8750.03"):
+        for avans, teminat in (("50", "50"), ("25", "75"), ("10", "90"), ("99.99", "0.01")):
+            sonuc = compute(
+                [_kalem("1", fiyat, "20")],
+                advance_rate=Decimal(avans),
+                retention_rate=Decimal(teminat),
+            )
+            assert sonuc.tax_base >= Decimal("0.00"), (fiyat, avans, teminat, sonuc.tax_base)
+            assert sonuc.total >= Decimal("0.00"), (fiyat, avans, teminat, sonuc.total)
+            assert sonuc.advance_amount + sonuc.retention_amount <= sonuc.subtotal
+
+
 # --------------------------------------------------------------------------- #
 # K5 — yuvarlama ve kayan nokta yasağı
 # --------------------------------------------------------------------------- #

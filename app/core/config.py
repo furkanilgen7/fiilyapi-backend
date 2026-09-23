@@ -32,7 +32,13 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 30
-    environment: str = "development"
+    # 🔴 VARSAYILAN FAIL-CLOSED'dur. Bu alanın TEK tüketicisi aşağıdaki
+    # `_reddet_prod_ortaminda_varsayilan_jwt_secret` doğrulayıcısıdır; varsayılan
+    # "development" olduğunda `ENVIRONMENT` eksik ya da yanlış yazılmışsa o koruma
+    # SESSİZCE kapanır ve gerçek token'lar herkese açık depodaki
+    # `dev-only-change-me` ile imzalanır. Geliştirici tarafı `.env` ile açıkça
+    # "development" verir (`.env.example` da öyle); eksiklik artık AÇIK kalmaz.
+    environment: str = "production"
 
     # Kullaniciya donuk TUM zaman ve gun sinirlarinin saat dilimi (IANA adi). Tek sirketli
     # bir Turk ERP'si oldugu icin varsayilan TR'dir: "bugun"/"bu ay" filtreleri ve Excel

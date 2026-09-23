@@ -1,5 +1,9 @@
 import uuid
+from datetime import UTC, datetime, timedelta
 
+import jwt
+
+from app.core.config import settings
 from app.core.security import create_refresh_token
 from app.main import app
 from app.modules.auth import service as auth_service
@@ -287,3 +291,61 @@ def test_me_response_permissions_schema_references_access_level_enum() -> None:
     ref_target = values.get("$ref") or values.get("allOf", [{}])[0].get("$ref")
     assert ref_target is not None
     assert ref_target.endswith("AccessLevel")
+
+
+async def test_refresh_does_not_extend_absolute_session_lifetime(client, seeded_db, user_factory):
+    """Refresh ucu, sunulan refresh token'in MUTLAK omrunu UZATMAMALI.
+
+    Kusur (auth-refresh-rotasyon, kayit 25): `/auth/refresh` her cagrida
+    `create_refresh_token` ile O ANDAN itibaren 30 gunluk YENI bir refresh token
+    basiyordu (app/core/security.py:96-99) ve eskisini gecersizlestirmiyordu.
+    Rotasyon/jti/kara liste olmadigi icin bu, calinmis bir refresh token'a SINIRSIZ
+    omur veriyor: saldirgan her 29 gunde bir refresh cagirdikca saat sifirlaniyor,
+    30 gunluk tavan hicbir zaman dolmuyordu.
+
+    Burada 25 gun once basilmis (5 gun omru kalan) gercek bir refresh token sunuluyor;
+    donen refresh token'in son kullanma zamani SUNULANDAN BUYUK OLMAMALI.
+    """
+    user = await user_factory(email="rotasyon@fiil.com", password="parola", role_key="patron")
+    simdi = datetime.now(UTC)
+    yirmi_bes_gun_once_basilan = jwt.encode(
+        {
+            "sub": str(user.id),
+            "ver": user.token_version,
+            "type": "refresh",
+            "iat": simdi - timedelta(days=25),
+            "exp": simdi + timedelta(days=5),
+        },
+        settings.jwt_secret,
+        algorithm=settings.jwt_algorithm,
+    )
+
+    response = await client.post(
+        "/auth/refresh", json={"refresh_token": yirmi_bes_gun_once_basilan}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["access_token"], "Refresh yine de yeni access token basmali"
+
+    def _exp(token: str) -> int:
+        return jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=[settings.jwt_algorithm],
+            options={"verify_exp": False},
+        )["exp"]
+
+    sunulan_exp = _exp(yirmi_bes_gun_once_basilan)
+    donen_exp = _exp(response.json()["refresh_token"])
+    assert donen_exp <= sunulan_exp, (
+        "Refresh, oturumun mutlak omrunu uzatti: sunulan token "
+        f"{sunulan_exp} icin geciyordu, donen token {donen_exp} icin geciyor "
+        f"({donen_exp - sunulan_exp} saniye uzama). Calinan bir refresh token "
+        "bu sayede sinirsiz yasar."
+    )
+
+    # Oturum surekliligi kirilmamali: donen refresh token hala kullanilabilir olmali.
+    ikinci = await client.post(
+        "/auth/refresh", json={"refresh_token": response.json()["refresh_token"]}
+    )
+    assert ikinci.status_code == 200

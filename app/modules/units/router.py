@@ -10,8 +10,9 @@ from app.core.db import get_db
 from app.core.deps import get_current_user
 from app.core.errors import UnitValidationError
 from app.core.openapi import COMMON_ERROR_RESPONSES
-from app.core.permissions import require_permission
+from app.core.permissions import kapsam_kapisi, require_permission
 from app.core.ratelimit import client_ip
+from app.core.scoped_route import kapsam_rotasi, kapsamdan_oku, kapsamla_maskele
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
 from app.modules.units import batch, export, guards, importer, service
@@ -47,7 +48,24 @@ XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.s
 # BFF TUZAGI (frontend dilimi icin): IKI kok var, `units` VE `blocks`. Ikisi de
 # `src/app/api/backend/[...path]/route.ts` ALLOWED_ROOTS listesine eklenmezse
 # ilgili modul YALNIZ CANLIDA 404 verir.
-router = APIRouter(tags=["units"], responses=COMMON_ERROR_RESPONSES)
+# 🔴 KAPSAM MASKESI — IKI PARCA DA GEREKLI (kullanici karari 2026-09-19):
+#    `route_class` donen modeli maskeler, `dependencies` aktorun kapsamini
+#    kopruye yazar. Biri eksikse maske SESSIZCE `all` gorur ve hicbir sey
+#    gizlemez. Cifti `tests/core/test_kapsam_baglantisi.py` cakar.
+#
+# 🔴 ANAHTAR `units` DEGIL `projects`: kapsam, ucu KORUYAN izin modulunden
+#    okunur ve bu router (asagida) `require_permission("projects", ...)` kullanir
+#    — `units` bir izin modulu DEGILDIR (spec §8). Anahtari `units` yazmak
+#    matriste karsiligi olmayan bir satir sorar, `actor_scope` `all` doner ve
+#    maske sessizce olurdu. Bu tam olarak 2026-09-19 denetiminin buldugu
+#    kusurun ikizidir (o gun router HIC bagli degildi ve `projects=limited` olan
+#    rol unite satis bedelini, maliyetini ve beklenen karini tam goruyordu).
+router = APIRouter(
+    tags=["units"],
+    responses=COMMON_ERROR_RESPONSES,
+    route_class=kapsam_rotasi("projects", kapsamdan_oku),
+    dependencies=[kapsam_kapisi("projects")],
+)
 
 # Spec §8: YENI IZIN MODULU ACILMAZ — blok ve unite projenin alt kayitlaridir,
 # `projects` modulunun seviyeleri kullanilir. Modul sayisi 17'de kalir.
@@ -461,6 +479,19 @@ async def units_export_endpoint(
     """
     project = await guards.visible_project(session, user, project_id)
     units = await service.units_for_project(session, project)
+    # 🔴 MASKE BURADA ELLE UYGULANIR — rota sarmalayicisi bu ucu ATLAR.
+    #
+    # `_sarili` yalniz `BaseModel` donuslerini maskeler; bu uc bir `Response`
+    # (xlsx baytlari) doner ve sarmalayici bir dosyanin ICINE bakamaz. Elle
+    # cagirmasaydik `projects = view/limited` olan rol (santiye sefi, saha
+    # muhendisi, IK) ekranda `—` gordugu rayic degeri AYNI kapidan
+    # (`projects:view`) dosya olarak TAM indirirdi — `boq/export`te bulunan
+    # kacagin birebir ikizi (denetim 2026-09-19).
+    #
+    # `export.py` DEGISMEZ ve degismemelidir: `_text()` zaten `None`u "—" basar,
+    # yani maskeli deger ekrandaki ile AYNI isareti uretir. Maskeyi export
+    # katmanina tasimak, sunum katmanina bir yetki karari yuklerdi.
+    units = kapsamla_maskele(units, "projects")
     return Response(
         content=build_units_workbook(units).getvalue(),
         media_type=XLSX_MEDIA_TYPE,

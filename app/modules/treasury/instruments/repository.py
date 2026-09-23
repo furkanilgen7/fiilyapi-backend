@@ -52,6 +52,7 @@ from app.modules.treasury.models import (
 
 __all__ = [
     "count_instruments",
+    "count_payments_for_instrument",
     "get_instrument",
     "list_instruments",
     "payments_with_accounts",
@@ -200,6 +201,26 @@ async def get_instrument(
         .execution_options(populate_existing=True)
     )
     return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def count_payments_for_instrument(session: AsyncSession, instrument_id: uuid.UUID) -> int:
+    """DELETE'in ve YON degisiminin ON denetimi (`count_payments_for_account` kardesi).
+
+    🔴 SATIRLAR YUKLENMEZ, `COUNT` doner: cagiran taraf yalnizca "bag VAR MI"
+    sorusunu sorar. `payments_with_accounts` bu is icin kullanilsaydi, kapi
+    yuzlerce odeme satirini ve hesabini yalnizca uzunluguna bakmak icin okurdu.
+
+    🔴 Denetim SERVISTE olmak ZORUNDA: FK `ON DELETE SET NULL`dur, yani DB
+    ENGELLEMEZ, sessizce BAGI KOPARIR. `count_payments_for_account`taki RESTRICT
+    emsalinin aksine burada dusulecek bir `IntegrityError` bile YOKTUR — tek
+    savunma katmani budur.
+    """
+    stmt = (
+        select(func.count())
+        .select_from(Payment)
+        .where(Payment.financial_instrument_id == instrument_id)
+    )
+    return (await session.execute(stmt)).scalar_one()
 
 
 async def payments_with_accounts(

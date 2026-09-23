@@ -22,6 +22,8 @@ kaldirilinca gerekcesi de onunla birlikte tasinsin.
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.access import AccessLevel, Scope, satisfies
+from app.core.field_scope import maskele
 from app.core.permissions import can_read
 from app.modules.approvals import service as approvals_service
 from app.modules.dashboard.risks import build_risks
@@ -39,6 +41,7 @@ from app.modules.projects.models import ProjectStatus
 from app.modules.projects.repository import list_projects_for_user
 from app.modules.projects.schemas import metric, restricted
 from app.modules.roles.models import Role
+from app.modules.roles.repository import get_permission
 from app.modules.users.models import User
 
 # Kart -> BESLEYEN modul anahtari. Ad "bekleyen" demeye devam etse de artik
@@ -50,6 +53,10 @@ _PORTFOLIO_MODULE = "progress_payments"
 _RECEIVABLES_MODULE = "invoicing"
 _MARGIN_MODULE = "progress_payments"
 _APPROVALS_MODULE = "approvals"
+
+#: Proje kartlarinin ALAN kapisi. `pending_module` anahtarlarindan farklidir:
+#: bu deger yanitin GOVDESINE yazilmaz, yalnizca `can_read` kapisini adlandirir.
+_PROJECTS_MODULE = "projects"
 
 #: 🔴 YALNIZ SAYIM ISTIYORUZ. `pending_for_user` sayfayi ve TOPLAMI ayri
 #: sorgulardan uretir; `limit=0` sayfayi bos birakir ve satir zenginlestirmesini
@@ -265,8 +272,46 @@ async def _risks(session: AsyncSession, user: User) -> RiskAlertsPlaceholder:
 
 
 async def build_summary(session: AsyncSession, user: User) -> DashboardSummaryResponse:
-    """Gosterge paneli ozeti. Projeler + ONAY + PORTFOY + RISK gercek, iki kart bos."""
-    projects = await list_projects_for_user(session, user.id)
+    """Gosterge paneli ozeti. Projeler + ONAY + PORTFOY + RISK gercek, iki kart bos.
+
+    🔴 PROJE KARTLARININ ALAN KAPISI (K4 — turev alan sizintisi). Ucun kapisi
+    `require_permission("dashboard", view)`tir ve o YETMEZ: kart `code` · `name`
+    · `status` · **`budget`** · `progress_pct` tasir, yani AYNI VERI
+    `GET /projects` ucundan da cikar ve orada `require_permission("projects",
+    ...)` ile korunur. Kapi olmadan `projects` hucresi `none` yapilmis bir rol
+    (`PUT /roles/{role_id}/permissions/{module_key}`) sirketin proje
+    BUTCELERINI panelden okumaya devam ederdi.
+
+    Bugune kadar kazara guvenliydi: tohum matrisinde `dashboard`
+    (`seed_data.py:183`) ve `projects` (`:187`) satirlari BIREBIR ayni ve
+    `test_seed_matrix.py` bunu kilitliyor — ama o kilit TOHUMUNDUR, CALISMA
+    ANININ degil.
+
+    Emsal ayni dosyadadir: `_portfolio` `can_read("progress_payments")` ile,
+    `build_risks` UC ayri `can_read` ile kapalidir. Bu kart ISTISNAYDI.
+
+    ⚠️ Kapi kapaliyken `projects=[]` doner ve `active_project_count` ondan
+    TURETILDIGI icin 0 olur — sema DEGISMEZ, alanlar yerinde durur. Bos liste
+    "proje yok" ile "yetkin yok"u ayirt etmez; ILR-1/2'nin ucuncu hâli AYRI bir
+    zarf isterdi ve o KIRICI olurdu, bu onarimin kapsami disindadir.
+    """
+    # 🔴 İZİN SATIRI BİR KEZ OKUNUR, İKİ SORU ONA SORULUR.
+    #
+    # Kart hem SEVİYE (K4: `projects` görünmüyorsa kart hiç dolmaz) hem KAPSAM
+    # (aşağıdaki çapraz maske) kapısından geçer. `can_read` + `actor_scope`
+    # ikilisi AYNI `role_permissions` satırını İKİ KEZ çekerdi; panel açılış
+    # ekranıdır ve sorgu maliyeti bu dosyada ÇİVİLİDİR
+    # (`test_dashboard_pyt2_onay_sayaci.py` tam sayıyı ölçer). Tek okuma,
+    # bekçiyi gevşetmeden aynı iki cevabı verir.
+    projects_izni = await get_permission(session, user.role_id, _PROJECTS_MODULE)
+    projects_okunur = projects_izni is not None and satisfies(
+        projects_izni.access_level, AccessLevel.view
+    )
+    # İzin satırı YOKSA `Scope.all`: `core.permissions.actor_scope`in belgelenmiş
+    # fail-OPEN'ı. Satır yoksa seviye kapısı zaten kapanmıştır (`projects_okunur`
+    # `False`), yani burada `limited` varsaymak hiçbir şeyi korumaz.
+    projects_kapsami = Scope.all if projects_izni is None else projects_izni.scope
+    projects = await list_projects_for_user(session, user.id) if projects_okunur else []
     role = await session.get(Role, user.role_id)
 
     return DashboardSummaryResponse(
@@ -275,7 +320,29 @@ async def build_summary(session: AsyncSession, user: User) -> DashboardSummaryRe
         active_project_count=sum(
             1 for p in projects if p.status is ProjectStatus.active and not p.is_draft
         ),
-        projects=[DashboardProjectCard.model_validate(p) for p in projects],
+        projects=[
+            # 🔴 KART, VERİNİN SAHİBİ OLAN MODÜLÜN KAPSAMIYLA DA MASKELENİR.
+            #
+            # Rota sınıfı `kapsam_rotasi("dashboard", …)`tır, yani sarmalayıcı
+            # bu yanıta aktörün **`dashboard`** kapsamını uygular. Ama kartın
+            # taşıdığı `budget`/`progress_pct` `projects` modülünün verisidir ve
+            # `GET /projects` ucunda aktörün **`projects`** kapsamıyla maskelenir.
+            # İki hücre AYRI AYRI ayarlanabilir (İzin Matrisi ekranı): `projects
+            # = view/limited` + `dashboard = full/all` olan bir rol, projeler
+            # ekranında göremediği bütçeyi panelden okurdu.
+            #
+            # Bu, yukarıdaki K4 notunun SEVİYE ekseninde kapattığı yan kapının
+            # KAPSAM eksenidir — aynı cümle, aynı gerekçe. Sonuç fail-CLOSED'dır:
+            # alan, iki kapsamdan HERHANGİ BİRİ gizliyorsa düşer (sarmalayıcı
+            # `dashboard` kapsamını bunun ÜSTÜNE uygular).
+            #
+            # Tohumda iki satır birebir aynı olduğu için bugün sızıntı YOKTU;
+            # kapatılan şey bir yapılandırma hâlidir. Bekçisi:
+            # `tests/modules/test_kapsam_maskesi_uctan_uca_dashboard.py`
+            # (`test_PANEL_proje_kartini_PROJECTS_kapsamiyla_da_maskeler`).
+            maskele(DashboardProjectCard.model_validate(p), projects_kapsami)
+            for p in projects
+        ],
         portfolio=await _portfolio(session, user),
         receivables=_receivables(),
         average_margin=_average_margin(),

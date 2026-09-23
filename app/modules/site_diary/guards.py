@@ -20,6 +20,8 @@ __all__ = [
     "ENTRY_NOT_DELETABLE",
     "ENTRY_NOT_EDITABLE",
     "LINE_ITEM_MISMATCH",
+    "MAX_YEAR",
+    "MIN_YEAR",
     "SECTION_MISMATCH",
     "SITE_MISSING",
     "SUGGESTION_NO_BRIDGE",
@@ -28,6 +30,24 @@ __all__ = [
     "WORKER_COUNTS_NULL",
     "YEAR_REQUIRED_FOR_MONTH",
 ]
+
+#: `year` sınırı — EMSALLERDEN alındı, icat EDİLMEDİ: `treasury/router.py:289`
+#: (`cash_flow.MIN_YEAR`/`MAX_YEAR`), `equipment/router.py:223,249,378`,
+#: `payroll/router.py:537`, `personnel/router.py:746` hepsi 2000-2200 kullanır.
+#: Sınırsız bırakılınca değer `period_conditions` → `_month_bounds`
+#: (repository.py:141-146) üzerinden doğrudan `datetime.date()`e gidiyordu ve
+#: `date(0,1,1)` / `date(10000,1,1)` `ValueError` fırlatıyordu; bu istisnanın
+#: `core/exception_handlers.py`de handler'ı YOK, yani kullanıcı girdisi 500
+#: üretiyordu. `month` zaten `Query(ge=1, le=12)` ile sınırlıydı.
+#:
+#: TEK kopya burada durur (`guards.py`): hem `router.py` (liste + özet) hem
+#: `router_suggestion.py` (öneri) buradan İTHAL eder — `router.py` bunu
+#: `router_suggestion` modülünü de import ettiği için (`router.include_router`),
+#: sabitler `router.py`de tanımlansaydı `router_suggestion.py`nin ondan import
+#: etmesi DAİRESEL İTHAL olurdu (kayıt #38'in "tek kopya" gerekçesi burada da
+#: geçerli: iki tanım TANIMLAMA, ortak yere TAŞI).
+MIN_YEAR = 2000
+MAX_YEAR = 2200
 
 # 404 — kayıt yok VEYA kapsam dışında. İki hâl AYIRT EDİLEMEZ (spec §3 IDOR
 # kuralı): görünmeyen projedeki gerçek kayıt için 403 dönmek, kaydın varlığını

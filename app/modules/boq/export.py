@@ -14,6 +14,7 @@ temsiline (ornegin "1240.000", "347200.00") cevirdigi icin burada TEKRAR
 yuvarlama/bicimlendirme YAPILMAZ — API ile Excel her zaman ayni degeri gosterir.
 """
 
+from decimal import Decimal
 from io import BytesIO
 
 from openpyxl import Workbook
@@ -48,7 +49,21 @@ def _group_title(index: int, group: BoqGroupResponse) -> str:
     return f"{index}. {group.name}"
 
 
-def _item_row(item: BoqItemResponse) -> tuple[str, ...]:
+def _hucre(deger: Decimal | None) -> str | None:
+    """🔴 MASKELI deger (`None`) hucreye YAZILMAZ — hucre BOS birakilir.
+
+    `str(None)` yazmak felaket olurdu: dosyada "None" metni gorunur ve kullanici
+    onu bir VERI sanirdi. `"0"` yazmak daha da kotudur — sifir sessizce YANLIS
+    bir sayidir ve gizlemekten kotudur (`core/field_scope.py` maske kanonu).
+    Bos hucre, ekrandaki `—` ile AYNI seyi soyler: "bu deger sana kapali".
+
+    Kolonlarin hicbiri DB'de nullable degildir (`boq_items.quantity/unit_price`
+    NOT NULL), yani buraya `None` gelmesinin TEK sebebi maskedir.
+    """
+    return None if deger is None else str(deger)
+
+
+def _item_row(item: BoqItemResponse) -> tuple[str | None, ...]:
     """ "Gerç. %" (7. sutun) icin deger DONDURULMEZ — hucre yazilmadan bos
 
     birakilir (spec §5.3: openpyxl'de acikca `""` yazmak geri okumada `None`'a
@@ -58,14 +73,18 @@ def _item_row(item: BoqItemResponse) -> tuple[str, ...]:
         str(item.code),
         str(item.description),
         str(item.unit),
-        str(item.quantity),
-        str(item.unit_price),
-        str(item.amount),
+        _hucre(item.quantity),
+        _hucre(item.unit_price),
+        _hucre(item.amount),
     )
 
 
-def _write_row(sheet: Worksheet, row: int, values: tuple[str, ...]) -> None:
+def _write_row(sheet: Worksheet, row: int, values: tuple[str | None, ...]) -> None:
     for column, value in enumerate(values, start=1):
+        if value is None:
+            # Maskeli deger: hucreye HIC DOKUNULMAZ — "Gerç. %" sutunuyla ayni
+            # kanon (yukaridaki `_hucre` gerekcesi).
+            continue
         # Deger her zaman `str`; openpyxl'in tip tahminine alan birakilmaz.
         sheet.cell(row=row, column=column).value = value
 
@@ -78,7 +97,11 @@ def _write_group_header(sheet: Worksheet, row: int, index: int, group: BoqGroupR
 def _write_grand_total(sheet: Worksheet, row: int, boq: BoqListResponse) -> None:
     sheet.cell(row=row, column=1).value = GRAND_TOTAL_LABEL
     sheet.merge_cells(start_row=row, start_column=1, end_row=row, end_column=_TUTAR_COLUMN - 1)
-    sheet.cell(row=row, column=_TUTAR_COLUMN).value = str(boq.totals.grand_total)
+    # GENEL TOPLAM da maskelenebilir (`limited` kapsaminda `grand_total` PARADIR):
+    # maskeliyse hucre BOS kalir — `_hucre` gerekcesiyle ayni.
+    genel_toplam = _hucre(boq.totals.grand_total)
+    if genel_toplam is not None:
+        sheet.cell(row=row, column=_TUTAR_COLUMN).value = genel_toplam
     # Gerç. % (sutun 7) icin deger DONDURULMEZ — hucre bos birakilir (spec §5.3).
 
 

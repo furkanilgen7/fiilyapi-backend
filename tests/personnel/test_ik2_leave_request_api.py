@@ -457,6 +457,33 @@ async def test_patch_ters_tarih_422(client, ik_headers, personel, yillik):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("alan", ["start_date", "end_date", "leave_type_id"])
+async def test_patch_zorunlu_alan_null_422(client, ik_headers, personel, yillik, alan):
+    """NOT NULL kolonlara AÇIK `null` gönderilirse 422 — 500 DEĞİL.
+
+    Şema `date | None = None` olduğundan `{"start_date": null}` geçerdi;
+    `exclude_unset=True` açık null'ı KORUR, servisteki `or` deseni onu
+    "gönderilmedi" sanıp tarih sırasını ESKİ değerle denetlerdi, ardından
+    `setattr` NOT NULL kolona None yazıp `calculate_leave_days(None, date)`
+    çağrılırdı → yakalayıcısı olmayan `TypeError` (flush'tan ÖNCE, yani DB
+    NOT NULL kısıtı HİÇ devreye girmezdi).
+
+    Kayıt DEĞİŞMEMİŞ olmalı: doğrulamaların hepsi yazmadan önce koşar.
+    """
+    talep_id = await _talep_olustur(client, ik_headers, personel, yillik)
+    yanit = await client.patch(f"/leave-requests/{talep_id}", json={alan: None}, headers=ik_headers)
+    assert yanit.status_code == 422, yanit.text
+
+    sonra = await client.get(f"/leave-requests/{talep_id}", headers=ik_headers)
+    assert sonra.status_code == 200, sonra.text
+    govde = sonra.json()
+    assert govde["start_date"] == "2026-08-04"
+    assert govde["end_date"] == "2026-08-08"
+    assert govde["days"] == 5
+    assert govde["leave_type_id"] == str(yillik.id)
+
+
+@pytest.mark.asyncio
 async def test_patch_onaylanmis_409(client, ik_headers, seeded_db, personel, yillik):
     """`approved`/`rejected` kayıt DÜZENLENEMEZ (spec §3) — 409 (durum çakışması)."""
     onayli = LeaveRequest(

@@ -182,7 +182,7 @@ async def test_FH7_BIR_TL_lik_fatura_taseron_hakedisini_ODETEMEZ(
     brut = await hakedis_bruttu(seeded_db, hakedis.id, taseron=True)
     fatura = await fatura_kes(seeded_db, hakedis.id, taseron=True, brut=Decimal("1.00"))
     assert fatura.total > 0, "kurulum: `total > 0` şartı BU testte elenmiş olmalı"
-    await odeme_yaz(seeded_db, fatura, taseron=True, tutar=fatura.total)
+    await odeme_yaz(seeded_db, fatura, tutar=fatura.total)
 
     yanit = await client.post(f"{_HAKEDIS}/{hakedis.id}/mark-paid", headers=admin_headers)
 
@@ -208,7 +208,7 @@ async def test_FH7_POZITIF_KONTROL_dogru_tutarli_fatura_hakedisi_ODER(
     )
     brut = await hakedis_bruttu(seeded_db, hakedis.id, taseron=True)
     fatura = await fatura_kes(seeded_db, hakedis.id, taseron=True, brut=brut)
-    await odeme_yaz(seeded_db, fatura, taseron=True, tutar=fatura.total)
+    await odeme_yaz(seeded_db, fatura, tutar=fatura.total)
 
     yanit = await client.post(f"{_HAKEDIS}/{hakedis.id}/mark-paid", headers=admin_headers)
 
@@ -233,7 +233,7 @@ async def test_FH8_SINIR_bir_kurusluk_sapma_GECER(
     )
     brut = await hakedis_bruttu(seeded_db, hakedis.id, taseron=True)
     fatura = await fatura_kes(seeded_db, hakedis.id, taseron=True, brut=brut + sapma)
-    await odeme_yaz(seeded_db, fatura, taseron=True, tutar=fatura.total)
+    await odeme_yaz(seeded_db, fatura, tutar=fatura.total)
 
     yanit = await client.post(f"{_HAKEDIS}/{hakedis.id}/mark-paid", headers=admin_headers)
 
@@ -257,7 +257,7 @@ async def test_FH8_SINIR_iki_kurusluk_sapma_REDDEDILIR(
     )
     brut = await hakedis_bruttu(seeded_db, hakedis.id, taseron=True)
     fatura = await fatura_kes(seeded_db, hakedis.id, taseron=True, brut=brut + sapma)
-    await odeme_yaz(seeded_db, fatura, taseron=True, tutar=fatura.total)
+    await odeme_yaz(seeded_db, fatura, tutar=fatura.total)
 
     yanit = await client.post(f"{_HAKEDIS}/{hakedis.id}/mark-paid", headers=admin_headers)
 

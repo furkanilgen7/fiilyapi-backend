@@ -23,7 +23,7 @@ import uuid
 
 from sqlalchemy import func, select
 
-from app.core.access import AccessLevel
+from app.core.access import AccessLevel, Scope
 from app.modules.roles.models import Module, Role, RolePermission
 from app.modules.sites.models import Section, Site
 from app.modules.users.models import UserProjectAccess
@@ -53,7 +53,9 @@ async def _login(client, session, user_factory, role_key: str, *, grant_all: boo
     return resp.json()["access_token"]
 
 
-async def _set_permission(session, role_key: str, module_key: str, level: AccessLevel) -> None:
+async def _set_permission(
+    session, role_key: str, module_key: str, level: AccessLevel, scope: Scope = Scope.all
+) -> None:
     """Izin kapisini seed matrisinden BAGIMSIZ kilar.
 
     Matris kullanici tarafindan duzenlenebilir; testin dayanagi seed degeri
@@ -71,6 +73,7 @@ async def _set_permission(session, role_key: str, module_key: str, level: Access
         )
     ).scalar_one()
     permission.access_level = level
+    permission.scope = scope
     await session.flush()
 
 

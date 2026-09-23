@@ -39,7 +39,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import func, select
 
-from app.core.access import AccessLevel
+from app.core.access import AccessLevel, Scope
 from app.modules.audit.messages import section_created
 from app.modules.audit.models import AuditAction, AuditLog
 from app.modules.roles.models import Module, Role, RolePermission
@@ -89,7 +89,9 @@ async def _login(client, session, user_factory, role_key: str, *, grant_all: boo
     return resp.json()["access_token"]
 
 
-async def _set_permission(session, role_key: str, module_key: str, level: AccessLevel) -> None:
+async def _set_permission(
+    session, role_key: str, module_key: str, level: AccessLevel, scope: Scope = Scope.all
+) -> None:
     role_id = (await session.execute(select(Role.id).where(Role.key == role_key))).scalar_one()
     module_id = (
         await session.execute(select(Module.id).where(Module.key == module_key))
@@ -102,6 +104,7 @@ async def _set_permission(session, role_key: str, module_key: str, level: Access
         )
     ).scalar_one()
     permission.access_level = level
+    permission.scope = scope
     await session.flush()
 
 
@@ -565,10 +568,17 @@ async def test_create_writes_single_section_created_audit_row(
         .scalars()
         .all()
     )
-    assert [row.detail for row in rows] == [
-        section_created(site.name, "Yayın"),
-        section_created(site.name, "Taslak"),
-    ]
+    # 🔴 SIRA İDDİA EDİLMEZ (2026-09-23, CI kırmızısı): sorguda `ORDER BY` yok ve
+    # `AuditLog.id` uuid4'tür — ekleme sırasına göre SIRALANAMAZ. Yerelde satırlar
+    # tesadüfen ekleme sırasında geliyordu, CI'da (farklı plan/heap) ters geldi ve
+    # test kırmızı verdi. Testin iddiası zaten sıra değil: "taslak da yayın da
+    # AYNI aksiyona TEK satır yazar". Bu yüzden karşılaştırma SIRASIZDIR.
+    assert sorted(row.detail for row in rows) == sorted(
+        [
+            section_created(site.name, "Yayın"),
+            section_created(site.name, "Taslak"),
+        ]
+    )
 
 
 async def test_rejected_create_writes_no_audit_row(

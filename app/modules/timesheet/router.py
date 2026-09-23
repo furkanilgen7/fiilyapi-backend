@@ -161,23 +161,33 @@ async def save_site_timesheet_week_endpoint(
     session: Annotated[AsyncSession, Depends(get_db)],
     iso_year: _ISO_YEAR,
     iso_week: _ISO_WEEK,
+    section_id: uuid.UUID | None = None,
 ) -> TimesheetWeek:
     """E5 76 "Haftayı Kaydet" — **DEĞİŞTİRME** semantiği.
 
-    ⚠️ Gövde **hafta**+şantiye kapsamının TAM kümesidir: gövdede geçmeyen hücre
-    SİLİNİR. Aynı ayın BAŞKA haftalarına ve başka şantiyeye DOKUNULMAZ (kesin
-    karar `service.save_week`).
+    ⚠️ Gövde kaydedilen KAPSAMIN TAM kümesidir: kapsam içinde gövdede geçmeyen
+    hücre SİLİNİR. Aynı ayın BAŞKA haftalarına ve başka şantiyeye DOKUNULMAZ
+    (kesin karar `service.save_week`).
+
+    🔴 `section_id` GET ile AYNI süzgeçtir ve KAPSAMI DARALTIR: verildiğinde
+    yalnız o bölümün hücreleri kilitlenir, güncellenir ve silinir. Süzgeç
+    yazmada da tanınmasaydı, bölüm süzgeçli bir ızgarayı gönderen istemci aynı
+    haftanın DİĞER bölümlerini geri alınamaz biçimde silerdi. Süzgeç varken
+    gövdedeki her hücre o bölüme ait olmalıdır (422), başka şantiyenin bölümü
+    okumadaki ile aynı 404'tür.
 
     Denetim TEK hafta-özeti olayıdır; hücre başına olay yazmak 7×48'lik bir
     kaydetmede denetim günlüğünü kullanılamaz hâle getirirdi (spec §3).
 
-    Yanıt GÜNCEL haftadır (bölüm süzgeci UYGULANMAZ — kaydedilen kapsam
-    şantiyenin tamamıdır, ekran kaydettiğinin tamamını geri görmelidir).
+    Yanıt GÜNCEL haftadır ve KAYDEDİLEN kapsamı gösterir: süzgeçsiz istekte
+    şantiyenin tamamı, süzgeçli istekte o bölüm — ekran kaydettiğinin tamamını,
+    fazlasını DEĞİL, geri görmelidir.
     """
     _assert_week_exists(iso_year, iso_week)
     context = await service.visible_site(session, user, site_id)
+    section = await service.visible_section(session, context.site, section_id)
     cell_count = await service.save_week(
-        session, user, context, data, iso_year=iso_year, iso_week=iso_week
+        session, user, context, data, iso_year=iso_year, iso_week=iso_week, section=section
     )
     start, end = repository.week_bounds(iso_year, iso_week)
     await record_audit(
@@ -190,5 +200,5 @@ async def save_site_timesheet_week_endpoint(
         ip_address=client_ip(request),
     )
     return await week.build(
-        session, context.site, context.project, None, iso_year=iso_year, iso_week=iso_week
+        session, context.site, context.project, section, iso_year=iso_year, iso_week=iso_week
     )

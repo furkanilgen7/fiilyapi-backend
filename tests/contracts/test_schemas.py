@@ -399,7 +399,21 @@ def test_subcontractor_contract_item_response_bagsiz_kalem_group_null_doner():
     assert kalem.line_total == Decimal("1000.00")
 
 
-def test_subcontractor_contract_item_response_fiyatsiz_kalem_sifir_katki():
+def test_subcontractor_contract_item_response_fiyatsiz_kalem_line_total_NULL():
+    """🔴 KAPSAM MASKESİ (kullanıcı kararı 2026-09-19) — türev, girdisi yoksa `None` DÖNER.
+
+    Bu test ESKİDEN `line_total == Decimal("0")` diyordu ve o iddia İKİ ayrı şeyi
+    aynı sayıya çökertiyordu: *"fiyat girilmedi"* ile *"fiyatı görmeye yetkin
+    yok"*. `limited` kapsamındaki rol için `unit_price` MASKELENİR ve eski hâl
+    gizlenmiş bir bedeli ekrana **"0,00 TL"** diye basardı — gizlemekten kötüdür,
+    çünkü kullanıcı sahte bir sayıya bakıp ona göre karar verir.
+
+    🔴 "Fiyatsız kalem sözleşme bedeline 0 katkı verir" kuralı KALKMADI — o kural
+    SATIRIN KENDİ tutarında değil, toplamayı yapan yerde yaşar
+    (`service._subcontractor_amount` fiyatsız satırı kendisi eler). İki soru
+    ayrıdır: *bu satırın tutarı kaç* (bilinmiyor → `None`) ve *bu satır toplama
+    ne katar* (0). Eskiden birinciyi ikincisinin cevabıyla yanıtlıyorduk.
+    """
     kalem = SubcontractorContractItemResponse(
         id=uuid.uuid4(),
         contract_id=uuid.uuid4(),
@@ -412,7 +426,7 @@ def test_subcontractor_contract_item_response_fiyatsiz_kalem_sifir_katki():
         sort_order=0,
         group=None,
     )
-    assert kalem.line_total == Decimal("0")
+    assert kalem.line_total is None
 
 
 # --- Liste / dagitim gövdeleri ---

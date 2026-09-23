@@ -23,8 +23,9 @@ from app.core.access import AccessLevel
 from app.core.db import get_db
 from app.core.deps import get_current_user
 from app.core.openapi import COMMON_ERROR_RESPONSES
-from app.core.permissions import require_permission
+from app.core.permissions import kapsam_kapisi, require_permission
 from app.core.ratelimit import client_ip
+from app.core.scoped_route import kapsam_rotasi, kapsamdan_oku
 from app.modules.audit import messages
 from app.modules.audit.models import AuditAction
 from app.modules.audit.service import record_audit
@@ -37,7 +38,23 @@ from app.modules.customers.schemas import (
 )
 from app.modules.users.models import User
 
-router = APIRouter(tags=["customers"], responses=COMMON_ERROR_RESPONSES)
+# 🔴 KAPSAM MASKESI — IKI PARCA DA GEREKLI (kullanici karari 2026-09-19).
+#    Anahtar `customers` DEGIL `sales`: `customers` bir izin modulu degildir,
+#    uclari `sales` seviyeleriyle korunur (yukaridaki docstring) ve kapsam da
+#    o satirdan okunur.
+#
+#    BUGUN HICBIR ALANI MASKELENMEZ (olculdu: `CustomerResponse` tamami kimlik
+#    alani — ad, TCKN/VKN, telefon, adres; tek bir `Decimal` yok). Kopru YINE DE
+#    kurulur ve bu ihtiyati DEGILDIR: kartoteks yarin bir bakiye/alacak alani
+#    kazanirsa maske KENDILIGINDEN calisir. Kopruyu "simdilik gereksiz" diye
+#    atlamak, o alani ekleyen kisinin buraya bakmasini gerektirirdi — yani tam
+#    olarak `units` routerini 15 uc boyunca maskesiz birakan hatanin kendisi.
+router = APIRouter(
+    tags=["customers"],
+    responses=COMMON_ERROR_RESPONSES,
+    route_class=kapsam_rotasi("sales", kapsamdan_oku),
+    dependencies=[kapsam_kapisi("sales")],
+)
 
 _VIEW = require_permission("sales", AccessLevel.view)
 _FULL = require_permission("sales", AccessLevel.full)

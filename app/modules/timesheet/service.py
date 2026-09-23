@@ -127,12 +127,32 @@ async def _assert_sections(session: AsyncSession, site: Site, section_ids: set[u
             raise SiteValidationError(guards.SECTION_MISMATCH)
 
 
+def _assert_in_section_filter(cell: TimesheetCellInput, section: Section | None) -> None:
+    """Süzgeç verildiyse hücre O BÖLÜME ait olmalı — 422 (`_assert_week` ikizi).
+
+    Süzgeç kaydetme kapsamını daraltır; kapsamın dışına düşen bir hücre sessizce
+    yazılsaydı bir sonraki süzgeçli kaydetme onu ne günceller ne siler — hücre
+    kendi bölümünün ekranında hiç görünmeden orada kalırdı.
+    """
+    if section is None:
+        return
+    if cell.section_id != section.id:
+        raise SiteValidationError(guards.SECTION_FILTER_MISMATCH)
+
+
 async def _plan(
-    session: AsyncSession, site: Site, data: TimesheetWeekSave, *, iso_year: int, iso_week: int
+    session: AsyncSession,
+    site: Site,
+    data: TimesheetWeekSave,
+    *,
+    iso_year: int,
+    iso_week: int,
+    section: Section | None,
 ) -> _Plan:
     cells: dict[tuple[uuid.UUID, date], TimesheetCellInput] = {}
     for cell in data.cells:
         _assert_week(cell, iso_year, iso_week)
+        _assert_in_section_filter(cell, section)
         key = guards.cell_key(cell.personnel_id, cell.work_date)
         if key in cells:
             # Kismi UQ ihlali GOVDE ICINDE yakalanir; `IntegrityError` emniyet agi kalir.
@@ -213,6 +233,44 @@ def _apply(
     return yeniler, silinecekler
 
 
+def _assert_odenebilir_personel(existing: list[TimesheetEntry], plan: _Plan) -> None:
+    """🔴 PASİF/TASLAK personel kapısı — kullanıcı kararı 2026-09-19, seçenek (b).
+
+    Bordro `is_active`/`is_draft` süzer (`payroll.compute_flow`); puantaj
+    süzmüyordu ve bordronun ASLA ödemeyeceği kişiye adam-gün yazılabiliyordu.
+
+    ## Neden DÜZ bir süzgeç DEĞİL
+
+    Bu uç bir GÖVDE DEĞİŞTİRME ucudur ve gövde kapsamın TAM kümesidir. Düz
+    süzgeç, sonradan pasifleşen bir personeli içeren GEÇMİŞ haftayı tümüyle
+    422'ye çevirir ve o hafta bir daha DÜZENLENEMEZDİ — aynı haftadaki BAŞKA
+    kişinin saatini düzeltmek bile imkânsızlaşırdı. Üstelik ürün bu kayıtları
+    KORUMAYI seçmiştir (`personnel.models`: *"Silme YOKTUR"*).
+
+    Kapı bu yüzden DEĞİŞİME bağlıdır: hücre yeni ya da farklıysa reddedilir,
+    dokunulmamışsa geçer. Gövdeden ÇIKARMAK (silme) da serbesttir — yanlışlıkla
+    yazılmış bir kaydın düzeltilebilmesi için o yol açık kalmalıdır.
+
+    🔴 "Farklı" ÜÇ eksende ölçülür (`hours` · `code` · `section_id`) — `_apply`
+    tam olarak bu üç alanı yazar. Yalnız `hours` karşılaştırılsaydı saatli bir
+    hücreyi KODLUYA çevirmek ya da başka bölüme taşımak kapıdan sızardı.
+    """
+    by_key = {guards.cell_key(row.personnel_id, row.work_date): row for row in existing}
+    for key, cell in plan.cells.items():
+        person = plan.personnel[cell.personnel_id]
+        if person.is_active and not person.is_draft:
+            continue
+        row = by_key.get(key)
+        if (
+            row is not None
+            and row.hours == cell.hours
+            and row.code == cell.code
+            and row.section_id == cell.section_id
+        ):
+            continue
+        raise SiteValidationError(guards.personnel_not_payable(person.full_name))
+
+
 async def save_week(
     session: AsyncSession,
     actor: User,
@@ -221,19 +279,31 @@ async def save_week(
     *,
     iso_year: int,
     iso_week: int,
+    section: Section | None = None,
 ) -> int:
     """**Hafta**+şantiye kapsamını gövdeye eşitler; yazılan hücre sayısını döner.
 
     Kapsam kararı (404) kilitten ÖNCE verilmiştir (`visible_site`, router'da):
     görünmeyen şantiyenin satırları boşuna kilitlenmez.
+
+    🔴 `section` VERİLİRSE kapsam O BÖLÜME daralır — kilit de silme de. Okuma ucu
+    bölüm süzerken yazma ucu süzmeseydi, süzgeçli bir ızgarayı gönderen istemci
+    aynı haftadaki DİĞER bölümlerin hücrelerini geri alınamaz biçimde silerdi
+    (`repository.locked_week_entries` + `_apply` aynı listeyi kullanır).
     """
     site = context.site
-    plan = await _plan(session, site, data, iso_year=iso_year, iso_week=iso_week)
+    plan = await _plan(session, site, data, iso_year=iso_year, iso_week=iso_week, section=section)
 
     existing = await repository.locked_week_entries(
-        session, site.id, iso_year=iso_year, iso_week=iso_week
+        session,
+        site.id,
+        iso_year=iso_year,
+        iso_week=iso_week,
+        section_id=None if section is None else section.id,
     )
     await _assert_person_days_free(session, site, plan)
+    # Kapsam okunduktan SONRA koşar: "değişti mi" sorusu MEVCUT satırları ister.
+    _assert_odenebilir_personel(existing, plan)
 
     # --- Buradan itibaren yazma; dogrulama YOK (yukaridaki sira kisiti). ---
     yeniler, silinecekler = _apply(site, existing, plan, actor)

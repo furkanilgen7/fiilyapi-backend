@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.boq.models import BoqGroup, BoqItem, BoqItemSectionAllocation
+from app.modules.site_diary.models import SiteDiaryLine
 
 
 async def list_groups_for_site(session: AsyncSession, site_id: uuid.UUID) -> list[BoqGroup]:
@@ -56,6 +57,26 @@ async def get_item_by_code(
         stmt = stmt.where(BoqItem.id != exclude_item_id)
     result = await session.execute(stmt)
     return result.scalar_one_or_none()
+
+
+async def item_has_diary_lines(session: AsyncSession, item_id: uuid.UUID) -> bool:
+    """Kaleme yazilmis gunluk satiri var mi (`site_diary_lines.boq_item_id`).
+
+    `group_has_items` ile AYNI gerekce, farkli FK davranisiyla: orada CASCADE
+    kalemleri sessizce siliyordu, burada `ondelete="SET NULL"`
+    (`site_diary/models.py`) satirlari sessizce BAGSIZ birakiyor. Bagi kopmus
+    satir `site_diary/repository.py`deki INNER `join(BoqItem, ...)`
+    okumalarindan DUSER (Hakedis Ozeti, "gunlukten doldur" onerisi) ama gunun
+    detay ekraninda snapshot kolonlariyla gorunmeye DEVAM eder — iki ekran
+    kalici olarak farkli ₺ soyler. Gonderilmis gunde telafi yolu da yoktur.
+
+    Import yonu guvenli: `site_diary/models.py` yalniz `app.core.db`ye baglidir
+    ve `boq/progress.py` ayni modulu zaten iceri aliyor (cember yok).
+    """
+    result = await session.execute(
+        select(select(SiteDiaryLine.id).where(SiteDiaryLine.boq_item_id == item_id).exists())
+    )
+    return bool(result.scalar())
 
 
 # --- BOQ-SEC: bolum tahsisleri -------------------------------------------

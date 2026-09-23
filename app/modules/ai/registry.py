@@ -25,18 +25,36 @@ seviye parametresi almaz — yani #1 ve #3'teki `min_level` alanı ölüydü. Bu
 kapı `satisfies(permission.access_level, seviye)` ile **gerçekten** uygulanır ve
 `kapilar` demetinin **her üyesi için ayrı ayrı** koşar.
 
-## `Scope` KULLANILMAZ
+## `ActorContext`ta `scope` ALANI YOKTUR — ama gerekçesi artık BAŞKA
 
-Ölçüldü: `Scope` enum'unun 14 isabetinin hepsi `roles/` altındadır ve hiçbir
-süzgeç `permission.scope` OKUMAZ. Bu yüzden `ActorContext` dataclass'ında
-**`scope` ALANI BULUNMAZ** (S1) — matris ekranındaki kapsam etiketi bir güvenlik
-gerekçesi olarak KULLANILAMAZ, çünkü kod onu uygulamıyor. Bekçisi tip testidir.
+🔴 **ESKİ GEREKÇE BAYATTI, KARAR AYNI KALDI** (ölçüldü, `tests/modules/ai/
+test_p8_kapsam_maskesi.py`). Burada *"`Scope` enum'unun 14 isabetinin hepsi
+`roles/` altındadır ve hiçbir süzgeç `permission.scope` OKUMAZ"* yazıyordu. Bu
+2026-09-19'dan beri YANLIŞTIR: `core/field_scope` + `core/scoped_route` altı
+modülde (`boq · contracts · dashboard · projects · sales · sites`) ALAN
+DÜZEYİNDE gerçek bir maske uygular ve AI hattı bu maskeden GEÇER — `ReadOnlyTransport`
+gerçek `APIRoute` nesnelerini (dolayısıyla `kapsam_rotasi` sarmalayıcısını ve
+router düzeyindeki `kapsam_kapisi` köprüsünü) taşır; araçlar SERVİSİ değil UCU
+sarar. Kalan iş #4 (2026-09-23) bu altı modülü ATANABİLİR kümeyle eşitledi
+(`app.modules.roles.scope_wiring.kablolu_moduller()`) ama AI'nin bu maskeyle
+ilişkisini DEĞİŞTİRMEDİ: değişen yalnız HANGİ modüllerin `limited`/`finance`
+kapsamını yönetici hücreye ATAYABİLDİĞİ, maskenin AI hattına NASIL bağlandığı
+DEĞİL.
+
+Sonuç yine de aynı kaldı ve gerekçesi ŞUDUR: maske `roles.RolePermission.scope`u
+route sarmalayıcısı düzeyinde okur ve yanıt modelini DÖNÜŞTE değiştirir —
+`ToolRegistry.invoke()`in KAPI kararına (izin + sysadmin + şema doğrulama)
+hiçbir şey EKLEMEZ, yalnız dönen VERİYİ daraltır. Bu yüzden `ActorContext`
+dataclass'ında (bir KAPI kararı taşıyan yapı) **`scope` ALANI hâlâ BULUNMAZ**
+(S1): kapı kararı zaten `permissions`/`role_is_system` alanlarıyla verilir,
+kapsam maskesi ayrı bir katmanda (yanıt zarfında) yaşar. Bekçisi tip testidir.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import enum
+import logging
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
@@ -50,6 +68,8 @@ from app.modules.ai import guards
 from app.modules.ai.models import AiToolCallPhase, AiToolDecision
 from app.modules.ai.result import AracSonucu, ToolError
 from app.modules.ai.transport import ReadOnlyTransport, YolReddedildi
+
+logger = logging.getLogger(__name__)
 
 
 class ToolKapsami(str, enum.Enum):
@@ -362,6 +382,33 @@ class ToolRegistry:
         except httpx.HTTPError as exc:
             sonuc = ToolError("ust_kaynak_hatasi")
             hata = type(exc).__name__
+        # --- 6a. BEKLENMEYEN İSTİSNA — HUNİNİN SON DALI --------------
+        # 🔴 İki dal YETMİYORDU ve eksiği ölçüldü: 22 okuma handler'ı üst
+        # kaynak gövdesini `k["..."]` ile ayıklayıp STRICT bir pydantic
+        # modeli kurar. Bir alan NULL/eksik gelirse `ValidationError` ya da
+        # `KeyError` doğar; ikisi de ne `YolReddedildi` ne `httpx.HTTPError`
+        # olduğu için istisna huniden KAÇIYORDU. Kaçtığında iki hasar birden
+        # oluşuyordu: (1) `started` satırı eşsiz kalıyor, `finished` HİÇ
+        # yazılmıyordu — denetim tablosunda atfedilemez bir çağrı asılı
+        # kalırdı; (2) `raise_app_exceptions=True` olduğu için istisna SSE
+        # gövdesine kaçıyor, yanıt BAŞLAMIŞ olduğundan akış yarıda kopuyor ve
+        # `tur_bitti` karesi hiç gelmiyordu.
+        #
+        # 🔴 Kapı HUNİDEDİR, handler'larda DEĞİL: bu dosyanın açılış
+        # paragrafındaki "TEK HUNİ" doktrini gereği. 22 handler'a tek tek
+        # `try` koymak, birini yazan kişinin satırı unutmasına açıktır.
+        #
+        # 🔴 Kod `ust_kaynak_hatasi`dır: kullanıcıya giden cümle aynıdır ve
+        # kod sözlüğü (`guards.HATA_METINLERI`) KAPALI kalır. Ayrımı
+        # denetim taşır — `error` alanına istisnanın TÜRÜ yazılır.
+        except Exception as exc:  # noqa: BLE001 — gerekçe yukarıda
+            logger.exception(
+                "AI aracı '%s' handler'ının İÇİNDE beklenmeyen istisna: "
+                "zarf ToolError'a düşürüldü, tur devam ediyor.",
+                arac_adi,
+            )
+            sonuc = ToolError("ust_kaynak_hatasi")
+            hata = type(exc).__name__
         # --- 6b. ALAN MASKESİ, ÇALIŞMA ANINDA (S5-c / A1) --------------
         # 🔴 Kayıt anındaki şema taraması **YETMEZ** ve bu eşdeğer bir mutant
         # DEĞİLDİR: ölçüldü, `AiPuantajHaftasi.totals` `dict[str, Any]` ve
@@ -378,6 +425,16 @@ class ToolRegistry:
             if sizan:
                 sonuc = ToolError("alan_maskesi_ihlali")
                 hata = f"alan_maskesi_ihlali:{','.join(sizan)}"
+            elif hasattr(sonuc, "data"):
+                # --- 6c. DEĞER MASKESİ (KVKK) -------------------------
+                # 🔴 Anahtar taraması SERBEST METNİ göremez: `text` yasak bir
+                # ad değildir, içine yazılmış bir TCKN/IBAN da anahtar
+                # kesişimine düşmez. Burada zarf DÜŞÜRÜLMEZ, yalnız eşleşen
+                # alt dize yutulur — meşru bir kaydın içeriği yüzünden aracı
+                # tümden kırmak yanlış araçtır (gerekçe `exposure.py`de).
+                maskeli = exposure.deger_maskesi(sonuc.data)
+                if maskeli != sonuc.data:
+                    sonuc = dataclasses.replace(sonuc, data=maskeli)
         if isinstance(sonuc, ToolError):
             hata = hata or sonuc.kod
 

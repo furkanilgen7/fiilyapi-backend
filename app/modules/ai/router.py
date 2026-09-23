@@ -13,6 +13,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Annotated
 
+import anyio
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
@@ -360,32 +361,53 @@ async def ai_chat_endpoint(
             # atfedilemez bir turdur"* der ve akış istemci tarafından koparılsa
             # bile o satır düşmemelidir. Ama artık bu bir TERCİHTİR, bir
             # bağımlılık değil: ikisinden biri patlarsa öbürü YİNE koşar.
-            await _akis_sonu_yan_etkisi(
-                "okuma düzlemi istemcisinin kapatılması",
-                istemci.aclose,
-                conversation_id=conversation_id,
-                ai_session_id=ai_session_id,
-            )
-            await _akis_sonu_yan_etkisi(
-                "tur denetim satırı",
-                lambda: record_ai_turn(
-                    user_id=kullanici_id,
-                    detail=f"{tur_ozeti(gorulen)} · oturum: {ai_session_id}",
-                    ip_address=istemci_ip,
-                ),
-                conversation_id=conversation_id,
-                ai_session_id=ai_session_id,
-            )
-            # 🔴 Saklanan: cevap METNİ + araç ADLARI + zarf HÂLLERİ.
-            #    Saklanmayan: araç sonuç GÖVDELERİ ve yapısal bloklar (A3).
-            # `conversation_id` istemciden DEĞİL, sahiplik kapısından geçmiş
-            # dönüşten gelir.
-            await _akis_sonu_yan_etkisi(
-                "asistan cevabı",
-                _cevabi_yaz,
-                conversation_id=conversation_id,
-                ai_session_id=ai_session_id,
-            )
+            #
+            # 🔴 KALKAN (`shield=True`) — İZOLASYON TEK BAŞINA YETMİYORDU.
+            #
+            # `_akis_sonu_yan_etkisi` bir `except Exception` taşır ve ÜÇ bekçi
+            # de ona `RuntimeError` enjekte ediyordu; yani hepsi bir
+            # **`Exception`** ölçüyordu. Canlıda en sık görülen kopuş ise bir
+            # `Exception` DEĞİLDİR: kullanıcı sekmeyi kapatır/yeniler,
+            # Starlette `listen_for_disconnect` ile bunu görür ve görev
+            # grubunu **iptal eder**. İptal `CancelledError`dır, `GeneratorExit`
+            # gibi `BaseException` altındadır ve `except Exception`a TAKILMAZ.
+            #
+            # Kalkansız hâlde ölçülen zincir şuydu: `finally`nin İLK `await`i
+            # (`istemci.aclose`) iptali yeniden doğurur → kalan İKİ yan etki
+            # HİÇ koşmaz → `logger.exception` bile yazılmaz. Sonuç: `ai_messages`
+            # cevapsız bir soruyla kalır ve o tur `audit_log`da GÖRÜNMEZ.
+            # Yani AI-SOHBET-FIX'te kapatılan kusur, İPTAL yolundan geri gelir.
+            #
+            # Kalkan iptali EMDİĞİ için içerideki `await`ler normal koşar ve
+            # `_akis_sonu_yan_etkisi`in mevcut `except Exception`ı (dolayısıyla
+            # üç izolasyon bekçisi de) aynen geçerli kalır.
+            with anyio.CancelScope(shield=True):
+                await _akis_sonu_yan_etkisi(
+                    "okuma düzlemi istemcisinin kapatılması",
+                    istemci.aclose,
+                    conversation_id=conversation_id,
+                    ai_session_id=ai_session_id,
+                )
+                await _akis_sonu_yan_etkisi(
+                    "tur denetim satırı",
+                    lambda: record_ai_turn(
+                        user_id=kullanici_id,
+                        detail=f"{tur_ozeti(gorulen)} · oturum: {ai_session_id}",
+                        ip_address=istemci_ip,
+                    ),
+                    conversation_id=conversation_id,
+                    ai_session_id=ai_session_id,
+                )
+                # 🔴 Saklanan: cevap METNİ + araç ADLARI + zarf HÂLLERİ.
+                #    Saklanmayan: araç sonuç GÖVDELERİ ve yapısal bloklar (A3).
+                # `conversation_id` istemciden DEĞİL, sahiplik kapısından geçmiş
+                # dönüşten gelir.
+                await _akis_sonu_yan_etkisi(
+                    "asistan cevabı",
+                    _cevabi_yaz,
+                    conversation_id=conversation_id,
+                    ai_session_id=ai_session_id,
+                )
 
     return StreamingResponse(
         sse_akisi(_olaylar()),

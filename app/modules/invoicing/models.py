@@ -233,6 +233,19 @@ _ORAN_CHECK = (
     "(withholding_rate IS NULL OR withholding_rate BETWEEN 0 AND 100)"
 )
 
+# 🔴 kayit #56 (ca36b2e59ee3): `tax_base` eskiden bu kisitin DISINDAYDI —
+# `ck_invoices_amounts_non_negative` alti kolon sayiyordu ama para kolonu
+# YEDI tanedir. Uygulama katmaninda negatif `tax_base` yazan bir yol yok
+# (`amounts.py` kirpar), ama DB SON SAVUNMA iddiasi bu kolon icin YALANDI.
+# SQL BURAYA ve alembic/versions/ca36b2e59ee3_...'e KOPYALANIR, ITHAL EDILMEZ:
+# migration gecmisi DONMUS olmalidir (TB6 emsali). Ikisinin BUGUN esit oldugu
+# `test_invoicing_tax_base_check_migration.py::test_migration_SQL_i_modelin_SQL_i_ile_AYNI`
+# ile AYRICA olculur.
+AMOUNTS_NON_NEGATIVE_CHECK = (
+    "subtotal >= 0 AND advance_amount >= 0 AND retention_amount >= 0 AND "
+    "tax_base >= 0 AND vat_amount >= 0 AND withholding_amount >= 0 AND total >= 0"
+)
+
 
 class Invoice(Base):
     """Fatura basligi (FY satiri + FGE/FGI detayi + FK formu).
@@ -281,10 +294,10 @@ class Invoice(Base):
             name="ck_invoices_single_source",
         ),
         # DB SON SAVUNMADIR: servis 422 vermeyi unutsa bile negatif bir tutar
-        # mali tabloya giremez.
+        # mali tabloya giremez. Metin `AMOUNTS_NON_NEGATIVE_CHECK`ten gelir —
+        # `tax_base` kayit #56'ya kadar bu kisitin DISINDAYDI (bkz. sabit).
         CheckConstraint(
-            "subtotal >= 0 AND advance_amount >= 0 AND retention_amount >= 0 AND "
-            "vat_amount >= 0 AND withholding_amount >= 0 AND total >= 0",
+            AMOUNTS_NON_NEGATIVE_CHECK,
             name="ck_invoices_amounts_non_negative",
         ),
         CheckConstraint(_ORAN_CHECK, name="ck_invoices_rates_percentage"),

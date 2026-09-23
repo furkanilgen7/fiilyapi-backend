@@ -51,6 +51,7 @@ from app.modules.progress_payments.transitions import PaymentAction
 from app.modules.subcontractor_progress_payments import transitions as taseron_transitions
 from app.modules.subcontractor_progress_payments.models import SubcontractorPaymentStatus
 from tests._para_gercek import parayi_yatir
+from tests.modules.equipment._mk2_para_gercek import kira_parasini_yatir
 from tests.modules.posting._mu3d import (
     aktor,
     esleme_kur,
@@ -204,6 +205,11 @@ async def test_FISLENEN_OLAY_KUMESI_UC_AILENIN_TABLOLARINDAN_TURETILIR(seeded_db
         olay = f"rental.{kaynak.value}->{hedef.value}"
         denenen.append(olay)
         invoice, _s = await kira_hakedisi(seeded_db, status=kaynak)
+        if _EYLEM[(kaynak, hedef)] == "pay_invoice":
+            # PARA-GERCEK (2026-09-19) — `pay` artık gerçekleşmiş para ister.
+            # Damga ANLIK GÖRÜNTÜSÜNDEN ÖNCE yazılır: kurulumun kendisi bir
+            # "fişleme olayı" sayılmamalıdır.
+            await kira_parasini_yatir(seeded_db, invoice.id)
         once = await _kaynak_damgalari(seeded_db)
         await getattr(rental_service, _EYLEM[(kaynak, hedef)])(seeded_db, kullanici, invoice.id)
         if await _kaynak_damgalari(seeded_db) - once:

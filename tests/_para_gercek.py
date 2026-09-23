@@ -188,7 +188,6 @@ async def odeme_yaz(
     session: AsyncSession,
     fatura: Invoice,
     *,
-    taseron: bool,
     tutar: Decimal,
     evrak_durumu: FinancialInstrumentStatus | None = None,
     method: PaymentMethodKind | None = None,
@@ -212,7 +211,7 @@ async def odeme_yaz(
     if evrak_durumu is not None:
         evrak = FinancialInstrument(
             instrument_kind=FinancialInstrumentKind.cheque,
-            direction=_EVRAK_YONU[_AILE[taseron][0]],
+            direction=_EVRAK_YONU[fatura.direction],
             serial_no=uuid.uuid4().hex[:10],
             drawer_name="PARA-GERCEK Keşideci",
             issue_date=date(2026, 1, 15),
@@ -259,7 +258,5 @@ async def parayi_yatir(
     """
     fatura = await fatura_kes(session, payment_id, taseron=taseron, status=status)
     tutar = fatura.total + fark
-    await odeme_yaz(
-        session, fatura, taseron=taseron, tutar=tutar, evrak_durumu=evrak_durumu, method=method
-    )
+    await odeme_yaz(session, fatura, tutar=tutar, evrak_durumu=evrak_durumu, method=method)
     return tutar

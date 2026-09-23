@@ -28,15 +28,27 @@ __all__ = [
     "WEEK_MISSING",
     "DUPLICATE_CELL",
     "PERSONNEL_UNKNOWN",
+    "SECTION_FILTER_MISMATCH",
     "SECTION_MISMATCH",
     "SECTION_MISSING",
     "SITE_MISSING",
     "person_day_conflict",
+    "personnel_not_payable",
 ]
 
 # 422 — bölüm sahipliği. `site_diary.guards.SECTION_MISMATCH` ile AYNI cümle:
 # aynı kural iki modülde iki farklı metinle konuşmamalı.
 SECTION_MISMATCH = "Seçilen bölüm bu şantiyeye ait değil"
+
+# 422 — bölüm SÜZGEÇLİ kaydetmede gövde kapsamın dışına taşıyor. `DATE_OUT_OF_WEEK`
+# kuralının bölüm eksenindeki ikizi: süzgeç kapsamı daralttığı için o kapsamın
+# dışındaki bir hücre yazılsaydı, bir sonraki süzgeçli kaydetme onu ne yazar ne
+# silerdi — ekranda görünen ama kaydedilemeyen bir satır doğardı. Bölümsüz
+# (`section_id IS NULL`) hücre de DIŞARIDADIR: hiçbir bölümün süzgecine ait değildir.
+SECTION_FILTER_MISMATCH = (
+    "Bölüm süzgeciyle kaydetmede her hücre o bölüme ait olmalıdır; "
+    "süzgecin dışındaki hücre bu istekle gönderilemez."
+)
 
 # 422 — gövdedeki personel kartotekste yok. Var olmayan kimlik ile silinmiş kayıt
 # AYNI cümleyi alır (kimlik varlığı sızdırılmaz).
@@ -68,6 +80,24 @@ def person_day_conflict(full_name: str, work_date: date) -> str:
     return (
         f"{full_name} adlı personelin {work_date.isoformat()} günü başka bir şantiyede "
         "kayıtlı; bir kişi aynı günde tek şantiyede puantaj alabilir."
+    )
+
+
+def personnel_not_payable(full_name: str) -> str:
+    """422 — pasif ya da taslak personele YENİ/DEĞİŞEN adam-gün (2026-09-19).
+
+    Bordro bu kişilere satır AÇMAZ (`payroll.compute_flow`: taslak kartın ücreti
+    doğrulanmamış, pasif kişi ayrılmıştır). Puantaj süzmeseydi iki modül sessizce
+    ayrışır ve ödenmeyecek bir adam-gün maliyete girerdi.
+
+    🔴 Metin "yazılamaz" DEĞİL "değiştirilemez" der, çünkü kapı DEĞİŞİME
+    bağlıdır: dokunulmamış geçmiş hücre aynen geçer (kullanıcı kararı (b)).
+    Kullanıcı aksini okusaydı geçmiş haftayı hiç göndermeyi denemez ve gerçekte
+    açık olan yolu kapalı sanırdı.
+    """
+    return (
+        f"{full_name} aktif personel değil (ayrılmış ya da kartı taslak); "
+        "puantajı değiştirilemez. Mevcut kayıtları olduğu gibi gönderilebilir."
     )
 
 

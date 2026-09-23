@@ -18,9 +18,11 @@ sapabilir (23 küçük daire ≠ %55 değer), bu yüzden `count_balance` ile
 import uuid
 from datetime import date
 from decimal import Decimal
+from typing import Annotated
 
 from pydantic import BaseModel
 
+from app.core.field_scope import Gorunurluk
 from app.modules.units.models import UnitKind, UnitOwnerSide, UnitSalesStatus
 
 __all__ = [
@@ -51,22 +53,22 @@ class LandShareContract(BaseModel):
     """
 
     landowner_name: str
-    our_share_pct: Decimal
-    owner_share_pct: Decimal
+    our_share_pct: Annotated[Decimal, Gorunurluk.kimlik]
+    owner_share_pct: Annotated[Decimal, Gorunurluk.kimlik]
     contract_no: str | None
     notary_date: date | None
-    land_area_m2: Decimal | None
-    construction_area_m2: Decimal | None
+    land_area_m2: Annotated[Decimal | None, Gorunurluk.operasyonel]
+    construction_area_m2: Annotated[Decimal | None, Gorunurluk.operasyonel]
     delivery_date: date | None
-    daily_penalty: Decimal | None
-    guarantee_amount: Decimal | None
+    daily_penalty: Annotated[Decimal | None, Gorunurluk.para]
+    guarantee_amount: Annotated[Decimal | None, Gorunurluk.para]
 
 
 class LandSharePartition(BaseModel):
     """Bir kümenin (arsa sahibi payı · atanmamış) adet + değer toplamı."""
 
     unit_count: int
-    value_total: Decimal
+    value_total: Annotated[Decimal | None, Gorunurluk.para]
 
 
 class LandShareOwnerSide(LandSharePartition):
@@ -88,8 +90,8 @@ class LandShareOurSide(LandSharePartition):
     sold_count: int
     reserved_count: int
     available_count: int
-    sold_value: Decimal
-    remaining_value: Decimal
+    sold_value: Annotated[Decimal | None, Gorunurluk.para]
+    remaining_value: Annotated[Decimal | None, Gorunurluk.para]
 
 
 class LandShareShareholderRow(BaseModel):
@@ -103,9 +105,9 @@ class LandShareShareholderRow(BaseModel):
 
     shareholder_id: uuid.UUID
     name: str
-    share_pct: Decimal
+    share_pct: Annotated[Decimal, Gorunurluk.kimlik]
     unit_count: int
-    value_total: Decimal
+    value_total: Annotated[Decimal | None, Gorunurluk.para]
 
 
 class LandShareCountBalance(BaseModel):
@@ -142,13 +144,13 @@ class LandShareValueBalance(BaseModel):
     yaşarsa ayrışır).
     """
 
-    our_value: Decimal
-    owner_value: Decimal
-    assigned_value_total: Decimal
-    our_actual_pct: Decimal | None
-    owner_actual_pct: Decimal | None
-    deviation_pct: Decimal | None
-    tolerance_pct: Decimal
+    our_value: Annotated[Decimal | None, Gorunurluk.para]
+    owner_value: Annotated[Decimal | None, Gorunurluk.para]
+    assigned_value_total: Annotated[Decimal | None, Gorunurluk.para]
+    our_actual_pct: Annotated[Decimal | None, Gorunurluk.para]
+    owner_actual_pct: Annotated[Decimal | None, Gorunurluk.para]
+    deviation_pct: Annotated[Decimal | None, Gorunurluk.para]
+    tolerance_pct: Annotated[Decimal, Gorunurluk.kimlik]
     is_within_tolerance: bool | None
 
 
@@ -193,8 +195,8 @@ class LandShareUnitRow(BaseModel):
     unit_kind: UnitKind
     layout: str | None
     floor: str | None
-    gross_area_m2: Decimal | None
-    appraisal_value: Decimal | None
+    gross_area_m2: Annotated[Decimal | None, Gorunurluk.operasyonel]
+    appraisal_value: Annotated[Decimal | None, Gorunurluk.para]
     owner_side: UnitOwnerSide | None
     shareholder_id: uuid.UUID | None
     shareholder_name: str | None

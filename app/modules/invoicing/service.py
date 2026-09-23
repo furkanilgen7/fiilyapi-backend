@@ -461,7 +461,16 @@ async def create_invoice(
         _raise_blockers(
             validation.source_amount_blockers(
                 hesap.subtotal, await source_amounts.source_gross_for_invoice(session, invoice)
-            )
+            ),
+            # 🔴 MU-3D TAKAS-TABAN — FAT-HAK'ın KARDEŞİ, gerekçesi
+            #    `validation.source_posting_base_blockers`ta TEK KOPYA.
+            #    Kapı BURADADIR (ve `state_service`te) çünkü gelen fatura
+            #    `pending` DOĞAR ve o andan sonra oranları DÜZELTİLEMEZ:
+            #    yalnız geçişte yakalansaydı kayıt çoktan KALICILAŞMIŞ olurdu.
+            validation.source_posting_base_blockers(
+                hesap.tax_base,
+                await source_amounts.source_posting_base_for_invoice(session, invoice),
+            ),
         )
     session.add(invoice)
     await session.flush()

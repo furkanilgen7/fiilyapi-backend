@@ -53,6 +53,9 @@ _DUPLICATE_CODE = "Bu poz numarası bu şantiyede zaten kullanılıyor"
 # TB3-C: kalemi olan grup silinemez. `contracts/guards.py.GROUP_HAS_ITEMS`
 # deseninin aynısı — metinde ADET VERİLMEZ, eyleme dönüktür.
 _GROUP_HAS_ITEMS = "Bu grupta iş kalemi var, önce kalemleri silin"
+_ITEM_HAS_DIARY_LINES = (
+    "Bu kaleme yazılmış günlük kayıt satırları var, önce o günlerden kalemi çıkarın"
+)
 # --- BOQ-SEC (bölüm tahsisi) mesajları ---
 _ALLOCATION_EXCEEDS_QUANTITY = "Bölümlere dağıtılan miktar poz miktarını aşamaz"
 _ALLOCATION_DUPLICATE_SECTION = "Aynı bölüm gövdede birden fazla kez gönderildi"
@@ -482,6 +485,13 @@ async def delete_item(session: AsyncSession, actor: User, item_id: uuid.UUID) ->
     # iliskisindeki gibi bagimsiz bir kayit degil); "once tahsisleri kaldir"
     # demek, kullaniciya anlamsiz bir ara adim dayatmak olurdu.
     item, _ = await _visible_item(session, actor, item_id)
+    # 🔴 Borc #53: gunluk satirinin FK'si `ondelete="SET NULL"`dur — CASCADE
+    # DEGIL. Tahsisin aksine gunluk satiri kalemin ALT PARCASI degildir; silme
+    # onu yok etmez, BAGSIZ birakir ve o satir Hakedis Ozeti ile gunun detay
+    # ekraninda KALICI olarak farkli ₺ soylemeye baslar (gonderilmis gunde
+    # telafisi yok). `delete_group`/`group_has_items` deseniyle 409.
+    if await repository.item_has_diary_lines(session, item.id):
+        raise RelatedRecordsExistError(_ITEM_HAS_DIARY_LINES)
     identity = (item.code, item.description)
     group_id = item.group_id
     await session.delete(item)

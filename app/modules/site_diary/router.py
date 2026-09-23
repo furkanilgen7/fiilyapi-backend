@@ -63,7 +63,7 @@ async def list_site_diary_entries_endpoint(
     site_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
-    year: int | None = None,
+    year: Annotated[int | None, Query(ge=guards.MIN_YEAR, le=guards.MAX_YEAR)] = None,
     month: Annotated[int | None, Query(ge=1, le=12)] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -90,7 +90,7 @@ async def get_site_diary_summary_endpoint(
     site_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
-    year: int | None = None,
+    year: Annotated[int | None, Query(ge=guards.MIN_YEAR, le=guards.MAX_YEAR)] = None,
     month: Annotated[int | None, Query(ge=1, le=12)] = None,
 ) -> SiteDiarySummary:
     """Hakediş Özeti ekranının veri kaynağı — YALNIZ `submitted` günler (spec §3).

@@ -38,6 +38,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Numeric,
     String,
     Text,
@@ -140,15 +141,33 @@ class Warehouse(Base):
     KAYBOLMAZ, yalnizca santiye bagi kopar (fiilen merkez depoya doner).
     CASCADE burada bakiye tarihini silerdi.
 
-    UQ (site_id, name): ayni santiyede ayni adli iki depo acilamaz. BILINEN SINIR
-    — Postgres'in varsayilan `NULLS DISTINCT` semantigi yuzunden merkez depo
-    dalinda (`site_id IS NULL`) kisit fiilen ISLEMEZ; oradaki tekillik yazma
-    ucunun (T2: mevcut-ad kontrolu → 409) sorumlulugundadir (belge arsivi
-    `document_folders` ile ayni durum).
+    UQ (site_id, name): ayni santiyede ayni adli iki depo acilamaz. Postgres'in
+    varsayilan `NULLS DISTINCT` semantigi yuzunden bu kisit MERKEZ dalinda
+    (`site_id IS NULL`) FIILEN ISLEMEZ — coklu NULL birbirinden farkli sayilir.
+    Eskiden bu "BILINEN SINIR" diye kabul edilmis ve merkez dalindaki tekillik
+    tamamen servis korkulugua (`service._assert_warehouse_name_free`)
+    birakilmisti. 🔴 Korkuluk TEK KATMANDIR: iki es zamanli istek ikisi de
+    "ad bos" okur ve ikisi de yazar. Kardes dal (santiyeli depo) bu yarista DB
+    tarafindan korunurken merkez dali korunmuyordu.
+
+    `uq_warehouses_central_name` o boslugu kapatir: KISMI tekil indeks, yalniz
+    `site_id IS NULL` satirlarina uygulanir (`customers.national_id` ve
+    `subcontractor_progress_payments.slug` ile ayni desen). Servis korkulugu
+    KALKMAZ — kullaniciya anlamli 409 metnini o uretir, DB ikinci katmandir.
+
+    ⚠️ `document_folders` AYNI bosluga sahiptir ve bu dilimde DOKUNULMAMISTIR.
     """
 
     __tablename__ = "warehouses"
-    __table_args__ = (UniqueConstraint("site_id", "name", name="uq_warehouses_site_name"),)
+    __table_args__ = (
+        UniqueConstraint("site_id", "name", name="uq_warehouses_site_name"),
+        Index(
+            "uq_warehouses_central_name",
+            "name",
+            unique=True,
+            postgresql_where=text("site_id IS NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(100), nullable=False)

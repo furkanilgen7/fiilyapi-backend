@@ -18,12 +18,13 @@ yere kopyalandığında biri onu ATLAR ve delik YALNIZ O YOLDA açılır.
 
     0. KAYNAK KİLİDİ  (belge başına danışma kilidi)
     1. İDEMPOTANLIK   (fişlenmişse MEVCUDU döndür, created=False)
-    2. DÖNEM KAPISI   (kilitli okuma → kapalıysa 409)
-    3. EŞLEME         (rol → hesap; eksikse 422)
-    4. K1 KAPISI      (denge + satır sayısı + yaprak; 422)
-    5. YAZIM          (numara → başlık → bacaklar)
+    2. TARİH SINIRI   (entry_date gelecekte olamaz; 422)
+    3. DÖNEM KAPISI   (kilitli okuma → kapalıysa 409)
+    4. EŞLEME         (rol → hesap; eksikse 422)
+    5. K1 KAPISI      (denge + satır sayısı + yaprak; 422)
+    6. YAZIM          (numara → başlık → bacaklar)
 
-🔴 **1, 2'DEN ÖNCEDİR** ve bu bilinçlidir: ay kapandıktan sonra çağıran yeniden
+🔴 **1, 3'TEN ÖNCEDİR** ve bu bilinçlidir: ay kapandıktan sonra çağıran yeniden
 denerse yapılacak bir iş YOKTUR. 409 atmak, hiç yazılmayacak bir fiş yüzünden
 onay akışını kilitlerdi. Test bunu çakıyor
 (`test_ZATEN_fislenmis_belge_KAPALI_donemde_de_MEVCUDU_doner`).
@@ -31,6 +32,15 @@ onay akışını kilitlerdi. Test bunu çakıyor
 🔴 **0, 1'DEN ÖNCEDİR**: kilitsiz bir "önce oku, sonra yaz" iki eşzamanlı onayda
 ikisini de geçirir ve kaybeden `uq_journal_entries_source`a çarpıp kullanıcıya
 ayrımsız bir 409 gösterirdi (İK-2 kanonu: EŞİK = KİLİT).
+
+🔴 **2, 3'TEN ÖNCEDİR** — manuel yevmiye yolundaki (`accounting.service.
+create_entry`) SIRA gerekçesinin BİREBİR aynısı: `assert_periods_open`
+istenen dönemi YOKSA `open` olarak DOĞURUR (`lock_period` UPSERT'tir),
+dolayısıyla tarih sınırı sonra koşsaydı REDDEDİLEN bir istek bile gelecek bir
+dönem satırı bırakırdı. Kapı `accounting_service.assert_entry_date_not_future`yi
+ÇAĞIRIR, yeniden yazmaz: hata sözleşmesi (`AccountingValidationError` +
+`guards.ENTRY_DATE_IN_FUTURE`, 422) iki yazma yolunda da AYNI kalmalıdır
+(envanter #5, açık bacak — kapatan onarım).
 
 ## Yönetimin bağladığı kararların BU DOSYADAKİ karşılığı
 
@@ -184,6 +194,17 @@ async def post_document(
     mevcut = await repository.entry_for_source(session, source_type, source_id)
     if mevcut is not None:
         return PostingOutcome(entry=mevcut, created=False)
+
+    # 🔑 `entry_date` ÜST SINIRI — manuel yevmiye yoluyla (`accounting.service.
+    # create_entry`/`update_entry`) AYNI kapı, AYNI hata sözleşmesi
+    # (`AccountingValidationError` + `guards.ENTRY_DATE_IN_FUTURE`, 422).
+    # Dönem kapısından da ÖNCE koşar (aynı gerekçe: `lock_period` istenen
+    # dönemi YOKSA `open` olarak DOĞURUR — reddedilen istek gelecek bir dönem
+    # satırı bırakmamalıdır). Besleyicilerden (fatura/tahsilat/hakediş/...)
+    # BİRİ BİLE üst sınırsız kalsaydı ileri tarihli belge doğrudan `posted`
+    # bir fiş doğururdu; kapı burada TEK NOKTADA durur (envanter #5, açık
+    # bacak).
+    accounting_service.assert_entry_date_not_future(entry_date)
 
     await periods_service.assert_periods_open(session, [periods_service.period_of(entry_date)])
 

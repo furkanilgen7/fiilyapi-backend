@@ -300,3 +300,66 @@ async def test_denetim_tablosuna_gercek_INSERT_CALISIR(db_session):
     )
     await db_session.flush()
     assert await db_session.scalar(select(func.count()).select_from(AiToolCall)) >= 1
+
+
+# --------------------------------------------------------------------------- #
+# B6c — HANDLER'IN KENDİ İÇİNDE PATLAMASI (kayıt #66)
+# --------------------------------------------------------------------------- #
+
+
+async def test_B6c_handler_BEKLENMEYEN_istisna_atarsa_finished_YINE_YAZILIR(
+    monkeypatch, transport_factory, caplog
+):
+    """🔴 Huni `YolReddedildi` ve `httpx.HTTPError` DIŞINDA hiçbir şeyi tutmuyordu.
+
+    Gerçek senaryo: 22 okuma handler'ı üst kaynak gövdesini `k["..."]` ile
+    ayıklar ve STRICT bir pydantic modeli kurar (`reads/ai2bd.py`). Bir alan
+    NULL/eksik gelirse `pydantic.ValidationError` ya da `KeyError` doğar —
+    ikisi de ne `YolReddedildi` ne `httpx.HTTPError`dur. O hâlde:
+
+      1. `started` satırı ESSİZ kalır, `finished` HİÇ yazılmaz → denetim
+         tablosunda atfedilemez bir çağrı asılı durur (B6'nın "iki satır"
+         doktrini çiğnenir);
+      2. istisna SSE gövdesine kaçar, yanıt BAŞLAMIŞ olduğu için akış yarıda
+         kopar ve `tur_bitti` karesi hiç gelmez.
+
+    Doğru davranış: zarf `ToolError`a düşer, tur DEVAM eder, iz TAMDIR.
+    """
+    import dataclasses
+    import logging
+
+    kayitlar: list[dict] = []
+
+    async def _sahte(**kwargs):
+        kayitlar.append(kwargs)
+
+    monkeypatch.setattr(ai_audit, "record_tool_call", _sahte)
+
+    async def _patlayan(ctx, girdi):
+        raise ValueError("ust kaynak govdesi beklenmedik sekilde geldi")
+
+    spec = dataclasses.replace(NAVIGATE_TO, calistir=_patlayan)
+    kayit = ToolRegistry((spec,))
+
+    with caplog.at_level(logging.ERROR, logger="app.modules.ai.registry"):
+        sonuc = await kayit.invoke(
+            arac_adi="navigate_to",
+            argumanlar={"ekran": "projeler"},
+            actor=sahte_aktor(tam_izin()),
+            transport=transport_factory(bearer="kullanilmayacak"),
+        )
+
+    assert isinstance(sonuc, ToolError), f"beklenmeyen istisna zarfa DÜŞMEDİ: {sonuc!r}"
+    assert [k["phase"] for k in kayitlar] == [
+        AiToolCallPhase.started,
+        AiToolCallPhase.finished,
+    ], f"`finished` satırı yazılmadı, denetimde asılı bir çağrı kaldı: {kayitlar}"
+    assert len({k["call_id"] for k in kayitlar}) == 1, "iki satır AYNI call_id taşımalı"
+    assert kayitlar[1]["error"] == "ValueError", (
+        "denetim satırı istisnanın TÜRÜNÜ taşımalı; yoksa operatör hangi "
+        f"arızanın olduğunu tablodan okuyamaz. Bulunan: {kayitlar[1]['error']!r}"
+    )
+    # 🔴 SESSİZCE YUTULMAZ: tam traceback sunucuda kalır (kod sözlüğüne sızmaz).
+    assert any(r.exc_info for r in caplog.records), (
+        "istisna sessizce yutuldu; `logger.exception` ile traceback yazılmalı"
+    )

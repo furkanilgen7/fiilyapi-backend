@@ -111,6 +111,72 @@ def check_quota(
         )
 
 
+async def source_quotas_for(
+    session: AsyncSession,
+    items: list[SubcontractorContractItem],
+    *,
+    exclude_payment_id: uuid.UUID | None = None,
+) -> dict[uuid.UUID, tuple[Decimal, Decimal]]:
+    """Kaynak (işveren) kalem → (sözleşme miktarı, TÜM taşeron sözleşmelerinde
+    tamamlanmış toplam). `check_source_quota`nın TEK besleme yolu.
+
+    `check_quota` ikizi gibi İKİ çağıranı vardır — satır yazma yolu (`_resolve`)
+    ve onay anındaki yeniden doğrulama (`transitions._revalidate_quota`); ikinci
+    bir toplama tanımı açılmaz.
+    """
+    source_ids = sorted(
+        {item.source_contract_item_id for item in items if item.source_contract_item_id}
+    )
+    if not source_ids:
+        return {}
+    quantities = await repository.get_employer_item_quantities(session, source_ids)
+    completed = await repository.completed_quantities_by_source_item(
+        session, source_ids, exclude_payment_id=exclude_payment_id
+    )
+    return {
+        source_id: (quantity, completed.get(source_id, _ZERO))
+        for source_id, quantity in quantities.items()
+    }
+
+
+def check_source_quota(
+    item: SubcontractorContractItem,
+    source_quotas: dict[uuid.UUID, tuple[Decimal, Decimal]],
+    already_counted: dict[uuid.UUID, Decimal],
+    quantity: Decimal,
+) -> None:
+    """🔴 ÇİFT SAYIM tavanı (TH-PRJGENEL): aynı işveren kalemine bağlı TÜM taşeron
+    sözleşmelerinin tamamlanmış toplamı + bu satır ≤ işveren kaleminin miktarı.
+
+    `check_quota` ile KARDEŞTİR, onun yerine GEÇMEZ: o sözleşmenin KENDİ kalem
+    miktarını, bu kaynak kalemin TOPLAMINI bekler. Sözleşme başına kota tek
+    başına iki sözleşmeyi birbirinden habersiz saydığı için aynı imalat iki kez
+    hakediş edilebiliyordu.
+
+    `already_counted` = AYNI evrakta, AYNI kaynak kaleme bağlı ÖNCEKİ satırların
+    toplamı (bir sözleşmede iki kalem aynı kaynağı gösterebilir — UNIQUE yalnız
+    `(contract_id, code)`). Çağıran biriktirir; burada yalnız OKUNUR.
+
+    İKİ hâlde tavan YOKTUR ve bu bilinçlidir:
+    * `source_contract_item_id IS NULL` — kalem hiç köprülenmemiş ya da bağı
+      kopmuş (FK `SET NULL`); hangi işveren kalemine ait olduğu BİLİNMEZ,
+    * kaynak kalem silinmiş (sözlükte yok) — `completed_quantities`in ONAYLI
+      SAPMASININ aynısı: tavansız bir kalemi kilitlemek evrağı kilitlerdi.
+    """
+    source_id = item.source_contract_item_id
+    if source_id is None:
+        return
+    quota = source_quotas.get(source_id)
+    if quota is None:
+        return
+    source_quantity, completed_quantity = quota
+    used = completed_quantity + already_counted.get(source_id, _ZERO)
+    if used + quantity > source_quantity:
+        raise SiteValidationError(
+            guards.source_quantity_exceeds_quota(item.code, source_quantity - used, item.unit)
+        )
+
+
 def _stamp(
     diary_totals: dict[uuid.UUID, Decimal], item_id: uuid.UUID, quantity: Decimal
 ) -> QuantitySource:
@@ -214,6 +280,9 @@ async def _resolve(
         session, contract.id, exclude_payment_id=exclude_payment_id
     )
     item_groups = await group_names(session, list(items.values()))
+    source_quotas = await source_quotas_for(
+        session, list(items.values()), exclude_payment_id=exclude_payment_id
+    )
     period_year, period_month = period
     diary_totals = await bridge.subcontractor_period_totals(
         session,
@@ -225,6 +294,9 @@ async def _resolve(
     )
 
     seen: set[uuid.UUID] = set()
+    # Gövde-içi kaynak tüketimi: AYNI kaynak kaleme bağlı iki satır tavanı
+    # TOPLAMLARIYLA sınar (tek tek sınansaydı gövdenin kendisi çift sayardı).
+    body_by_source: dict[uuid.UUID, Decimal] = {}
     resolved: list[_ResolvedLine] = []
     for index, entry in enumerate(inputs):
         if entry.contract_item_id in seen:
@@ -242,6 +314,7 @@ async def _resolve(
 
         existing_line = existing.get(entry.contract_item_id)
         current_quantity = _ZERO if existing_line is None else existing_line.quantity
+        source_id = item.source_contract_item_id
 
         # Kontrol YALNIZ ARTIŞTA koşar (işveren H5 denetimi O1 dersi): sözleşme
         # miktarı SONRADAN düşürülürse taslakta duran satır zaten aşmış olur —
@@ -250,6 +323,12 @@ async def _resolve(
         # 0'dır, yani kotayı aşan YENİ satır bu inceltmeden faydalanmaz.
         if entry.quantity > current_quantity:
             check_quota(item, completed.get(item.id, _ZERO), entry.quantity)
+            # Kaynak tavanı AYNI inceltmeye tabidir: işveren kalemi sonradan
+            # düşürülürse taslak yine de azaltılarak kurtarılabilmelidir.
+            check_source_quota(item, source_quotas, body_by_source, entry.quantity)
+        if source_id is not None:
+            # Tüketim ARTIŞTAN bağımsız birikir: azalan satır da kaynağı yer.
+            body_by_source[source_id] = body_by_source.get(source_id, _ZERO) + entry.quantity
 
         coefficient = entry.coefficient
         if coefficient is None:

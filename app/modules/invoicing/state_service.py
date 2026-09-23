@@ -175,6 +175,26 @@ async def _kaynak_bruttu(
     return await source_amounts.source_gross_for_invoice(session, invoice)
 
 
+async def _kaynak_fis_tabani(
+    session: AsyncSession, invoice: Invoice, action: InvoiceAction
+) -> Decimal | None:
+    """TAKAS-TABAN — storno edilecek hakediş fişinin tabanı; YALNIZ `GATE_ACTIONS`ta.
+
+    Koşula bağlılığın gerekçesi `_kaynak_bruttu`nunkiyle AYNIDIR ve aynı olmak
+    ZORUNDADIR: takas YALNIZ `POSTING_ACTIONS`ta koşar ve o küme `GATE_ACTIONS`ın
+    ta kendisidir (`send`/`approve`). `mark-collected`/`dispute` hiçbir fişi
+    stornolamaz, dolayısıyla kaydıracak bir taban da yoktur.
+
+    🔴 Okuma `visible_invoice(for_update=True)`in satır kilidinin İÇİNDEDİR ve
+    fiş satırı ayrıca kilitlenmez: fişin tutarı DONMUŞ bir snapshot'tır
+    (`posting` fişi hiçbir yoldan güncellemez, yalnız storno eder) ve storno da
+    bu transaction'ın KENDİ adımıdır.
+    """
+    if action not in validation.GATE_ACTIONS:
+        return None
+    return await source_amounts.source_posting_base_for_invoice(session, invoice)
+
+
 async def perform_transition(
     session: AsyncSession, actor: User, invoice_id: uuid.UUID, action: InvoiceAction
 ) -> TransitionOutcome:
@@ -199,6 +219,14 @@ async def perform_transition(
     engeller += validation.source_amount_blockers(
         invoice.subtotal, await _kaynak_bruttu(session, invoice, action)
     )
+    # 🔴 MU-3D TAKAS-TABAN — 4d. faturanın matrahı, BU GEÇİŞTE storno edilecek
+    #     hakediş fişinin tabanına ±0,01 ₺ içinde eşit olmalıdır. FAT-HAK
+    #     (4c) brütleri kilitler, bu kapı DEFTERE GİDEN tutarı kilitler:
+    #     kesinti oranları faturaya taşınmazsa takas `avans + teminat` kadar
+    #     KAYAR ve mizan DENK kaldığı için hiçbir sayı bunu ele vermez.
+    engeller += validation.source_posting_base_blockers(
+        invoice.tax_base, await _kaynak_fis_tabani(session, invoice, action)
+    )
     if engeller:
         raise InvoicingValidationError(" · ".join(engeller))
 
@@ -214,18 +242,29 @@ async def perform_transition(
     #     okuması da K7'yi delmez: o, faturanın PARASI değil, faturaya YAPILMIŞ
     #     ödemelerin toplamıdır ve faturanın hiçbir kolonunu yeniden üretmez.
     if action in posting.POSTING_ACTIONS:
-        await posting.post_invoice(session, actor, invoice)
+        fis = await posting.post_invoice(session, actor, invoice)
         # 🔴 MU-3D İŞ 2 — TAKAS: faturanın fişi yazıldıysa kaynak hakedişin
         #    fişi STORNO edilir. AYNI transaction, faturanın fişinden HEMEN
         #    SONRA: sıra tersine çevrilseydi gider bir an için defterden
         #    tamamen düşerdi ve araya giren bir hata onu ORADA bırakırdı.
+        #
+        #    🔴 **TAKAS ŞARTA BAĞLIDIR ve olmak ZORUNDADIR.** `post_invoice`
+        #    `None` döndürdüğünde fiş HİÇ AÇILMAMIŞTIR (dört bacağın dördü de
+        #    sıfır ⇒ `len(lines) < 2`). Dönüş değeri ATILIYORDU ve storno
+        #    KOŞULSUZ koşuyordu: kaynağın CANLI fişi, yerine HİÇBİR ŞEY
+        #    geçmeden storno ediliyor, gider/hasılat defterden TAMAMEN
+        #    düşüyordu. 🔴 Kaynağın fişi de faturanınki de kendi içinde
+        #    dengeli olduğu için MİZAN DENK KALIR ve hiçbir denklik kontrolü
+        #    bunu görmez — yukarıdaki yorumun SÖYLEDİĞİ ("fişi yazıldıysa")
+        #    ama kodun YAPMADIĞI şey buydu.
         #
         #    🔴 Tetikleyici burada, `create_invoice`te DEĞİL — gerekçe
         #    `source_posting` modül docstring'inde ÖLÇÜLEREK yazılıdır:
         #    fatura `draft`/`pending` doğar ve fişi ANCAK BU GEÇİŞTE yazılır;
         #    oluşturmada storno atılsaydı, gönderilmeyen (ya da silinen) bir
         #    taslak yüzünden gider mizandan KALICI olarak kaybolurdu.
-        await source_posting.reverse_source_entry(session, actor, invoice)
+        if fis is not None:
+            await source_posting.reverse_source_entry(session, actor, invoice)
 
     await session.flush()
     # `updated_at` sunucu damgasıdır; UPDATE'ten sonra ORM'deki değer bayattır

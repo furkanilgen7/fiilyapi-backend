@@ -105,6 +105,26 @@ def _santiye_detayi(veri: Any) -> tuple[YapisalBlok, ...]:
     )
 
 
+def _metraj_rozeti(miktar: Any, birim: Any) -> str | None:
+    """Poz satırının metraj rozeti — metraj GİZLİYSE rozet BASILMAZ.
+
+    🔴 ÖLÇÜLMÜŞ KUSUR (2026-09-20). Burada eskiden doğrudan
+    `f"{k.get('quantity')} {k.get('unit')}"` vardı ve `f"{None}"` **"None"**dur:
+    `boq = view/finance` olan rolde (muhasebe) maske OPERASYONEL kovayı
+    düşürdüğü için sohbet kartındaki her poz satırı harfi harfine **"None m³"**
+    yazıyordu. Maske AI hattında da koşar — araçlar servisi değil UCU sarar.
+
+    `None` dönmek (yani rozeti hiç basmamak) BİLİNÇLİDİR ve kardeş alanın
+    kanonuyla aynıdır: `VarlikKalemi.doluluk_yuzde` için *"`None` ise çubuk
+    ÇİZİLMEZ — 0 yazmak 'stok bitti' demektir ve bu uydurulmuş bir olgu
+    olurdu"*. "—" basmak da aynı sınıfa girerdi: rozet bir OLGU taşır, olgunun
+    yokluğu bir olgu DEĞİLDİR. Bekçisi: `tests/modules/ai/test_ai2bd_maskeli_rozet.py`.
+    """
+    if miktar is None:
+        return None
+    return f"{miktar} {birim}" if birim else str(miktar)
+
+
 def _is_kalemleri(veri: Any) -> tuple[YapisalBlok, ...]:
     if not isinstance(veri, Mapping):
         return ()
@@ -113,7 +133,7 @@ def _is_kalemleri(veri: Any) -> tuple[YapisalBlok, ...]:
             ad=str(k.get("code") or ""),
             alt_metin=str(k.get("description") or "") or None,
             ton=BlokTonu.notr,
-            rozet_metni=f"{k.get('quantity')} {k.get('unit')}",
+            rozet_metni=_metraj_rozeti(k.get("quantity"), k.get("unit")),
         )
         for g in veri.get("gruplar") or []
         if isinstance(g, Mapping)

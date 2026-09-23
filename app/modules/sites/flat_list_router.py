@@ -46,13 +46,22 @@ from app.core.access import AccessLevel
 from app.core.db import get_db
 from app.core.deps import get_current_user
 from app.core.openapi import COMMON_ERROR_RESPONSES
-from app.core.permissions import require_permission
+from app.core.permissions import kapsam_kapisi, require_permission
+from app.core.scoped_route import kapsam_rotasi, kapsamdan_oku
 from app.modules.projects.service import visible_projects
 from app.modules.sites import repository
 from app.modules.sites.schemas import SiteOptionListResponse, SiteOptionResponse
 from app.modules.users.models import User
 
-router = APIRouter(tags=["sites"], responses=COMMON_ERROR_RESPONSES)
+# 🔴 KAPSAM MASKESİ — İKİ PARÇA DA GEREKLİ (kullanıcı kararı 2026-09-19).
+#    Gerekçe `router.py`deki kardeşindedir; çifti
+#    `tests/core/test_kapsam_baglantisi.py` çakar.
+router = APIRouter(
+    tags=["sites"],
+    responses=COMMON_ERROR_RESPONSES,
+    route_class=kapsam_rotasi("sites", kapsamdan_oku),
+    dependencies=[kapsam_kapisi("sites")],
+)
 
 _VIEW = require_permission("sites", AccessLevel.view)
 

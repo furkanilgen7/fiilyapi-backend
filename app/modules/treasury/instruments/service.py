@@ -53,7 +53,12 @@ from datetime import date
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import ConflictError, NotFoundError, TreasuryValidationError
+from app.core.errors import (
+    ConflictError,
+    NotFoundError,
+    RelatedRecordsExistError,
+    TreasuryValidationError,
+)
 from app.modules.audit import messages
 from app.modules.projects.service import visible_projects
 from app.modules.treasury import posting as treasury_posting
@@ -303,6 +308,17 @@ async def update_instrument(
     )
     if yon_degisiyor and instrument.status in transitions.TERMINAL_STATUSES:
         raise ConflictError(guards.TERMINAL_STATUS_DIRECTION)
+    # 🔴 IKINCI YON KAPISI — DURUM DEGIL **BAG**. Portfoydeki bir evrakta yon
+    # serbesttir ve oyle KALIR (yukaridaki kapinin gerekcesi), ama BAGLI ODEMESI
+    # varsa serbest DEGILDIR: bagin yon uyumu odeme yazilirken bir kez dogrulanir
+    # (`payments_service._UYUMLU_YON`, 422) ve PATCH onu GERIYE DONUK
+    # gecersizlestirirdi. Odeme fisinin nakit bacagi FATURANIN akisindan,
+    # tahsil/odeme fisininki ENSTRUMANIN `direction`indan secilir; ikisi ayrisinca
+    # `101` hic kapanmaz ve terminal durumdan cikis olmadigi icin duzeltecek
+    # ikinci gecis DOGAMAZ. Sayim KILITLI satir uzerinde kosar (ESIK = KILIT):
+    # kilitsiz olsaydi bir PATCH ile bir odeme yazimi birbirini kacirirdi.
+    if yon_degisiyor and await repository.count_payments_for_instrument(session, instrument.id):
+        raise ConflictError(guards.DIRECTION_LOCKED_BY_PAYMENTS)
 
     issue_date = verilen.get("issue_date") or instrument.issue_date
     due_date = verilen.get("due_date") or instrument.due_date
@@ -402,10 +418,20 @@ async def change_status(
 
 
 async def delete_instrument(session: AsyncSession, actor: User, instrument_id: uuid.UUID) -> str:
-    """YALNIZ `portfolio` iken silinir; terminal durumda **409**.
+    """YALNIZ `portfolio` iken ve BAGLI ODEMESI YOKKEN silinir; ikisi de **409**.
 
     🔴 Silme kapisi da satiri ONCE kilitler: kilitsiz olsaydi bir gecis ile bir
     silme yarisir ve tahsil edilmis bir cek silinebilirdi (mali izin kaybi).
+
+    🔴 **BAGLI ODEME SAYIMI** (`delete_account`in BIREBIR aynasi). Durum kapisi
+    TEK BASINA yetmez: `payments.financial_instrument_id` FK'si
+    **`ON DELETE SET NULL`**dur, yani DB silmeyi ENGELLEMEZ — bagi sessizce
+    KOPARIR. Bagsiz odemeyi `balance.cash_realized_condition` DAIMA nakit saydigi
+    icin, portfoydeki bir cek silindiginde banka bakiyesi HENUZ TAHSIL EDILMEMIS
+    tutar kadar ANINDA siser; ustelik `101 Alinan Cekler`i bosaltacak tek olay
+    (`collected` gecisi) artik dogamaz cunku evrak satiri YOKTUR. Her fis tek
+    basina dengeli oldugu icin mizan dogru gorunur ve kusur hicbir kolon
+    farkiyla ele vermez. Sayim KILITLI satir uzerinde kosar (ESIK = KILIT).
 
     Denetim metni silmeden ONCE kurulur; sonra kurulsaydi numara/keside
     guvenilir okunamaz ve silinenin NE OLDUGU kaybolurdu.
@@ -413,6 +439,8 @@ async def delete_instrument(session: AsyncSession, actor: User, instrument_id: u
     instrument = await visible_instrument(session, actor, instrument_id, for_update=True)
     if instrument.status is not FinancialInstrumentStatus.portfolio:
         raise ConflictError(guards.TERMINAL_STATUS_DELETE)
+    if await repository.count_payments_for_instrument(session, instrument.id):
+        raise RelatedRecordsExistError(guards.INSTRUMENT_HAS_PAYMENTS)
     detail = messages.financial_instrument_deleted(instrument.serial_no, instrument.drawer_name)
     await session.delete(instrument)
     await session.flush()

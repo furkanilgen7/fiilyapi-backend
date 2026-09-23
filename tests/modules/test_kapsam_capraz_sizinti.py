@@ -1,0 +1,260 @@
+"""ÇAPRAZ MODÜL SIZINTISI — kısıtlı bir modülün yanıtına GÖMÜLÜ, BAŞKA modülde
+tanımlı şemanın para/ilerleme alanları gerçekten maskeleniyor mu?
+
+## Neden ayrı bir dosya
+
+`field_scope.maskele()` iç içe `BaseModel`lere İNER (`_deger`), yani maske
+`contracts` yanıtının içindeki `progress_payments` şemasına ULAŞIR. Ulaşmak
+yetmez: o şemanın alanları ETİKETSİZSE hepsi `kimlik` sayılır (fail-OPEN,
+gerekçe `core/field_scope.py`) ve HİÇBİR kapsamda gizlenmez. 2026-09-19
+denetiminde ölçülen canlı hâl tam buydu: `EmployerContractDetail.amount`
+`limited` kapsamda `null` dönerken, AYNI sözleşme bedeli gömülü
+`progress_payment_summary.contract_amount` alanında AÇIKTA kalıyordu.
+
+## Kardeş bekçilerle işbölümü — ÇAKIŞMAZ
+
+* `tests/core/test_para_alani_siniflandirmasi.py` YAPIYI ölçer: maskeli
+  uçlardan ulaşılan her şemada etiket VAR MI? (Etiketi olmayan alanı yakalar.)
+* Bu dosya DAVRANIŞI ölçer: gerçek rol · gerçek uç · gerçek yanıt. Etiket doğru
+  KOVAYA konmuş mu, köprü (`kapsam_kapisi`) → rota sınıfı (`kapsam_rotasi`) →
+  maske zinciri gömülü şemaya kadar KOPMADAN gidiyor mu?
+
+Üç parçanın (etiket · köprü · rota sınıfı) üçü de tek tek yeşilken zincirin
+gömülü şemada kopması mümkündür — yapı testi onu göremez, çünkü yapı testi
+şemanın imzasına bakar, dönen GÖVDEYE değil.
+
+## Kapsam DEĞİŞKENİ testte kurulur, seed'den OKUNMAZ
+
+Üç testin tek farkı rolün `contracts` KAPSAMIDIR; seviye (`view`) sabittir.
+Seed'e bağlansaydı, matris bir gün değiştiğinde test sessizce ANLAMSIZLAŞIR
+(hep aynı kapsamı ölçen üç kopya olurdu) — kırmızı vermeden. Şimdi ölçülen şey
+maskenin kendisidir ve deneyin tek değişkeni kapsamdır (`_boq._set_permission`
+deseni).
+"""
+
+import uuid
+from decimal import Decimal
+
+from app.core.access import AccessLevel, Scope
+from app.modules.contracts.models import EmployerContractGroup, EmployerContractItem
+from app.modules.progress_payments.models import (
+    ProgressPayment,
+    ProgressPaymentLine,
+    ProgressPaymentStatus,
+)
+from app.modules.projects.models import ProjectContract
+from app.modules.sites.models import Site
+
+from ._boq import _auth, _login_with_access, _set_permission
+
+#: Ölçülen senaryonun sayıları. Hepsi BİRBİRİNDEN FARKLI seçildi: eşit sayılar
+#: kullanılsaydı "yanlış alanı okuyan" bir assert de yeşil kalırdı.
+_BEDEL = Decimal("11200000.00")
+_MIKTAR = Decimal("21000.000")
+_BIRIM_FIYAT = Decimal("100.00")
+#: brüt = 21.000 × ₺100 = 2.100.000 · avans %20 = 420.000 · teminat %5 = 105.000
+#: net = 2.100.000 − 420.000 − 105.000 = 1.575.000 · kalan = 11.200.000 − 2.100.000
+#: ilerleme = 2.100.000 / 11.200.000 × 100 = %18,75
+_BRUT = "2100000.00"
+_AVANS = "420000.00"
+_TEMINAT = "105000.00"
+_NET = "1575000.00"
+_KALAN = "9100000.00"
+_ILERLEME = "18.75"
+
+
+async def _hakedisli_proje(db_session, project_factory, olusturan_id: uuid.UUID) -> uuid.UUID:
+    """Bedeli olan bir sözleşme + ONAYLANMIŞ tek hakediş.
+
+    Hakediş durum GEÇİŞ uçlarıyla kurulmaz (`_fixtures_summary._ozet_ortami`
+    emsali): kurulum testin ÖLÇTÜĞÜ şey değil ÖN KOŞULUDUR ve uçlardan kurmak
+    testi ölçmediği kurallara (D8 tek açık hakediş) bağımlı yapardı.
+    """
+    project = await project_factory("KPS-CPR", name="Çapraz Sızıntı Projesi")
+    contract = ProjectContract(
+        project_id=project.id,
+        contract_no="SZL-KPS-CPR",
+        amount=_BEDEL,
+        advance_pct=Decimal("20"),
+        retainage_pct=Decimal("5"),
+        vat_pct=Decimal("20"),
+    )
+    db_session.add(contract)
+    await db_session.flush()
+
+    site = Site(project_id=project.id, code="SNT-KPS", name="Çapraz Şantiyesi")
+    group = EmployerContractGroup(project_id=project.id, name="Çapraz Grubu", sort_order=1)
+    db_session.add_all([site, group])
+    await db_session.flush()
+
+    item = EmployerContractItem(
+        project_id=project.id,
+        group_id=group.id,
+        code="03.001",
+        description="Çapraz pozu",
+        unit="m³",
+        quantity=Decimal("100000"),
+        unit_price=_BIRIM_FIYAT,
+        sort_order=1,
+    )
+    db_session.add(item)
+    await db_session.flush()
+
+    payment = ProgressPayment(
+        project_id=project.id,
+        sequence_no=1,
+        status=ProgressPaymentStatus.approved,
+        period_year=2026,
+        period_month=9,
+        vat_pct=contract.vat_pct,
+        advance_pct=contract.advance_pct,
+        retainage_pct=contract.retainage_pct,
+        created_by=olusturan_id,
+    )
+    payment.lines = [
+        ProgressPaymentLine(
+            contract_item_id=item.id,
+            site_id=site.id,
+            code=item.code,
+            description=item.description,
+            unit=item.unit,
+            contract_unit_price=_BIRIM_FIYAT,
+            coefficient=Decimal("1.000"),
+            quantity=_MIKTAR,
+            group_name=group.name,
+        )
+    ]
+    db_session.add(payment)
+    await db_session.flush()
+    return project.id
+
+
+async def _sozlesme_detayi(
+    client, db_session, user_factory, project_factory, kapsam: Scope, eposta: str
+) -> dict:
+    """`GET /projects/{id}/contract` — `contracts` kapsamı `kapsam` olan rolle."""
+    olusturan = await user_factory(
+        email=f"kurucu-{eposta}", password="parola1234", role_key="system_admin"
+    )
+    project_id = await _hakedisli_proje(db_session, project_factory, olusturan.id)
+    token = await _login_with_access(client, db_session, user_factory, "project_manager", eposta)
+    await _set_permission(db_session, "project_manager", "contracts", AccessLevel.view, kapsam)
+
+    resp = await client.get(f"/projects/{project_id}/contract", headers=_auth(token))
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+async def test_ALL_kapsamda_GOMULU_ozetin_HER_SAYISI_GORUNUR(
+    client, db_session, user_factory, project_factory
+):
+    """🔴 POZİTİF KONTROL — maske "her şeyi gizle" hâline gelirse burası kırmızı.
+
+    Bu test olmasaydı, gömülü özeti KOŞULSUZ `None`a çeken bir kusur diğer iki
+    testi de yeşil bırakırdı ve E14 "Hakediş Özeti" kartı HERKES için boşalırdı.
+    """
+    govde = await _sozlesme_detayi(
+        client, db_session, user_factory, project_factory, Scope.all, "all@capraz.co"
+    )
+    ozet = govde["progress_payment_summary"]
+
+    assert govde["amount"] == str(_BEDEL)
+    assert ozet["contract_amount"] == str(_BEDEL)
+    assert ozet["cumulative_gross"] == _BRUT
+    assert ozet["advance_deduction_total"] == _AVANS
+    assert ozet["retention_total"] == _TEMINAT
+    assert ozet["net_total"] == _NET
+    assert ozet["remaining"] == _KALAN
+    assert ozet["progress_pct"] == _ILERLEME
+
+
+async def test_LIMITED_kapsamda_GOMULU_ozetin_PARASI_da_GIZLENIR(
+    client, db_session, user_factory, project_factory
+):
+    """`contracts = view/limited` → PARA gizli.
+
+    🔴 Ölçülen kusur BUYDU: `amount` gizlenirken gömülü `contract_amount`
+    AÇIKTAYDI — yani maske ikinci bir kapıdan AYNI sayıyı yayınlıyordu.
+    `net_total`/`remaining` de türevdir; gizlenmeselerdi bedel
+    `net_total + avans + teminat` ya da `cumulative_gross + remaining` ile geri
+    hesaplanırdı.
+    """
+    govde = await _sozlesme_detayi(
+        client, db_session, user_factory, project_factory, Scope.limited, "lim@capraz.co"
+    )
+    ozet = govde["progress_payment_summary"]
+
+    assert govde["amount"] is None, "SÖZLEŞME BEDELİ SIZDI"
+    assert ozet["contract_amount"] is None, "GÖMÜLÜ ÖZETTEN BEDEL SIZDI"
+    assert ozet["cumulative_gross"] is None, "KÜMÜLATİF BRÜT SIZDI"
+    assert ozet["advance_deduction_total"] is None, "AVANS MAHSUBU SIZDI"
+    assert ozet["retention_total"] is None, "TEMİNAT KESİNTİSİ SIZDI"
+    assert ozet["net_total"] is None, "NET ÖDEME SIZDI"
+    assert ozet["remaining"] is None, "KALAN BEDEL SIZDI"
+    # 🔴 İÇERİDEKİ POZİTİF KONTROL: `limited` PARAYI gizler, ilerlemeyi DEĞİL.
+    # Hepsini `None` yapan bir kusur yukarıdaki yedi assert'i de geçerdi.
+    assert ozet["progress_pct"] == _ILERLEME, "İLERLEME YANLIŞLIKLA GİZLENDİ"
+    assert govde["contract_no"] == "SZL-KPS-CPR", "KİMLİK GİZLENDİ"
+
+
+async def test_FINANCE_kapsamda_GOMULU_ILERLEME_gizlenir_PARA_DURUR(
+    client, db_session, user_factory, project_factory
+):
+    """`contracts = view/finance` → OPERASYONEL gizli, PARA görünür (`limited`in
+    AYNASI).
+
+    🔴 `progress_pct` kardeşi `ContractListItem.progress_pct` ZATEN
+    `operasyonel` etiketliydi: aynı kavram sözleşme LİSTESİNDE muhasebeden
+    gizlenirken DETAYINDA görünüyordu. Bu test o çelişkiyi çakar.
+    """
+    govde = await _sozlesme_detayi(
+        client, db_session, user_factory, project_factory, Scope.finance, "fin@capraz.co"
+    )
+    ozet = govde["progress_payment_summary"]
+
+    assert ozet["progress_pct"] is None, "GÖMÜLÜ İLERLEME YÜZDESİ SIZDI"
+    # PARA muhasebenin işidir — gizlenmesi ekranı kullanılamaz yapardı.
+    assert govde["amount"] == str(_BEDEL), "PARA YANLIŞLIKLA GİZLENDİ"
+    assert ozet["contract_amount"] == str(_BEDEL), "GÖMÜLÜ BEDEL YANLIŞLIKLA GİZLENDİ"
+    assert ozet["net_total"] == _NET, "GÖMÜLÜ NET ÖDEME YANLIŞLIKLA GİZLENDİ"
+
+
+async def test_OZETIN_KENDI_UCU_ETIKETLERDEN_ETKILENMEZ(
+    client, db_session, user_factory, project_factory
+):
+    """Aynı şema KENDİ ucundan (`/projects/{id}/progress-payments/summary`)
+    dönerken etiketler İŞLEMEZ — ve bu BİLİNÇLİDİR.
+
+    🔴 Etiket şemanın TANIMLI olduğu yerdedir ama anlamı KULLANIM yerinden
+    gelir. `progress_payments` izin matrisinde kapsam kısıtı taşımaz (bütün
+    hücreleri `Scope.all`) ve routerı `kapsam_rotasi`ya BAĞLI DEĞİLDİR; yani bu
+    uçta maske hiç koşmaz. Etiketlemek bu ucun davranışını DEĞİŞTİRMEMELİDİR —
+    değiştirseydi, `contracts` sızıntısını kapatmak `progress_payments`
+    ekranlarını sessizce boşaltırdı.
+
+    Bu test aynı zamanda B maddesinin (sözleşme birim fiyatının hakediş ucundan
+    maskesiz dönmesi) ÜRÜN KARARI olduğunu belgeler: kapanması matrisin
+    değişmesini gerektirir, etiket eklemek YETMEZ.
+    """
+    olusturan = await user_factory(
+        email="kurucu@ozet.co", password="parola1234", role_key="system_admin"
+    )
+    project_id = await _hakedisli_proje(db_session, project_factory, olusturan.id)
+    token = await _login_with_access(
+        client, db_session, user_factory, "project_manager", "ozet@capraz.co"
+    )
+    # `contracts` kapsamı EN DAR hâlde olsa bile bu uç ETKİLENMEZ: ölçülen şey
+    # tam olarak "maske başka modülün ucuna TAŞMIYOR" olgusudur.
+    await _set_permission(
+        db_session, "project_manager", "contracts", AccessLevel.view, Scope.limited
+    )
+
+    resp = await client.get(
+        f"/projects/{project_id}/progress-payments/summary", headers=_auth(token)
+    )
+    assert resp.status_code == 200, resp.text
+    ozet = resp.json()
+    assert ozet["contract_amount"] == str(_BEDEL)
+    assert ozet["cumulative_gross"] == _BRUT
+    assert ozet["net_total"] == _NET
+    assert ozet["progress_pct"] == _ILERLEME

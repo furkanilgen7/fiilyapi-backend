@@ -1,9 +1,11 @@
 import enum
 import uuid
 from decimal import Decimal
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.field_scope import Gorunurluk
 from app.modules.projects.models import ProjectStatus
 
 # Yer tutucu sozlesmesi TEK yerde tanimlidir (B6/P1, spec §2.3): kopyalanmaz,
@@ -158,16 +160,16 @@ class DashboardProjectCard(BaseModel):
     code: str
     name: str
     status: ProjectStatus
-    budget: Decimal
-    progress_pct: Decimal
+    budget: Annotated[Decimal | None, Gorunurluk.para]
+    progress_pct: Annotated[Decimal | None, Gorunurluk.operasyonel]
 
 
 class DashboardSummaryResponse(BaseModel):
     role_name: str
     active_project_count: int
     projects: list[DashboardProjectCard]
-    portfolio: MetricPlaceholder
-    receivables: MetricPlaceholder
-    average_margin: MetricPlaceholder
+    portfolio: Annotated[MetricPlaceholder, Gorunurluk.para]
+    receivables: Annotated[MetricPlaceholder, Gorunurluk.para]
+    average_margin: Annotated[MetricPlaceholder, Gorunurluk.para]
     pending_approvals: PendingApprovalsPlaceholder
     risks: RiskAlertsPlaceholder

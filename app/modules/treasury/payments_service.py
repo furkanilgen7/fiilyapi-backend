@@ -25,6 +25,14 @@ yalnız YOLU barındırır (spec §5 rota sırası tuzağı), tek satır kural t
 `invoicing` yalnız `treasury.repository`yi okur, `treasury`nin iş mantığını
 DEĞİL.
 
+🔴 **ODM-HAK — bu modül AYRICA `progress_payments.models` ve
+`subcontractor_progress_payments.models`i okur** (`_assert_source_not_paid`).
+Çember AÇILMAZ ve bu ölçüldü: her iki `models.py` de YAPRAKTIR (yalnız
+`app.core.db` + birbirlerinden `QuantitySource`); ters yöndeki tek kenar
+`progress_payments.transitions → treasury.realized`tır ve `realized` bu modülü
+İTHAL ETMEZ. Okunan tek şey durum KOLONUDUR — hakediş modüllerinin SERVİSLERİ
+buradan çağrılmaz.
+
 ## 🔴 K7 — EŞİK = KİLİT (WORKFLOW §4, İK-2/İK-3 kanonu)
 
 K6 bir EŞİK denetimidir → kilitsiz yapılamaz. İki eşzamanlı tahsilat AYNI
@@ -126,6 +134,7 @@ gerekçe `posting.payment_cash_role`ta). Bu dosyaya iki YENİ KAPI düşer:
 import uuid
 from decimal import Decimal
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError, TreasuryValidationError
@@ -135,6 +144,11 @@ from app.modules.invoicing import service as invoicing_service
 from app.modules.invoicing import transitions
 from app.modules.invoicing.models import Invoice, InvoiceDirection, InvoiceStatus
 from app.modules.invoicing.transitions import InvoiceAction
+from app.modules.progress_payments.models import ProgressPayment, ProgressPaymentStatus
+from app.modules.subcontractor_progress_payments.models import (
+    SubcontractorPaymentStatus,
+    SubcontractorProgressPayment,
+)
 from app.modules.treasury import posting, repository
 from app.modules.treasury.instruments import repository as instruments_repository
 from app.modules.treasury.instruments import service as instruments_service
@@ -151,6 +165,7 @@ from app.modules.users.models import User
 __all__ = [
     "PAYMENT_INSTRUMENT_NOT_PORTFOLIO",
     "PAYMENT_INSTRUMENT_NOT_PORTFOLIO_DELETE",
+    "PAYMENT_SOURCE_PAID",
     "PERMISSION_MODULE",
     "create_payment",
     "delete_payment",
@@ -200,6 +215,18 @@ PAYMENT_INSTRUMENT_NOT_PORTFOLIO = "Yalnızca portföydeki çek/senede ödeme ba
 # farkı ele vermezdi. 409'dur (422 değil): gövde kusurlu DEĞİL, kaydın DURUMU
 # bu işlemi imkânsız kılıyor (`instruments.guards.TERMINAL_STATUS_DELETE` emsali).
 PAYMENT_INSTRUMENT_NOT_PORTFOLIO_DELETE = "Portföyden çıkmış bir çek/senede bağlı ödeme silinemez"
+
+# 🔴 409 — ODM-HAK. Hakedişin `paid` damgası bu ödemeye DAYANIR
+# (`realized.assert_realized_covers`: gerçekleşmiş ödeme faturanın `total`ini
+# karşılamalı). Ödeme silinirse damganın altındaki para çekilmiş olur ve damga
+# geri ALINAMAZ: `paid` dört evrak ailesinde de TERMİNALDİR (hiçbir geçiş
+# çiftinin KAYNAĞI değildir) ve `paid` bir hakediş ADMİN DAHİL silinemez. Yani
+# kayıt kalıcı olarak boş bir "Ödendi" rozeti taşırdı ve tek düzeltme yolu elle
+# SQL olurdu. 409'dur (422 değil): gövde kusurlu DEĞİL, KAYNAĞIN DURUMU bu
+# işlemi imkânsız kılıyor — `PAYMENT_INSTRUMENT_NOT_PORTFOLIO_DELETE` emsali.
+PAYMENT_SOURCE_PAID = (
+    "Ödenmiş hakedişe ait ödeme silinemez: hakediş 'Ödendi' damgasını bu ödemeye dayanarak aldı"
+)
 
 #: 🔴 FIN-PAY K3 — UYUMLU YÖN ÇİFTLERİ. Eşleme koddan ÖLÇÜLDÜ, tahmin edilmedi
 #: (`balance.inflow_condition()` ve `models.FinancialInstrumentDirection`):
@@ -430,6 +457,74 @@ async def _assert_instrument_deletable(session: AsyncSession, payment: Payment) 
         raise ConflictError(PAYMENT_INSTRUMENT_NOT_PORTFOLIO_DELETE)
 
 
+#: 🔴 ODM-HAK — faturanın KAYNAK kolonu → o kaynağın durum modeli ve `paid` üyesi.
+#:
+#: Tabloda YALNIZ iki hakediş ailesi vardır ve bu uydurulmadı: `mark-paid`i
+#: `realized.assert_realized_covers` kapısından geçiren kaynaklar tam olarak
+#: bunlardır (`realized.SOURCE_DIRECTION` ile AYNI iki kolon). Öteki kaynak
+#: kolonlarının (`equipment_rental_invoice_id` · `purchase_order_id`) "ödendi"
+#: damgası bu ödemelerden TÜRETİLMEZ, o yüzden burada yoktur — eklenseydi
+#: ölçülmemiş bir kapı açılırdı.
+_PAID_SOURCES = (
+    ("progress_payment_id", ProgressPayment, ProgressPaymentStatus.paid),
+    (
+        "subcontractor_progress_payment_id",
+        SubcontractorProgressPayment,
+        SubcontractorPaymentStatus.paid,
+    ),
+)
+
+
+async def _assert_source_not_paid(session: AsyncSession, invoice: Invoice) -> None:
+    """🔴 ODM-HAK — **ödenmiş hakedişin ödemesi silinemez** → 409.
+
+    `transitions.py`nin açıkça ERTELEDİĞİ hâl buydu: *"Ödeme sonradan silinir
+    ya da çek karşılıksız çıkarsa ne olacağı AYRI bir karardır."* Çek yolu
+    kapalıydı (`instruments/transitions.py`: `collected` TERMİNAL, geri dönüş
+    çifti YOK), ama SİLME yolu açıktı ve evraksız bir `transfer` ödemesi
+    `_assert_instrument_deletable`ın erken dönüşü yüzünden HER ZAMAN
+    silinebiliyordu — silme yolu hakedişi HİÇ sormuyordu.
+
+    Sonuç kalıcıydı: `paid` dört evrak ailesinde de TERMİNALDİR
+    (`_TRANSITION_SHAPE`te hiçbir çiftin KAYNAĞI değil) ve `paid` bir hakediş
+    ADMİN DAHİL silinemez (`progress_payments/service.py` 409). Yani hakediş,
+    arkasında tek kuruş olmadan kalıcı bir "Ödendi" rozeti taşırdı.
+
+    🔴 **KAPI İLERİ YÖNÜ AÇMAZ.** `paid → approved` geçişi AÇILMIYOR (o hâlâ
+    ayrı bir ürün kararıdır); yalnız damganın ALTINDAKİ paranın çekilmesi
+    engelleniyor. Kural tek cümledir: **ödenmiş hakedişin parası geri alınmaz.**
+
+    🔴 **KAPSAM DAR: yalnız `paid`.** `draft`/`pending_approval`/`approved` bir
+    hakedişin faturasında silme AÇIK KALIR — yoksa yanlış girilmiş bir tahsilatı
+    düzeltmenin tek yolu (`DELETE` + yeniden yazma; `PATCH /payments/{id}`
+    YOKTUR) kapanır ve kapı kusurdan daha pahalı olurdu.
+
+    🔴 **SATIR KİLİTLENİR** — İK-2'nin "EŞİK = KİLİT" kanonu: kilitsiz okunsaydı
+    eşzamanlı bir `mark-paid` ile bu silme birbirini KAÇIRIRDI (silme hakedişi
+    `approved` görüp ödemeyi siler, `mark-paid` ise AYNI ödemeyi Σ'ya katıp
+    `paid` damgalar) ve kusur tam olarak yeniden doğardı. Kilit sırası
+    BOZULMAZ: `invoices` satırı ZATEN alınmıştır ve hakediş ondan SONRA gelir;
+    ters yönden (hakediş → fatura) kilitleyen bir yol ölçüldü ve YOKTUR
+    (`mark-paid` sözleşme → hakediş kilitler, fatura satırına HİÇ dokunmaz).
+
+    Okuma yalnız `status` kolonudur: `ProgressPayment.lines` `selectin` ile
+    gelir ve burada hiç gerekmez; ayrıca kolon seçimi kimlik haritasındaki bayat
+    bir nesneyi değil DB'nin kilit altındaki değerini verir (`populate_existing`
+    tuzağı).
+    """
+    for kolon, model, paid in _PAID_SOURCES:
+        source_id = getattr(invoice, kolon)
+        if source_id is None:
+            continue
+        durum = (
+            await session.execute(
+                select(model.status).where(model.id == source_id).with_for_update()
+            )
+        ).scalar_one_or_none()
+        if durum is paid:
+            raise ConflictError(PAYMENT_SOURCE_PAID)
+
+
 # --- Uç 6: GET /invoices/{id}/payments ---
 
 
@@ -567,6 +662,7 @@ async def delete_payment(session: AsyncSession, actor: User, payment_id: uuid.UU
     # `bank_account_id` NOT NULL + FK RESTRICT olduğu için satır YAPISAL OLARAK
     # vardır (404 dalı ulaşılamazdır ama korkuluk olarak durur).
     await _assert_instrument_deletable(session, payment)
+    await _assert_source_not_paid(session, invoice)
 
     account = await _account_or_404(session, payment.bank_account_id)
     # Denetim metni silmeden ÖNCE kurulur; sonra kurulsaydı hesap/numara

@@ -37,6 +37,7 @@ from app.core.errors import SiteValidationError
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.permissions import require_permission
 from app.modules.site_diary import guards, service, suggestion
+from app.modules.site_diary.guards import MAX_YEAR, MIN_YEAR
 from app.modules.site_diary.schemas import EmployerDiarySuggestion, SubcontractorDiarySuggestion
 from app.modules.users.models import User
 
@@ -70,7 +71,7 @@ async def employer_diary_suggestion_endpoint(
     project_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
-    year: int | None = None,
+    year: Annotated[int | None, Query(ge=MIN_YEAR, le=MAX_YEAR)] = None,
     month: Annotated[int | None, Query(ge=1, le=12)] = None,
 ) -> EmployerDiarySuggestion:
     """İşveren hakedişi için "günlükten doldur" ÖNERİSİ — **hiçbir şey yazmaz**.
@@ -92,7 +93,7 @@ async def subcontractor_diary_suggestion_endpoint(
     contract_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
-    year: int | None = None,
+    year: Annotated[int | None, Query(ge=MIN_YEAR, le=MAX_YEAR)] = None,
     month: Annotated[int | None, Query(ge=1, le=12)] = None,
 ) -> SubcontractorDiarySuggestion:
     """Taşeron hakedişi için "günlükten doldur" ÖNERİSİ — **hiçbir şey yazmaz**.

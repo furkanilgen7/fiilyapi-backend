@@ -42,10 +42,14 @@ from app.modules.equipment.models import (
     EquipmentRentalInvoiceLine,
     RentalInvoiceStatus,
 )
+from app.modules.invoicing.models import Invoice
 from app.modules.procurement.models import PaymentTerms, Supplier
 from app.modules.roles.models import Role
+from app.modules.treasury.models import BankAccount, Payment
 from app.modules.users.models import User
 from tests.conftest import test_engine
+
+from ._mk2_para_gercek import kira_parasini_yatir
 
 pytestmark = pytest.mark.asyncio
 
@@ -146,6 +150,11 @@ async def _kur(*, status: RentalInvoiceStatus) -> _Kurulum:
         ]
         session.add_all(aktorler)
         await session.flush()
+        # 🔴 PARA-GERCEK (kullanıcı kararı 2026-09-19) — `pay_invoice` artık
+        #    arkasında GERÇEKLEŞMİŞ para ister. Kurulmasaydı bu dosya kilidi
+        #    değil EKSİK PARAYI ölçen bir kırmızı gösterirdi; MU-3D eşlemesinin
+        #    (yukarıda) yarattığı tuzakla AYNI sınıftır.
+        await kira_parasini_yatir(session, invoice.id)
         await session.commit()
         return _Kurulum(
             invoice_id=invoice.id,
@@ -225,6 +234,16 @@ async def _fisleri_temizle(session, invoice_id: uuid.UUID) -> None:
 
 async def _temizle(kurulum: _Kurulum) -> None:
     async with _SessionFactory() as session:
+        # 🔴 PARA-GERCEK kurulumunun izi ÖNCE düşer: `payments.invoice_id` ve
+        #    `invoices.equipment_rental_invoice_id` FK'dır, ters sırada silmek
+        #    kira hakedişinin DELETE'ini kırardı.
+        _fatura_alt = select(Invoice.id).where(
+            Invoice.equipment_rental_invoice_id == kurulum.invoice_id
+        )
+        await session.execute(delete(Payment).where(Payment.invoice_id.in_(_fatura_alt)))
+        await session.execute(
+            delete(Invoice).where(Invoice.equipment_rental_invoice_id == kurulum.invoice_id)
+        )
         await session.execute(
             delete(EquipmentRentalInvoiceLine).where(
                 EquipmentRentalInvoiceLine.invoice_id == kurulum.invoice_id
@@ -239,6 +258,11 @@ async def _temizle(kurulum: _Kurulum) -> None:
         await session.execute(delete(Supplier).where(Supplier.id == kurulum.supplier_id))
         await session.execute(delete(User).where(User.id.in_(kurulum.actor_ids)))
         await session.execute(delete(Role).where(Role.id == kurulum.role_id))
+        # 🔴 PARA-GERCEK'in banka hesabı da DÜŞER. Bu dosya GERÇEKTEN commit eder
+        #    ve bırakılan satır sonraki koşuda `treasury` liste/sayaç testlerini
+        #    kırar — nitekim kırdı (`test_hz1_bank_accounts`: `assert 4 == 3`).
+        #    Ödemeler yukarıda silindiği için `bank_account_id` FK'sı serbesttir.
+        await session.execute(delete(BankAccount).where(BankAccount.bank_name == "PARA-GERCEK"))
         await session.commit()
 
 

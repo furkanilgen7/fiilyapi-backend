@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from app.core.access import AccessLevel, Scope
 from app.modules.dashboard.schemas import (
     DashboardSummaryResponse,
     MetricPlaceholder,
@@ -7,6 +8,8 @@ from app.modules.dashboard.schemas import (
     RiskAlertsPlaceholder,
 )
 from app.modules.users.models import UserProjectAccess
+
+from ._boq import _set_permission
 
 
 def test_metric_placeholder_defaults_to_unavailable():
@@ -114,3 +117,66 @@ async def test_summary_empty_state_is_not_an_error(client, user_factory):
     assert resp.status_code == 200
     assert resp.json()["projects"] == []
     assert resp.json()["active_project_count"] == 0
+
+
+async def _ozet(client, email: str):
+    """Panel yanitini HAM doner — govde METNI de iddiaya girer (butce sizintisi)."""
+    login = await client.post("/auth/login", json={"email": email, "password": "parola1234"})
+    assert login.status_code == 200, login.text
+    return await client.get(
+        "/dashboard/summary",
+        headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+    )
+
+
+async def test_projects_izni_KAPALIYKEN_panel_proje_karti_BASMAZ(
+    client, seeded_db, user_factory, project_factory
+):
+    """🔴 K4 (TUREV ALAN SIZINTISI) — proje kartlarinin ALAN KAPISI.
+
+    `GET /dashboard/summary`in TEK kapisi `require_permission("dashboard", view)`
+    idi. Ayni yanit `code` · `name` · `status` · **`budget`** · `progress_pct`
+    tasiyor; ayni veri `GET /projects` ucundan `require_permission("projects",
+    ...)` ile korunuyor. Yani AYNI VERI iki uctan cikiyordu ve yalniz birinde
+    kapi vardi.
+
+    Bugun kazara guvenliydi: tohum matrisinde `dashboard` (seed_data.py:183) ve
+    `projects` (:187) satirlari BIREBIR AYNI. Ama izin hucreleri CALISMA ANINDA
+    degistirilebilir (`PUT /roles/{role_id}/permissions/{module_key}`), ve
+    `test_seed_matrix.py` yalnizca TOHUMUN esitligini kilitler.
+
+    Bekci CIFT YONLUDUR (K-IKIZ1): once izin VARKEN kartlarin GELDIGI, sonra
+    hucre `none` yapilinca DUSTUGU cakilir — "her seyi bosalt" mutasyonu da
+    yakalanir.
+    """
+    await project_factory("GK-A", name="Güneşkent A-Blok", status="active", budget="7654321.00")
+    # `hr_manager`: `dashboard = _LIM` (paneli acabilir) ve `projects = _LIM`.
+    user = await user_factory(email="ik-panel@t.co", password="parola1234", role_key="hr_manager")
+    seeded_db.add(UserProjectAccess(user_id=user.id, project_id=None, all_projects=True))
+    await seeded_db.flush()
+
+    # 🔴 Bu test K4 KAPISINI ölçer, KAPSAM MASKESİNİ değil: `hr_manager` seed'de
+    #    her iki modülde de `limited` taşır ve bütçe o yüzden maskelenirdi —
+    #    aşağıdaki "BÜTÇE sızdı" iddiası o zaman kapıdan değil maskeden geçerdi
+    #    ve kapı kaldırılsa bile YEŞİL kalırdı (sahte-yeşil). Kapsam açıkça
+    #    `all`a çekilir ki ölçülen tek şey izin hücresi olsun.
+    await _set_permission(seeded_db, "hr_manager", "dashboard", AccessLevel.view, Scope.all)
+    await _set_permission(seeded_db, "hr_manager", "projects", AccessLevel.view, Scope.all)
+
+    # (a) OLUMLU KONTROL — `projects` izni VARKEN kart DOLU.
+    izinli = await _ozet(client, "ik-panel@t.co")
+    assert izinli.status_code == 200, izinli.text
+    assert [p["code"] for p in izinli.json()["projects"]] == ["GK-A"]
+    assert izinli.json()["active_project_count"] == 1
+    assert "7654321.00" in izinli.text
+
+    # (b) Hucre CALISMA ANINDA kapatilir — uc hâlâ acik (403 DEGIL) ama kart bos.
+    await _set_permission(seeded_db, "hr_manager", "projects", AccessLevel.none)
+
+    kapali = await _ozet(client, "ik-panel@t.co")
+    assert kapali.status_code == 200, kapali.text
+    govde = kapali.json()
+    assert govde["projects"] == [], govde["projects"]
+    assert govde["active_project_count"] == 0
+    assert "7654321.00" not in kapali.text, "BÜTÇE sızdı"
+    assert "Güneşkent A-Blok" not in kapali.text, "proje ADI sızdı"

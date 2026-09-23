@@ -42,6 +42,7 @@ from app.modules.payroll import service
 from app.modules.payroll.models import (
     PayrollLine,
     PayrollLineStatus,
+    PayrollMinimumWage,
     PayrollPeriod,
     PayrollPeriodStatus,
     PayrollRate,
@@ -63,9 +64,15 @@ _SessionFactory = async_sessionmaker(test_engine, class_=AsyncSession, expire_on
 _ROL_ANAHTARI = "ik3_conc_admin"
 _EPOSTALAR = ("ik3-onay1@conc.co", "ik3-onay2@conc.co")
 
-#: Üretim verisiyle çakışmayan uzak bir yıl (UQ `(year, month)`); her senaryo
-#: KENDİ AYINI kullanır ki testler birbirinin dönemini görmesin.
-_YIL = 2099
+#: Üretim/seed verisiyle çakışmayan uzak bir GEÇMİŞ yıl (UQ `(year, month)`);
+#: her senaryo KENDİ AYINI kullanır ki testler birbirinin dönemini görmesin.
+#: 🔴 GELECEK bir yıl KULLANILAMAZ: `post_document` artık `accounting_service.
+#: assert_entry_date_not_future` kapısından geçer (MU-3A, envanter #5) ve bu
+#: dosyanın `approve_period` çağrısı `posted` bir fiş üretir (MU-3E) — 2099
+#: seçilmiş olsaydı her onay 422 (`ENTRY_DATE_IN_FUTURE`) ile patlardı. Geçmişe
+#: alt sınır YOKTUR (`assert_entry_date_not_future` yalnız ÜST sınırı denetler),
+#: o yüzden uzaklık aynı yalıtım gerekçesiyle GEÇMİŞE taşınır.
+_YIL = 2005
 
 SIRKET_NET = Decimal("7650.00")
 TASERON_NET = Decimal("5000.00")
@@ -172,6 +179,13 @@ async def _kur(
                 short_work_pct=Decimal("1.000"),
             )
         )
+        # 🔴 MU-3E kayıt 24 — dilimli rejimde (`income_tax_pct=None`) damga
+        #    tavanı `minimum_wage_gross`e bağlıdır (posting._expected_stamp_tax,
+        #    fail-closed). Satırsız yıl 422 (`RATES_CHANGED_SINCE_COMPUTE`)
+        #    verir ve `approve_period` hiç `approved`a ulaşamaz. 9.000 brüt bu
+        #    tutarın ALTINDA kalmalı (income_tax_amount=0,00 yorumu bunu zaten
+        #    OLGU sayıyordu) — tam istisna, damga kalanı sıfır.
+        session.add(PayrollMinimumWage(year=_YIL, gross_amount=Decimal("33030.00")))
         await _fisleme_eslemesi(session)
         await session.flush()
         await session.commit()
@@ -274,6 +288,7 @@ async def _temizle(kurulum: _Kurulum) -> None:
         await session.execute(delete(PayrollPeriod).where(PayrollPeriod.id == kurulum.period_id))
         # T5: oran yarışı senaryosu bu yıl için satır YARATABİLİR (upsert).
         await session.execute(delete(PayrollRate).where(PayrollRate.year == _YIL))
+        await session.execute(delete(PayrollMinimumWage).where(PayrollMinimumWage.year == _YIL))
         # 🔴 MU-3E — dönemin fişi ve eşlemesi. Fiş ÖNCE gider (`journal_lines`
         #    CASCADE ile düşer), sonra kural, en sonra hesap kartı: `posting_
         #    rules.account_id` ve `journal_lines.account_id` RESTRICT'tir.
@@ -305,7 +320,7 @@ async def _temizle(kurulum: _Kurulum) -> None:
         #    YOKSA `open` olarak AÇAR. Bu dosya GERÇEKTEN commit ettiği için o
         #    satır veritabanında KALIR ve `tests/modules/accounting/
         #    test_mu2_periods_api.py`nin dönem SAYAN/SIRALAYAN testlerini tam
-        #    küme koşusunda kırar (ölçüldü: 2099/3 ve 2099/4 satırları, 4 test).
+        #    küme koşusunda kırar (ölçüldü: `_YIL`/3 ve `_YIL`/4 satırları, 4 test).
         #    Sızıntı hiçbir yerde GÖRÜNMEZ — kırmızı BAŞKA bir pakette çıkar.
         await session.execute(delete(AccountingPeriod).where(AccountingPeriod.year == _YIL))
         await session.execute(delete(Personnel).where(Personnel.id.in_(kurulum.personnel_ids)))

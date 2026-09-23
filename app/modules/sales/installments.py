@@ -57,6 +57,8 @@ from app.modules.users.models import User
 __all__ = ["generate_plan", "get_plan", "pay_installment", "save_installments"]
 
 _ZERO = Decimal("0.00")
+# `Numeric(18,2)` ölçeğinin en küçük pozitif adımı — taksit başına TABAN tutar.
+_KURUS = Decimal("0.01")
 
 
 # --- Yanıt zarfı ---
@@ -156,6 +158,7 @@ async def generate_plan(
     DOKUNULMADAN kalır.
     """
     sale, project = await guards.visible_sale(session, actor, sale_id)
+    guards.ensure_sale_writable(sale)
 
     # Kilit ÖNCE: eşzamanlı bir `pay` isteği, "tahsilat var mı" kontrolü ile
     # satırların silinmesi arasına giremesin.
@@ -171,6 +174,19 @@ async def generate_plan(
         raise SiteValidationError(guards.PLAN_DOWN_PAYMENT_EXCEEDS)
     if installment_count > 0 and sale.first_installment_date is None:
         raise SiteValidationError(guards.PLAN_INPUT_MISSING)
+
+    # Σ amount == sale_price DEĞİŞMEZİNİN iki deliği (`plan.build_plan` girdi
+    # doğrulamasını ÇAĞIRANA bırakır, modül notu). `PUT installments` bu
+    # değişmezi `INSTALLMENT_TOTAL_MISMATCH` ile zaten zorluyordu; üretim yolu
+    # zorlamıyordu ve iki yazma yolu AYRIŞMIŞTI.
+    financed = sale.sale_price - down_payment
+    if installment_count > 0 and financed < installment_count * _KURUS:
+        # Bakiye taksit başına bir kuruşun altına düşüyor → `ROUND_DOWN` ile
+        # 0,00 tutarlı satırlar doğar ve sayaçlar onları "ödenmiş" sayar.
+        raise SiteValidationError(guards.PLAN_INSTALLMENT_TOO_SMALL)
+    if installment_count <= 0 and financed > _ZERO:
+        # Taksit yok ama bakiye var → plan `sale_price`ın ALTINDA kalırdı.
+        raise SiteValidationError(guards.PLAN_BALANCE_UNCOVERED)
 
     rows = plan.build_plan(
         sale_price=sale.sale_price,
@@ -230,6 +246,12 @@ def _resolve_inputs(
         if entry.sequence_no in seen:
             raise DuplicateError(guards.DUPLICATE_SEQUENCE_NO)
         seen.add(entry.sequence_no)
+        # 0,00 tutarlı satır `paid_amount >= amount` ölçütünü DOĞDUĞU ANDA
+        # sağlar: `_sync_paid_at` ona sunucu saatini damgalar, sayaçlar onu
+        # "ödenmiş" sayar ve toplam yine `sale_price`a eşit olduğu için aşağıdaki
+        # eşitlik kontrolü bu gövdeyi GEÇİRİRDİ.
+        if entry.amount <= _ZERO:
+            raise SiteValidationError(guards.INSTALLMENT_AMOUNT_NOT_POSITIVE)
         total += entry.amount
 
         current = existing.get(entry.sequence_no)
@@ -256,6 +278,7 @@ async def save_installments(
     geçmişini kimliksizleştirirdi.
     """
     sale, project = await guards.visible_sale(session, actor, sale_id)
+    guards.ensure_sale_writable(sale)
 
     # Kilit ÖNCE (TB1 deseni): doğrulamayı besleyen `list_installments`
     # okumasından da önce — aksi hâlde eşzamanlı `pay` araya girer ve tutarı
@@ -305,6 +328,7 @@ async def pay_installment(
     tahsilat SERİLEŞTİRİLİR (bkz. `tests/sales/test_installment_concurrency.py`).
     """
     installment, sale, project = await guards.visible_installment(session, actor, installment_id)
+    guards.ensure_sale_writable(sale)
 
     if installment.paid_amount + data.amount > installment.amount:
         raise SiteValidationError(guards.PAYMENT_EXCEEDS_INSTALLMENT)

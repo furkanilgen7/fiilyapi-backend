@@ -275,7 +275,15 @@ async def update(
     payment_id: uuid.UUID,
     data: SubcontractorProgressPaymentUpdate,
 ) -> PaymentContext:
-    context = await visible_payment(session, actor, payment_id)
+    # 🔴 DURUM KAPISI KİLİT ALTINDA OKUNUR. Burası kilitsiz `visible_payment`
+    # kullanıyordu; kardeş ÜÇ yazma yolu (`save_lines`:324, `refresh_prices`:351,
+    # `delete_payment`:383) zaten `visible_payment_locked` kullanıyordu. Kilitsiz
+    # okunan durum üzerinde verilen karar TOCTOU'dur: eşzamanlı bir `approve`
+    # ile PATCH birbirini görmeden geçer ve dönem değişikliği
+    # `lines.restamp_for_period` ile ONAYLANMIŞ satırların `quantity_source`
+    # damgasını yeniden yazar. Kilit sırası kardeş yollarla AYNI (önce sözleşme,
+    # sonra hakediş) — ters sıra karşılıklı kilitlenme doğururdu.
+    context = await visible_payment_locked(session, actor, payment_id)
     if context.payment.status != SubcontractorPaymentStatus.draft:
         raise ConflictError(guards.INVALID_STATUS_TRANSITION)
 

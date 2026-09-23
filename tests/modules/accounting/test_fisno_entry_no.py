@@ -138,27 +138,32 @@ async def test_YIL_degisince_sayac_0001den_baslar_ve_eski_yil_KENDI_sirasindan_d
 ) -> None:
     """🔴 İki yıl AYNI veritabanında yan yana durur.
 
-    Sayaç yıldan bağımsız (küresel) olsaydı 2027'nin ilk fişi `0003` olurdu.
-    Tersi kusur da bekçilenir: 2027 açıldıktan SONRA kesilen 2026 fişi
+    Sayaç yıldan bağımsız (küresel) olsaydı 2025'in ilk fişi `0003` olurdu.
+    Tersi kusur da bekçilenir: 2025 açıldıktan SONRA kesilen 2026 fişi
     `0003`tür — yani yıl sayaçları BİRBİRİNİ SIFIRLAMAZ, her biri kendi
     hattında ilerler.
 
     Yıl `entry_date`ten değil **`period_year`**den okunur; ikisi
     `ck_journal_entries_period_matches_date` ile zaten kilitlidir.
+
+    🔴 İkinci yıl GEÇMİŞTEDİR (2027 → 2025): `assert_entry_date_not_future`
+    ileri tarihli fişi 422 ile reddediyor. İddia DEĞİŞMEDİ — kurulum "iki ayrı
+    yıl yan yana" der, "yıl ileride" DEMEZ; sayaçların birbirini sıfırlamaması
+    takvim YÖNÜNDEN bağımsızdır.
     """
     kasa, saticilar = await _iki_yaprak(hesap_fabrikasi)
     ilk_2026 = await _fis(client, muhasebe_headers, kasa, saticilar)
     ikinci_2026 = await _fis(client, muhasebe_headers, kasa, saticilar)
-    ilk_2027 = await _fis(client, muhasebe_headers, kasa, saticilar, entry_date="2027-03-04")
+    ilk_2025 = await _fis(client, muhasebe_headers, kasa, saticilar, entry_date="2025-03-04")
 
     assert (ilk_2026["entry_no"], ikinci_2026["entry_no"]) == (_no(2026, 1), _no(2026, 2))
-    assert ilk_2027["period_year"] == 2027
-    assert ilk_2027["entry_no"] == _no(2027, 1)
+    assert ilk_2025["period_year"] == 2025
+    assert ilk_2025["entry_no"] == _no(2025, 1)
 
     ucuncu_2026 = await _fis(client, muhasebe_headers, kasa, saticilar)
-    ikinci_2027 = await _fis(client, muhasebe_headers, kasa, saticilar, entry_date="2027-11-30")
+    ikinci_2025 = await _fis(client, muhasebe_headers, kasa, saticilar, entry_date="2025-11-30")
     assert ucuncu_2026["entry_no"] == _no(2026, 3)
-    assert ikinci_2027["entry_no"] == _no(2027, 2)
+    assert ikinci_2025["entry_no"] == _no(2025, 2)
 
 
 async def test_sira_AYIN_degismesinden_etkilenmez(
@@ -166,19 +171,23 @@ async def test_sira_AYIN_degismesinden_etkilenmez(
 ) -> None:
     """Sayaç YIL bazlıdır, AY bazlı DEĞİL: Temmuz ve Ağustos aynı hattı sürer.
 
-    Ay bazlı olsaydı `YEV-2026-0001` yılda on iki kez üretilir ve numara TEKİL
+    Ay bazlı olsaydı `YEV-2025-0001` yılda on iki kez üretilir ve numara TEKİL
     OLMAKTAN çıkardı — biçimde ay alanı yoktur, çakışma sessiz olurdu.
+
+    🔴 Üçü de 2025'e alındı: iddia AY sınırını (7 → 8 → 12, Aralık YIL SONU
+    sınırıdır) ölçer ve o sınır korunmuştur; 2026-12-31 bugünden İLERİDE olduğu
+    için `assert_entry_date_not_future` onu 422 ile reddederdi.
     """
     kasa, saticilar = await _iki_yaprak(hesap_fabrikasi)
-    temmuz = await _fis(client, muhasebe_headers, kasa, saticilar)
-    agustos = await _fis(client, muhasebe_headers, kasa, saticilar, entry_date="2026-08-05")
-    aralik = await _fis(client, muhasebe_headers, kasa, saticilar, entry_date="2026-12-31")
+    temmuz = await _fis(client, muhasebe_headers, kasa, saticilar, entry_date="2025-07-17")
+    agustos = await _fis(client, muhasebe_headers, kasa, saticilar, entry_date="2025-08-05")
+    aralik = await _fis(client, muhasebe_headers, kasa, saticilar, entry_date="2025-12-31")
 
     assert (temmuz["period_month"], agustos["period_month"], aralik["period_month"]) == (7, 8, 12)
     assert [temmuz["entry_no"], agustos["entry_no"], aralik["entry_no"]] == [
-        _no(2026, 1),
-        _no(2026, 2),
-        _no(2026, 3),
+        _no(2025, 1),
+        _no(2025, 2),
+        _no(2025, 3),
     ]
 
 
@@ -302,24 +311,30 @@ async def test_PATCH_entry_dateI_SONRAKI_YILA_tasisa_bile_numara_AYNI_kalir(
 ) -> None:
     """Numara `PATCH` ile DEĞİŞMEZ — `entry_date` bir sonraki YILA taşınsa bile.
 
-    🔴 Asıl tuzak budur: yıl `period_year`den türetiliyorsa, tarihi 2027'ye
+    🔴 Asıl tuzak budur: yıl `period_year`den türetiliyorsa, tarihi 2026'ya
     çeken bir `PATCH` numarayı "yeniden türetmeye" ayartabilir. Numara BİR KEZ
     verilir ve fişin kimliğidir; kaydığı anda kullanıcının elindeki kâğıt yanlış
     fişi gösterirdi.
+
+    🔴 Taşıma GEÇMİŞ yıllar arasındadır (2025 → 2026): `entry_date`in gelecek
+    sınırı (`assert_entry_date_not_future`) 2027'yi 422 ile reddeder. İDDİA
+    GÜÇLENDİ, zayıflamadı — numaranın yılı (`YEV-2025-…`) artık `period_year`
+    (2026) ile AYRIŞIR, yani "yeniden türetme" ayartısı tam olarak ölçülür.
     """
     kasa, saticilar = await _iki_yaprak(hesap_fabrikasi)
-    fis = await _fis(client, muhasebe_headers, kasa, saticilar)
+    fis = await _fis(client, muhasebe_headers, kasa, saticilar, entry_date="2025-07-17")
     numara = fis["entry_no"]
 
     resp = await client.patch(
         f"{_YOL}/{fis['id']}",
-        json={"description": "Düzeltilmiş açıklama", "entry_date": "2027-01-04"},
+        json={"description": "Düzeltilmiş açıklama", "entry_date": "2026-01-04"},
         headers=muhasebe_headers,
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["description"] == "Düzeltilmiş açıklama"
-    assert resp.json()["period_year"] == 2027
+    assert resp.json()["period_year"] == 2026
     assert resp.json()["entry_no"] == numara
+    assert numara == _no(2025, 1), "numara ESKİ yılın hattından gelir"
 
     detay = await client.get(f"{_YOL}/{fis['id']}", headers=muhasebe_headers)
     assert detay.json()["entry_no"] == numara

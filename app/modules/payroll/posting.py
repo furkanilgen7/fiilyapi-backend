@@ -181,7 +181,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import PayrollValidationError
 from app.modules.accounting.models import JournalSourceType
-from app.modules.payroll import compute, summary
+from app.modules.payroll import compute, income_tax, summary
 from app.modules.payroll.models import PayrollLine, PayrollPeriod, PayrollRate
 from app.modules.payroll.service.core import month_bounds
 from app.modules.posting import service as posting_service
@@ -191,6 +191,7 @@ from app.modules.users.models import User
 
 __all__ = [
     "INCOMPLETE_LINES",
+    "RATES_CHANGED_SINCE_COMPUTE",
     "PAYROLL_POSTING_RULES",
     "ROLE_PERSONNEL_EXPENSE",
     "ROLE_PERSONNEL_PAYABLE",
@@ -259,6 +260,18 @@ INCOMPLETE_LINES = (
 
 _ZERO = Decimal("0.00")
 
+#: Dört kesinti kaleminin AYRI yuvarlanmasından doğan kabul edilebilir sapma
+#: (`compute.Deductions` docstring'i bunu KASITLI ilan eder).
+_KURUS = Decimal("0.01")
+
+#: 422 — donmuş kesinti ile CANLI oran ayrışmış. Metin kullanıcıya YAPILACAK
+#: İŞİ söyler (`INCOMPLETE_LINES` deseni) ve SAYI taşımaz: bir bordro hatası
+#: mesajında tutar geçseydi yetkisiz okuyucuya ücret bilgisi sızardı.
+RATES_CHANGED_SINCE_COMPUTE = (
+    "Bordro fişi yazılamıyor: oran seti dönem hesaplandıktan sonra değişmiş "
+    "(dönemi yeniden hesaplayın)"
+)
+
 
 @dataclass(frozen=True)
 class PostingTotals:
@@ -325,7 +338,45 @@ def postable_lines(lines: list[PayrollLine]) -> list[PayrollLine]:
     return [line for line in lines if line.status in summary.PAYABLE_LINE_STATUSES]
 
 
-def _stamp_share(line: PayrollLine, rate: PayrollRate) -> Decimal:
+def _expected_stamp_tax(
+    line: PayrollLine, rate: PayrollRate, minimum_wage_gross: Decimal | None
+) -> Decimal:
+    """`compute.employee_deductions`teki damga formülünün BİREBİR kopyası.
+
+    🔴 **kayıt 24 — TAVAN İSTİSNAYI GÖRMÜYORDU.** Önceki hâl damganın üst
+    sınırını çıplak `stamp_tax_pct × brüt` alıyordu; bu, `compute`un asgari
+    ücrete isabet eden kısmı DÜŞTÜĞÜ dilimli rejimde (DVK (II) IV/34,
+    `income_tax.stamp_tax_exemption`) HER satırda tam istisna tutarı kadar
+    (2026: 250,70 TL) fazladan geniş bir tavandı. Oran seti compute ile
+    approve arasında DÜŞERSE (kalan büyür) bu boşluk kalanın gerçek beklenen
+    değeri AŞMASINA rağmen 422 fırlatmadan sessizce geçmesine izin veriyordu
+    — istisnalı bir satırda tam bir HAYALET damga bile 422'siz yazılabiliyordu
+    (ölçüldü: brüt 26.005,50, gerçek damga 0, SGK işçi 14→13,25 sonrası kalan
+    195,04 ve eski tavan bunu geçiriyordu).
+
+    Düz oran rejiminde (`rate.income_tax_pct` dolu — freelance/intern)
+    istisna hiç uygulanmaz (GV GT 319: istisna ÜCRET gelirine aittir), bu
+    yüzden o rejimde tavan hâlâ çıplak `stamp_tax_pct × brüt`tür.
+
+    Dilimli rejimde istisna `minimum_wage_gross`e bağlıdır. Onaylanan bir
+    satır `compute`tan geçtiği için bu değer o an VARDI (yoksa satır
+    `uncomputed`a düşerdi, K3) — approve anında YİNE de yoksa bu, kalanın
+    geçerliliğinin DOĞRULANAMADIĞI anlamına gelir ve fail-closed 422 fırlatılır
+    (sessizce istisnasız kabul etmek de, sessizce 0 kabul etmek de yanlış
+    tarafa yatık olurdu).
+    """
+    ham_damga = compute.rate_share(line.gross_amount, rate.stamp_tax_pct)
+    if rate.income_tax_pct is not None:
+        return ham_damga
+    if minimum_wage_gross is None:
+        raise PayrollValidationError(RATES_CHANGED_SINCE_COMPUTE)
+    istisna = income_tax.stamp_tax_exemption(minimum_wage_gross, rate.stamp_tax_pct)
+    return compute.quantize_money(max(_ZERO, ham_damga - istisna))
+
+
+def _stamp_share(
+    line: PayrollLine, rate: PayrollRate, minimum_wage_gross: Decimal | None
+) -> Decimal:
     """Damga vergisi = KESİNTİNİN KALANI (`sgk.py` K6 formülüyle BİREBİR).
 
     🔴 `stamp_tax_pct × brüt` ile TÜRETİLMEZ. `compute` kesintiyi tam olarak
@@ -333,13 +384,37 @@ def _stamp_share(line: PayrollLine, rate: PayrollRate) -> Decimal:
     fark KURUŞUNA KADAR damgadır **ve asgari ücret damga istisnasını
     KENDİLİĞİNDEN görür** — istisnalı bir satırda orandan türetilen damga
     gerçekte kesilmemiş bir vergiyi deftere yazardı ve fiş DENGESİZ çıkardı.
+
+    🔴 **KALAN, GERÇEK BEKLENEN DEĞERE DAR ARALIKLA DENETLENİR (fail-closed).**
+    `deduction_amount` ve `income_tax_amount` compute anında DONMUŞTUR ama iki
+    `rate_share` CANLI orandan türer. Oran seti compute ile approve ARASINDA
+    değişirse farkın TAMAMI bu kalana yazılır ve belirti mizanda GÖRÜNMEZ: fiş
+    cebirsel olarak dengeli kalır, yalnız `360`/`361` dağılımı kayar. `rates`
+    kapısı yalnız onaylanmış/ödenmiş dönem VARSA oran değişimini kapatır —
+    taslak dönem serbesttir, yani pencere canlıda AÇIKTIR.
+
+    Oranları satıra dondurmak çözüm DEĞİLDİR: K1 (`models.py:194`) "kesinti
+    oranları satıra KOPYALANMAZ, tek gerçek kaynak `payroll_rates`" der ve
+    dondurmak migration isterdi. Bunun yerine kalan `_expected_stamp_tax`in
+    ürettiği GERÇEK beklenen değere (istisna dâhil) ±1 kuruşla denetlenir —
+    çıplak `stamp_tax_pct × brüt` tavanı istisnayı görmediği için kalan
+    yönlüdür (kayıt 24).
+
+    Tolerans BİR KURUŞTUR: `compute` dört kalemi AYRI AYRI yuvarlar ve bu
+    bilinçli olarak tek seferde yuvarlanmış toplamdan bir kuruş ayrışabilir
+    (`compute.Deductions` docstring'i). Tolerans olmasaydı sıradan bir dönem
+    yuvarlama yüzünden 422 alırdı.
     """
-    return (
+    kalan = (
         line.deduction_amount
         - compute.rate_share(line.gross_amount, rate.sgk_employee_pct)
         - compute.rate_share(line.gross_amount, rate.unemployment_employee_pct)
         - line.income_tax_amount
     )
+    beklenen = _expected_stamp_tax(line, rate, minimum_wage_gross)
+    if abs(kalan - beklenen) > _KURUS:
+        raise PayrollValidationError(RATES_CHANGED_SINCE_COMPUTE)
+    return kalan
 
 
 def _eksik(line: PayrollLine, rate: PayrollRate | None) -> bool:
@@ -356,7 +431,11 @@ def _eksik(line: PayrollLine, rate: PayrollRate | None) -> bool:
     )
 
 
-def totals_for(lines: list[PayrollLine], rates: dict[WorkerSource, PayrollRate]) -> PostingTotals:
+def totals_for(
+    lines: list[PayrollLine],
+    rates: dict[WorkerSource, PayrollRate],
+    minimum_wage_gross: Decimal | None,
+) -> PostingTotals:
     """Ödenebilir satırların YEDİ bileşenini toplar. Eksik varsa **422**.
 
     🔴 Aritmetik burada YENİDEN YAZILMAZ: her prim kalemi `compute.rate_share`
@@ -366,7 +445,9 @@ def totals_for(lines: list[PayrollLine], rates: dict[WorkerSource, PayrollRate])
 
     `rates` **DÖNEMİN YILINA** ait aktif orandır (`service.rates_by_source`),
     bugünün yılı değil (S2): geçmiş bir dönemin fişi bu yılın oranıyla
-    yazılamaz.
+    yazılamaz. `minimum_wage_gross` de AYNI yılın brüt asgari ücretidir
+    (`service.tax_context._minimum_wage_gross`) — `_stamp_share`in damga
+    istisnasını doğrulayabilmesi için (kayıt 24).
     """
     toplam = dict.fromkeys(
         (
@@ -389,7 +470,7 @@ def totals_for(lines: list[PayrollLine], rates: dict[WorkerSource, PayrollRate])
         toplam["gross"] += line.gross_amount
         toplam["net"] += line.net_amount
         toplam["income_tax"] += line.income_tax_amount
-        toplam["stamp_tax"] += _stamp_share(line, rate)
+        toplam["stamp_tax"] += _stamp_share(line, rate, minimum_wage_gross)
         for alan, oran_alani in (
             ("sgk_employee", "sgk_employee_pct"),
             ("unemployment_employee", "unemployment_employee_pct"),
@@ -437,6 +518,7 @@ async def post_payroll_period(
     period: PayrollPeriod,
     lines: list[PayrollLine],
     rates: dict[WorkerSource, PayrollRate],
+    minimum_wage_gross: Decimal | None,
 ) -> PostingOutcome | None:
     """Dönemin tahakkukunu fişler. `None` = *"fişlenecek para yok"*.
 
@@ -454,7 +536,7 @@ async def post_payroll_period(
     okumuştur. Buradan ikinci bir okuma açılsaydı kilidin dışına düşer ve
     fiş, onaylanan satırlardan BAŞKA bir kümeyi tutarlayabilirdi.
     """
-    bacaklar = lines_for(totals_for(lines, rates))
+    bacaklar = lines_for(totals_for(lines, rates, minimum_wage_gross))
     if len(bacaklar) < 2:
         return None
     # 🔴 AYIN SON GÜNÜ — `approved_at.date()` DEĞİL (modül docstring'i:

@@ -167,11 +167,12 @@ async def list_equipment_document_types_endpoint(
     dependencies=[_VIEW],
 )
 async def equipment_documents_summary_endpoint(
+    user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> EquipmentDocumentsSummaryResponse:
     """K7 özeti: `expiring_soon` (30 gün) + `expired` + `missing` (zorunlu tip
-    eksikleri, yalnız AKTİF ekipman)."""
-    return await service.build_summary(session)
+    eksikleri, yalnız AKTİF ekipman) — hepsi K20 kapsamından GEÇER."""
+    return await service.build_summary(session, user)
 
 
 @router.get(

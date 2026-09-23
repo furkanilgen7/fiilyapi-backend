@@ -73,6 +73,7 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import EquipmentValidationError
 from app.core.timezone import to_display
 from app.modules.accounting import state_service as accounting_state_service
 from app.modules.accounting.models import JournalSourceType
@@ -83,6 +84,16 @@ from app.modules.posting import service as posting_service
 from app.modules.posting.service import PostingLine, PostingOutcome
 from app.modules.procurement.models import Supplier
 from app.modules.users.models import User
+
+# 422 — kayıt 54: kira hakedişi, kendisinden ÖNCE fişlenmiş bir faturanın
+# yerini almış ve faturanın `tax_base`i kiranın kendi `invoice_amount`ıyla
+# TOLERANS DIŞI ayrışıyor (`invoicing.source_posting.
+# replacing_invoice_base_mismatch`). Onay bu yüzden reddedilir.
+SOURCE_REPLACED_BASE_MISMATCH = (
+    "Bu kira hakedişinin yerini alan fatura zaten fişlenmiş ({fatura}), ancak "
+    "kiranın kendi tutarı ({kira}) ile eşleşmiyor; kira hakedişi yeniden "
+    "fişlenemiyor. Faturayı kiranın tutarıyla eşleşecek şekilde düzeltin."
+)
 
 __all__ = [
     "RENTAL_POSTING_RULES",
@@ -222,6 +233,20 @@ async def post_on_approval(
     if await source_posting.source_replaced_by_invoice(
         session, Invoice.equipment_rental_invoice_id, invoice.id
     ):
+        # 🔴 KAYIT 54 — TERS SIRA: fatura kira hakedişinden ÖNCE fişlenmiş
+        #    olabilir (taban kapısı o an `None` görüp geçmiştir). `invoice_
+        #    amount` NULL ise zaten fiş hiç açılmayacaktı (NULL-EŞİK kanonu) —
+        #    o hâlde karşılaştıracak bir taban yok, kural KOŞMAZ.
+        if invoice.invoice_amount is not None:
+            mismatch = await source_posting.replacing_invoice_base_mismatch(
+                session, Invoice.equipment_rental_invoice_id, invoice.id, invoice.invoice_amount
+            )
+            if mismatch is not None:
+                raise EquipmentValidationError(
+                    SOURCE_REPLACED_BASE_MISMATCH.format(
+                        fatura=mismatch, kira=invoice.invoice_amount
+                    )
+                )
         return
     # `session.get` — kimlik haritasından okur, ikinci bir sorgu koşmaz
     # (`_supplier_display` ile AYNI desen).

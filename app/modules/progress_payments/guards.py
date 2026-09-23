@@ -38,6 +38,17 @@ PERIOD_REQUIRED = "Hakediş dönemi seçiniz."
 LINES_REQUIRED = "En az bir kalemde miktar giriniz."
 CONTRACT_AMOUNT_REQUIRED = "Sözleşme bedeli girilmeden hakediş onaya gönderilemez."
 
+# 422 — kayıt 53/54: hakediş, fatura hakedişten ÖNCE fişlenmiş bir kaynağın
+# yerini almış ve faturanın `tax_base`i hakedişin taze hesaplanan tabanıyla
+# TOLERANS DIŞI ayrışıyor (`invoicing.source_posting.
+# replacing_invoice_base_mismatch`). Onay bu yüzden reddedilir; düzeltme
+# faturanın avans/teminat oranlarındadır (`{fatura}` ≠ `{hakedis}`).
+SOURCE_REPLACED_BASE_MISMATCH = (
+    "Bu hakedişin yerini alan fatura zaten fişlenmiş ({fatura}), ancak hakedişin "
+    "gerçek tabanı ({hakedis}) ile eşleşmiyor; hakediş yeniden fişlenemiyor. "
+    "Faturanın avans/teminat oranlarını hakedişle eşleyip faturayı düzeltin."
+)
+
 # 422 — miktar korkulukları (HER YAZIMDA; spec §6.5). DB erişimi gerektirdikleri
 # için `validate_submit` içinde KULLANILMAZ, `lines.py`/`service.py` (H5) bunları
 # çağırır — metin sabitleri yine de tek kopya burada durur.

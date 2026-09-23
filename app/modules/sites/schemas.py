@@ -1,11 +1,13 @@
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
 # B6/P1 yer tutucu sozlesmesi TEK yerde tanimlidir (spec §3): kopyalanmaz,
 # projects modulunden import edilir.
+from app.core.field_scope import Gorunurluk
 from app.modules.projects.schemas import CountPlaceholder, MetricPlaceholder
 from app.modules.sites.models import SectionStatus, SectionType, SiteStatus
 
@@ -100,9 +102,9 @@ class SectionResponse(BaseModel):
     start_date: date | None
     end_date: date | None
     sort_order: int
-    progress_pct: MetricPlaceholder
+    progress_pct: Annotated[MetricPlaceholder, Gorunurluk.operasyonel]
     boq_item_count: CountPlaceholder
-    budget: MetricPlaceholder
+    budget: Annotated[MetricPlaceholder, Gorunurluk.para]
     worker_count: CountPlaceholder
     # --- BLM-SAY: LISTE ucuna TASINDI (kullanicinin canlida bildirdigi kusur) ---
     #
@@ -117,7 +119,7 @@ class SectionResponse(BaseModel):
     # docstring'i, P6 §7 S2a). Ikisi de yanittadir, hangisinin basilacagi
     # ekranin karari.
     planned_worker_count: int | None
-    budget_amount: Decimal | None
+    budget_amount: Annotated[Decimal | None, Gorunurluk.para]
     # --- P11 (spec §3): YALNIZ EKLEME. Bolum basan UC yuzey de (detay, liste,
     # santiye detayi) tek donusturucuden (`service.to_section`) gectigi icin bu
     # iki alan hepsinde ayni anda dogar. Varsayilan YOKTUR: alani doldurmayi
@@ -200,7 +202,7 @@ class SiteCard(BaseModel):
     remaining_days: int | None
     section_count: int
     worker_count: CountPlaceholder
-    progress_pct: MetricPlaceholder
+    progress_pct: Annotated[MetricPlaceholder, Gorunurluk.operasyonel]
 
     # --- Santiye formu genislemesi (§6.2). YALNIZ EKLEME yapildi: yukaridaki
     # P2 alanlarinin hicbiri kaldirilmadi/yeniden adlandirilmadi, aksi hâlde
@@ -214,10 +216,10 @@ class SiteCard(BaseModel):
     neighborhood: str | None
     parcel: str | None
     gps_coordinates: str | None
-    land_area_m2: Decimal | None
-    construction_area_m2: Decimal | None
+    land_area_m2: Annotated[Decimal | None, Gorunurluk.operasyonel]
+    construction_area_m2: Annotated[Decimal | None, Gorunurluk.operasyonel]
     floor_info: str | None
-    budget: Decimal | None
+    budget: Annotated[Decimal | None, Gorunurluk.para]
     facilities: SiteFacilities
     electricity_subscription_no: str | None
     water_subscription_no: str | None
@@ -243,8 +245,8 @@ class SiteDetailResponse(SiteCard):
     project: SiteProjectSummary
     section_status_counts: SectionStatusCounts
     sections: list[SectionResponse]
-    total_progress_payment: MetricPlaceholder
-    contract_amount: MetricPlaceholder
+    total_progress_payment: Annotated[MetricPlaceholder, Gorunurluk.para]
+    contract_amount: Annotated[MetricPlaceholder, Gorunurluk.para]
 
 
 class SiteCounts(BaseModel):
@@ -265,10 +267,10 @@ class SiteListTotals(BaseModel):
     yerdedir — `sites/service/presenters.py:_totals`.
     """
 
-    total_progress_payment: MetricPlaceholder
+    total_progress_payment: Annotated[MetricPlaceholder, Gorunurluk.para]
     subcontractor_count: CountPlaceholder
     active_worker_count: CountPlaceholder
-    average_margin: MetricPlaceholder
+    average_margin: Annotated[MetricPlaceholder, Gorunurluk.para]
 
 
 class SiteListResponse(BaseModel):

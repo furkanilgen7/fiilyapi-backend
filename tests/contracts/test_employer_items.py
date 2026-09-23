@@ -350,3 +350,62 @@ async def test_grup_baska_projeye_ait_kalem_eklenemez(
         headers=admin_headers,
     )
     assert yanit.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_acik_null_quantity_500_uretmez(
+    client, admin_headers, dagitimli_proje, sozlesme_kalemi, seeded_db
+):
+    """Gövdede AÇIKÇA gönderilen `null` 422 olmalı — `exclude_unset` onu "gönderilmedi"
+
+    saymaz, sözlüğe `None` olarak GİRER ve servisteki `None < Decimal(...)`
+    karşılaştırması `TypeError` → 500 üretirdi. Alan NOT NULL'dır; "alanı sil"
+    diye bir istek YOKTUR.
+    """
+    yanit = await client.patch(
+        f"/contracts/employer/items/{sozlesme_kalemi}",
+        json={"quantity": None},
+        headers=admin_headers,
+    )
+
+    assert yanit.status_code == 422, yanit.text
+    assert "quantity" in yanit.text
+
+    kalem = await seeded_db.get(EmployerContractItem, sozlesme_kalemi)
+    await seeded_db.refresh(kalem)
+    assert kalem.quantity == Decimal("200.000")
+
+
+@pytest.mark.asyncio
+async def test_acik_null_code_500_uretmez(
+    client, admin_headers, dagitimli_proje, sozlesme_kalemi, seeded_db
+):
+    """Aynı sınıf: NOT NULL metin alanına açık `null` 422 döner, NOT NULL ihlali değil."""
+    yanit = await client.patch(
+        f"/contracts/employer/items/{sozlesme_kalemi}",
+        json={"code": None},
+        headers=admin_headers,
+    )
+
+    assert yanit.status_code == 422, yanit.text
+    assert "code" in yanit.text
+
+    kalem = await seeded_db.get(EmployerContractItem, sozlesme_kalemi)
+    await seeded_db.refresh(kalem)
+    assert kalem.code == "04.001"
+
+
+@pytest.mark.asyncio
+async def test_alan_gondermemek_hala_gecerli(
+    client, admin_headers, dagitimli_proje, sozlesme_kalemi
+):
+    """Yanlış-pozitif bekçisi: "alan yok" ile "alan null" AYNI ŞEY DEĞİLDİR."""
+    yanit = await client.patch(
+        f"/contracts/employer/items/{sozlesme_kalemi}",
+        json={"description": "Demir donatı (revize)"},
+        headers=admin_headers,
+    )
+
+    assert yanit.status_code == 200, yanit.text
+    assert yanit.json()["description"] == "Demir donatı (revize)"
+    assert Decimal(yanit.json()["quantity"]) == Decimal("200.000")

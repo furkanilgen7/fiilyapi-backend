@@ -43,6 +43,8 @@ P8_MIGRATION_PATH = next(VERSIONS_DIR.glob("*_p8_unite_satisi.py"))
 DOCUMENTS_MIGRATION_PATH = next(VERSIONS_DIR.glob("*_belge_cekirdegi.py"))
 EQUIPMENT_MIGRATION_PATH = next(VERSIONS_DIR.glob("*_mk1_makine_cekirdegi.py"))
 AI_MIGRATION_PATH = next(VERSIONS_DIR.glob("*_ai0b_izin_modulu_ve_arac_denetimi.py"))
+#: Tohum DEGIL, DUZELTICI: uygulanmayan kapsamlari `all`a ceker (2026-09-19).
+SCOPE_FIX_MIGRATION_PATH = next(VERSIONS_DIR.glob("*_izin_kapsami_uygulanmayanlar_all.py"))
 EXTENSION_MIGRATION_PATHS = [
     INVOICING_MIGRATION_PATH,
     P1_MIGRATION_PATH,
@@ -123,6 +125,22 @@ def _permission_map_from_migrations() -> dict[tuple[str, str], tuple[str, str]]:
         for module_key, cells in extension.MATRIX.items():
             for role_key, (level, scope) in zip(extension.ROLE_ORDER, cells, strict=True):
                 result[(role_key, module_key)] = (_value(level), _value(scope))
+
+    # 🔴 DUZELTICI migration (2026-09-19) — canlinin GERCEKTEN izledigi yol
+    #    "tohumlar, SONRA duzeltme"dir. Tohum migration'lari DUZELTILMEZ
+    #    (migration yazildigi gunun fotografidir); onun yerine bu bekci ayni
+    #    sirayi taklit eder. Dusen kapsamlar migration'in KENDISINDEN okunur,
+    #    ikinci bir kopya yazilmaz.
+    duzeltici = _load_migration_module(SCOPE_FIX_MIGRATION_PATH)
+    dusen = set(duzeltici.DUSEN)
+    kapsamsiz = duzeltici.KAPSAMSIZ_MODUL
+    result = {
+        (role_key, module_key): (
+            level,
+            "all" if (scope in dusen or module_key == kapsamsiz) else scope,
+        )
+        for (role_key, module_key), (level, scope) in result.items()
+    }
     return result
 
 

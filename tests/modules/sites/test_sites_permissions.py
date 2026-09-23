@@ -19,7 +19,7 @@ import uuid
 
 from sqlalchemy import select
 
-from app.core.access import AccessLevel
+from app.core.access import AccessLevel, Scope
 from app.modules.roles.models import Module, Role, RolePermission
 from app.modules.sites.models import Section, Site
 from app.modules.users.models import UserProjectAccess
@@ -47,7 +47,9 @@ async def _login(client, user_factory, role_key: str, *, grant_all: bool, sessio
     return resp.json()["access_token"]
 
 
-async def _set_permission(session, role_key: str, module_key: str, level: AccessLevel) -> None:
+async def _set_permission(
+    session, role_key: str, module_key: str, level: AccessLevel, scope: Scope = Scope.all
+) -> None:
     """Bir rolun modul iznini dogrudan ayarlar — testin 403 kapisini seed
     degerlerinden BAGIMSIZ dogrulayabilmesi icin."""
     role_id = (await session.execute(select(Role.id).where(Role.key == role_key))).scalar_one()
@@ -62,6 +64,7 @@ async def _set_permission(session, role_key: str, module_key: str, level: Access
         )
     ).scalar_one()
     permission.access_level = level
+    permission.scope = scope
     await session.flush()
 
 

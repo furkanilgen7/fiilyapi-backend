@@ -75,8 +75,12 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with SessionLocal() as session:
         try:
             yield session
+            # 🔴 `commit()` `try`in İÇİNDEDİR, `else` dalında DEĞİL: commit'in
+            # KENDİ patlaması da aşağıdaki açık `rollback` dalına girsin.
+            # `else`deyken transaction'ın geri alınması session kapanışının
+            # ÖRTÜK davranışına kalıyordu (`AsyncSession.__aexit__` yalnız
+            # `close()` çağırır). Bekçi: tests/core/test_getdb_commit_hatasi.py.
+            await session.commit()
         except Exception:
             await session.rollback()
             raise
-        else:
-            await session.commit()

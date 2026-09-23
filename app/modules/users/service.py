@@ -9,7 +9,7 @@ from app.core.errors import DomainError, NotFoundError, PermissionLockedError
 from app.core.security import hash_password
 from app.modules.projects.models import Project
 from app.modules.roles.models import SYSTEM_ADMIN_KEY, Role
-from app.modules.roles.repository import get_permission
+from app.modules.roles.repository import get_permission, get_role_matrix
 from app.modules.users import repository
 from app.modules.users.models import User, UserProjectAccess, UserStatus
 from app.modules.users.schemas import ProjectAccessInput, UserCreate, UserUpdate
@@ -30,15 +30,34 @@ async def _is_last_active_system_admin(session: AsyncSession, user: User) -> boo
 
 
 async def _require_assignable_role(session: AsyncSession, actor: User, role_id: uuid.UUID) -> Role:
+    """Aktörün bu rolü atamaya yetkisi var mı?
+
+    `user_management=admin` (Sistem Yöneticisi) her rolü atar. Onun altındaki bir aktör
+    (1) sistem rollerini atayamaz ve (2) KENDİ seviyesini herhangi bir modülde aşan bir
+    rolü atayamaz — yoksa `is_system=False` güçlü bir rolü kendine ya da açtığı
+    kullanıcıya vererek sahip olmadığı yetkiyi kendine basar (spec §5.0).
+    """
     role = (await session.execute(select(Role).where(Role.id == role_id))).scalar_one_or_none()
     if role is None:
         raise NotFoundError("Rol bulunamadı")
+
+    perm = await get_permission(session, actor.role_id, "user_management")
+    if perm is not None and satisfies(perm.access_level, AccessLevel.admin):
+        return role
+
     if role.is_system:
-        perm = await get_permission(session, actor.role_id, "user_management")
-        if perm is None or not satisfies(perm.access_level, AccessLevel.admin):
-            raise PermissionLockedError(
-                "Sistem rolleri yalnızca Sistem Yöneticisi tarafından atanabilir"
-            )
+        raise PermissionLockedError(
+            "Sistem rolleri yalnızca Sistem Yöneticisi tarafından atanabilir"
+        )
+
+    actor_levels = {
+        module.key: permission.access_level
+        for module, permission in await get_role_matrix(session, actor.role_id)
+    }
+    for module, permission in await get_role_matrix(session, role_id):
+        actor_level = actor_levels.get(module.key, AccessLevel.none)
+        if not satisfies(actor_level, permission.access_level):
+            raise PermissionLockedError("Sahip olmadığınız yetkileri içeren bir rol atayamazsınız")
     return role
 
 
@@ -107,18 +126,30 @@ async def delete_user(session: AsyncSession, user_id: uuid.UUID) -> None:
 async def set_project_access(
     session: AsyncSession, user_id: uuid.UUID, data: ProjectAccessInput
 ) -> list[UserProjectAccess]:
-    user = await repository.get_user(session, user_id)
+    # 🔴 TAM-DEĞİŞTİRME (`DELETE` + `INSERT`) KİLİT ALTINDA KOŞAR. Tabloda
+    # `(user_id, project_id)` UNIQUE kısıtı YOKTUR (migration `e274019416f6`
+    # yalnız PK + NON-UNIQUE indeks açar), yani kilitsiz iki eşzamanlı istek
+    # birbirinin `DELETE`iyle `INSERT`i arasına girip ya iki kümenin karışımını
+    # ya da AYNI projenin çift satırını bırakır. Erişim kararı
+    # (`projects.visible_projects`) bu satırlardan okunur — sapma SESSİZDİR.
+    # Kısıt yerine kilit seçildi: canlı satırlara dokunulmaz, migration gerekmez.
+    user = await repository.get_user_locked(session, user_id)
     if user is None:
         raise NotFoundError("Kullanıcı bulunamadı")
-    if not data.all_projects and data.project_ids:
+    # Kayıt #51 (kalan bacak): tabloda (user_id, project_id) üzerinde UNIQUE
+    # kısıt YOK ve `ProjectAccessInput.project_ids` tekilleştirme yapmıyor —
+    # tek istekte aynı proje ID'si birden fazla gönderilirse eşzamanlılık
+    # gerekmeden AYNI projeye iki satır yazılır. Sırayı koruyarak burada
+    # tekilleştir; giriş sırası mockup/UI için anlamlı olabileceğinden
+    # `set()` yerine sıra-koruyan tekilleştirme kullanılır.
+    project_ids = list(dict.fromkeys(data.project_ids))
+    if not data.all_projects and project_ids:
         found = (
-            (await session.execute(select(Project.id).where(Project.id.in_(data.project_ids))))
+            (await session.execute(select(Project.id).where(Project.id.in_(project_ids))))
             .scalars()
             .all()
         )
-        missing = set(data.project_ids) - set(found)
+        missing = set(project_ids) - set(found)
         if missing:
             raise NotFoundError("Proje bulunamadı")
-    return await repository.replace_project_access(
-        session, user_id, data.all_projects, data.project_ids
-    )
+    return await repository.replace_project_access(session, user_id, data.all_projects, project_ids)

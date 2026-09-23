@@ -11,7 +11,7 @@ yalnız SQL kurar, yetki/kapsam kararı vermez.
 import uuid
 from datetime import date, timedelta
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.site_planning.models import (
@@ -162,6 +162,35 @@ async def active_sprint(session: AsyncSession, site_id: uuid.UUID) -> SitePlanSp
 # kaydetme birbirinin sildiği/eklediği satırları yarıştırırsa ızgara ikisinin de
 # olmadığı bir hâlde kalır. Sıralama her sorguda SABİTTİR — iki istek kayıtları
 # farklı sırada kilitlerse kilitlenme (deadlock) doğar.
+
+
+#: `site_plan_rows` tekillik kısıtının adı — `models.py` `__table_args__` ile
+#: BİREBİR aynı olmalıdır (yanlış ad PostgreSQL'de hata verir, sessizce
+#: atlanmaz; bekçi: tests/site_planning/test_ertelenmis_uq_http.py).
+ROW_UNIQUE_CONSTRAINT = "uq_site_plan_rows_site_kind_section_label"
+
+
+async def enforce_row_uniqueness_now(session: AsyncSession) -> None:
+    """Ertelenmiş satır tekilliğini İSTEK İÇİNDE denetletir.
+
+    🔴 Kısıt `DEFERRABLE INITIALLY DEFERRED`dır: ihlali normalde `flush()`ta
+    DEĞİL transaction'ın commit'inde patlar. O commit `app/core/db.py`
+    `get_db`nin teardown'undadır ve FastAPI 0.141.1 teardown'u YANIT
+    GÖNDERİLDİKTEN SONRA koşturur (`routing.py:140-146`); Starlette 1.6.0 de
+    `response_started` olduğu için işleyiciyi çağıramaz
+    (`_exception_handler.py:55`). Yani gerçek bir çakışmada istemci **200** ve
+    gövdesinde YAZILMAMIŞ satırları görürdü.
+
+    Bu çağrı bekleyen denetimi yazmanın hemen ardına çeker: ihlal artık
+    handler'ın İÇİNDE `IntegrityError` olarak doğar ve
+    `_integrity_error_handler` onu 409'a çevirir.
+
+    Erteleme KALDIRILMAZ, yalnız SONA alınır: tüm `flush()`lar bittikten sonra
+    koştuğu için etiket TAKASI (A↔B) hâlâ geçerlidir ve haksız 409 doğmaz —
+    kısıt yalnız ADIYLA hedeflenir, `ALL` ile değil (kardeş modüllerin
+    ertelenmiş kısıtları etkilenmez).
+    """
+    await session.execute(text(f"SET CONSTRAINTS {ROW_UNIQUE_CONSTRAINT} IMMEDIATE"))
 
 
 async def locked_site_rows(session: AsyncSession, site_id: uuid.UUID) -> list[SitePlanRow]:

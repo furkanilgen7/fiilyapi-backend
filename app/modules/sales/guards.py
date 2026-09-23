@@ -30,7 +30,7 @@ from app.modules.customers.repository import get_customer
 from app.modules.projects.models import Project
 from app.modules.projects.service import visible_projects
 from app.modules.sales import repository
-from app.modules.sales.models import SaleInstallment, UnitSale
+from app.modules.sales.models import SaleInstallment, UnitSale, UnitSaleStatus
 from app.modules.units.models import Unit, UnitOwnerSide
 from app.modules.units.repository import get_unit
 from app.modules.users.models import User
@@ -39,6 +39,7 @@ __all__ = [
     "CUSTOMER_MISSING",
     "DELETE_NOT_ALLOWED",
     "DUPLICATE_SEQUENCE_NO",
+    "INSTALLMENT_AMOUNT_NOT_POSITIVE",
     "INSTALLMENT_MISSING",
     "INVALID_STATUS_TRANSITION",
     "INSTALLMENT_TOTAL_MISMATCH",
@@ -46,16 +47,21 @@ __all__ = [
     "PAID_INSTALLMENT_BELOW_PAID",
     "PAID_INSTALLMENT_REMOVED",
     "PAYMENT_EXCEEDS_INSTALLMENT",
+    "PLAN_BALANCE_UNCOVERED",
     "PLAN_DOWN_PAYMENT_EXCEEDS",
     "PLAN_HAS_PAYMENTS",
+    "PLAN_INSTALLMENT_TOO_SMALL",
     "PLAN_INPUT_MISSING",
     "PROJECT_MISSING",
+    "SALE_CANCELLED_NOT_WRITABLE",
     "SALE_MISSING",
     "SALE_NOT_DELETABLE",
+    "SALE_PRICE_BELOW_COLLECTED",
     "UNIT_ALREADY_SOLD",
     "UNIT_MISSING",
     "USER_NOT_FOUND",
     "ensure_no_open_sale",
+    "ensure_sale_writable",
     "ensure_plan_replaceable",
     "ensure_unit_sellable",
     "existing_customer",
@@ -131,6 +137,54 @@ PAID_INSTALLMENT_BELOW_PAID = "Taksit tutarı tahsil edilen tutardan küçük ol
 
 # 422 — §8 S2: kısmi ödeme serbesttir, AŞIRI ödeme değil.
 PAYMENT_EXCEEDS_INSTALLMENT = "Tahsilat tutarı taksit bakiyesini aşamaz"
+
+# 422 — 0,00 tutarlı satır DOĞDUĞU ANDA "tam ödendi"dir: `installment_stats`
+# "ödenmiş"i `paid_amount >= amount` ile ölçer ve sıfır satırda `0 >= 0`
+# DOĞRUDUR. Böyle bir satır hiç tahsilat yokken `installment_paid_count`a
+# girer ve `_sync_paid_at` ona sunucu saatini damgalar. Kural ŞEMADA değil
+# BURADA durur (`INSTALLMENT_TOTAL_MISMATCH` ile aynı katman): sözleşmedeki
+# `minimum: 0` değişmez, dolayısıyla frontend tipleri bayatlamaz.
+INSTALLMENT_AMOUNT_NOT_POSITIVE = "Taksit tutarı sıfırdan büyük olmalıdır"
+
+# 422 — `build_plan` taksit tutarını `ROUND_DOWN` ile kuruşa indirir; bakiye
+# taksit sayısına bölündüğünde kuruşun altına düşerse ÜRETİLEN SATIRLAR 0,00
+# olur (uç hâl: peşinat = satış bedeli → 12 adet 0,00 taksit). Yukarıdaki
+# gerekçeyle aynı zarar, bu kez ÜRETİM yolunda.
+PLAN_INSTALLMENT_TOO_SMALL = (
+    "Taksitlendirilecek bakiye her taksite en az 1 kuruş düşecek kadar olmalıdır"
+)
+
+# 422 — taksit sayısı yokken peşinat satış bedelinin ALTINDA kalırsa
+# `build_plan` bakiyeyi DAĞITMADAN döner ve plan toplamı `sale_price`ın altına
+# düşer. `PUT installments` aynı gövdeyi `INSTALLMENT_TOTAL_MISMATCH` ile
+# reddediyordu: iki yazma yolu AYNI değişmezi (Σ amount == sale_price) zorlar.
+PLAN_BALANCE_UNCOVERED = (
+    "Taksit sayısı girilmediğinde peşinat satış bedelinin tamamını karşılamalıdır"
+)
+
+# 422 — `PATCH /sales/{id}` satış bedelini TAHSİL EDİLMİŞ paranın altına
+# indiremez. İki zararı birden doğururdu: (1) `UnitSaleResponse.remaining_amount`
+# (`service.py`) NEGATİF döner ve liste TOPLAM satırı eksiye kayar; (2) kayıt
+# ÇIKIŞSIZ kalır — tahsilatlı planı `generate-plan` 409 (`PLAN_HAS_PAYMENTS`)
+# ile yeniden üretemez, `PUT installments` ise toplamı yeni bedele eşitlemek
+# için tahsilatlı satırı ne düşürebilir (409 `PAID_INSTALLMENT_REMOVED`) ne de
+# tahsilatın altına indirebilir (422 `PAID_INSTALLMENT_BELOW_PAID`).
+#
+# Kapı BEDELİ tahsilata bağlar, plan TOPLAMINA değil: "Σ amount == sale_price"
+# koşulu PATCH'e taşınsaydı planı olan bir satışta bedel BİR DAHA
+# değiştirilemezdi — `PUT installments` yeni toplamı ESKİ bedele bakarak
+# reddeder, PATCH eski toplamı YENİ bedele bakarak reddederdi (karşılıklı
+# kilit). Bu sınırla bedel serbestçe düşürülüp yükseltilebilir ve plan
+# ardından `generate-plan`/`PUT installments` ile yeni bedele hizalanır.
+SALE_PRICE_BELOW_COLLECTED = "Satış bedeli tahsil edilen tutardan küçük olamaz"
+
+# 409 — iptal edilmiş satış kaydına plan YAZILMAZ, tahsilat İŞLENMEZ. İptal
+# ünitenin vitrinini serbest bırakır (`cancelled` → `listed`, T3 senkronu) ve
+# daire başkasına satılabilir; ayrıca özet KPI'ları iptalleri saymaz
+# (`list_sale_rows(exclude_cancelled=True)`), dolayısıyla bu kayda işlenen para
+# hiçbir özete girmez. `ConflictError` (409): kaydın O ANKİ DURUMUYLA çakışma,
+# bir alan doğrulaması değil (`INVALID_STATUS_TRANSITION` ile aynı sınıf).
+SALE_CANCELLED_NOT_WRITABLE = "İptal edilmiş satışın ödeme planı değiştirilemez"
 
 
 # --- Görünürlük (spec §6) ---
@@ -262,6 +316,21 @@ async def visible_installment(
         raise NotFoundError(INSTALLMENT_MISSING)
     project = await visible_project(session, actor, sale.project_id, INSTALLMENT_MISSING)
     return installment, sale, project
+
+
+def ensure_sale_writable(sale: UnitSale) -> None:
+    """İptal edilmiş satışa plan/tahsilat YAZILMAZ (409).
+
+    Kapı YALNIZ `cancelled`i kapsar. `deed_transferred` KASITLA DIŞARIDADIR:
+    F156 tapu devir koşulu "Sözleşme imzasında"/"Peşinat sonrası" olduğunda tapu
+    taksitler bitmeden devredilir, dolayısıyla devirden sonra plan üretmek ve
+    kalan taksitleri tahsil etmek MEŞRU işlemlerdir.
+
+    Kapı `transitions.TRANSITIONS`in İKAMESİ DEĞİLDİR: o tablo durumlar ARASI
+    geçişi bekçiler, bu kapı ise terminal bir durumdaki kaydın VERİSİNE yazmayı.
+    """
+    if sale.status is UnitSaleStatus.cancelled:
+        raise ConflictError(SALE_CANCELLED_NOT_WRITABLE)
 
 
 def ensure_plan_replaceable(installments: list[SaleInstallment]) -> None:

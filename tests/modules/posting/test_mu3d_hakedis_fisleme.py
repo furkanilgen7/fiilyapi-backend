@@ -18,6 +18,7 @@ from app.modules.progress_payments.models import ProgressPaymentStatus
 from app.modules.progress_payments.transitions import PaymentAction
 from app.modules.subcontractor_progress_payments import transitions as taseron_transitions
 from app.modules.subcontractor_progress_payments.models import SubcontractorPaymentStatus
+from tests.modules.equipment._mk2_para_gercek import kira_parasini_yatir
 from tests.modules.posting._mu3d import (
     KOD_ALICILAR,
     KOD_GIDER,
@@ -298,6 +299,10 @@ async def test_ODEME_damgasi_IKINCI_bir_fis_URETMEZ(seeded_db, user_factory):
     kullanici = await aktor(seeded_db, user_factory)
     invoice, _s = await kira_hakedisi(seeded_db)
     await rental_service.approve_invoice(seeded_db, kullanici, invoice.id)
+    # PARA-GERCEK (2026-09-19) — `pay` artık gerçekleşmiş para ister. Ödemenin
+    # kendi faturası Hazine'nin fişidir; buradaki iddia kira hakedişinin ÜSTÜNE
+    # İKİNCİ bir fiş atılmadığıdır, o yüzden sayım para YAZILDIKTAN SONRA alınır.
+    await kira_parasini_yatir(seeded_db, invoice.id)
 
     once = (await seeded_db.execute(select(func.count()).select_from(JournalEntry))).scalar_one()
     await rental_service.pay_invoice(seeded_db, kullanici, invoice.id)

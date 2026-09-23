@@ -10,11 +10,13 @@ kalemi yok demektir.
 """
 
 import uuid
+from datetime import date
 from decimal import Decimal
 
 from app.core.access import AccessLevel
 from app.modules.audit.models import AuditAction
 from app.modules.boq.models import BoqGroup, BoqItem
+from app.modules.site_diary.models import DiaryStatus, SiteDiaryEntry, SiteDiaryLine
 
 from ._boq import (
     _audit_details,
@@ -374,3 +376,86 @@ async def test_delete_boq_group_leaves_sibling_groups_intact(
     body = after.json()
     assert [g["id"] for g in body["groups"]] == [str(kept.id)]
     assert body["totals"]["grand_total"] == "200.00"
+
+
+# --- BOQ kalemi <-> gunluk satiri butunlugu (borc #53) ---------------------
+#
+# `site_diary_lines.boq_item_id` FK'si `ondelete="SET NULL"`dir
+# (site_diary/models.py:209-215): korkuluk olmadan tek bir DELETE, o kaleme
+# yazilmis GECMIS gunlerin satirlarini "bagi kopmus"a cevirir. O satirlar
+# `site_diary/repository.py:249` ve `:279`daki INNER `join(BoqItem, ...)`
+# okumalarindan DUSER — Hakedis Ozeti ve "gunlukten doldur" onerisi o ₺'yi
+# artik saymaz — ama gunun DETAY ekrani snapshot kolonlariyla (code/description/
+# unit/unit_price/quantity) satiri gostermeye devam eder. Iki ekran kalici
+# olarak farkli ₺ soyler ve GONDERILMIS gunde duzeltme yolu yoktur:
+# `apply_lines` yalniz `draft`ta kosar (site_diary/service.py) ve bagi kopmus
+# satir govdeden ADRESLENEMEZ.
+
+
+async def _diary_line(session, site, project, actor, item, quantity: Decimal = Decimal("12.000")):
+    """Gonderilmis bir gune, verilen BOQ kalemine bagli tek satir yazar."""
+    entry = SiteDiaryEntry(
+        site_id=site.id,
+        project_id=project.id,
+        entry_date=date(2026, 3, 1),
+        status=DiaryStatus.submitted,
+        created_by=actor.id,
+    )
+    session.add(entry)
+    await session.flush()
+    line = SiteDiaryLine(
+        entry_id=entry.id,
+        boq_item_id=item.id,
+        code=item.code,
+        description=item.description,
+        unit=item.unit,
+        unit_price=item.unit_price,
+        quantity=quantity,
+    )
+    session.add(line)
+    await session.flush()
+    return line
+
+
+async def test_gunluk_satiri_olan_kalem_silinemez_409(
+    client, db_session, user_factory, project_factory
+):
+    """Kaleme yazilmis gunluk satiri varsa DELETE 409 doner, bag KOPMAZ."""
+    project = await project_factory("BOQ-API-53")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    item = await _item(db_session, site, group, code="01.001")
+    actor = await user_factory(
+        email="gunlukcu@boq-api.co", password="parola1234", role_key="system_admin"
+    )
+    line = await _diary_line(db_session, site, project, actor, item)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.delete(f"/boq/items/{item.id}", headers=_auth(token))
+
+    assert resp.status_code == 409
+    assert await db_session.get(BoqItem, item.id) is not None
+    await db_session.refresh(line)
+    assert line.boq_item_id == item.id
+
+
+async def test_gunluk_satiri_olmayan_kalem_hala_silinir_204(
+    client, db_session, user_factory, project_factory
+):
+    """Regresyon: gunluk satiri BASKA kaleme yazilmissa hedef kalem silinebilir."""
+    project = await project_factory("BOQ-API-54")
+    site = await _site(db_session, project)
+    group = await _group(db_session, site)
+    used = await _item(db_session, site, group, code="01.001")
+    doomed = await _item(db_session, site, group, code="01.002")
+    actor = await user_factory(
+        email="gunlukcu2@boq-api.co", password="parola1234", role_key="system_admin"
+    )
+    await _diary_line(db_session, site, project, actor, used)
+    token = await _login(client, user_factory, "system_admin")
+
+    resp = await client.delete(f"/boq/items/{doomed.id}", headers=_auth(token))
+
+    assert resp.status_code == 204
+    assert await db_session.get(BoqItem, doomed.id) is None
+    assert await db_session.get(BoqItem, used.id) is not None

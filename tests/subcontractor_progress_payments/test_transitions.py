@@ -528,6 +528,62 @@ async def test_onayda_kota_yeniden_dogrulanir_422(
     )
 
 
+async def test_onayda_KAYNAK_kalem_tavani_da_yeniden_dogrulanir_422(
+    client: AsyncClient,
+    seeded_db: AsyncSession,
+    admin_headers: dict[str, str],
+    admin_kullanicisi: User,
+    taseron_sozlesmesi,
+    ikiz_sozlesme_fabrikasi,
+    hakedis_fabrikasi,
+) -> None:
+    """🔴 ÇİFT SAYIM (TH-PRJGENEL): aynı işveren kalemine bağlı İKİ sözleşme.
+
+    Kaynak (işveren) kalem 200 birimdir. Birinci sözleşme 150, ikinci sözleşme
+    60 taşır; İKİSİ DE kendi sözleşme kalem miktarının (200) altında olduğu için
+    YAZMA anında ikisi de geçer. Tavan yalnız yazma yolunda olsaydı iki taslak
+    önce yazılıp sonra ikisi de onaylanarak 210 birim ödenirdi. İkinci ONAY 422
+    döner ve durum DEĞİŞMEZ.
+    """
+    contract, _, _ = taseron_sozlesmesi
+    kalem = _kalemler(contract)[0]
+    ilk = await _satirli_hakedis(
+        seeded_db,
+        hakedis_fabrikasi,
+        contract,
+        admin_kullanicisi,
+        sequence_no=1,
+        status=SubcontractorPaymentStatus.pending_approval,
+        miktarlar=[Decimal("150"), Decimal("0")],
+    )
+    ikiz = await ikiz_sozlesme_fabrikasi(contract, kalem.source_contract_item_id)
+    ikinci = await _satirli_hakedis(
+        seeded_db,
+        hakedis_fabrikasi,
+        ikiz,
+        admin_kullanicisi,
+        sequence_no=1,
+        status=SubcontractorPaymentStatus.pending_approval,
+        miktarlar=[Decimal("60")],
+    )
+
+    birinci_onay = await client.post(
+        f"/subcontractor-progress-payments/{ilk.id}/approve", headers=admin_headers
+    )
+    assert birinci_onay.status_code == 200, birinci_onay.text
+
+    ikinci_onay = await client.post(
+        f"/subcontractor-progress-payments/{ikinci.id}/approve", headers=admin_headers
+    )
+    assert ikinci_onay.status_code == 422, ikinci_onay.text
+    detay = ikinci_onay.json()["detail"]
+    assert "işveren sözleşmesindeki miktarı aşamaz" in detay
+    assert contract.contract_no not in detay, "karşı sözleşmenin kimliği sızmamalı"
+    assert (await _oku(seeded_db, ikinci.id)).status == (
+        SubcontractorPaymentStatus.pending_approval
+    )
+
+
 async def test_onayda_kota_kendi_miktarini_iki_kez_saymaz(
     client: AsyncClient,
     seeded_db: AsyncSession,

@@ -468,7 +468,7 @@ async def test_6_TEMIZLIK_HICBIR_SATIR_BIRAKMAZ_sayac_DAHIL() -> None:
     ve sonraki testlere sızar. `_temizle` bu yüzden TEK korumadır.
 
     Fiilen sızdı: `_kur(taslak_fis=True)` `generate_entry_no(..., year=YIL)` çağırıp
-    `journal_entry_counters`e `{2031: N}` satırı yazıyordu; `_temizle` o tabloyu
+    `journal_entry_counters`e `{2019: N}` satırı yazıyordu; `_temizle` o tabloyu
     hiç bilmiyordu. `test_fisno_numbering.py::test_YIL_sayaclari_BIRBIRINI_sifirlamaz`
     tabloyu GLOBAL okuduğu için kırmızıya döndü. Seri koşuda görünmüyordu — alfabetik
     sırada `test_fisno_*` bu dosyadan ÖNCE koşuyor; sıra değişince (xdist

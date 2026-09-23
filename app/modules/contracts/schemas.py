@@ -19,11 +19,12 @@ mockup kendi etiketiyle çelişiyor).
 import uuid
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 # Serbest metin tavanı (TB4 S3) `boq` ailesiyle PAYLAŞILIR — tek kaynak.
+from app.core.field_scope import Gorunurluk
 from app.core.text import FREE_TEXT_MAX_LENGTH
 from app.modules.contracts.models import ContractStatus, PaymentPeriod
 
@@ -110,9 +111,9 @@ class ContractSummary(BaseModel):
     yenilenmeden tüketilemez.
     """
 
-    total_amount: Decimal
+    total_amount: Annotated[Decimal | None, Gorunurluk.para]
     active_count: int
-    progress_payment_total: Decimal | None = None
+    progress_payment_total: Annotated[Decimal | None, Gorunurluk.para] = None
     expiring_this_month_count: int
 
 
@@ -124,10 +125,18 @@ class ContractListItem(BaseModel):
     title: str
     contract_no: str | None
     counterparty_name: str | None
-    amount: Decimal
+    amount: Annotated[Decimal | None, Gorunurluk.para]
     start_date: date | None
     end_date: date | None
-    progress_pct: Decimal | None = None
+    # 🔴 PARA — kullanıcı kararı 2026-09-19. Bu oran §8 "finansal ilerleme"dir
+    #    (`kümülatif brüt ÷ sözleşme bedeli × 100`, üreticisi
+    #    `progress_payments/summary.py`) ve TAMAMEN paradan türer; `projects`teki
+    #    FİZİKSEL ilerlemeden KASTEN ayrıdır. `operasyonel` etiketliyken iki
+    #    kusur birden üretiyordu: `limited` rol bedeli göremezken ORANI görüyor ve
+    #    bedeli dolaylı ele veriyordu; muhasebe ise kendi asıl metriğini
+    #    göremiyordu. Emsali `land_share_schemas`taki `our_actual_pct`/
+    #    `deviation_pct` — üçü de `para`.
+    progress_pct: Annotated[Decimal | None, Gorunurluk.para] = None
     """§8 finansal ilerleme: `kümülatif brüt / bedel × 100` (P7/H9, spec §9.6).
 
     **İKİ SEKMEDE DE GERÇEK DEĞER** (P-YT4, 2026-08-23). Eski not "taşeron
@@ -185,6 +194,17 @@ class EmployerContractItemUpdate(BaseModel):
     """`project_id` YOK. `group_id` verilirse aynı proje kontrolü servis
     katmanında tekrarlanır (`BoqItemUpdate` deseni)."""
 
+    # 🔴 `None` BURADA "alan gönderilmedi" demektir, "alanı boşalt" DEĞİL — kalemin
+    # yedi alanının yedisi de DB'de `NOT NULL`dır, boşaltılabilir alan YOKTUR.
+    # `Field(gt=0)` gibi kısıtlar union'ın `None` dalına uygulanmadığı için
+    # istemcinin AÇIKÇA gönderdiği `null` şemayı geçer ve
+    # `model_dump(exclude_unset=True)` sözlüğüne `None` olarak GİRER: servis onu
+    # bir DEĞER sanıp `None < Decimal(...)` karşılaştırır (`TypeError` → 500) ya da
+    # NOT NULL kolona yazıp veri bütünlüğü hatası aldırırdı. Ayrım aşağıdaki
+    # doğrulayıcıda kapatılır — biçim kuralı şemaya aittir ve `loc` alan adını
+    # taşır. Metin BİLEREK sınıf docstring'ine KONMADI: docstring OpenAPI
+    # `description`'ıdır ve sözleşme tabanını gereksiz yere kirletirdi (davranış
+    # değişikliği şemada görünmez, alanlar aynen kalır).
     group_id: uuid.UUID | None = None
     code: str | None = Field(default=None, min_length=1, max_length=50)
     description: str | None = Field(default=None, min_length=1, max_length=FREE_TEXT_MAX_LENGTH)
@@ -192,6 +212,27 @@ class EmployerContractItemUpdate(BaseModel):
     quantity: Decimal | None = Field(default=None, gt=0)
     unit_price: Decimal | None = Field(default=None, ge=0)
     sort_order: int | None = Field(default=None, ge=0)
+
+    @field_validator(
+        "group_id",
+        "code",
+        "description",
+        "unit",
+        "quantity",
+        "unit_price",
+        "sort_order",
+        mode="before",
+    )
+    @classmethod
+    def _acik_null_reddedilir(cls, value: object) -> object:
+        """Doğrulayıcı YALNIZ gövdede geçen alanlar için koşar — varsayılan
+
+        `None` doğrulanmaz. Bu yüzden "alan yok" hâli etkilenmez, yalnız AÇIK
+        `null` reddedilir.
+        """
+        if value is None:
+            raise ValueError("Alan boşaltılamaz; değiştirmemek için gövdeden çıkarın.")
+        return value
 
 
 class EmployerContractItemResponse(BaseModel):
@@ -203,11 +244,11 @@ class EmployerContractItemResponse(BaseModel):
     code: str
     description: str
     unit: str
-    quantity: Decimal
-    unit_price: Decimal
+    quantity: Annotated[Decimal | None, Gorunurluk.operasyonel]
+    unit_price: Annotated[Decimal | None, Gorunurluk.para]
     sort_order: int
-    distributed_quantity: Decimal
-    remaining_quantity: Decimal
+    distributed_quantity: Annotated[Decimal | None, Gorunurluk.operasyonel]
+    remaining_quantity: Annotated[Decimal | None, Gorunurluk.operasyonel]
 
 
 class EmployerContractGroupItems(BaseModel):
@@ -238,11 +279,11 @@ class EmployerContractDetail(BaseModel):
     project_id: uuid.UUID
     contract_no: str | None
     signature_date: date | None
-    amount: Decimal | None
-    advance_pct: Decimal
-    retainage_pct: Decimal
-    vat_pct: Decimal
-    late_penalty_daily: Decimal | None
+    amount: Annotated[Decimal | None, Gorunurluk.para]
+    advance_pct: Annotated[Decimal, Gorunurluk.kimlik]
+    retainage_pct: Annotated[Decimal, Gorunurluk.kimlik]
+    vat_pct: Annotated[Decimal, Gorunurluk.kimlik]
+    late_penalty_daily: Annotated[Decimal | None, Gorunurluk.para]
     has_price_escalation: bool
     index_type: PriceIndexType | None
     """T5 (spec §6 ek task, P7 bulgusu): fiyat farkı endeks tipi additive olarak
@@ -256,9 +297,9 @@ class EmployerContractDetail(BaseModel):
     end_date: date | None
     employer_name: str | None
     contractor_name: str | None
-    items_total: Decimal
-    items_total_diff: Decimal
-    advance_amount: Decimal
+    items_total: Annotated[Decimal | None, Gorunurluk.para]
+    items_total_diff: Annotated[Decimal | None, Gorunurluk.para]
+    advance_amount: Annotated[Decimal | None, Gorunurluk.para]
     progress_payment_summary: ProgressPaymentSummary
     """E14 127-147 "Hakediş Özeti" kartı — P7/H9'da GERÇEK veriye bağlandı
     (spec §9.6). ZORUNLU alan (H9 denetim O2): tek üretici
@@ -324,7 +365,7 @@ class ContractDistributionSite(BaseModel):
 
 class ContractDistributionAllocation(BaseModel):
     site_id: uuid.UUID
-    quantity: Decimal
+    quantity: Annotated[Decimal | None, Gorunurluk.operasyonel]
     boq_item_id: uuid.UUID
 
 
@@ -333,10 +374,10 @@ class ContractDistributionItem(BaseModel):
     code: str
     description: str
     unit: str
-    quantity: Decimal
-    unit_price: Decimal
+    quantity: Annotated[Decimal | None, Gorunurluk.operasyonel]
+    unit_price: Annotated[Decimal | None, Gorunurluk.para]
     allocations: list[ContractDistributionAllocation]
-    remaining_quantity: Decimal
+    remaining_quantity: Annotated[Decimal | None, Gorunurluk.operasyonel]
 
 
 class ContractDistributionGroup(BaseModel):
@@ -351,16 +392,16 @@ class ContractDistributionSiteItem(BaseModel):
 
     code: str
     description: str
-    quantity: Decimal
-    unit_price: Decimal
-    amount: Decimal
+    quantity: Annotated[Decimal | None, Gorunurluk.operasyonel]
+    unit_price: Annotated[Decimal | None, Gorunurluk.para]
+    amount: Annotated[Decimal | None, Gorunurluk.para]
 
 
 class ContractDistributionSiteSummary(BaseModel):
     site_id: uuid.UUID
     site_name: str
     items: list[ContractDistributionSiteItem]
-    total_amount: Decimal
+    total_amount: Annotated[Decimal | None, Gorunurluk.para]
 
 
 class ContractDistributionResponse(BaseModel):
@@ -452,8 +493,12 @@ class SubcontractorContractItemGroup(BaseModel):
 
 
 class SubcontractorContractItemResponse(BaseModel):
-    """`FORM`/`TSD` kalem satırı. `line_total` türevdir, saklanmaz — `unit_price`
-    NULL olan satır toplama 0 katkı verir (spec §3.6)."""
+    """`FORM`/`TSD` kalem satırı. `line_total` türevdir, saklanmaz.
+
+    `unit_price` NULL olan satır SÖZLEŞME BEDELİNE 0 katkı verir (spec §3.6) —
+    ama satırın KENDİ `line_total`ı `null`dır, `0` değil; gerekçesi türevin
+    docstring'indedir. Toplama kuralı `service._subcontractor_amount`ta yaşar.
+    """
 
     id: uuid.UUID
     contract_id: uuid.UUID
@@ -461,17 +506,41 @@ class SubcontractorContractItemResponse(BaseModel):
     code: str
     description: str
     unit: str
-    quantity: Decimal
-    unit_price: Decimal | None
+    quantity: Annotated[Decimal | None, Gorunurluk.operasyonel]
+    unit_price: Annotated[Decimal | None, Gorunurluk.para]
     sort_order: int
     # Bağsız kalemler `group: null` ile döner (spec §3.6).
     group: SubcontractorContractItemGroup | None = None
 
     @computed_field  # type: ignore[prop-decorator]
     @property
-    def line_total(self) -> Decimal:
-        if self.unit_price is None:
-            return Decimal("0")
+    def line_total(self) -> Decimal | None:
+        """Girdilerinden HERHANGİ BİRİ yoksa `None` — 0 DEĞİL.
+
+        🔴 **Neden `Decimal("0")` değil** (eski hâli buydu ve İKİ kusur
+        üretiyordu):
+
+        * `quantity` `operasyonel` etiketlidir ve `finance` kapsamında maske onu
+          `None`a çeker. Korumasız çarpım `None * Decimal` → `TypeError` verir ve
+          maske SERİLEŞTİRMEDEN ÖNCE uygulandığı için hata yanıt yolunda patlar:
+          muhasebe rolü taşeron sözleşme detayını **500** ile karşılardı.
+        * `unit_price` `para` etiketlidir ve `limited` kapsamında gizlenir. `0`
+          dönen bir türev, GİZLENMİŞ bir bedeli ekrana `"0,00 TL"` diye basardı
+          (`frontend/src/lib/format.ts` yalnız `null` görünce `—` yazar). Yanlış
+          bir sayı göstermek, hiç göstermemekten daha kötüdür.
+
+        🔴 **Neden maskeli bileşeni ATLAYIP hesaplamıyoruz:** eksik bir toplamı
+        gerçek gibi basmak da aynı yalanı söylerdi (`boq/schemas.py::group_total`
+        aynı kararı aynı gerekçeyle verir).
+
+        🔴 **Spec §3.6'nın "fiyatsız satır toplama 0 katkı verir" kuralı DEĞİŞMEDİ**
+        ve burada YAŞAMIYOR: sözleşme bedelini `service._subcontractor_amount`
+        hesaplar, fiyatsız satırı kendisi eler. O kural bir TOPLAMA kuralıdır;
+        satırın kendi tutarı "girilmedi" iken `0 TL` DEĞİLDİR (spec §3.6 bu iki
+        hâli zaten ayırır).
+        """
+        if self.quantity is None or self.unit_price is None:
+            return None
         return _quantize_money(self.quantity * self.unit_price)
 
 
@@ -561,10 +630,10 @@ class SubcontractorContractDetail(BaseModel):
     is_notarized: bool
     start_date: date | None
     end_date: date | None
-    late_penalty_daily: Decimal | None
-    advance_pct: Decimal
-    retainage_pct: Decimal
-    vat_pct: Decimal
+    late_penalty_daily: Annotated[Decimal | None, Gorunurluk.para]
+    advance_pct: Annotated[Decimal, Gorunurluk.kimlik]
+    retainage_pct: Annotated[Decimal, Gorunurluk.kimlik]
+    vat_pct: Annotated[Decimal, Gorunurluk.kimlik]
     payment_period: PaymentPeriod
     payment_term_days: int
     materials_by_contractor: bool
@@ -573,7 +642,7 @@ class SubcontractorContractDetail(BaseModel):
     status: ContractStatus
     is_draft: bool
     items: list[SubcontractorContractItemResponse]
-    contract_total: Decimal
+    contract_total: Annotated[Decimal | None, Gorunurluk.para]
     items_missing_price: int
     progress_payment_summary: None = None
     documents: None = None

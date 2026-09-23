@@ -215,6 +215,7 @@ def personel_fabrikasi(seeded_db: AsyncSession):
         source: WorkerSource = WorkerSource.company,
         subcontractor_id: uuid.UUID | None = None,
         is_active: bool = True,
+        is_draft: bool = False,
     ) -> Personnel:
         personnel = Personnel(
             full_name=full_name,
@@ -222,6 +223,7 @@ def personel_fabrikasi(seeded_db: AsyncSession):
             source=source,
             subcontractor_id=subcontractor_id,
             is_active=is_active,
+            is_draft=is_draft,
         )
         seeded_db.add(personnel)
         await seeded_db.flush()

@@ -352,6 +352,19 @@ async def update_sale(
     sale, project = await guards.visible_sale(session, actor, sale_id)
     updates = data.model_dump(exclude_unset=True)
 
+    # Bedel TAHSİL EDİLMİŞ paranın altına indirilemez (T4 para değişmezi).
+    # Kilit doğrulamayı besleyen OKUMADAN ÖNCE (`installments.save_installments`
+    # ile aynı sıra kanonu): aksi hâlde eş zamanlı bir `pay` araya girer ve
+    # bedel, tahsilat toplamının altında kalırdı.
+    if updates.get("sale_price") is not None:
+        await repository.lock_installments(session, sale.id)
+        tahsilat = sum(
+            (row.paid_amount for row in await repository.list_installments(session, sale.id)),
+            _ZERO,
+        )
+        if updates["sale_price"] < tahsilat:
+            raise SiteValidationError(guards.SALE_PRICE_BELOW_COLLECTED)
+
     if "advisor_user_id" in updates:
         # Ad, FK ile BİRLİKTE tazelenir: ikisini ayrı ayrı güncellenebilir
         # bırakmak, kayıtta bir kullanıcıya ait FK ile başkasının adını yan yana

@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from app.core.errors import (
     AccountingValidationError,
@@ -196,6 +196,40 @@ async def _integrity_error_handler(request: Request, exc: IntegrityError) -> JSO
     )
 
 
+#: PostgreSQL SQLSTATE'leri — "değer alanın sınırını aşıyor" sınıfı.
+#: `22003` sayısal taşma (numeric field overflow), `22001` metin taşması
+#: (string data right truncation). İkisi de kullanıcının DÜZELTEBİLECEĞİ bir
+#: ALAN hatasıdır; 22 sınıfının geri kalanı (ör. `22012` sıfıra bölme) sunucu
+#: hatasıdır ve 500 KALIR — kapı bilerek DARdır.
+FIELD_OVERFLOW_SQLSTATES = frozenset({"22003", "22001"})
+
+FIELD_OVERFLOW_DETAIL = "Gönderilen değer alanın sınırını aşıyor"
+
+
+async def _field_overflow_handler(request: Request, exc: DBAPIError) -> JSONResponse:
+    """Kolon sınırını aşan değeri 422'ye çevirir; diğer DB hatalarını 500 BIRAKIR.
+
+    🔴 `IntegrityError` DEĞİL, `DBAPIError` kaydedilir ve ayrım SQLSTATE'ten
+    yapılır. Gerekçe ÖLÇÜLDÜ: asyncpg sürücüsünde `sqlalchemy.exc.DataError`
+    HİÇ doğmaz — `dialects/postgresql/asyncpg.py:1010-1021`
+    `_asyncpg_error_translate` yalnız altı sınıfı eşler,
+    `NumericValueOutOfRangeError` düz `Error`a düşer ve SQLAlchemy onu
+    `DBAPIError` olarak sarar. `DataError`e kaydedilmiş bir işleyici hiç
+    çağrılmazdı (bekçi: tests/core/test_data_error_422.py).
+
+    `IntegrityError` daha türemiş bir sınıf olarak AYRICA kayıtlıdır; Starlette
+    işleyiciyi `type(exc).__mro__` üzerinde arar, bu yüzden 409 yolu gölgelenmez.
+    """
+    sqlstate = getattr(exc.orig, "sqlstate", None) or getattr(exc.orig, "pgcode", None)
+    if sqlstate not in FIELD_OVERFLOW_SQLSTATES:
+        # Altyapı/sunucu hatası: bugünkü davranış (500) KORUNUR.
+        raise exc
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": FIELD_OVERFLOW_DETAIL},
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Alan hatalarını uygun HTTP koduna çeviren handler'ları kaydeder.
 
@@ -228,3 +262,4 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ApprovalValidationError, _approval_validation_handler)
     app.add_exception_handler(DomainError, _domain_error_handler)
     app.add_exception_handler(IntegrityError, _integrity_error_handler)
+    app.add_exception_handler(DBAPIError, _field_overflow_handler)

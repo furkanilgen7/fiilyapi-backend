@@ -346,5 +346,14 @@ async def build_risks(session: AsyncSession, actor: User) -> RiskAlertsPlacehold
         alerts += await _overdue_payment_alerts(session, project_ids)
     if izinler[SCHEDULE_MODULE]:
         alerts += await _schedule_alerts(session, project_ids)
-    alerts.sort(key=lambda alert: (_SEVERITY_ORDER[alert.severity], alert.title, alert.detail))
+    # 🔴 ANAHTARDA `alert.detail` YOKTUR ve bu bir eksiklik DEGIL SARTTIR.
+    # Gecikme satirlarinin `title`i SABITTIR ("Hakediş gecikmiş"); `detail`
+    # anahtara girerse ayni siddet grubunun ICINDEKI tek ayirt edici anahtar o
+    # STRING olur ve sira ALFABETIK dizilir — "Çelik OSB – 90 gün" metin olarak
+    # "Ada Beton – 5 gün"den SONRA gelir, yani EN AGIR gecikme listenin EN ALTINA
+    # duserdi. Python'un `sort`u KARARLIDIR (stable): anahtar disinda kalan her
+    # sey kaynagin KENDI SQL sirasini korur — gecikmeler `ORDER BY vade` (en gec
+    # kalan ilk, `_overdue_payment_alerts` docstring'inin sozu), takvim
+    # `ORDER BY end_date DESC`. Bekcisi: `test_gecikme_satirlari_EN_GEC_KALAN_ILK_SIRADA`.
+    alerts.sort(key=lambda alert: (_SEVERITY_ORDER[alert.severity], alert.title))
     return RiskAlertsPlaceholder(available=True, items=alerts, sources=sources)

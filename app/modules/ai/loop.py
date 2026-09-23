@@ -37,6 +37,7 @@ yoktur; bu satır o kararın **yapısal** hâlidir, yorum hâli değil.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import AsyncIterator, Mapping, Sequence
 
@@ -48,6 +49,7 @@ from app.core.security import TokenError, decode_token
 from app.modules.ai import context, guards
 from app.modules.ai.actor import aktor_baglami
 from app.modules.ai.db import AiSessionLocal
+from app.modules.ai.models import AiToolCallPhase, AiToolDecision
 from app.modules.ai.presenters import bloklari_uret
 from app.modules.ai.prompt import sistem_promptu
 from app.modules.ai.providers.base import (
@@ -68,6 +70,8 @@ from app.modules.ai.registry import ActorContext, ToolKapsami, ToolRegistry
 from app.modules.ai.result import AracSonucu, Ok, ToolError, Truncated
 from app.modules.ai.transport import ReadOnlyTransport
 from app.modules.users.models import User, UserStatus
+
+logger = logging.getLogger(__name__)
 
 
 class OturumSuresiDoldu(Exception):
@@ -251,6 +255,7 @@ async def ajan_turu(
                 izin_listesi=izin_listesi,
                 transport=transport,
                 bearer=bearer,
+                kullanici_id=actor.user_id,
                 harcanan=harcanan,
                 tavan=ayarlar.ai_max_tool_calls,
                 ai_session_id=ai_session_id,
@@ -272,6 +277,62 @@ async def ajan_turu(
     yield TurBitti(sebep=sebep, kullanim=kullanim)
 
 
+async def _reddi_izle(
+    *,
+    cagri: AracCagrisiHazir,
+    karar: AiToolDecision,
+    hata: str,
+    kullanici_id: uuid.UUID | None,
+    ai_session_id: uuid.UUID | None,
+    saglayici_adi: str,
+    model: str,
+) -> None:
+    """Huniye ULAŞMADAN reddedilen bir çağrının `ai_tool_calls` izi.
+
+    🔴 `audit.py` doktrini: *"iz bırakmayan bir AI turu, atfedilemez bir
+    turdur."* `record_tool_call`ın TEK çağrıldığı yer `ToolRegistry.invoke`
+    içindeki `_iz`di; dolayısıyla aşağıdaki üç ret tabloda **SIFIR** satır
+    bırakıyordu. Geriye kalan tek iz `audit_log` tur özetiydi ve o yalnız
+    TOPLAM yazar (hangi araç, hangi kod, kaç ret YOK).
+
+    🔴 Huninin kendi ret desenine uyulur: **iki satır, tek `call_id`**
+    (`registry.invoke` §1-4 dalları aynısını yapar). Tek satır yazılsaydı
+    "başarılı çağrıda iki satır" bekçisiyle sayım tutarsız hâle gelirdi.
+
+    🔴 `module_keys` BOŞTUR: bu noktada `spec` çözülmemiştir ve çözmek
+    huninin "katalog dispatch'te yeniden hesaplanır" kuralını buraya
+    kopyalamak olurdu. Ret SEBEBİ `error` alanında yaşar.
+
+    🔴 FAIL-CLOSED KURULMAZ. Huninin `denetim_yazilamadi` dalı "iz yoksa araç
+    KOŞMAZ" der; burada araç zaten koşmuyor, ret dönülüyor. Yazım arızası akışı
+    çökertmemeli — `logger.exception` tam traceback'i bırakır.
+    """
+    from app.modules.ai.audit import record_tool_call
+
+    call_id = uuid.uuid4()
+    try:
+        for faz in (AiToolCallPhase.started, AiToolCallPhase.finished):
+            await record_tool_call(
+                call_id=call_id,
+                phase=faz,
+                user_id=kullanici_id,
+                tool_name=cagri.arac_adi,
+                module_keys=[],
+                arguments=dict(cagri.argumanlar),
+                decision=karar,
+                ai_session_id=ai_session_id,
+                provider=saglayici_adi,
+                model=model,
+                error=hata,
+            )
+    except Exception:  # noqa: BLE001 — gerekçe docstring'in son maddesinde
+        logger.exception(
+            "AI araç reddi (%s · %s) denetim tablosuna YAZILAMADI; akış sürüyor.",
+            cagri.arac_adi,
+            hata,
+        )
+
+
 async def _cagriyi_kosur(
     *,
     kayit: ToolRegistry,
@@ -279,6 +340,7 @@ async def _cagriyi_kosur(
     izin_listesi: frozenset[str],
     transport: ReadOnlyTransport,
     bearer: str,
+    kullanici_id: uuid.UUID | None,
     harcanan: int,
     tavan: int,
     ai_session_id: uuid.UUID | None,
@@ -291,19 +353,58 @@ async def _cagriyi_kosur(
     🔴 `varsayilan_kapsam` burada UYGULANMAZ, yalnız **taşınır**: doldurma
     `ToolRegistry.invoke`un ağzındadır (tek yer). Burada da doldurulsaydı iki
     kopya olurdu ve biri diğerinden sessizce ayrışabilirdi.
+
+    🔴 ÜÇ ERKEN DÖNÜŞÜN DE DENETİM İZİ VARDIR (`_reddi_izle`). Özellikle
+    `niyet_disi` bir GÜVENLİK OLAYIDIR — zehirli bir araç çıktısının yazma
+    denemesi — ve eskiden yalnız SSE karesinde görünüyordu.
+
+    🔴 `kullanici_id` turun başında çözülmüş aktörden gelir, burada YENİDEN
+    çözülmez: `taze_aktor` bu üç dalın İKİSİNDEN sonra koşar (bütçe ve niyet
+    reddi ona hiç ulaşmaz) ve üçüncüsünde zaten patlamıştır. Atıf için
+    kullanılan kimlik, turu AÇAN kimliktir.
     """
     # --- Bütçe: aşımda DÜRÜST hata, "kayıt yok" DEĞİL --------------------
     if harcanan >= tavan:
+        await _reddi_izle(
+            cagri=cagri,
+            karar=AiToolDecision.denied_budget,
+            hata="butce_asildi",
+            kullanici_id=kullanici_id,
+            ai_session_id=ai_session_id,
+            saglayici_adi=saglayici_adi,
+            model=model,
+        )
         return ToolError("butce_asildi")
 
     # --- Niyet tavanı (B21) ---------------------------------------------
     if cagri.arac_adi not in izin_listesi:
+        await _reddi_izle(
+            cagri=cagri,
+            karar=AiToolDecision.denied_permission,
+            hata="niyet_disi",
+            kullanici_id=kullanici_id,
+            ai_session_id=ai_session_id,
+            saglayici_adi=saglayici_adi,
+            model=model,
+        )
         return ToolError("niyet_disi")
 
     # --- 🔴 TAZE kimlik + izin (S19 / B28) -------------------------------
     try:
         actor = await taze_aktor(bearer)
     except OturumSuresiDoldu:
+        # 🔴 `decision` huninin KAPALI sözlüğüdür; oturum reddi için yeni bir
+        # enum üyesi açmak migration ister. B28'in üçüncü hâli `error`
+        # alanında yaşar ve "yetkin yok"tan orada ayrılır.
+        await _reddi_izle(
+            cagri=cagri,
+            karar=AiToolDecision.denied_permission,
+            hata="oturum_suresi_doldu",
+            kullanici_id=kullanici_id,
+            ai_session_id=ai_session_id,
+            saglayici_adi=saglayici_adi,
+            model=model,
+        )
         return ToolError("oturum_suresi_doldu")
 
     # --- TEK HUNİ --------------------------------------------------------

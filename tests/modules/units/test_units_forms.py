@@ -258,7 +258,11 @@ _UNITE_FORMU = {
     "parking_right": "one_closed",  # UE 81
     "min_sale_price": "1380000.00",  # UE 92
     "vat_rate": "10.00",  # UE 93
-    "sales_status": "sold",  # UE 94
+    # UE 94 — deger "sold"du; acilis vitrininde `sold`/`reserved` ARTIK 422
+    # (satis spec §3: vitrin durumu satis kaydindan turer, bkz.
+    # `tests/sales/test_sales_unit_sync.py::test_unite_olusturulurken_satildi...`).
+    # Bu vakanin IDDIASI degismedi: 8 form alani YAZILIR ve DONER.
+    "sales_status": "listed",
 }
 
 

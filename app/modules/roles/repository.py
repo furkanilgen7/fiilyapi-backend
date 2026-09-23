@@ -3,6 +3,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.access import AccessLevel, Scope
 from app.modules.roles.models import Module, Role, RolePermission
 
 
@@ -39,11 +40,46 @@ async def list_modules(session: AsyncSession) -> list[Module]:
 async def get_role_matrix(
     session: AsyncSession, role_id: uuid.UUID
 ) -> list[tuple[Module, RolePermission]]:
+    """Rolün matrisi — HER modül için bir hücre, izin satırı olmasa bile.
+
+    🔴 Bu fonksiyon eskiden INNER JOIN'di ve `modules`ı değil `role_permissions`ı
+    sürüyordu. Satırı olmayan modül matristen TAMAMEN DÜŞÜYORDU; belirti Ayarlar
+    ekranı değil `/auth/me` idi — `permissions` haritasında anahtar HİÇ bulunmuyordu.
+
+    Delik yapısaldır: `create_custom_role` yalnız o anda var olan modüller için
+    hücre açar, uzantı migration'ları ise izin satırlarını `WHERE r.key = :role_key`
+    süzgeciyle ve sabit `ROLE_ORDER` üzerinde yazar (tek istisna `ai`). Yani
+    migration'dan ÖNCE açılmış her özel rol, sonradan inen her modülün dışında kalır.
+
+    Artık sürücü `modules`tır (LEFT OUTER JOIN) ve eksik hücre yerine VARSAYILAN
+    KAPALI bir hücre üretilir. Üretilen nesne `session.add` EDİLMEZ: okuma yolu
+    yazmaz, yoksa `uq_role_module` yarışında çift satır doğardı. Kalıcı hücreyi
+    yalnız `service.update_role_permission` açar.
+    """
     stmt = (
         select(Module, RolePermission)
-        .join(RolePermission, RolePermission.module_id == Module.id)
-        .where(RolePermission.role_id == role_id)
+        .outerjoin(
+            RolePermission,
+            (RolePermission.module_id == Module.id) & (RolePermission.role_id == role_id),
+        )
         .order_by(Module.sort_order)
     )
     result = await session.execute(stmt)
-    return [(row[0], row[1]) for row in result.all()]
+    return [
+        (module, permission or varsayilan_hucre(role_id, module))
+        for module, permission in result.all()
+    ]
+
+
+def varsayilan_hucre(role_id: uuid.UUID, module: Module) -> RolePermission:
+    """İzin satırı olmayan (rol, modül) çifti için GEÇİCİ, kalıcılaşmayan hücre.
+
+    Varsayılan `none`dur — `core/permissions.py` zaten satır yokken reddediyordu,
+    bu hücre o davranışı AYNEN temsil eder; matrise görünürlük ekler, yetki eklemez.
+    """
+    return RolePermission(
+        role_id=role_id,
+        module_id=module.id,
+        access_level=AccessLevel.none,
+        scope=Scope.all,
+    )

@@ -411,6 +411,7 @@ async def create_unit(
     project = await guards.visible_project(session, actor, project_id)
     block = await guards.block_in_project(session, project, data.block_id)
     guards.ensure_owner_side_allowed(project, data.owner_side)
+    guards.ensure_opening_sales_status(data.sales_status)
     guards.ensure_net_le_gross(data.gross_area_m2, data.net_area_m2)
     await guards.ensure_unit_no_unique(session, block.id, data.unit_no)
     unit = Unit(

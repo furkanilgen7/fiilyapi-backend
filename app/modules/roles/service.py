@@ -3,11 +3,13 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.access import AccessLevel, Scope
+from app.core.access import DROPPED_SCOPES, AccessLevel, Scope, satisfies
 from app.core.errors import DomainError, NotFoundError, PermissionLockedError
+from app.core.field_scope import gizlenen_kova
 from app.modules.roles.models import SYSTEM_ADMIN_KEY, Module, Role, RolePermission
-from app.modules.roles.repository import get_permission
+from app.modules.roles.repository import get_module, get_permission
 from app.modules.roles.schemas import RoleCreate
+from app.modules.roles.scope_wiring import kablolu_moduller
 
 
 async def update_role_permission(
@@ -30,7 +32,94 @@ async def update_role_permission(
 
     permission = await get_permission(session, role_id, module_key)
     if permission is None:
-        raise NotFoundError("İzin satırı bulunamadı")
+        # 🔴 Satırın YOKLUĞU "böyle bir hücre olamaz" demek DEĞİLDİR: uzantı
+        # migration'ları izin satırlarını sabit `ROLE_ORDER` üzerinde yazar, o
+        # yüzden migration'dan önce açılmış her özel rol sonradan inen modülün
+        # hücresine sahip olmaz. Eskiden burada 404 atılıyordu ve yönetici o
+        # modülü ekrandan KALICI OLARAK açamıyordu. Hücre artık burada doğar;
+        # matris tarafı `repository.get_role_matrix` ile zaten görünür.
+        # 404 YALNIZ modül gerçekten yoksa kalır — uydurma anahtar satır açmaz.
+        module = await get_module(session, module_key)
+        if module is None:
+            raise NotFoundError("İzin satırı bulunamadı")
+        permission = RolePermission(
+            role_id=role_id,
+            module_id=module.id,
+            access_level=AccessLevel.none,
+            scope=Scope.all,
+        )
+        session.add(permission)
+
+    # 🔴 KAPSAM UYGULANIYOR (2026-09-19): `core/field_scope` alan maskesini yazar,
+    # `core/permissions.actor_scope` + `core/scoped_route` onu uca bağlar. Bu blok
+    # kapsam DEKORATİFKEN yazılmıştı ve o zaman doğruydu: hiçbir uç
+    # `permission.scope`u okumadığı için ekranda verilen "Sınırlı / Mali" sözü
+    # YALANDI ve yeni bir yalanın kalıcı yazılmasına izin verilmiyordu. Söz
+    # tutulduktan sonra aynı fren TERSİNE ÇEVRİLDİ: yönetici kendi kurduğu kısıtı
+    # hiçbir hücreye ATAYAMIYORDU (yalnız mevcut değeri geri gönderebiliyordu) ve
+    # reddetme metni "henüz uygulanmıyor" diyerek artık YANLIŞ bilgi veriyordu.
+    #
+    # Atanabilir kapsamlar ELLE LİSTELENMEZ; iki gerçek kaynaktan TÜRETİLİR:
+    #   * `access.DROPPED_SCOPES` — matristen DÜŞEN kapsamlar (own/project/stock),
+    #   * `field_scope.gizlenen_kova()` — maskesi GERÇEKTEN yazılmış kapsamlar.
+    # Üçüncü bir liste tutmak bugün onarılan kusurun aynısını üretirdi: iki liste
+    # bir gün ayrışır ve ekran yine uygulanmayan bir kısıt vaat ederdi. Bekçisi
+    # `tests/modules/test_role_service.py::test_ATANABILIR_kapsam_listesi_*`.
+    #
+    # 🔴 DÜŞEN kapsamlar MEVCUT OLSA BİLE geri yazılamaz. "Mevcudu geri göndermek
+    #    serbesttir" muafiyeti artık HİÇBİR YERDE yok — karar mevcut değere değil
+    #    kapsamın UYGULANIP UYGULANMADIĞINA bakar. Muafiyet kalsaydı migration
+    #    canlıyı `all`a çektikten sonra bile düşen kapsam ekrandan yeniden doğardı.
+    if scope in DROPPED_SCOPES:
+        raise PermissionLockedError(
+            "Bu kapsam kaldırıldı; erişimi daraltmak için proje erişimini kullanın."
+        )
+    # 🔴 Burada FAIL-CLOSED'uz, `field_scope`un OKUMA yolundaki fail-OPEN'ının
+    # tersine. Oradaki gevşeklik "canlıda kalmış bir kalıntı satır ekranı
+    # BOŞALTMASIN" içindir; burada ise yönetici YENİ bir söz veriyor. Maskesi
+    # olmayan bir kapsam yazılabilseydi `Scope`a eklenen her üye — hiç
+    # uygulanmadan — matristen atanabilir hâle gelirdi.
+    if scope is not Scope.all and gizlenen_kova(scope) is None:
+        raise PermissionLockedError(
+            "Bu kapsam uygulanmıyor (alan maskesi tanımlı değil); "
+            "erişimi daraltmak için proje erişimini kullanın."
+        )
+    # 🔴 MODÜL EKSENLİ FAIL-CLOSED (kalan iş #4, 2026-09-23): üstteki kapı yalnız
+    # KAPSAMIN maskesi var mı diye sorar, hangi MODÜLE yazıldığına hiç bakmaz.
+    # `limited`/`finance` yalnız `kablolu_moduller()`in döndürdüğü routerlarda
+    # (`route_class=kapsam_rotasi(...)` + `dependencies=[kapsam_kapisi(...)]`)
+    # bir karşılığa sahiptir; geri kalan 16 modülde (payroll · treasury ·
+    # accounting · invoicing · personnel · … ) köprü YOKTUR — maske aktörün
+    # `_KAPSAM` ContextVar'ı hiç yazılmadığı için sessizce `Scope.all` görür ve
+    # HİÇBİR ŞEY GİZLEMEZ. Bu kapı olmadan yönetici `personnel = view/limited`
+    # yazabiliyordu (200 dönüyordu), ekran "Sınırlı" gösteriyordu ve kullanıcı
+    # maaşı tam değeriyle görmeye devam ediyordu — ayrı yetki verildiği YALANDI.
+    #
+    # Bu kontrol yalnız kapsam GERÇEKTEN bir kovayı gizliyorsa (`gizlenen_kova`
+    # `None` DEĞİLSE) anlamlıdır; `Scope.all` hiçbir şeyi maskelemediği için her
+    # modülde serbest kalmaya devam eder (üstteki `all_a_cekilebilir` testiyle
+    # aynı ilke). Pozitif kontrol: `tests/modules/test_role_service.py::
+    # test_MODUL_EKSENLI_kapsam_kablolu_OLMAYAN_modulde_REDDEDILIR`.
+    if gizlenen_kova(scope) is not None and module_key not in kablolu_moduller():
+        raise PermissionLockedError(
+            "Bu modülde kapsam kısıtı uygulanmıyor (alan maskesi bu modülün "
+            "uçlarına bağlı değil); erişimi daraltmak için proje erişimini kullanın."
+        )
+    # 🔴 MASKELEYEN KAPSAM + YAZAN SEVİYE = ÜRÜNDE KARŞILIĞI OLMAYAN HÜCRE.
+    # Maske girdiyi `None` yapar; salt-okuma yüzeyi bunu "—" diye basar ama YAZMA
+    # yüzeyi basamaz: `frontend/src/lib/masked.ts::maskesiz` maskeli bir değer
+    # forma/hesaba düştüğünde RENDER anında atar (bilerek: `?? 0` yazmak
+    # kullanıcının GÖREMEDİĞİ bir sayıyı kaydeder, satırı atlamak kaydı sessizce
+    # siler). O dosya "`full` izin matrisinde yalnız `Scope.all` ile gelir" diye
+    # YAZILI bir varsayım taşıyordu ve bu varsayımı hiçbir şey uygulamıyordu —
+    # eski fren yalnız KAPSAM değişimine bakıyor, SEVİYEYİ hiç denetlemiyordu.
+    # Eşik `draft`: kayıt OLUŞTURABİLEN ilk seviye odur; `none`/`view` serbest
+    # kalır (ekranın "Sınırlı"/"Mali" preset'lerinin ikisi de `view`dır).
+    if gizlenen_kova(scope) is not None and satisfies(level, AccessLevel.draft):
+        raise PermissionLockedError(
+            "Kapsam kısıtlı bir hücre yazma seviyesi taşıyamaz: maskelenen alan "
+            "form ve hesaplara düşerdi. Bu seviye için kapsamı 'all' seçin."
+        )
 
     permission.access_level = level
     permission.scope = scope

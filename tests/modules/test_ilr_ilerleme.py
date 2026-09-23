@@ -23,7 +23,7 @@ from decimal import Decimal
 
 from sqlalchemy import text
 
-from app.core.access import AccessLevel
+from app.core.access import AccessLevel, Scope
 from app.modules.boq import progress
 from app.modules.progress_payments import project_progress
 from app.modules.progress_payments.models import ProgressPaymentStatus
@@ -437,6 +437,17 @@ async def test_BOLUM_ucunde_yuzde_IZINLIDE_DOLAR_IZINSIZDE_KISITLANIR(
     yazan = await _ilr.aktor(seeded_db, user_factory, "e2y@ilr.co")
     await _ilr.gunluk(seeded_db, site, yazan, [(demir, "49")], section=section)
 
+    # 🔴 Bu test `site_diary` KAPISINI olcer, KAPSAM MASKESINI DEGIL. `accounting`
+    #    seed'de `sites = _FIN` (finance) tasir ve `progress_pct` OPERASYONEL
+    #    kovadadir (`sites/schemas.py`) — yani uc ucun ucu de maskeden `kisitli()`
+    #    donerdi ve `site_diary` kapisi TAMAMEN kaldirilsa bile test YESIL kalirdi.
+    #    OLCULDU (2026-09-19): `reads.py`deki iki `can_read` kapisi silinip test
+    #    kosuldu, YESIL kaldi. Kapsam ACIKCA `all`a cekilir ki deneyin tek
+    #    degiskeni izin hucresi olsun; hucrenin KENDISI de seed'e birakilmaz
+    #    (`_set_permission` kanonu: matris degisince test sessizce anlamsizlasmasin).
+    await _set_permission(seeded_db, "accounting", "sites", AccessLevel.view, Scope.all)
+    await _set_permission(seeded_db, "accounting", "site_diary", AccessLevel.none)
+
     izinli = await _ilr.login(client, seeded_db, user_factory, "patron", "e2a@ilr.co")
     izinsiz = await _ilr.login(client, seeded_db, user_factory, "accounting", "e2b@ilr.co")
 
@@ -486,6 +497,18 @@ async def test_KART_fiziksel_ve_mali_AYRI_izinlere_bakar(
     await _ilr.isveren_hakedisi(
         seeded_db, project, yazan, kalem, site, quantity="49", status=ProgressPaymentStatus.approved
     )
+    # 🔴 KISITLI iki satir da KAPIDAN gecmeli, MASKEDEN DEGIL. `/projects`
+    #    yaniti `projects` kapsamiyla maskelenir ve seed'de `accounting = _FIN`
+    #    (operasyonel = fiziksel gizlenir) · `field_engineer = _LIM` (para = mali
+    #    gizlenir) tasir — yani beklenen `(False, None, None)` uclusunu maske TEK
+    #    BASINA uretirdi. OLCULDU (2026-09-19): `progress_cards.by_projects`teki
+    #    iki `can_read` kapisi `True`ya sabitlenip test kosuldu, YESIL kaldi.
+    #    Kapsam ACIKCA `all`a cekilir ki olculen tek sey izin hucresi olsun.
+    #    `patron` seed'de zaten `all` tasir ve ACIKCA kurulmaz: kapsami daralirsa
+    #    OLUMLU kontrol KIRILIR (sessizce yesil kalmaz), istenen yon budur.
+    await _set_permission(seeded_db, "accounting", "projects", AccessLevel.view, Scope.all)
+    await _set_permission(seeded_db, "field_engineer", "projects", AccessLevel.view, Scope.all)
+    await _set_permission(seeded_db, "accounting", "site_diary", AccessLevel.none)
     await _set_permission(seeded_db, "field_engineer", "progress_payments", AccessLevel.none)
 
     async def _olc(role_key: str, email: str) -> dict:
@@ -655,6 +678,17 @@ async def test_SANTIYE_KARTI_yuzdesi_para_agirliklidir_ve_KAPSAM_sizdirmaz(
         f"TOPLU ve TEKIL hâl ayrisiyor: {toplu} != {tekil} — iki carpim iki farkli "
         "'%' uretiyor demektir (K3)"
     )
+
+    # 🔴 KISITLI yon KAPIDAN gecmeli, MASKEDEN DEGIL: `/projects/{id}/sites`
+    #    `sites` kapsamiyla maskelenir, `accounting` seed'de `sites = _FIN`
+    #    (finance) tasir ve `SiteCard.progress_pct` OPERASYONEL kovadadir — yani
+    #    beklenen `(False, None)` ikilisini maske tek basina uretirdi. OLCULDU
+    #    (2026-09-19): `reads.site_progress_map`teki `can_read` kapisi silinip
+    #    test kosuldu, YESIL kaldi. (Denetim bu dorduncu hâli KACIRDI; kardes uc
+    #    testle AYNI sinif.) Kapsam ACIKCA `all`a cekilir ki olculen tek sey izin
+    #    hucresi olsun; hucrenin KENDISI de seed'e birakilmaz.
+    await _set_permission(seeded_db, "accounting", "sites", AccessLevel.view, Scope.all)
+    await _set_permission(seeded_db, "accounting", "site_diary", AccessLevel.none)
 
     izinli = await _ilr.login(client, seeded_db, user_factory, "patron", "g1a@ilr.co")
     izinsiz = await _ilr.login(client, seeded_db, user_factory, "accounting", "g1b@ilr.co")

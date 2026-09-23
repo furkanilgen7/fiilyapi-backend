@@ -577,3 +577,38 @@ async def test_contract_total_satir_bazinda_yuvarlanmis_toplamla_esit(
     line_total_sum = sum(Decimal(item["line_total"]) for item in govde["items"])
     assert line_total_sum == Decimal("2.02")
     assert Decimal(govde["contract_total"]) == line_total_sum
+
+
+@pytest.mark.asyncio
+async def test_yayindaki_sozlesmede_zorunlu_alan_silinemez(client, admin_headers, proje, taseron):
+    """Kayıt no=15 — açık bacak: `is_publishing` yalnız taslak→yayın GEÇİŞİNİ
+
+    ölçer; ZATEN yayında olan bir sözleşmeye dokunan bir PATCH (`is_draft`
+    gövdede yokken) `is_draft=True` guard'a giderdi ve TÜM zorunluluk
+    kuralları atlanırdı (`subcontracts.py:566-568`). Bu test, yayındaki bir
+    sözleşmenin zorunlu bir alanının (`contract_no`) PATCH ile boşaltılamadığını
+    ölçer.
+    """
+    olustur = await client.post(
+        f"/projects/{proje}/subcontractor-contracts",
+        json={
+            "is_draft": False,
+            "subcontractor_id": str(taseron),
+            "work_category": "Betonarme",
+            "contract_no": "TSZ-2026-030",
+            "signature_date": "2026-01-01",
+            "start_date": "2026-01-05",
+            "end_date": "2026-12-31",
+        },
+        headers=admin_headers,
+    )
+    assert olustur.status_code == 201, olustur.text
+    contract_id = olustur.json()["id"]
+
+    guncelle = await client.patch(
+        f"/subcontractor-contracts/{contract_id}",
+        json={"contract_no": None},
+        headers=admin_headers,
+    )
+    assert guncelle.status_code == 422
+    assert guncelle.json()["detail"] == guards.CONTRACT_NO_REQUIRED

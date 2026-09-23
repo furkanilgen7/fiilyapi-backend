@@ -51,17 +51,24 @@ yönlendirilir. Yönlendirilmemiş bir tanesi kalsaydı test canlıya yazardı.
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
+import anyio
 import asyncpg
 import httpx
 import pytest
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 import app.core.db as core_db
 from app.core.config import settings
@@ -150,11 +157,20 @@ async def _admin(sql: str) -> None:
 
 class _Ortam:
     def __init__(
-        self, session_factory: async_sessionmaker[AsyncSession], bearer: str, user_id: uuid.UUID
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        bearer: str,
+        user_id: uuid.UUID,
+        engine: AsyncEngine,
     ) -> None:
         self.Session = session_factory
         self.bearer = bearer
         self.user_id = user_id
+        #: 🔴 Yalnız KOPAN AKIŞ bekçisi için: bir kopuş, uçuş hâlindeki
+        #: bağlantıyı iptal eder ve havuzda ölü bir bağlantı bırakır (canlıda da
+        #: aynısı olur, orada da geri dönüştürülür). İddiayı ölçmeden önce
+        #: havuz boşaltılır ki okuma TAZE bir bağlantıdan yapılsın.
+        self.engine = engine
 
 
 @asynccontextmanager
@@ -182,7 +198,7 @@ async def _gercek_ortam(monkeypatch: pytest.MonkeyPatch):  # noqa: ANN201
             # 🔴 COMMIT ŞART: aşağıdaki HER oturum AYRI bir bağlantıdır.
             await kurulum.commit()
             bearer = create_access_token(user.id, user.token_version)
-            ortam = _Ortam(Session, bearer, user.id)
+            ortam = _Ortam(Session, bearer, user.id, engine)
 
         # 🔴 DÖRT oturum fabrikasının HEPSİ yönlendirilir. Biri atlanırsa test
         # canlı `DATABASE_URL`e yazar — bu yüzden liste aşağıda ADIYLA sayılır.
@@ -438,3 +454,145 @@ async def test_istemci_kapatma_PATLARSA_iki_yazi_da_KOSAR(monkeypatch, caplog) -
         assert len(await _denetim_satirlari(ortam)) == 1
         assert caplog.records, "Kapatma arızası sessizce yutuldu."
         assert "kapatılması" in caplog.records[0].getMessage()
+
+
+# --------------------------------------------------------------------------- #
+# BEKÇİ 4 — İSTEMCİ AKIŞI KOPARIRSA (kayıt #81)
+#
+# 🔴 Yukarıdaki ÜÇ bekçi de `RuntimeError` enjekte eder — yani bir `Exception`.
+# `_akis_sonu_yan_etkisi`in `except Exception`i onu yakalar ve üçü de yeşildir.
+# Ama canlıda en sık görülen kopuş bir `Exception` DEĞİLDİR: kullanıcı sekmeyi
+# kapatır/yeniler, Starlette `listen_for_disconnect` ile bunu görür ve
+# **görev grubunu İPTAL EDER**. İptal `CancelledError`dır ve `BaseException`
+# altındadır — `except Exception`a TAKILMAZ.
+#
+# O hâlde `finally`nin İLK `await`i (`istemci.aclose`) iptali yeniden doğurur,
+# kalan İKİ yan etki (`record_ai_turn`, `_cevabi_yaz`) HİÇ koşmaz ve
+# `logger.exception` bile yazılmaz. Sonuç: sohbette cevapsız bir soru kalır ve
+# o AI turu atfedilemez.
+# --------------------------------------------------------------------------- #
+
+
+class _AsiliSaglayici:
+    """İlk metin parçasından SONRA asılı kalır — iptal TAM O NOKTADA teslim edilir.
+
+    🔴 Sıra bu yüzden yarışsızdır: `asildi` olayını **akış görevinin kendisi**
+    kurar ve hemen ardından süresiz beklemeye girer; `receive()` ancak ondan
+    sonra çalışabilir. Yani iptal her koşuda aynı noktada doğar.
+    """
+
+    ad = "sahte"
+
+    def __init__(self, asildi: anyio.Event) -> None:
+        self.asildi = asildi
+
+    def arac_semasi(self, spec: ToolSpec) -> dict[str, Any]:  # pragma: no cover - çağrılmaz
+        return {}
+
+    async def tur(
+        self, *, sistem: str, gecmis: Sequence[Mesaj], araclar: Sequence[ToolSpec]
+    ) -> AsyncIterator[AiOlay]:
+        yield MetinParcasi(metin=CEVAP_PARCALARI[0])
+        self.asildi.set()
+        await anyio.sleep_forever()
+        yield TurBitti(sebep=TurSebebi.bitti, kullanim=Kullanim())  # pragma: no cover
+
+
+async def _kopan_akis(ortam: _Ortam, mesaj: str = SORU) -> list[bytes]:
+    """`POST /ai/chat`i HAM ASGI ile koşar ve akışı İSTEMCİ TARAFINDAN koparır.
+
+    🔴 `httpx.ASGITransport` KULLANILAMAZ: onun `receive`i yanıt bitene kadar
+    bloklar, yani `http.disconnect` hiç üretilemez ve ölçülmek istenen yol
+    testin elinden kaçardı.
+
+    🔴 `spec_version` **"2.3"**tür, uydurma değil: uvicorn'un üç HTTP protokol
+    uygulaması da (`h11_impl` · `httptools_impl` · `zttp_impl`) bu değeri
+    gönderir ve Starlette `< (2, 4)` olduğu için `listen_for_disconnect` +
+    görev grubu iptali yolunu koşar. "2.4" yazılsaydı iptal hiç doğmaz ve
+    bekçi hiçbir şey bekçilemezdi.
+    """
+    govde = json.dumps({"mesaj": mesaj}).encode()
+    kareler: list[bytes] = []
+    istek_gonderildi = False
+
+    async def receive() -> dict[str, Any]:
+        nonlocal istek_gonderildi
+        if not istek_gonderildi:
+            istek_gonderildi = True
+            return {"type": "http.request", "body": govde, "more_body": False}
+        # 🔴 Tarayıcı sekmeyi kapattı: akış ortasında kopuş.
+        await ortam.asildi.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(olay: dict[str, Any]) -> None:
+        if olay["type"] == "http.response.body":
+            kareler.append(olay["body"])
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/ai/chat",
+        "raw_path": b"/ai/chat",
+        "root_path": "",
+        "query_string": b"",
+        "headers": [
+            (b"host", b"test"),
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(govde)).encode()),
+            (b"authorization", f"Bearer {ortam.bearer}".encode()),
+        ],
+        "client": ("127.0.0.1", 51234),
+        "server": ("test", 80),
+    }
+
+    # 🔴 Uygulama KENDİ görevinde koşar — uvicorn'da olduğu gibi. Doğrudan
+    # `await` edilseydi Starlette'in iptal kapsamı TESTİN görevinde açılır ve
+    # kopuş iptali testin kendi teardown'ına sızardı.
+    async def _kosar() -> None:
+        await ana_app(scope, receive, send)
+
+    with anyio.fail_after(30):
+        async with anyio.create_task_group() as gorevler:
+            gorevler.start_soon(_kosar)
+    return kareler
+
+
+async def test_AKIS_ISTEMCI_TARAFINDAN_KOPARSA_UC_YAN_ETKI_DE_KOSAR(monkeypatch) -> None:
+    """🔴 Mutasyon: `router.py`deki `anyio.CancelScope(shield=True)` kaldırılınca
+    hem denetim satırı hem asistan cevabı kaybolur ve bu test KIRMIZI olur.
+    """
+    async with _gercek_ortam(monkeypatch) as ortam:
+        ortam.asildi = anyio.Event()
+        monkeypatch.setattr(ai_router, "saglayici_kur", lambda: _AsiliSaglayici(ortam.asildi))
+
+        kareler = await _kopan_akis(ortam)
+        # Kopuşun havuzda bıraktığı ölü bağlantı atılır; iddia TAZE bir
+        # bağlantıdan okunur (ölçülen şey "satır COMMIT edildi mi"dir).
+        await ortam.engine.dispose()
+
+        # Pozitif kontrol: akış GERÇEKTEN başladı ve GERÇEKTEN yarıda koptu.
+        akan = b"".join(kareler).decode()
+        assert CEVAP_PARCALARI[0] in akan, f"akış hiç başlamadı: {akan!r}"
+        assert "event: tur_bitti" not in akan, (
+            "akış normal bitmiş — kopuş hiç olmadı, bekçi hiçbir şey ölçmüyor"
+        )
+
+        # 🔴 (a) Asistan cevabı (kopana kadar akan kısmı) KALICI.
+        sohbet_adedi, mesajlar = await _sayim(ortam)
+        assert sohbet_adedi == 1
+        assert mesajlar == [
+            (AiMessageRole.kullanici.value, SORU),
+            (AiMessageRole.asistan.value, CEVAP_PARCALARI[0]),
+        ], (
+            "İstemci koptuğunda asistan cevabı YAZILMADI; geçmişte cevapsız bir "
+            f"soru kaldı. Bulunan: {mesajlar}"
+        )
+
+        # 🔴 (b) Tur denetim satırı KALICI — `audit.py` doktrini bu satırın
+        #     "akış istemci tarafından koparılsa bile düşmemesi"ni ister.
+        denetim = await _denetim_satirlari(ortam)
+        assert len(denetim) == 1, f"Kopan tur `audit_log`a yazılmadı, yani ATFEDİLEMEZ: {denetim}"
+        assert "AI turu" in denetim[0]

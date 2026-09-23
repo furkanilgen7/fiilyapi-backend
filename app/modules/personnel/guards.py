@@ -101,6 +101,16 @@ LEAVE_TYPE_INACTIVE = "Seçilen izin tipi pasif, kullanılamaz"
 # ama ihlali 409 "veri bütünlüğü" verirdi; servis DB'ye düşmeden Türkçe 422 atar.
 LEAVE_DATE_ORDER = "İzin bitiş tarihi başlangıç tarihinden önce olamaz"
 
+# 422 — PATCH gövdesinde NOT NULL kolonlara AÇIK `null`. Şema alanları
+# `... | None = None` olmak ZORUNDA (kısmi gönderim), bu yüzden "gönderilmedi" ile
+# "null gönderildi" ancak `model_fields_set` ile ayrılır. Ayrılmazsa null,
+# `setattr` ile NOT NULL kolona yazılır ve `calculate_leave_days` DB'ye
+# VARILMADAN `TypeError` atar (yakalayıcısı yok → 500) ya da `leave_type_id`de
+# gövdesi belirsiz 409'a düşer. `note`/`document_id` bu listede DEĞİL: onlar
+# nullable kolonlardır ve null ile TEMİZLENMELERİ meşrudur.
+LEAVE_NULLABLE_OLMAYAN_ALANLAR: tuple[str, ...] = ("leave_type_id", "start_date", "end_date")
+LEAVE_FIELD_NOT_NULL = "İzin tipi, başlangıç ve bitiş tarihi boş bırakılamaz"
+
 # 409 — karara bağlanmış talep DÜZENLENEMEZ/SİLİNEMEZ (spec §3: "yalnız pending").
 # `ConflictError`: engel kaydın MEVCUT DURUMUDUR, gövdedeki bir alan değil; 422
 # verilseydi ekran "hangi alanı düzelteyim" diye arardı. Onaylı izin bakiyeyi
@@ -190,6 +200,33 @@ LEAVE_APPROVE_OWN_REQUEST = (
 # korkuluk, onu YANLIŞ eylemi aramaya yollar. Karara bağlanmış bir talebi geri
 # çekmek onayı ya da reddi SESSİZCE İPTAL ederdi.
 LEAVE_WITHDRAW_NOT_PENDING = "Yalnız bekleyen izin talebi geri çekilebilir"
+
+
+# --- KARARLAR.md §1.10 (kullanıcı kararı 2026-09-23): açık `null` -> 422 ------
+#
+# NOT NULL kolona PATCH gövdesinde AÇIKÇA `null` gönderilirse alan adıyla
+# (pydantic `loc` üzerinden) 422 verilir — DB'ye düşüp opak 409 "Veri bütünlüğü
+# hatası" olmaz. Emsal `contracts/schemas.py::EmployerContractItemUpdate.
+# _acik_null_reddedilir`: `field_validator(..., mode="before")` YALNIZ gövdede
+# GEÇEN alan için çalışır (pydantic'in "before" doğrulayıcı davranışı);
+# "alan hiç gönderilmedi" hâli ETKİLENMEZ, yalnız AÇIK `null` reddedilir.
+#
+# Metin BİLEREK sabittir (alan adını TEKRARLAMAZ): field adı zaten pydantic
+# hata gövdesinin `loc`unda vardır, mesajın kendisi jenerik kalır (kanon metni
+# birebir).
+PERSONNEL_FIELD_NOT_NULL = "Alan boşaltılamaz; değiştirmemek için gövdeden çıkarın."
+
+# Hedef kolonu DB'de `nullable=False` olan `PersonnelUpdate` alanları.
+# 🔴 ELLE YAZILMIŞ bir liste bir sonraki NOT NULL alan eklendiğinde SESSİZCE
+# kör kalır (depo kanonu: "sayı değil BEKÇİ yaz") — bu yüzden bu tuple
+# `tests/personnel/test_personnel_ik_api.py`de `Personnel.__table__.columns`
+# ÜZERİNDEN TÜRETİLİP doğrulanır; elle kopya DEĞİL, DB şemasının izdüşümüdür.
+PERSONNEL_NULLABLE_OLMAYAN_ALANLAR: tuple[str, ...] = (
+    "full_name",
+    "source",
+    "is_active",
+    "is_draft",
+)
 
 
 def validate_personnel_source(source: WorkerSource, subcontractor_id: uuid.UUID | None) -> None:

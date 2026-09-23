@@ -135,6 +135,12 @@ async def save_rows(
 
     await repository.delete_rows(session, [rid for rid in by_id if rid not in kalanlar])
     await session.flush()
+    # 🔴 Ertelenmiş tekillik kısıtını İSTEK İÇİNDE denetlet. `locked_site_rows`
+    # yalnız MEVCUT satırları kilitler; rakip bir isteğin hayalet INSERT'ü bu
+    # kilidin dışındadır ve kısıt ertelenmiş olduğu için yanıt gönderildikten
+    # SONRA patlardı — istemci 200 görüp hiçbir şey yazılmazdı. Gerekçenin tamamı
+    # `repository.enforce_row_uniqueness_now` docstring'indedir.
+    await repository.enforce_row_uniqueness_now(session)
     return [row for row, _ in await repository.plan_rows(session, site.id)]
 
 

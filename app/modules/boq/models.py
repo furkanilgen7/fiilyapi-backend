@@ -132,17 +132,34 @@ class BoqItemSectionAllocation(Base):
     (satirlar arasi toplam kisidi bir CHECK'e sigmaz) — servis katmaninda ve
     🔴 POZ SATIRI `FOR UPDATE` ILE KILITLENEREK tutulur (EŞİK = KİLİT, İK-2
     dersi): kilitsiz bir esik kontrolu iki eszamanli tahsiste IKISINI DE gecirir.
-    Invariantin IKI yazma kapisi vardir ve ikisi de AYNI kilidi alir:
-    `service.replace_allocations` (tahsis toplami ARTAR) ve `service.update_item`
-    (poz `quantity`si DUSER — kotayi tahsis toplaminin altina cekmek ayni
-    invarianti ters yonden kirar).
+    🔴 BU INVARIANTIN KAPI SAYISI BURAYA YAZILMAZ — bu notun kendi alt
+    paragrafindaki ders (asagi bak) burada da gecerlidir: sayi yazildigi gun
+    dogru, bir sonraki dilimde BAYATTIR. Nitekim oyle oldu — bu paragraf
+    "IKI kapi" diyordu, 2026-09-23'te UCUNCUSU olculdu
+    (`contracts/distribution.py::_assert_quota_covers_section_allocations`,
+    envanter kaydi #11: karari KILITSIZ okunan BAYAT `quantity` ile veriyor,
+    karar "artis" derse kilidi HIC almiyordu — TOCTOU).
+    Sayi yerine KURAL: tahsis toplamini ARTIRAN ya da poz `quantity`sini
+    DUSUREN her yol — hangi modulde olursa olsun — karari vermeden ONCE poz
+    satirini `FOR UPDATE` ile kilitlemek ZORUNDADIR; kotayi tahsis toplaminin
+    altina cekmek ayni invarianti TERS YONDEN kirar. Bilinen yollar bugun:
+    `boq.service.replace_allocations`, `boq.service.update_item`,
+    `contracts.distribution.save_distribution`.
 
-    ON DELETE CASCADE (K2). 🔴 OLCUM NOTU: emir bunu "yedi FK'lik `SET NULL`
-    emsalinden bilincli sapma" diye tanimliyordu; sayim yapildi ve `sections.id`
-    hedefleyen SEKIZ FK vardi — YEDISI `SET NULL`, BIRI (`section_milestones`)
-    ZATEN CASCADE. Yani bu bir sapma degil, VAR OLAN AYRIMIN dogru tarafina
+    ON DELETE CASCADE (K2). Bu bir SAPMA DEGIL, var olan AYRIMIN dogru tarafina
     yerlesmektir: bilgi bagi olan kayitlar `SET NULL`, bolumun bir PARCASI olan
-    kayitlar CASCADE. Gerekce: tahsis satirinin BAGIMSIZ VARLIGI YOKTUR;
+    kayitlar CASCADE.
+
+    🔴 BURADA ARTIK SAYI YOKTUR ve bu bilinclidir. Onceki iki metin (`emir`in
+    "yedi FK" iddiasi ve bu notun "sekiz FK" duzeltmesi) YAZILDIKLARI GUN
+    dogruydu; ikisi de curudu cunku sayi ELLE tutuluyordu ve yeni FK ekleyen
+    hicbir dilim onlari guncellemek ZORUNDA degildi. Sayiyi tazelemek kusuru
+    kapatmaz, yalniz saatini ileri alir. Yasayan harita ve onun BEKCISI
+    `tests/test_sections_fk_haritasi.py`dedir: harita `Base.metadata`dan
+    OLCULUR, yeni bir `sections.id` FK'si testi KIRAR ve yazarini iki kovadan
+    birini bilerek secmeye zorlar.
+
+    Gerekce: tahsis satirinin BAGIMSIZ VARLIGI YOKTUR;
     o satir "su poz, su bolume, su kadar" demekten ibarettir, bolum gidince cumle
     anlamsizlasir. `SET NULL` secilseydi kolon nullable olmak ZORUNDA kalirdi
     (NOT NULL kolona SET NULL calisma aninda FK hatasi verir), sahipsiz satirlar

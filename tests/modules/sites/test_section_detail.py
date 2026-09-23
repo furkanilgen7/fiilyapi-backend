@@ -25,7 +25,7 @@ from decimal import Decimal
 
 from sqlalchemy import func, select
 
-from app.core.access import AccessLevel
+from app.core.access import AccessLevel, Scope
 from app.modules.audit.messages import section_updated
 from app.modules.audit.models import AuditAction, AuditLog
 from app.modules.roles.models import Module, Role, RolePermission
@@ -73,7 +73,9 @@ async def _login(client, session, user_factory, role_key: str, *, grant_all: boo
     return resp.json()["access_token"]
 
 
-async def _set_permission(session, role_key: str, module_key: str, level: AccessLevel) -> None:
+async def _set_permission(
+    session, role_key: str, module_key: str, level: AccessLevel, scope: Scope = Scope.all
+) -> None:
     role_id = (await session.execute(select(Role.id).where(Role.key == role_key))).scalar_one()
     module_id = (
         await session.execute(select(Module.id).where(Module.key == module_key))
@@ -86,6 +88,7 @@ async def _set_permission(session, role_key: str, module_key: str, level: Access
         )
     ).scalar_one()
     permission.access_level = level
+    permission.scope = scope
     await session.flush()
 
 
@@ -127,6 +130,9 @@ async def test_get_section_returns_every_new_column(
         budget_amount=Decimal("1500000.00"),
         is_draft=True,
     )
+    # Bu testler KOLON VARLIĞINI ölçer, kapsam maskesini değil; `site_chief`in
+    # seed kapsamı `limited` olduğu için izin AÇIKÇA kurulur (varsayılan `all`).
+    await _set_permission(db_session, VIEW_ROLE, "sites", AccessLevel.view)
     token = await _login(client, db_session, user_factory, VIEW_ROLE, grant_all=True)
 
     resp = await client.get(f"/sections/{section.id}", headers=_auth(token))
@@ -161,6 +167,9 @@ async def test_get_section_keeps_placeholder_metrics(
     durur — bu iddia AYNEN gecerlidir ve tahsis yokken turev `0.00`dir.
     """
     _, section = await _tree(db_session, project_factory, "P6T2-PH", budget_amount=Decimal("10.00"))
+    # Bu testler KOLON VARLIĞINI ölçer, kapsam maskesini değil; `site_chief`in
+    # seed kapsamı `limited` olduğu için izin AÇIKÇA kurulur (varsayılan `all`).
+    await _set_permission(db_session, VIEW_ROLE, "sites", AccessLevel.view)
     token = await _login(client, db_session, user_factory, VIEW_ROLE, grant_all=True)
 
     body = (await client.get(f"/sections/{section.id}", headers=_auth(token))).json()
@@ -179,6 +188,9 @@ async def test_get_section_nullable_columns_default_to_null(
 ):
     """Taslak destegi (kalici karar 4): T1 kolonlari `is_draft` DISINDA nullable."""
     _, section = await _tree(db_session, project_factory, "P6T2-NULL")
+    # Bu testler KOLON VARLIĞINI ölçer, kapsam maskesini değil; `site_chief`in
+    # seed kapsamı `limited` olduğu için izin AÇIKÇA kurulur (varsayılan `all`).
+    await _set_permission(db_session, VIEW_ROLE, "sites", AccessLevel.view)
     token = await _login(client, db_session, user_factory, VIEW_ROLE, grant_all=True)
 
     body = (await client.get(f"/sections/{section.id}", headers=_auth(token))).json()
@@ -387,6 +399,9 @@ async def test_patch_new_fields_rejected_for_view_permission(
     """Yeni alanlar yazma kapisini GEVSETMEZ: `sites:view` yine 403 alir."""
     await _set_permission(db_session, VIEW_ROLE, "sites", AccessLevel.view)
     _, section = await _tree(db_session, project_factory, "P6T2-VIEW")
+    # Bu testler KOLON VARLIĞINI ölçer, kapsam maskesini değil; `site_chief`in
+    # seed kapsamı `limited` olduğu için izin AÇIKÇA kurulur (varsayılan `all`).
+    await _set_permission(db_session, VIEW_ROLE, "sites", AccessLevel.view)
     token = await _login(client, db_session, user_factory, VIEW_ROLE, grant_all=True)
 
     resp = await client.patch(

@@ -14,12 +14,17 @@ from decimal import Decimal
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.contracts.models import SubcontractorContract, SubcontractorContractItem
+from app.modules.contracts.models import (
+    EmployerContractItem,
+    SubcontractorContract,
+    SubcontractorContractItem,
+)
 from app.modules.projects.models import Project
 from app.modules.sites.models import Section, Site
 from app.modules.subcontractor_progress_payments.models import (
     SubcontractorPaymentStatus,
     SubcontractorProgressPayment,
+    SubcontractorProgressPaymentLine,
 )
 
 # "Açık" hakediş: henüz sonuçlanmamış taslak veya onay bekleyen (spec §5) —
@@ -178,6 +183,74 @@ async def list_completed_payments(
         stmt = stmt.where(SubcontractorProgressPayment.id != exclude_payment_id)
     result = await session.execute(stmt.order_by(SubcontractorProgressPayment.sequence_no))
     return list(result.scalars().all())
+
+
+async def get_employer_item_quantities(
+    session: AsyncSession, item_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, Decimal]:
+    """İşveren kalemi → sözleşme miktarı (ÇİFT SAYIM tavanının payda tarafı).
+
+    Toplama DEĞİL düz bir okumadır; `completed_quantities_by_source_item` ile
+    birlikte kullanılır. Silinmiş kalem sözlükte YER ALMAZ — çağıran tavansız
+    davranır (bağı kopmuş kalemin kotası da yoktur, `completed_quantities`
+    ONAYLI SAPMASININ aynısı).
+    """
+    if not item_ids:
+        return {}
+    stmt = select(EmployerContractItem.id, EmployerContractItem.quantity).where(
+        EmployerContractItem.id.in_(item_ids)
+    )
+    return {row[0]: Decimal(row[1]) for row in (await session.execute(stmt)).all()}
+
+
+async def completed_quantities_by_source_item(
+    session: AsyncSession,
+    source_item_ids: list[uuid.UUID],
+    *,
+    exclude_payment_id: uuid.UUID | None = None,
+) -> dict[uuid.UUID, Decimal]:
+    """İşveren kalemi → o kaleme bağlı **TÜM** taşeron sözleşmelerindeki
+    tamamlanmış (`approved|paid`) hakediş miktarı toplamı. TEK sorgu.
+
+    🔴 ÇİFT SAYIM (TH-PRJGENEL): `subcontractor_contract_items`te UNIQUE yalnız
+    `(contract_id, code)`tur — aynı işveren kalemine iki taşeron sözleşmesi
+    (biri proje-geneli, biri şantiyeye bağlı) köprü kurabilir. Sözleşme başına
+    kota (`list_completed_payments`) ikisini BİRBİRİNDEN habersiz sayar, yani
+    aynı imalat iki kez hakediş edilebilirdi.
+
+    Kapsam BİLEREK sözleşme sınırını aşar ve bu güvenli çünkü dönen şey yalnız
+    bir TOPLAM SAYIdır: karşı sözleşmenin kimliği, adı ya da satırı çağırana
+    HİÇ ULAŞMAZ (spec §9.0 görünürlük sızıntısı yüzeyi açılmaz).
+
+    Sözleşme başına toplamın (`completed_quantities`) İKİNCİ bir kopyası
+    DEĞİLDİR: orası kalem, burası KAYNAK kalem kırılımıdır ve ikisi bağımsız
+    iki tavanı besler.
+    """
+    if not source_item_ids:
+        return {}
+    stmt = (
+        select(
+            SubcontractorContractItem.source_contract_item_id,
+            func.sum(SubcontractorProgressPaymentLine.quantity),
+        )
+        .select_from(SubcontractorProgressPaymentLine)
+        .join(
+            SubcontractorContractItem,
+            SubcontractorContractItem.id == SubcontractorProgressPaymentLine.contract_item_id,
+        )
+        .join(
+            SubcontractorProgressPayment,
+            SubcontractorProgressPayment.id == SubcontractorProgressPaymentLine.payment_id,
+        )
+        .where(
+            SubcontractorContractItem.source_contract_item_id.in_(source_item_ids),
+            SubcontractorProgressPayment.status.in_(COMPLETED_STATUSES),
+        )
+        .group_by(SubcontractorContractItem.source_contract_item_id)
+    )
+    if exclude_payment_id is not None:
+        stmt = stmt.where(SubcontractorProgressPayment.id != exclude_payment_id)
+    return {row[0]: Decimal(row[1] or 0) for row in (await session.execute(stmt)).all()}
 
 
 async def list_draft_payments(
