@@ -568,10 +568,17 @@ async def test_create_writes_single_section_created_audit_row(
         .scalars()
         .all()
     )
-    assert [row.detail for row in rows] == [
-        section_created(site.name, "Yayın"),
-        section_created(site.name, "Taslak"),
-    ]
+    # 🔴 SIRA İDDİA EDİLMEZ (2026-09-23, CI kırmızısı): sorguda `ORDER BY` yok ve
+    # `AuditLog.id` uuid4'tür — ekleme sırasına göre SIRALANAMAZ. Yerelde satırlar
+    # tesadüfen ekleme sırasında geliyordu, CI'da (farklı plan/heap) ters geldi ve
+    # test kırmızı verdi. Testin iddiası zaten sıra değil: "taslak da yayın da
+    # AYNI aksiyona TEK satır yazar". Bu yüzden karşılaştırma SIRASIZDIR.
+    assert sorted(row.detail for row in rows) == sorted(
+        [
+            section_created(site.name, "Yayın"),
+            section_created(site.name, "Taslak"),
+        ]
+    )
 
 
 async def test_rejected_create_writes_no_audit_row(
