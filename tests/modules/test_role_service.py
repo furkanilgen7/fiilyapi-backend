@@ -8,6 +8,7 @@ from app.core.errors import NotFoundError, PermissionLockedError
 from app.core.field_scope import gizlenen_kova
 from app.modules.roles.models import SYSTEM_ADMIN_KEY, Module, Role, RolePermission
 from app.modules.roles.repository import get_permission
+from app.modules.roles.scope_wiring import kablolu_moduller
 from app.modules.roles.service import rename_role, update_role_permission
 
 
@@ -207,15 +208,21 @@ async def test_UYGULANAN_kapsam_ATANABILIR(seeded_db, uygulanan: Scope, seviye: 
     kapsamı `all` olan bir hücreye `limited`/`finance` HİÇ yazılamıyordu ve
     mekanizma yalnız seed'deki hücrelerde yaşayabiliyordu. Bu test o tek yönlü
     kapıyı çakar: daraltma da genişletme kadar mümkün olmalı.
+
+    🔴 Modül `contracts` (KABLOLU) — `personnel` DEĞİL. Kalan iş #4 (2026-09-23)
+    ile `update_role_permission` MODÜL eksenli üçüncü bir kapı kazandı:
+    `personnel` köprüsü YOK, `contracts`ınki VAR. Bu test kapsamın atanabildiğini
+    ölçmek içindir; kablolu olmayan bir modülle çalıştırılırsa artık YENİ kapıya
+    çarpar ve ölçtüğü şey değişir (bkz. `test_MODUL_EKSENLI_*`).
     """
     role = await _role(seeded_db, "site_chief")
-    before = await get_permission(seeded_db, role.id, "personnel")
+    before = await get_permission(seeded_db, role.id, "contracts")
     assert before.scope is Scope.all, "Testin dayanağı: bu hücre seed'de `all`"
 
-    updated = await update_role_permission(seeded_db, role.id, "personnel", seviye, uygulanan)
+    updated = await update_role_permission(seeded_db, role.id, "contracts", seviye, uygulanan)
 
     assert updated.scope is uygulanan
-    okunan = await get_permission(seeded_db, role.id, "personnel")
+    okunan = await get_permission(seeded_db, role.id, "contracts")
     assert (okunan.access_level, okunan.scope) == (seviye, uygulanan), "Yazma KALICI olmalı"
 
 
@@ -258,15 +265,20 @@ async def test_MASKELEYEN_kapsam_YAZAN_seviyeyle_BIRLESEMEZ(
 
     `none`/`view` serbest kalır (pozitif kontrolü üstteki testtedir): salt-okuma
     yüzeyi maskeli değeri zaten "—" diye basar.
+
+    🔴 Modül `contracts` (KABLOLU) — `personnel` DEĞİL: `personnel` üzerinde
+    çalıştırılsaydı kalan iş #4'ün yeni MODÜL kapısı bu testten ÖNCE devreye
+    girer ve test aslında hangi kapıyı ölçtüğünü kaybederdi (yine
+    `PermissionLockedError` alırdı ama SEVİYE+KAPSAM bileşimi hiç sınanmazdı).
     """
     role = await _role(seeded_db, "site_chief")
-    before = await get_permission(seeded_db, role.id, "personnel")
+    before = await get_permission(seeded_db, role.id, "contracts")
     eski = (before.access_level, before.scope)
 
     with pytest.raises(PermissionLockedError):
-        await update_role_permission(seeded_db, role.id, "personnel", yazan, maskeleyen)
+        await update_role_permission(seeded_db, role.id, "contracts", yazan, maskeleyen)
 
-    after = await get_permission(seeded_db, role.id, "personnel")
+    after = await get_permission(seeded_db, role.id, "contracts")
     assert (after.access_level, after.scope) == eski, "Reddedilen istek satırı DEĞİŞTİRMEMELİ"
 
 
@@ -324,10 +336,57 @@ async def test_RED_METINLERI_HENUZ_UYGULANMIYOR_DEMEZ(seeded_db):
     with pytest.raises(PermissionLockedError) as dusen:
         await update_role_permission(seeded_db, role.id, "personnel", AccessLevel.view, Scope.own)
     with pytest.raises(PermissionLockedError) as seviye:
+        # `contracts` (KABLOLU) — bu dal SEVİYE+KAPSAM ret metnini ölçer; `personnel`
+        # (kablosuz) olsaydı kalan iş #4'ün MODÜL kapısı araya girer ve metin
+        # gerekçesi burada iddia edilenden FARKLI bir dala (modül eksenine) ait olurdu.
         await update_role_permission(
-            seeded_db, role.id, "personnel", AccessLevel.full, Scope.finance
+            seeded_db, role.id, "contracts", AccessLevel.full, Scope.finance
         )
 
     metinler = [str(dusen.value), str(seviye.value)]
     assert not any("henüz uygulanmıyor" in metin for metin in metinler), metinler
     assert "kaldırıldı" in str(dusen.value), "Düşen kapsamın kendi gerekçesi kalmalı"
+
+
+# --------------------------------------------------------------------------- #
+# MODÜL EKSENİ — kalan iş #4 (2026-09-23): ATANABİLİR ile KABLOLU eşitlendi
+# --------------------------------------------------------------------------- #
+
+
+async def test_MODUL_EKSENLI_kapsam_kablolu_OLMAYAN_modulde_REDDEDILIR(seeded_db):
+    """🔴 POZİTİF KONTROL — envanter kaydı #4'ün taşıyıcı iddiasının ÖLÇÜMÜ.
+
+    Onarım ÖNCESİ: `payroll` hücresine `view/limited` KABUL ediliyordu (200) —
+    `payroll` routerı düz `APIRoute`, `PayrollLineResponse` para alanlarını tam
+    değeriyle dönüyordu; yönetici ayrı yetki verdiğini sanıyor, ikisi de her
+    şeyi gösteriyordu. `payroll` `kablolu_moduller()`de YOKTUR (ölçüldü,
+    `tests/modules/test_scope_wiring.py`). Bu test o kabulü ÇAKAR: aynı istek
+    artık `PermissionLockedError` vermeli.
+    """
+    assert "payroll" not in kablolu_moduller(), "Testin dayanağı: payroll KABLOSUZ olmalı"
+    role = await _role(seeded_db, "hr_manager")
+    before = await get_permission(seeded_db, role.id, "payroll")
+    eski = (before.access_level, before.scope)
+
+    with pytest.raises(PermissionLockedError):
+        await update_role_permission(seeded_db, role.id, "payroll", AccessLevel.view, Scope.limited)
+
+    after = await get_permission(seeded_db, role.id, "payroll")
+    assert (after.access_level, after.scope) == eski, "Reddedilen istek satırı DEĞİŞTİRMEMELİ"
+
+
+async def test_MODUL_EKSENLI_kapsam_KABLOLU_modulde_SERBESTTIR(seeded_db):
+    """🔴 POZİTİF KONTROL — yeni kapı SIRADAN kablolu modülleri KİLİTLEMEMELİ.
+
+    "Her modülü reddet" hâline gelen bozuk bir kapı da bu testin öncekiyle
+    birlikte yakalayacağı hatadır: kablolu bir modülde aynı istek SERBEST
+    kalmalı.
+    """
+    assert "sites" in kablolu_moduller(), "Testin dayanağı: sites KABLOLU olmalı"
+    role = await _role(seeded_db, "field_engineer")
+
+    updated = await update_role_permission(
+        seeded_db, role.id, "sites", AccessLevel.view, Scope.limited
+    )
+
+    assert updated.scope is Scope.limited

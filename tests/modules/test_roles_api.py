@@ -110,18 +110,26 @@ async def test_DUSEN_kapsam_uctan_yazilamaz(client, user_factory, seeded_db):
 async def test_UYGULANAN_kapsam_UCTAN_atanabilir(client, user_factory, seeded_db, uygulanan: str):
     """🔴 POZİTİF KONTROL — ekranın sunduğu "Sınırlı"/"Mali" düğmesi 200 almalı.
 
-    `permission-presets.ts` bu iki preset'i HER hücrede sunuyor ve kendi kuralı
-    "UI, backend'in reddedeceği bir düğme sunmamalı" diyor. Kapsam 2026-09-19'da
-    gerçekten uygulandığı hâlde uç 403 döndürüyordu; ekran çalışmayan bir düğme
-    gösteriyordu. Bu bekçi servis testinin AYNISI değildir: uçta `PermissionUpdate`
-    şeması ve 403 eşlemesi de araya girer.
+    `permission-presets.ts` bu iki preset'i HER hücrede sunuyor. Kapsam
+    2026-09-19'da gerçekten uygulandığı hâlde uç 403 döndürüyordu; ekran
+    çalışmayan bir düğme gösteriyordu. Bu bekçi servis testinin AYNISI
+    değildir: uçta `PermissionUpdate` şeması ve 403 eşlemesi de araya girer.
+
+    🔴 Modül `contracts` (KABLOLU) — `personnel` DEĞİL. Kalan iş #4 (2026-09-23)
+    "UI, backend'in reddedeceği bir düğme sunmamalı" kuralının KENDİSİNİN
+    16 modülde (personnel dâhil) hâlâ YANLIŞ olduğunu ölçtü: ekran preset'i
+    HER modülde sunmaya devam ediyor (frontend, OpenAPI devri gerektirir, bu
+    onarımın kapsamı DIŞINDA — bkz. envanter kaydı). Bu test artık yalnız
+    KABLOLU bir modülde pozitif kontrolü ölçer; `personnel` için beklenen
+    davranış artık 403'tür (bkz. `test_MODUL_EKSENLI_*`,
+    `tests/modules/test_role_service.py`).
     """
     token = await _login(client, user_factory, "system_admin")
     h = {"Authorization": f"Bearer {token}"}
     rid = await _rid(seeded_db, "site_chief")
 
     resp = await client.put(
-        f"/roles/{rid}/permissions/personnel",
+        f"/roles/{rid}/permissions/contracts",
         json={"access_level": "view", "scope": uygulanan},
         headers=h,
     )
@@ -129,8 +137,36 @@ async def test_UYGULANAN_kapsam_UCTAN_atanabilir(client, user_factory, seeded_db
     assert resp.status_code == 200, resp.text
     assert resp.json()["scope"] == uygulanan
     hucreler = await client.get(f"/roles/{rid}/permissions", headers=h)
-    personel = [c for c in hucreler.json() if c["module_key"] == "personnel"][0]
-    assert personel["scope"] == uygulanan, "Yazma KALICI olmalı"
+    hucre = [c for c in hucreler.json() if c["module_key"] == "contracts"][0]
+    assert hucre["scope"] == uygulanan, "Yazma KALICI olmalı"
+
+
+@pytest.mark.parametrize("uygulanan", ["limited", "finance"])
+async def test_MODUL_EKSENLI_kapsam_kablosuz_modulde_UCTAN_REDDEDILIR(
+    client, user_factory, seeded_db, uygulanan: str
+):
+    """🔴 POZİTİF KONTROL — envanter kaydı #4'ün taşıyıcı iddiasının UÇ ölçümü.
+
+    Onarım ÖNCESİ bu istek 200 dönüyordu: `personnel` köprüsüz (`kablolu_
+    moduller()`de YOK) ama servis katmanı yalnız KAPSAMA bakıyordu, MODÜLE
+    bakmıyordu. `PermissionMatrix.tsx` ekranı bu düğmeyi HÂLÂ sunuyor (frontend
+    değişikliği bu onarımın kapsamı DIŞINDA) — yani ekran hâlâ "backend'in
+    reddedeceği bir düğme" gösteriyor; onarılan yalnız backend'in kendisidir.
+    """
+    token = await _login(client, user_factory, "system_admin")
+    h = {"Authorization": f"Bearer {token}"}
+    rid = await _rid(seeded_db, "hr_manager")
+
+    resp = await client.put(
+        f"/roles/{rid}/permissions/payroll",
+        json={"access_level": "view", "scope": uygulanan},
+        headers=h,
+    )
+
+    assert resp.status_code == 403, resp.text
+    hucreler = await client.get(f"/roles/{rid}/permissions", headers=h)
+    hucre = [c for c in hucreler.json() if c["module_key"] == "payroll"][0]
+    assert hucre["scope"] == "all", "Reddedilen istek satırı DEĞİŞTİRMEMELİ"
 
 
 async def test_MASKELEYEN_kapsam_YAZAN_seviyeyle_UCTAN_reddedilir(client, user_factory, seeded_db):

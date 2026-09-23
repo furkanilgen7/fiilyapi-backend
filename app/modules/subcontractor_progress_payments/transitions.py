@@ -56,7 +56,7 @@ from typing import NamedTuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import ConflictError
+from app.core.errors import ConflictError, SiteValidationError
 from app.core.timezone import to_display
 from app.modules.approvals import service as approvals_service
 from app.modules.approvals.models import ApprovalDocumentType
@@ -179,24 +179,34 @@ async def _fisle(
         return
     if new_status is not SubcontractorPaymentStatus.approved:
         return
+    contract_amount = await repository.get_contract_amount(session, payment.contract_id)
+    # 🔴 `sequence_no` ARTAN sıra ŞARTTIR: avans mahsubu zinciri sıralıdır ve
+    #    her adımın tavanı bir öncekinin sonucuna bağlıdır. ÖNE ALINDI (kayıt
+    #    53/54): gerçek taban bilinmeden ters-sıra kusuru ölçülemez — aşağı.
+    prior = await repository.list_completed_payments(
+        session, payment.contract_id, before_sequence_no=payment.sequence_no
+    )
+    advance_recovered = calculations.cumulative_state(prior, contract_amount).advance_recovered
+    base = posting.posting_base_for(payment, contract_amount, advance_recovered)
     # 🔴 KRIT-HAKEDIS K3 — gerekçe kardeş dosyada TEK KOPYA
     #    (`invoicing.source_posting.source_replaced_by_invoice`).
     if await source_posting.source_replaced_by_invoice(
         session, Invoice.subcontractor_progress_payment_id, payment.id
     ):
+        # 🔴 KAYIT 53/54 — TERS SIRA (gerekçe kardeş dosyada TEK KOPYA).
+        mismatch = await source_posting.replacing_invoice_base_mismatch(
+            session, Invoice.subcontractor_progress_payment_id, payment.id, base
+        )
+        if mismatch is not None:
+            raise SiteValidationError(
+                guards.SOURCE_REPLACED_BASE_MISMATCH.format(fatura=mismatch, hakedis=base)
+            )
         return
-    contract_amount = await repository.get_contract_amount(session, payment.contract_id)
-    # 🔴 `sequence_no` ARTAN sıra ŞARTTIR: avans mahsubu zinciri sıralıdır ve
-    #    her adımın tavanı bir öncekinin sonucuna bağlıdır.
-    prior = await repository.list_completed_payments(
-        session, payment.contract_id, before_sequence_no=payment.sequence_no
-    )
-    advance_recovered = calculations.cumulative_state(prior, contract_amount).advance_recovered
     await posting.post_subcontractor_payment(
         session,
         actor,
         payment,
-        base=posting.posting_base_for(payment, contract_amount, advance_recovered),
+        base=base,
         # 🔴 ONAY GÜNÜ — `period_year`/`period_month` DEĞİL (gerekçe kardeş dosyada).
         entry_date=to_display(payment.approved_at).date(),
         # 🔴 `to_display` ŞART, çıplak `.date()` DEĞİL (TB5 yerel takvim

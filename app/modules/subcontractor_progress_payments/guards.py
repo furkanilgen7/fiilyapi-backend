@@ -25,6 +25,7 @@ from app.modules.progress_payments.guards import (
     PAYMENT_MISSING,
     PAYMENT_NOT_DELETABLE,
     PERIOD_REQUIRED,
+    SOURCE_REPLACED_BASE_MISMATCH,
 )
 
 __all__ = [
@@ -40,6 +41,7 @@ __all__ = [
     "PERIOD_REQUIRED",
     "REJECTION_REASON_REQUIRED",
     "SECTION_MISMATCH",
+    "SOURCE_REPLACED_BASE_MISMATCH",
     "quantity_exceeds_quota",
     "source_quantity_exceeds_quota",
     "validate_reject",

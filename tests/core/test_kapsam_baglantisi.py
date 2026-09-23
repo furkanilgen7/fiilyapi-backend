@@ -62,71 +62,58 @@ yanıt şemalarına bir `Decimal` eklendiği gün bekçi kırmızıya döner ve 
 karar (uç başına kapsam) o gün gerçekten zorunlu olur.
 """
 
-import importlib
 import inspect
-import pkgutil
 from decimal import Decimal
 
 from fastapi import APIRouter
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
 
-import app.modules
-from app.core.access import Scope
 from app.core.field_scope import Gorunurluk
 from app.core.permissions import kapsam_kapisi, require_permission
 from app.core.scoped_route import kapsam_rotasi, kapsamdan_oku
-from app.modules.roles.seed_data import MATRIX
+from app.modules.roles.scope_wiring import kablolu_moduller
+from app.modules.roles.scope_wiring import kapanis as _kapanis
+from app.modules.roles.scope_wiring import kapsam_kapisi_anahtari as _kapsam_kapisi_anahtari
+from app.modules.roles.scope_wiring import rota_sinifi_bilgisi as _rota_sinifi_bilgisi
+from app.modules.roles.scope_wiring import tum_routerlar as _tum_routerlar
 
-#: Kapanış kimlikleri. `require_permission`/`kapsam_kapisi` iç fonksiyon
-#: döndürür; `__qualname__` o fabrikadan çıktığının kanıtıdır.
+#: Kapanış kimliği. `require_permission` iç fonksiyon döndürür; `__qualname__`
+#: o fabrikadan çıktığının kanıtıdır. (`kapsam_kapisi`nin eşdeğeri artık
+#: `app.modules.roles.scope_wiring` içinde yaşıyor — bkz. import.)
 _IZIN_KAPANISI = "require_permission.<locals>._check"
-_KAPSAM_KAPANISI = "kapsam_kapisi.<locals>._cozucu"
 
 
 def _kisitli_moduller() -> set[str]:
-    """Matriste `all` OLMAYAN bir kapsam taşıyan izin modülleri."""
-    return {
-        modul
-        for modul, hucreler in MATRIX.items()
-        if any(scope is not Scope.all for _lvl, scope in hucreler)
-    }
+    """Kapsam köprüsü GERÇEKTEN kurulu olan izin modülleri — yani ATANABİLİR olanlar.
 
+    🔴 TERSİNE ÇEVRİLDİ (kalan iş #4, 2026-09-23). Eski hâli `MATRIX` SEED
+    sabitini okuyordu ve soruyordu: *"seedde kısıtlı görünen bir modül gerçekten
+    kablolu mu?"* Bu soru YANLIŞ yöndeydi — seed'in kendisi köprüsüz bir modüle
+    (`payroll`) hiç `limited`/`finance` yazmıyor olsa bile, `update_role_
+    permission` (onarım ÖNCESİ) modüle hiç bakmadığı için YÖNETİCİ o hücreye
+    ekrandan istediği an kısıtlı bir kapsam YAZABİLİYORDU. Yani gerçek soru
+    hep şuydu: *"ATANABİLİR olan (üretim kodunun fiilen kabul ettiği) bir modül
+    kablolu mu?"* — ve `update_role_permission`ın üçüncü kapısı artık bu iki
+    kümeyi TANIM GEREĞİ eşitliyor: `app.modules.roles.service.
+    update_role_permission` ile BİREBİR AYNI kaynağı (`kablolu_moduller()`)
+    okur.
 
-def _kapanis(fn) -> dict:
-    """Bir kapanışın serbest değişkenleri (ad → değer)."""
-    # `strict=True`: serbest değişken adları ile hücreler BİREBİR eşleşir;
-    # eşleşmiyorsa kapanış yapısı hakkındaki varsayımımız çürümüştür ve
-    # sessizce kısa bir sözlük üretmek bekçiyi KÖR bırakırdı.
-    return dict(
-        zip(
-            fn.__code__.co_freevars,
-            (c.cell_contents for c in fn.__closure__ or ()),
-            strict=True,
-        )
-    )
-
-
-def _izin_anahtari(bagimlilik) -> str | None:
-    """Bu bağımlılık `require_permission(...)` mı? Öyleyse izin modülü anahtarı."""
-    fn = getattr(bagimlilik, "dependency", None)
-    if getattr(fn, "__qualname__", "") != _IZIN_KAPANISI:
-        return None
-    return _kapanis(fn).get("module_key")
-
-
-def _kapsam_kapisi_anahtari(bagimlilik) -> str | None:
-    """Bu bağımlılık `kapsam_kapisi(...)` mı? Öyleyse köprünün yazdığı anahtar.
-
-    `kapsam_bagimligi_kur` `functools.wraps(cozucu)` kullandığı için sarmalayıcı
-    `__qualname__`i ÇÖZÜCÜDEN devralır; kimliği `__wrapped__` üzerinden okumak
-    hem sarmalayıcıyı hem çözücüyü tek seferde doğrular.
+    Bu, ROUTER-başına bekçiyi (aşağıdaki `test_KISITLI_izinle_korunan_her_
+    router_MASKEYE_BAGLIDIR`) TEK routerlı anahtarlar için (`boq`, `contracts`,
+    `dashboard`) tanım gereği tutarlı kılar — o routerın kendisi zaten
+    `kablolu_moduller()`in KAYNAĞIDIR. Bu bir kayıp DEĞİL: o testin gerçek
+    değeri artık ÇOK-routerlı anahtarlarda (`sales`: hem `sales/router.py` hem
+    `customers/router.py`; `projects`: hem `projects/router.py` hem
+    `units/router.py`) — `kablolu_moduller()` VEYA (OR) semantiğiyle bir
+    anahtarı TEK bir router doğru kurduysa bile kabul eder (gerekçe
+    `scope_wiring.py` docstring'inde), o yüzden KARDEŞ router bozulsa bile
+    anahtar kümede KALIR ve router-başına bekçi o kardeşi KENDİ başına yakalar.
+    `test_bekci_EKSIK_ve_YANLIS_kopruleri_CAKAR` ve `test_ROTA_bekcisi_ALT_
+    ROUTER_kor_noktasini_YAKALAR` zaten SENTETİK routerlarla `kisitli` kümesini
+    ELLE veriyor — onlar bu değişiklikten ETKİLENMEZ.
     """
-    fn = getattr(bagimlilik, "dependency", None)
-    cozucu = getattr(fn, "__wrapped__", None)
-    if cozucu is None or getattr(cozucu, "__qualname__", "") != _KAPSAM_KAPANISI:
-        return None
-    return _kapanis(cozucu).get("module_key")
+    return set(kablolu_moduller())
 
 
 def _kullanilan_izinler(router: APIRouter) -> set[str]:
@@ -138,13 +125,12 @@ def _kullanilan_izinler(router: APIRouter) -> set[str]:
     return {anahtar for b in bagimliliklar if (anahtar := _izin_anahtari(b))}
 
 
-def _rota_sinifi_bilgisi(router: APIRouter) -> tuple[str | None, object]:
-    """`kapsam_rotasi` fabrikasından çıkan sınıfın (modül anahtarı, sağlayıcı)sı."""
-    sinif = router.route_class
-    if getattr(sinif, "__name__", "") != "_KapsamRotasi":
-        return None, None
-    kapanis = _kapanis(sinif.__init__)
-    return kapanis.get("modul_key"), kapanis.get("saglayici")
+def _izin_anahtari(bagimlilik) -> str | None:
+    """Bu bağımlılık `require_permission(...)` mı? Öyleyse izin modülü anahtarı."""
+    fn = getattr(bagimlilik, "dependency", None)
+    if getattr(fn, "__qualname__", "") != _IZIN_KAPANISI:
+        return None
+    return _kapanis(fn).get("module_key")
 
 
 def _siniflandirma_gerektirir(annotation) -> bool:
@@ -257,32 +243,6 @@ def _kopru_sorunlari(router: APIRouter, kisitli: set[str]) -> list[str]:
     return sorunlar
 
 
-def _tum_routerlar() -> dict[int, tuple[str, APIRouter]]:
-    """`app.modules` ağacındaki HER modül düzeyi `APIRouter`.
-
-    🔴 İçe aktarma hatası YUTULMAZ: yutulsaydı yeniden adlandırılan ya da
-    bozulan bir modül sessizce taranmaz ve bekçi yeşil kalırdı.
-    """
-    hatalar: list[str] = []
-    bulunan: dict[int, tuple[str, APIRouter]] = {}
-    for bilgi in pkgutil.walk_packages(app.modules.__path__, "app.modules."):
-        try:
-            mod = importlib.import_module(bilgi.name)
-        except Exception as hata:  # noqa: BLE001 — gerekçe: sessiz atlama YASAK
-            hatalar.append(f"{bilgi.name}: {type(hata).__name__}: {hata}")
-            continue
-        for ad, obj in vars(mod).items():
-            if isinstance(obj, APIRouter):
-                # Aynı router birden çok modülde ithal edilmiş olabilir; kimlik
-                # `id()`dir, ad değil. İlk (alfabetik) ad raporlamada kullanılır.
-                tam_ad = f"{mod.__name__}.{ad}"
-                mevcut = bulunan.get(id(obj))
-                if mevcut is None or tam_ad < mevcut[0]:
-                    bulunan[id(obj)] = (tam_ad, obj)
-    assert not hatalar, f"Router taramasında içe aktarma HATASI (bekçi kör kalırdı): {hatalar}"
-    return bulunan
-
-
 def test_KISITLI_izinle_korunan_her_router_MASKEYE_BAGLIDIR() -> None:
     kisitli = _kisitli_moduller()
     eksik: dict[str, list[str]] = {}
@@ -328,7 +288,7 @@ def test_bekci_EKSIK_ve_YANLIS_kopruleri_CAKAR() -> None:
     olmasaydı "her routerı reddet" hâli de yeşil kalırdı; bu yüzden DOĞRU kurulmuş
     router da aynı fonksiyondan geçirilir ve SIFIR sorun vermesi şart koşulur.
     """
-    from app.core.access import AccessLevel
+    from app.core.access import AccessLevel, Scope
 
     kisitli = {"boq"}
     izin = require_permission("boq", AccessLevel.view)

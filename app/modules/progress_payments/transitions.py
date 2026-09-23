@@ -259,6 +259,15 @@ async def _fisle(
         return
     if new_status is not ProgressPaymentStatus.approved:
         return
+    # 🔴 Zincir `sequence_no` ARTAN sırada olmalıdır (avans tavanı sıralıdır) —
+    #    repository öyle döner. `before_sequence_no` kaydın KENDİSİNİ dışlar.
+    #    ÖNE ALINDI (kayıt 53/54): gerçek taban bilinmeden `source_replaced_
+    #    by_invoice` dalına girilirse ters-sıra kusuru ölçülemez — bkz. aşağı.
+    prior = await repository.list_completed_payments(
+        session, payment.project_id, before_sequence_no=payment.sequence_no
+    )
+    advance_recovered = calculations.cumulative_state(prior, contract.amount).advance_recovered
+    base = posting.posting_base_for(payment, contract.amount, advance_recovered)
     # 🔴 KRIT-HAKEDIS K3 — TAKASIN GERİ DÖNÜŞÜ. Faturası zaten fişlenmiş bir
     #    hakediş YENİDEN FİŞLENMEZ: `unapprove` canlı fiş bulamayıp sessizce
     #    döner (faturanın stornosu onu çoktan `reversed` yapmıştır) ve buradaki
@@ -268,18 +277,23 @@ async def _fisle(
     if await source_posting.source_replaced_by_invoice(
         session, Invoice.progress_payment_id, payment.id
     ):
+        # 🔴 KAYIT 53/54 — TERS SIRA: fatura hakedişten ÖNCE fişlenmiş olabilir
+        #    (o an `source_posting_base_blockers` kapısı `None` görüp geçmiştir,
+        #    gerekçe `source_amounts.py`de). Şimdi gerçek taban BELLİ — yerini
+        #    alan faturayla KARŞILAŞTIRILMADAN sessizce dönülmez, fail-closed.
+        mismatch = await source_posting.replacing_invoice_base_mismatch(
+            session, Invoice.progress_payment_id, payment.id, base
+        )
+        if mismatch is not None:
+            raise SiteValidationError(
+                guards.SOURCE_REPLACED_BASE_MISMATCH.format(fatura=mismatch, hakedis=base)
+            )
         return
-    # 🔴 Zincir `sequence_no` ARTAN sırada olmalıdır (avans tavanı sıralıdır) —
-    #    repository öyle döner. `before_sequence_no` kaydın KENDİSİNİ dışlar.
-    prior = await repository.list_completed_payments(
-        session, payment.project_id, before_sequence_no=payment.sequence_no
-    )
-    advance_recovered = calculations.cumulative_state(prior, contract.amount).advance_recovered
     await posting.post_progress_payment(
         session,
         actor,
         payment,
-        base=posting.posting_base_for(payment, contract.amount, advance_recovered),
+        base=base,
         # 🔴 ONAY GÜNÜ — hakedişin dönemi (`period_year`/`period_month`) DEĞİL.
         #    Döneme yazılsaydı geçmiş bir aya kesilen hakediş KAPALI bir döneme
         #    fiş atmayı dener ve KARAR-6'yı delerdi. `_stamp` bu satırdan hemen

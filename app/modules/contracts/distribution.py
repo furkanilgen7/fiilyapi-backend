@@ -348,14 +348,26 @@ async def _assert_quota_covers_section_allocations(
     `_assert_within_contract_quantity` bu boşluğu kapatmaz: o toplamı YUKARI
     sınırlar, aşağı çekmeyi hiç ölçmez.
 
-    🔴 EŞİK = KİLİT (İK-2 dersi): kontrolden ÖNCE poz satırı `lock_item` ile
-    `FOR UPDATE` alınır, diğer iki kapının kullandığı kilidin AYNISI. Kilit
-    sırası `id` artan — `lock_employer_items`'ın `ORDER BY id` disipliniyle aynı
-    yönde, deadlock doğurmaz. YALNIZ kotası DÜŞEN satırlar kilitlenir: kotayı
-    yükseltmek invariantı kıramaz, dolayısıyla dokunulmamış hücre başına ek
-    sorgu YOKTUR.
+    🔴 EŞİK = KİLİT (İK-2 dersi) — ve kilit KOŞULSUZDUR. Bu fonksiyonun ilk
+    hâli "kotası DÜŞEN satırlar" kararını `save_distribution`ın kilitsiz okuma
+    fazından (`list_boq_items_for_sites`, `FOR UPDATE` YOK) gelen STALE
+    `row.quantity` ile veriyordu — tam da `boq.service.update_item`'ın
+    KAÇINDIĞI TOCTOU: T1 bu satırı 500 okur, T1 flush/commit etmeden T2
+    araya girip kotayı 500→1200 yükseltir ve 700 tahsis ekler (ikisi de
+    `boq.service`nin KENDİ kilidiyle geçerli), T1 kararını hâlâ 500'e göre
+    verip 600'ü "artış" sanır — kilit hiç alınmaz, `allocated_total_for_item`
+    hiç çağrılmaz, 600 < 700 yazılır (bkz. `tests/contracts/
+    test_distribution_k3_toctou.py`). Bu yüzden karar ARTIK "artış mı"
+    kararını TAŞIMAZ: gövdede yazılacak (yani `existing_by_key`/`relink_plan`
+    üzerinden mevcut bir satırı hedefleyen) HER hücrenin satırı `lock_item`
+    ile `FOR UPDATE` alınır (diğer iki kapının kullandığı kilidin AYNISI,
+    `populate_existing` ile TAZELENİR) ve "düşüyor mu" kararı ancak kilitli/
+    taze değere göre verilir. Kilit sırası `id` artan —
+    `lock_employer_items`'ın `ORDER BY id` disipliniyle aynı yönde, deadlock
+    doğurmaz. Gövdede HİÇ geçmeyen ("dokunulmamış") hücreler bu döngüye
+    girmez — ek sorgu yalnız BU isteğin yazacağı satırlar için vardır.
     """
-    dusurulen: dict[uuid.UUID, Decimal] = {}
+    hedef_miktar: dict[uuid.UUID, Decimal] = {}
     for alloc in allocations:
         if alloc.quantity is None:
             continue
@@ -363,16 +375,18 @@ async def _assert_quota_covers_section_allocations(
         row = existing_by_key.get(key)
         if row is None:
             row = relink_plan.get(key)
-        if row is None or alloc.quantity >= row.quantity:
+        if row is None:
             continue
-        dusurulen[row.id] = alloc.quantity
+        hedef_miktar[row.id] = alloc.quantity
 
-    for item_id in sorted(dusurulen):
+    for item_id in sorted(hedef_miktar):
         locked = await boq_repository.lock_item(session, item_id)
         if locked is None:  # pragma: no cover — satır bu işlemde okundu
             continue
+        if hedef_miktar[item_id] >= locked.quantity:
+            continue
         allocated = await boq_repository.allocated_total_for_item(session, item_id)
-        if allocated > dusurulen[item_id]:
+        if allocated > hedef_miktar[item_id]:
             raise ConflictError(_QUANTITY_BELOW_ALLOCATED)
 
 

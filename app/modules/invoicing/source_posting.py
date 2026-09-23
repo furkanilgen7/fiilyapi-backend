@@ -61,6 +61,7 @@ istenen budur: itiraz edilmiş bir faturanın arkasındaki gider hâlâ gerçekt
 
 import uuid
 from collections.abc import Awaitable, Callable
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -69,12 +70,18 @@ from sqlalchemy.orm.attributes import InstrumentedAttribute
 from app.modules.accounting.models import JournalEntry, JournalSourceType
 from app.modules.equipment import rental_posting
 from app.modules.invoicing.models import Invoice
+from app.modules.invoicing.validation import SOURCE_AMOUNT_TOLERANCE
 from app.modules.posting.repository import CANCELLED_STATUS
 from app.modules.progress_payments import posting as progress_posting
 from app.modules.subcontractor_progress_payments import posting as subcontractor_posting
 from app.modules.users.models import User
 
-__all__ = ["SOURCE_REVERSERS", "reverse_source_entry", "source_replaced_by_invoice"]
+__all__ = [
+    "SOURCE_REVERSERS",
+    "replacing_invoice_base_mismatch",
+    "reverse_source_entry",
+    "source_replaced_by_invoice",
+]
 
 #: 🔴 `invoices` kaynak FK'si → o ailenin STORNO fonksiyonu.
 #:
@@ -167,3 +174,54 @@ async def source_replaced_by_invoice(
         .limit(1)
     )
     return (await session.execute(stmt)).first() is not None
+
+
+async def replacing_invoice_base_mismatch(
+    session: AsyncSession,
+    source_column: InstrumentedAttribute[uuid.UUID | None],
+    source_id: uuid.UUID,
+    expected_base: Decimal,
+) -> Decimal | None:
+    """🔴 KAYIT 53/54 — TERS SIRA bekçisi: *"yerimi alan fatura DOĞRU tutarı mı yazdı"*
+
+    `source_replaced_by_invoice` yalnız VARLIĞA bakar (`True`/`False`) ve
+    ÜÇ meşru hâli birden `False` sayar. Ama o `True` döndüğünde çağıranın
+    (`_fisle`/`post_on_approval`) tepkisi bugüne kadar KAYITSIZ ŞARTSIZ bir
+    sessiz `return`dü — yerini alan faturanın `tax_base`i hiç ÖLÇÜLMEDEN.
+
+    Kaynak fişi HENÜZ doğmamışken (`source_posting_base_for_invoice` → `None`)
+    bağlı fatura önce fişlenirse, `source_posting_base_blockers` kapısı da
+    `None`da atlanır (o modülün docstring'i bunu MEŞRU sayar — takas henüz
+    yoktur). Delik ORADA DEĞİL, BURADADIR: kaynak SONRADAN onaylandığında artık
+    gerçek taban BELLİDİR (`expected_base`, çağıranın az önce hesapladığı
+    `posting.posting_base_for(...)` / kira ailesinde `invoice_amount`) ve
+    yerini alan faturanın `tax_base`iyle KARŞILAŞTIRILABİLİR. Bu fonksiyon o
+    karşılaştırmayı yapar; kaynağın fişini ATLAYIP ATLAMAYACAĞINA karar VERMEZ
+    (`source_replaced_by_invoice` hâlâ o kapıdır) — yalnız atlamanın SESSİZ
+    olup olmayacağını belirler.
+
+    Dönüş `None` = uyum (ya yerini alan CANLI fatura yok, ya da tabanı toleransı
+    aşmıyor). Aksi hâlde faturanın `tax_base`ini döner; çağıran bunu kendi
+    hata sınıfıyla (aile başına ayrı `DomainError` alt sınıfı) sarmalar —
+    bu modül `app.core.errors`a BAĞLI DEĞİLDİR (üç aile üç ayrı sınıf kullanır).
+
+    Tolerans `SOURCE_AMOUNT_TOLERANCE` ile TEK kopyadan okunur — FAT-HAK ve
+    TAKAS-TABAN kapılarıyla AYNI sayı.
+    """
+    stmt = (
+        select(Invoice.tax_base)
+        .join(
+            JournalEntry,
+            (JournalEntry.source_type == JournalSourceType.invoice)
+            & (JournalEntry.source_id == Invoice.id),
+        )
+        .where(source_column == source_id, JournalEntry.status != CANCELLED_STATUS)
+        .limit(1)
+    )
+    row = (await session.execute(stmt)).first()
+    if row is None:
+        return None
+    (actual_tax_base,) = row
+    if abs(actual_tax_base - expected_base) <= SOURCE_AMOUNT_TOLERANCE:
+        return None
+    return actual_tax_base

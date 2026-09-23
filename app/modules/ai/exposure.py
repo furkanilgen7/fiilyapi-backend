@@ -25,13 +25,32 @@ açtığı kapı kapanırdı) ya da tümüyle açılır (dolayısıyla `wage_amo
 | `AGREGA` | Yalnız toplam/KPI; satır ve kimlik YOK | kayıt: **şema** + dispatch: **zarf** |
 | `ACIK` | Kısıt yok (S5(c) yasağı yine geçerli) | — |
 
-## 🔴 `Scope` HATASINI TEKRARLAMA — bayrak GERÇEKTEN OKUNUR
+## 🔴 `Scope`u KENDİ BAŞINA GÜVENLİK GEREKÇESİ SAYMA — ama artık DEKORATİF de DEĞİL
 
-Bu depoda ölçülmüş bir kusur var: `Scope` enum'unun 14 isabetinin **hepsi**
-`roles/` altındadır ve **hiçbir süzgeç** `permission.scope` okumaz — yani İzin
-Matrisi ekranı "Mali (sınırlı)" yazar, kod o kısıtı hiç uygulamaz. Aynı hata
-`YONETISIM_DENYLIST`te de ölçüldü: bugün onu okuyan **tek** yer bir **test
-dosyasıdır**, üretim kodu değil.
+🔴 **ESKİ GEREKÇE BAYATTI, KARAR AYNI KALDI** (ölçüldü, `tests/modules/ai/
+test_p8_kapsam_maskesi.py`; kardeşi `ai/tools/schemas.py:191`, `ai/registry.py`
+aynı düzeltmeyi taşır). Burada *"`Scope` enum'unun 14 isabetinin hepsi `roles/`
+altındadır ve hiçbir süzgeç `permission.scope` okumaz"* yazıyordu. Bu
+2026-09-19'dan beri YANLIŞTIR: `core/field_scope` + `core/scoped_route` altı
+modülde (`boq · contracts · dashboard · projects · sales · sites`) ALAN
+DÜZEYİNDE gerçek bir maske uygular ve AI hattı da bu maskeden GEÇER — araçlar
+gerçek `APIRoute`ları (dolayısıyla `kapsam_rotasi`/`kapsam_kapisi` köprüsünü)
+taşır. Kalan iş #4 (2026-09-23) bu altı modülü `update_role_permission`ın
+ATANABİLİR kümesiyle eşitledi (`kablolu_moduller()`); bu dosyanın konusu olan
+`personnel`/`payroll`/`customers`/`sales` KVKK ifşa seviyesi bundan
+ETKİLENMEZ — `sales` zaten kablolu altı modülün biridir, `personnel`/`payroll`
+ise DEĞİLDİR ve bu dosyanın KENDİ mekanizması (`AI_IFSA` bayrağı, kayıt
+anında yaptırım) onlarda hâlâ TEK korkuluktur; `Scope` maskesi onları
+kapsamaz.
+
+Bu yüzden bu dosyanın kendi kuralı geçerliliğini KORUR: modül bazlı ifşa
+seviyesi (`AI_IFSA`) `permission.scope`a değil sabit bir listeye dayanır ve
+öyle kalmalıdır — `Scope` altı modülde gerçek bir maske olsa da KVKK
+korkuluğunun YERİNE geçemez, çünkü (a) yalnız altı modülü kapsar, geri kalan
+16'sını (payroll dâhil) kapsamaz, (b) kapsam bir YÖNETİCİ kararıdır ve rol
+başına değişir, KVKK kısıtı ise sabittir ve role bakmaksızın uygulanmalıdır.
+Aynı hata `YONETISIM_DENYLIST`te de ölçüldü: bugün onu okuyan **tek** yer bir
+**test dosyasıdır**, üretim kodu değil.
 
 Bu yüzden burada bayrağın okunduğu yer bir liste değil, **kaydın kendisidir**:
 `dogrula_spec()` `ToolRegistry.__init__` içinde koşar ve ihlalli bir araç

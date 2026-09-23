@@ -132,10 +132,19 @@ class BoqItemSectionAllocation(Base):
     (satirlar arasi toplam kisidi bir CHECK'e sigmaz) — servis katmaninda ve
     🔴 POZ SATIRI `FOR UPDATE` ILE KILITLENEREK tutulur (EŞİK = KİLİT, İK-2
     dersi): kilitsiz bir esik kontrolu iki eszamanli tahsiste IKISINI DE gecirir.
-    Invariantin IKI yazma kapisi vardir ve ikisi de AYNI kilidi alir:
-    `service.replace_allocations` (tahsis toplami ARTAR) ve `service.update_item`
-    (poz `quantity`si DUSER — kotayi tahsis toplaminin altina cekmek ayni
-    invarianti ters yonden kirar).
+    🔴 BU INVARIANTIN KAPI SAYISI BURAYA YAZILMAZ — bu notun kendi alt
+    paragrafindaki ders (asagi bak) burada da gecerlidir: sayi yazildigi gun
+    dogru, bir sonraki dilimde BAYATTIR. Nitekim oyle oldu — bu paragraf
+    "IKI kapi" diyordu, 2026-09-23'te UCUNCUSU olculdu
+    (`contracts/distribution.py::_assert_quota_covers_section_allocations`,
+    envanter kaydi #11: karari KILITSIZ okunan BAYAT `quantity` ile veriyor,
+    karar "artis" derse kilidi HIC almiyordu — TOCTOU).
+    Sayi yerine KURAL: tahsis toplamini ARTIRAN ya da poz `quantity`sini
+    DUSUREN her yol — hangi modulde olursa olsun — karari vermeden ONCE poz
+    satirini `FOR UPDATE` ile kilitlemek ZORUNDADIR; kotayi tahsis toplaminin
+    altina cekmek ayni invarianti TERS YONDEN kirar. Bilinen yollar bugun:
+    `boq.service.replace_allocations`, `boq.service.update_item`,
+    `contracts.distribution.save_distribution`.
 
     ON DELETE CASCADE (K2). Bu bir SAPMA DEGIL, var olan AYRIMIN dogru tarafina
     yerlesmektir: bilgi bagi olan kayitlar `SET NULL`, bolumun bir PARCASI olan

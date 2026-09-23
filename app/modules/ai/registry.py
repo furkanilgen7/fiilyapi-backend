@@ -25,12 +25,29 @@ seviye parametresi almaz — yani #1 ve #3'teki `min_level` alanı ölüydü. Bu
 kapı `satisfies(permission.access_level, seviye)` ile **gerçekten** uygulanır ve
 `kapilar` demetinin **her üyesi için ayrı ayrı** koşar.
 
-## `Scope` KULLANILMAZ
+## `ActorContext`ta `scope` ALANI YOKTUR — ama gerekçesi artık BAŞKA
 
-Ölçüldü: `Scope` enum'unun 14 isabetinin hepsi `roles/` altındadır ve hiçbir
-süzgeç `permission.scope` OKUMAZ. Bu yüzden `ActorContext` dataclass'ında
-**`scope` ALANI BULUNMAZ** (S1) — matris ekranındaki kapsam etiketi bir güvenlik
-gerekçesi olarak KULLANILAMAZ, çünkü kod onu uygulamıyor. Bekçisi tip testidir.
+🔴 **ESKİ GEREKÇE BAYATTI, KARAR AYNI KALDI** (ölçüldü, `tests/modules/ai/
+test_p8_kapsam_maskesi.py`). Burada *"`Scope` enum'unun 14 isabetinin hepsi
+`roles/` altındadır ve hiçbir süzgeç `permission.scope` OKUMAZ"* yazıyordu. Bu
+2026-09-19'dan beri YANLIŞTIR: `core/field_scope` + `core/scoped_route` altı
+modülde (`boq · contracts · dashboard · projects · sales · sites`) ALAN
+DÜZEYİNDE gerçek bir maske uygular ve AI hattı bu maskeden GEÇER — `ReadOnlyTransport`
+gerçek `APIRoute` nesnelerini (dolayısıyla `kapsam_rotasi` sarmalayıcısını ve
+router düzeyindeki `kapsam_kapisi` köprüsünü) taşır; araçlar SERVİSİ değil UCU
+sarar. Kalan iş #4 (2026-09-23) bu altı modülü ATANABİLİR kümeyle eşitledi
+(`app.modules.roles.scope_wiring.kablolu_moduller()`) ama AI'nin bu maskeyle
+ilişkisini DEĞİŞTİRMEDİ: değişen yalnız HANGİ modüllerin `limited`/`finance`
+kapsamını yönetici hücreye ATAYABİLDİĞİ, maskenin AI hattına NASIL bağlandığı
+DEĞİL.
+
+Sonuç yine de aynı kaldı ve gerekçesi ŞUDUR: maske `roles.RolePermission.scope`u
+route sarmalayıcısı düzeyinde okur ve yanıt modelini DÖNÜŞTE değiştirir —
+`ToolRegistry.invoke()`in KAPI kararına (izin + sysadmin + şema doğrulama)
+hiçbir şey EKLEMEZ, yalnız dönen VERİYİ daraltır. Bu yüzden `ActorContext`
+dataclass'ında (bir KAPI kararı taşıyan yapı) **`scope` ALANI hâlâ BULUNMAZ**
+(S1): kapı kararı zaten `permissions`/`role_is_system` alanlarıyla verilir,
+kapsam maskesi ayrı bir katmanda (yanıt zarfında) yaşar. Bekçisi tip testidir.
 """
 
 from __future__ import annotations

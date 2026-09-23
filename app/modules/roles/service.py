@@ -9,6 +9,7 @@ from app.core.field_scope import gizlenen_kova
 from app.modules.roles.models import SYSTEM_ADMIN_KEY, Module, Role, RolePermission
 from app.modules.roles.repository import get_module, get_permission
 from app.modules.roles.schemas import RoleCreate
+from app.modules.roles.scope_wiring import kablolu_moduller
 
 
 async def update_role_permission(
@@ -82,6 +83,27 @@ async def update_role_permission(
         raise PermissionLockedError(
             "Bu kapsam uygulanmıyor (alan maskesi tanımlı değil); "
             "erişimi daraltmak için proje erişimini kullanın."
+        )
+    # 🔴 MODÜL EKSENLİ FAIL-CLOSED (kalan iş #4, 2026-09-23): üstteki kapı yalnız
+    # KAPSAMIN maskesi var mı diye sorar, hangi MODÜLE yazıldığına hiç bakmaz.
+    # `limited`/`finance` yalnız `kablolu_moduller()`in döndürdüğü routerlarda
+    # (`route_class=kapsam_rotasi(...)` + `dependencies=[kapsam_kapisi(...)]`)
+    # bir karşılığa sahiptir; geri kalan 16 modülde (payroll · treasury ·
+    # accounting · invoicing · personnel · … ) köprü YOKTUR — maske aktörün
+    # `_KAPSAM` ContextVar'ı hiç yazılmadığı için sessizce `Scope.all` görür ve
+    # HİÇBİR ŞEY GİZLEMEZ. Bu kapı olmadan yönetici `personnel = view/limited`
+    # yazabiliyordu (200 dönüyordu), ekran "Sınırlı" gösteriyordu ve kullanıcı
+    # maaşı tam değeriyle görmeye devam ediyordu — ayrı yetki verildiği YALANDI.
+    #
+    # Bu kontrol yalnız kapsam GERÇEKTEN bir kovayı gizliyorsa (`gizlenen_kova`
+    # `None` DEĞİLSE) anlamlıdır; `Scope.all` hiçbir şeyi maskelemediği için her
+    # modülde serbest kalmaya devam eder (üstteki `all_a_cekilebilir` testiyle
+    # aynı ilke). Pozitif kontrol: `tests/modules/test_role_service.py::
+    # test_MODUL_EKSENLI_kapsam_kablolu_OLMAYAN_modulde_REDDEDILIR`.
+    if gizlenen_kova(scope) is not None and module_key not in kablolu_moduller():
+        raise PermissionLockedError(
+            "Bu modülde kapsam kısıtı uygulanmıyor (alan maskesi bu modülün "
+            "uçlarına bağlı değil); erişimi daraltmak için proje erişimini kullanın."
         )
     # 🔴 MASKELEYEN KAPSAM + YAZAN SEVİYE = ÜRÜNDE KARŞILIĞI OLMAYAN HÜCRE.
     # Maske girdiyi `None` yapar; salt-okuma yüzeyi bunu "—" diye basar ama YAZMA
