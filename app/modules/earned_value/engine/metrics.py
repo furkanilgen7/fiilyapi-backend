@@ -13,6 +13,7 @@ from decimal import Decimal
 from .accumulate import Points, Triple
 from .classify import pf_band
 from .numeric import ZERO, diff, ratio
+from .plan import LeafPlan
 from .policy import HEADER_QTY_REQUIRES_UNIFORM_UOM
 from .results import NodeMetrics
 from .tree import Tree
@@ -91,9 +92,14 @@ def rollup(tree: Tree, points: Points) -> Rollup:
 
 
 def node_metrics(
-    tree: Tree, r: Rollup, daily_bands: PfBands, cumulative_bands: PfBands
+    tree: Tree,
+    r: Rollup,
+    daily_bands: PfBands,
+    cumulative_bands: PfBands,
+    plan: LeafPlan | None = None,
 ) -> dict[object, NodeMetrics]:
     out: dict[object, NodeMetrics] = {}
+    planned = plan.subtree_pct(tree) if plan is not None else [(None, None)] * len(tree)
     for i, node in enumerate(tree.nodes):
         uom = tree.uom_of[i]
         # S4: karma birimli baslikta qty tabanli alanlar tanimsiz.
@@ -145,6 +151,8 @@ def node_metrics(
             progress_pct_day=ratio(ed, budget),
             progress_pct_cum=ratio(ec, budget),
             progress_pct_week=ratio(ew, budget),
+            planned_pct_day=planned[i][0],
+            planned_pct_cum=planned[i][1],
             prev_planned_qty=prev_pq,
             prev_unit_mhr=node.prev_unit_mhr if leaf else ratio(r.prev_budget[i], prev_pq),
             prev_budget_mhr=r.prev_budget[i],

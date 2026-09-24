@@ -43,7 +43,7 @@ def _imports(path: Path) -> list[str]:
 
 def _engine_files() -> list[Path]:
     files = sorted(ENGINE.rglob("*.py"))
-    assert len(files) >= 8, f"Motor tarayıcısı kör: {len(files)} dosya"
+    assert len(files) >= 15, f"Motor tarayıcısı kör: {len(files)} dosya"
     return files
 
 
@@ -90,13 +90,29 @@ def test_engine_import_loads_no_framework_at_runtime() -> None:
     assert out.stdout.strip() == ""
 
 
-def test_core_modules_do_not_import_planning() -> None:
+#: 🔴 Planlamayi import edebilen TEK uygulama dosyasi — BAGLANTI NOKTASI, cekirdek alan
+#: modulu DEGIL. Spec §2.7'nin "cekirdek"i gunluk/puantaj/BOQ/bolum gibi ALAN modulleridir;
+#: router kaydi uygulamanin kablo demetidir ve bir modul ancak oradan uca baglanir (modeller
+#: ise `alembic/env.py` + `tests/conftest.py`ten — ikisi de `app/` disinda). Liste bayatlayamaz:
+#: karsiligi kalmayan istisna `test_wiring_allowlist_is_not_stale` ile kirmizi olur.
+WIRING_ALLOWLIST = frozenset({"app/core/router_registry.py"})
+
+
+def _planning_importers() -> dict[str, list[str]]:
     files = [p for p in sorted(APP.rglob("*.py")) if PLANNING not in p.parents]
     assert len(files) >= 200, f"Çekirdek tarayıcısı kör: {len(files)} dosya"
-    offenders = [
-        f"{p.relative_to(APP.parent)}: {name}"
-        for p in files
-        for name in _imports(p)
-        if name == PLANNING_PKG or name.startswith(PLANNING_PKG + ".")
-    ]
-    assert offenders == []
+    found: dict[str, list[str]] = {}
+    for p in files:
+        names = [n for n in _imports(p) if n == PLANNING_PKG or n.startswith(PLANNING_PKG + ".")]
+        if names:
+            found[str(p.relative_to(APP.parent))] = names
+    return found
+
+
+def test_core_modules_do_not_import_planning() -> None:
+    offenders = {k: v for k, v in _planning_importers().items() if k not in WIRING_ALLOWLIST}
+    assert offenders == {}
+
+
+def test_wiring_allowlist_is_not_stale() -> None:
+    assert set(_planning_importers()) >= WIRING_ALLOWLIST

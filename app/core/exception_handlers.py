@@ -13,6 +13,7 @@ from app.core.errors import (
     DocumentValidationError,
     DomainError,
     DuplicateError,
+    EarnedValueValidationError,
     EquipmentValidationError,
     InventoryValidationError,
     InvoicingValidationError,
@@ -58,6 +59,14 @@ async def _project_type_mismatch_handler(
 
 async def _project_validation_handler(
     request: Request, exc: ProjectValidationError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content={"detail": str(exc)}
+    )
+
+
+async def _earned_value_validation_handler(
+    request: Request, exc: EarnedValueValidationError
 ) -> JSONResponse:
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content={"detail": str(exc)}
@@ -244,6 +253,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ProjectTypeMismatchError, _project_type_mismatch_handler)
     app.add_exception_handler(ProjectValidationError, _project_validation_handler)
     app.add_exception_handler(SiteValidationError, _site_validation_handler)
+    app.add_exception_handler(EarnedValueValidationError, _earned_value_validation_handler)
     app.add_exception_handler(InventoryValidationError, _inventory_validation_handler)
     app.add_exception_handler(DuplicateError, _duplicate_error_handler)
     app.add_exception_handler(RelatedRecordsExistError, _related_records_exist_handler)

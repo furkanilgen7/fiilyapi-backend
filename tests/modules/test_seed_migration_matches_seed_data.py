@@ -14,6 +14,7 @@ Matris tek bir migration'da degil, uc uca eklenen migration'larda birikir:
   * e9e8e6a52f96 -> 18. modul "contracts", f2a3b4c5d6e7 -> 19. modul "sales" (ayni desen)
   * b8c9d0e1f2a3 -> 20. modul "documents", d7e8f9a0b1c2 -> 21. modul "equipment"
   * e5f7a9c1b3d4 -> 22. modul "ai" (AI-0b)
+  * 46a82e4b271c -> 23. modul "earned_value" (PLN-B1)
 Bu yuzden karsilastirma, migration'larin BILESKESI ile seed_data arasinda yapilir.
 
 DB gerektirmez: ilk migration'in upgrade() fonksiyonu, gercek `alembic.op` yerine
@@ -43,6 +44,7 @@ P8_MIGRATION_PATH = next(VERSIONS_DIR.glob("*_p8_unite_satisi.py"))
 DOCUMENTS_MIGRATION_PATH = next(VERSIONS_DIR.glob("*_belge_cekirdegi.py"))
 EQUIPMENT_MIGRATION_PATH = next(VERSIONS_DIR.glob("*_mk1_makine_cekirdegi.py"))
 AI_MIGRATION_PATH = next(VERSIONS_DIR.glob("*_ai0b_izin_modulu_ve_arac_denetimi.py"))
+EARNED_VALUE_MIGRATION_PATH = next(VERSIONS_DIR.glob("*_pln_b1_earned_value_butce.py"))
 #: Tohum DEGIL, DUZELTICI: uygulanmayan kapsamlari `all`a ceker (2026-09-19).
 SCOPE_FIX_MIGRATION_PATH = next(VERSIONS_DIR.glob("*_izin_kapsami_uygulanmayanlar_all.py"))
 EXTENSION_MIGRATION_PATHS = [
@@ -56,6 +58,7 @@ EXTENSION_MIGRATION_PATHS = [
     DOCUMENTS_MIGRATION_PATH,
     EQUIPMENT_MIGRATION_PATH,
     AI_MIGRATION_PATH,
+    EARNED_VALUE_MIGRATION_PATH,
 ]
 
 
@@ -197,11 +200,11 @@ def test_migration_permission_matrix_matches_seed_data():
     assert _permission_map_from_app() == _permission_map_from_migrations()
 
 
-def test_migration_permission_matrix_has_176_cells():
+def test_migration_permission_matrix_has_184_cells():
     app_map = _permission_map_from_app()
     migration_map = _permission_map_from_migrations()
-    assert len(app_map) == 176
-    assert len(migration_map) == 176
+    assert len(app_map) == 184
+    assert len(migration_map) == 184
 
 
 def test_migration_role_keys_match_seed_data():

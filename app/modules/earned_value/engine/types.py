@@ -50,6 +50,15 @@ class ContractorMix(str, enum.Enum):
     MIXED = "mixed"
 
 
+class Distribution(str, enum.Enum):
+    """Yayma dagilimi (B1-1). Agirlik formulleri `policy.DISTRIBUTION_WEIGHTS`."""
+
+    LINEAR = "linear"
+    BELL = "bell"
+    FRONT = "front"
+    BACK = "back"
+
+
 class RowKind(str, enum.Enum):
     OVERALL = "overall"
     OVERALL_OWN = "overall_own"
@@ -132,14 +141,57 @@ class HoursEntry:
 
 @dataclass(frozen=True, slots=True)
 class PlannedMhr:
-    """Planli egri noktasi: planned_mhr(D, d). B0'da girdi; B1'de yaymadan uretilir."""
+    """Planli egri noktasi — iki anahtardan TAM OLARAK BIRI dolu:
 
-    curve: CurveKey
+    * `curve`: disiplin egrisi planned_mhr(D, d) (B0 girdisi; S1 bu egriden pay alir);
+    * `node_id`: YAPRAK egrisi planned_mhr(L, d) (K9; B1'de yaymadan uretilir).
+
+    Girdide yaprak noktasi varsa disiplin noktalari yok sayilir
+    (`policy.LEAF_CURVES_OVERRIDE_DISCIPLINE_CURVES`).
+    """
+
+    curve: CurveKey | None
     day: date
     mhr: Decimal
+    node_id: NodeId | None = None
 
     def __post_init__(self) -> None:
         _require_decimal(self, "mhr", self.mhr, optional=False)
+        if (self.curve is None) == (self.node_id is None):
+            raise ValueError(
+                f"PlannedMhr: curve ya da node_id — tam olarak biri dolu olmali "
+                f"(curve={self.curve!r}, node_id={self.node_id!r})"
+            )
+
+    @classmethod
+    def for_leaf(cls, node_id: NodeId, day: date, mhr: Decimal) -> PlannedMhr:
+        """Yaprak anahtarli nokta (K9)."""
+        return cls(None, day, mhr, node_id)
+
+
+@dataclass(frozen=True, slots=True)
+class SpreadLeaf:
+    """Yayma/onizleme girdisi: bir yaprak (kalem × bolum), butcesi ve penceresi.
+
+    `is_direct=False` yaprak egriye GIRMEZ (S3); onizleme yalniz "dolayli toplam"a ekler.
+    """
+
+    node_id: NodeId
+    discipline: CurveKey
+    budget: Decimal
+    start: date
+    end: date
+    distribution: Distribution
+    is_direct: bool
+
+    def __post_init__(self) -> None:
+        _require_decimal(self, "budget", self.budget, optional=False)
+        if not isinstance(self.distribution, Distribution):
+            raise TypeError(f"SpreadLeaf.distribution Distribution olmali: {self.distribution!r}")
+        if self.start > self.end:
+            raise ValueError(
+                f"SpreadLeaf {self.node_id!r}: start > end ({self.start} > {self.end})"
+            )
 
 
 @dataclass(frozen=True, slots=True)

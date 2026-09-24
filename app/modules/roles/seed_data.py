@@ -149,6 +149,12 @@ MODULES: list[dict] = [
     # bazli gizleme YAPMADIGI icin (`PermissionMatrix.tsx` `useModules()` tum
     # modulleri ceker) satir ekranda GORUNUR; bu bir karar degil, OLGUDUR.
     {"key": "ai", "name": "FİİL AI", "group": ModuleGroup.SISTEM, "sort_order": 22},
+    # PLN-B1 (PLANLAMA-SPEC §3.8 K17, §3.9 B1-8): 23. modul — adam-saat butcesi,
+    # birim oran katalogu, ilerleme raporlari. Yeni ROL acilmaz. Grup SAHA:
+    # `ModuleGroup` bir PG enum'udur, "Planlama" grubu acmak enum degisikligi olurdu.
+    # sort_order 23: mevcut modullerin sirasi KAYDIRILMAZ (sona eklenir). Izin
+    # Matrisi mockup'inda satiri YOKTUR — `boq`/`ai` gibi bilincli sapma.
+    {"key": "earned_value", "name": "Planlama", "group": ModuleGroup.SAHA, "sort_order": 23},
 ]
 
 # Kısayollar — matrisi okunur tutmak için.
@@ -267,6 +273,13 @@ MATRIX: dict[str, list[tuple[AccessLevel, Scope]]] = {
     # `readOnly = role.key === SYSTEM_ADMIN_KEY`), yani buraya `_V` yazilsaydi
     # sonsuza kadar `_V` kalirdi.
     "ai": [_A, _V, _V, _V, _V, _V, _V, _V],
+    # PLN-B1 (§3.9 B1-8, CEO onayi 2026-09-25). Seviye esleme `progress_payments`
+    # emsali: goruntule=view · butce/oran/ayar/dagitim yazma=draft · dondurma, taslak
+    # silme (B3: rapor onayi + kilit acma)=approve · sirket katalogu/disiplin=full.
+    # 🔴 sef = `_APR` BILINCLI: sef baseline dondurabilir ve rapor onaylayabilir.
+    # Saha muhendisi `_DRF`: butce/dagitim yazar, donduramaz. Kapsam maskesi
+    # BAGLANMAZ (adam-saat para degil) → limited/finance bu modulde atanamaz.
+    "earned_value": [_A, _F, _APR, _DRF, _N, _V, _F, _N],
 }
 
 
@@ -275,7 +288,7 @@ async def seed_reference_data(session: AsyncSession) -> None:
 
     Idempotent: hangi başlangıç durumundan çalıştırılırsa çalıştırılsın (boş DB,
     tamamen seed edilmiş DB, ya da roller/modüller var ama role_permissions boş)
-    sonuçta 8 rol, 22 modül ve 176 izin satırı bulunur; mevcut satırlar
+    sonuçta 8 rol, 23 modül ve 184 izin satırı bulunur; mevcut satırlar
     üzerine yazılmaz ve `uq_role_module` UNIQUE kısıtı asla ihlal edilmez.
     """
     existing_role_rows = (await session.execute(select(Role))).scalars().all()

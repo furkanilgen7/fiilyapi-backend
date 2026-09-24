@@ -7,7 +7,7 @@ from app.modules.roles.seed_data import MATRIX, MODULES, ROLE_ORDER, seed_refere
 def test_contracts_modulu_matriste_var():
     anahtarlar = [m["key"] for m in MODULES]
     assert "contracts" in anahtarlar
-    assert len(MODULES) == 22
+    assert len(MODULES) == 23
 
 
 def test_contracts_satiri_dogru_rollere_kapali():
@@ -34,4 +34,4 @@ async def test_seed_168_izin_satiri_uretir(db_session):
     await seed_reference_data(db_session)
 
     toplam = await db_session.scalar(select(func.count()).select_from(RolePermission))
-    assert toplam == 8 * 22
+    assert toplam == 8 * 23

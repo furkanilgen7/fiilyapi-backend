@@ -58,6 +58,12 @@ BEKLENEN: dict[tuple[str, str], str] = {
     ("boq_item_section_allocations", "section_id"): "CASCADE",
     ("section_documents", "section_id"): "CASCADE",
     ("section_milestones", "section_id"): "CASCADE",
+    # PLN-B1: yaprak ayari "su kalem, su bolumde, su oran" demekten ibarettir — tahsis
+    # (kalem × bolum) gibi. Donmus revizyon ETKILENMEZ: baseline bolum kimligini FK'siz
+    # tutar ve agac snapshot'tan basilir (`earned_value/budget_snapshot.py`).
+    ("ev_leaf_settings", "section_id"): "CASCADE",
+    # PLN-B1: disiplin × bolum pencere EZMESI — bolumsuz ezme anlamsiz.
+    ("ev_windows", "section_id"): "CASCADE",
 }
 
 

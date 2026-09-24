@@ -294,3 +294,12 @@ class ConflictError(DomainError):
     kaydın silinememesi (`PAYMENT_NOT_DELETABLE`) gibi. `RelatedRecordsExistError`
     (bağlı alt kayıt) semantiğine de UYMADIĞI için P7 ile birlikte açılır.
     """
+
+
+class EarnedValueValidationError(DomainError):
+    """Planlama (earned value) govde kurali ihlali (PLN-B1) — 422.
+
+    Kayit vardir ve gorunur; ihlal edilen sey duzeltilebilir ALAN DEGERLERIDIR
+    (tarih araligi, bant sirasi, taslak olmayan revizyona yazma DEGIL — o durum
+    engelidir ve `ConflictError`dir). Mesaj Turkce ve dogrudan kullaniciya gosterilir.
+    """

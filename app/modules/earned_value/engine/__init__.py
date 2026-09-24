@@ -16,15 +16,30 @@ Girdi duz dataclass'lardir (`types`); B1/B2/B3 adaptorleri DB'den bunlari kurar.
 * Yuvarlama motorda YOK; yalniz bolme 28 anlamli haneye iner (`numeric.ENGINE_CONTEXT`).
 """
 
-from .calendar import CalendarPosition, ProjectCalendar
+from .calendar import (
+    CalendarPosition,
+    ProjectCalendar,
+    expand_holiday_ranges,
+    working_day_predicate,
+)
 from .classify import classify_status, pf_band
+from .preview import (
+    DisciplinePreview,
+    SeriesPreview,
+    SpreadPreview,
+    WeekLoad,
+    compute_spread_preview,
+    preview_from_curves,
+)
 from .report import compute_daily_report
 from .results import DailyReport, NodeMetrics, SummaryRow, Totals
+from .spread import NoWorkingDayError, spread_leaf
 from .types import (
     AllocationRule,
     CalendarSettings,
     ContractorMix,
     ContractorType,
+    Distribution,
     EngineInput,
     HoursEntry,
     Node,
@@ -33,6 +48,7 @@ from .types import (
     PlannedMhr,
     QtyEntry,
     RowKind,
+    SpreadLeaf,
     Status,
 )
 
@@ -43,8 +59,11 @@ __all__ = [
     "ContractorMix",
     "ContractorType",
     "DailyReport",
+    "DisciplinePreview",
+    "Distribution",
     "EngineInput",
     "HoursEntry",
+    "NoWorkingDayError",
     "Node",
     "NodeMetrics",
     "PfBand",
@@ -53,10 +72,19 @@ __all__ = [
     "ProjectCalendar",
     "QtyEntry",
     "RowKind",
+    "SeriesPreview",
+    "SpreadLeaf",
+    "SpreadPreview",
     "Status",
     "SummaryRow",
     "Totals",
+    "WeekLoad",
     "classify_status",
     "compute_daily_report",
+    "compute_spread_preview",
+    "expand_holiday_ranges",
     "pf_band",
+    "preview_from_curves",
+    "spread_leaf",
+    "working_day_predicate",
 ]

@@ -9,6 +9,7 @@ from .accumulate import accumulate
 from .calendar import ProjectCalendar
 from .metrics import node_metrics, rollup
 from .numeric import ENGINE_CONTEXT, ZERO
+from .plan import leaf_plan
 from .policy import DEFAULT_CUMULATIVE_PF_BANDS, DEFAULT_DAILY_PF_BANDS
 from .results import DailyReport, Totals
 from .summary import curve_totals, summary_rows
@@ -25,9 +26,8 @@ def compute_daily_report(inp: EngineInput, report_date: date) -> DailyReport:
         calendar = ProjectCalendar(inp.calendar)
         position = calendar.position(report_date)  # takvim disi d → ValueError
         tree = build_tree(inp.nodes)
-        for p in inp.planned_mhr:
-            if not calendar.contains(p.day):
-                raise ValueError(f"Planli egri {p.curve!r}: {p.day} proje takvimi disinda")
+        # K9: noktalar dogrulanir; yaprak noktasi varsa planli yaprak egrilerinden kurulur.
+        plan = leaf_plan(tree, calendar, inp.planned_mhr, report_date)
         points = accumulate(tree, calendar, inp.qty_entries, inp.hours_entries, report_date)
         rolled = rollup(tree, points)
         daily_bands = inp.daily_pf_bands or DEFAULT_DAILY_PF_BANDS
@@ -37,7 +37,8 @@ def compute_daily_report(inp: EngineInput, report_date: date) -> DailyReport:
             tree,
             points,
             leaf_budget,
-            curve_totals(inp.planned_mhr, report_date),
+            {} if plan is not None else curve_totals(inp.planned_mhr, report_date),
+            plan,
             inp.tolerance_points,
             daily_bands,
             cumulative_bands,
@@ -54,7 +55,7 @@ def compute_daily_report(inp: EngineInput, report_date: date) -> DailyReport:
         return DailyReport(
             report_date=report_date,
             position=position,
-            nodes=node_metrics(tree, rolled, daily_bands, cumulative_bands),
+            nodes=node_metrics(tree, rolled, daily_bands, cumulative_bands, plan),
             rows=rows,
             totals=totals,
             unrated_entries=points.unrated_entries,
