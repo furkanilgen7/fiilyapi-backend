@@ -5,15 +5,20 @@
   basi hicbir zaman proje baslangicindan once olmaz.
 * `week_no(d)`: ilk (kismi) hafta 1.
 * Hafta penceresi `W(d) = [week_start(d), min(week_end(d), d)]` — pencere d'de KAPANIR.
+
+Yayma (B1) takvim ARALIGINDAN bagimsiz bir is gunu yuklemi ister (yaprak penceresi proje
+araligi henuz belli degilken de yayilir, K7): `working_day_predicate`. Tatil listesi ayarda
+TARIH ARALIGI olarak tutulur; `expand_holiday_ranges` onu gunlere acar.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import date, timedelta
 
 from .policy import DEFAULT_WEEKLY_HOLIDAYS
-from .types import CalendarSettings
+from .types import SUNDAY, CalendarSettings
 
 _WEEK = 7
 
@@ -32,10 +37,11 @@ class CalendarPosition:
 class ProjectCalendar:
     def __init__(self, settings: CalendarSettings) -> None:
         self._settings = settings
-        self._weekly_holidays = (
+        self._is_working_day = working_day_predicate(
             DEFAULT_WEEKLY_HOLIDAYS
             if settings.weekly_holidays is None
-            else settings.weekly_holidays
+            else settings.weekly_holidays,
+            settings.extra_holidays,
         )
         self._first_nominal_start = self._nominal_week_start(settings.start_date)
 
@@ -78,7 +84,7 @@ class ProjectCalendar:
 
     def is_holiday(self, d: date) -> bool:
         self._check(d)
-        return d.weekday() in self._weekly_holidays or d in self._settings.extra_holidays
+        return not self._is_working_day(d)
 
     def window(self, d: date) -> tuple[date, date]:
         """W(d) = [week_start(d), min(week_end(d), d)]."""
@@ -95,3 +101,28 @@ class ProjectCalendar:
             window_end=window_end,
             is_holiday=self.is_holiday(d),
         )
+
+
+def working_day_predicate(
+    weekly_holidays: frozenset[int] = DEFAULT_WEEKLY_HOLIDAYS,
+    extra_holidays: frozenset[date] = frozenset(),
+) -> Callable[[date], bool]:
+    """Is gunu yuklemi (S5: haftanin gunleri kumesi + elle liste). Takvim araligi YOK."""
+    if not all(0 <= dow <= SUNDAY for dow in weekly_holidays):
+        raise ValueError(f"weekly_holidays 0..6 olmali: {sorted(weekly_holidays)}")
+    weekly, extra = frozenset(weekly_holidays), frozenset(extra_holidays)
+
+    def is_working_day(d: date) -> bool:
+        return d.weekday() not in weekly and d not in extra
+
+    return is_working_day
+
+
+def expand_holiday_ranges(ranges: Iterable[tuple[date, date]]) -> frozenset[date]:
+    """Tatil araliklarini ([bas, bit], iki uc dahil) gun kumesine acar."""
+    days: set[date] = set()
+    for first, last in ranges:
+        if first > last:
+            raise ValueError(f"Tatil araligi ters: {first} > {last}")
+        days.update(first + timedelta(days=i) for i in range((last - first).days + 1))
+    return frozenset(days)

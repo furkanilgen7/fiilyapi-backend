@@ -39,6 +39,8 @@ EXPECTED_MODULE_KEYS = {
     "equipment",
     # AI-0b: 22. modul.
     "ai",
+    # PLN-B1: 23. modul.
+    "earned_value",
 }
 
 
@@ -63,9 +65,9 @@ async def test_seeds_all_modules(seeded_db):
 
 
 async def test_matrix_is_complete(seeded_db):
-    """8 rol × 22 modül = 176 hücre; hiçbiri eksik olamaz."""
+    """8 rol × 23 modül = 184 hücre; hiçbiri eksik olamaz."""
     rows = (await seeded_db.execute(select(RolePermission))).scalars().all()
-    assert len(rows) == 176
+    assert len(rows) == 184
 
 
 async def test_system_admin_has_admin_level_everywhere(seeded_db):
@@ -103,7 +105,7 @@ async def test_hr_manager_is_confined_to_people_modules(seeded_db):
 
 async def test_reseed_after_permissions_wiped_restores_full_matrix(db_session):
     """roles/modules mevcutken role_permissions bosaltilip yeniden seed edilirse
-    176 izin satirinin tamami geri gelmeli - kismi/basarisiz bir onceki calistirma
+    184 izin satirinin tamami geri gelmeli - kismi/basarisiz bir onceki calistirma
     sonrasi operasyonel yeniden calistirmayi simule eder."""
     await seed_reference_data(db_session)
 
@@ -115,12 +117,12 @@ async def test_reseed_after_permissions_wiped_restores_full_matrix(db_session):
     await seed_reference_data(db_session)
 
     rows = (await db_session.execute(select(RolePermission))).scalars().all()
-    assert len(rows) == 176
+    assert len(rows) == 184
 
     role_count = (await db_session.execute(select(Role))).scalars().all()
     module_count = (await db_session.execute(select(Module))).scalars().all()
     assert len(role_count) == 8
-    assert len(module_count) == 22
+    assert len(module_count) == 23
 
 
 async def test_invoicing_module_is_in_mali_group_between_accounting_and_treasury(seeded_db):
@@ -148,7 +150,7 @@ async def test_invoicing_permissions_follow_accounting_row(seeded_db):
 async def test_module_sort_orders_are_unique_and_contiguous(seeded_db):
     """invoicing/projects/sites/boq araya girince sonraki moduller kayar; boşluk/çakışma olmaz."""
     orders = sorted((await seeded_db.execute(select(Module.sort_order))).scalars())
-    assert orders == list(range(1, 23))
+    assert orders == list(range(1, 24))  # PLN-B1: earned_value = 23
 
 
 async def test_users_table_exists_in_test_schema(seeded_db):
@@ -329,6 +331,7 @@ async def test_documents_module_row_and_sort(seeded_db):
     assert {m.key for m in modules if m.sort_order > by_key["documents"].sort_order} == {
         "equipment",
         "ai",
+        "earned_value",  # PLN-B1: 23. sira, SONA eklendi (kaydirma yok)
     }
 
 
@@ -351,3 +354,20 @@ async def test_documents_permissions_match_spec_row(seeded_db):
     for role_key, level in beklenen.items():
         assert await _level_of(seeded_db, role_key, "documents") == level
         assert level is not AccessLevel.none
+
+
+async def test_earned_value_matrix_row_is_the_approved_one(seeded_db):
+    """PLN-B1 §3.9 B1-8: [A, F, APR, DRF, N, V, F, N]. 🔴 Sef `approve` BILINCLI
+    (CEO onayi 2026-09-25): sef baseline dondurur, B3'te rapor onaylar."""
+    expected = {
+        "system_admin": AccessLevel.admin,
+        "patron": AccessLevel.full,
+        "site_chief": AccessLevel.approve,
+        "field_engineer": AccessLevel.draft,
+        "hr_manager": AccessLevel.none,
+        "accounting": AccessLevel.view,
+        "project_manager": AccessLevel.full,
+        "procurement": AccessLevel.none,
+    }
+    for role_key, level in expected.items():
+        assert await _level_of(seeded_db, role_key, "earned_value") == level, role_key

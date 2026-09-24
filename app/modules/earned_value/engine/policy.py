@@ -1,4 +1,4 @@
-"""PLN-B0 sirasinda kapanan urun kararlari (PLANLAMA-SPEC §3.7) — TEK isimli nokta.
+"""PLN-B0/B1 urun kararlari (PLANLAMA-SPEC §3.7, §3.8, §3.9) — TEK isimli nokta.
 
 Her karar burada bir sabit ya da kucuk bir fonksiyondur; motorun geri kalani onu
 buradan okur. Karar degisirse YALNIZ bu dosya degisir ve adli testi
@@ -7,9 +7,11 @@ buradan okur. Karar degisirse YALNIZ bu dosya degisir ve adli testi
 
 from __future__ import annotations
 
-from decimal import ROUND_HALF_UP, Decimal
+from collections.abc import Callable, Mapping
+from datetime import date
+from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
 
-from .types import SUNDAY, ContractorMix, ContractorType, Node, PfBands
+from .types import SUNDAY, ContractorMix, ContractorType, Distribution, Node, PfBands
 
 # S1 — Own/Subcon planli %: disiplin egrisi o egrideki own/subcon BUTCE PAYIYLA bolunur.
 #   planned_mhr_own(D, d) = planned_mhr(D, d) × budget_own(D) / budget(D)   (subcon ayni)
@@ -85,3 +87,86 @@ def contractor_mix(types: set[ContractorType]) -> ContractorMix | None:
     if types == {ContractorType.SUBCON}:
         return ContractorMix.SUBCON
     return ContractorMix.MIXED
+
+
+# --- PLN-B1 -----------------------------------------------------------------------------
+
+# B1-1 — yayma agirligi (mockup "Planlama - Adam-Saat Butcesi" `preview()` W tablosu AYNEN,
+#   kullanici kabulu): u ∈ [0, 1] pencere icindeki konum.
+#   dogrusal w = 1 · can w = 6u(1−u) + 0,05 · on w = 2(1−u) + 0,05 · arka w = 2u + 0,05.
+#   +0,05 tabani: can/on/arka pencerenin UC gunlerini de sifirlamaz.
+_W_FLOOR = Decimal("0.05")
+_ONE, _TWO, _SIX = Decimal(1), Decimal(2), Decimal(6)
+DISTRIBUTION_WEIGHTS: Mapping[Distribution, Callable[[Decimal], Decimal]] = {
+    Distribution.LINEAR: lambda u: _ONE,
+    Distribution.BELL: lambda u: _SIX * u * (_ONE - u) + _W_FLOOR,
+    Distribution.FRONT: lambda u: _TWO * (_ONE - u) + _W_FLOOR,
+    Distribution.BACK: lambda u: _TWO * u + _W_FLOOR,
+}
+
+# B1-1 — tatil / calisilmayan gun agirligi: 0 (o gune pay dusmez, sozluge girmez).
+NON_WORKING_DAY_WEIGHT = Decimal(0)
+
+
+def spread_position(t: date, start: date, end: date) -> Decimal:
+    """B1-1: u = (t − s) / max(1, e − s) — TAKVIM gunu farki (tatiller de sayilir)."""
+    return Decimal((t - start).days) / Decimal(max(1, (end - start).days))
+
+
+# B1-1 — gun paylarinin yuvarlanmasi: EN BUYUK KALAN (Hamilton). Ham paylar (butce × w/Σw,
+#   hepsi >= 0) kuantuma ASAGI iner; hedef = butcenin kuantuma asagi yuvarlanmisi; eksik
+#   TAM kuantumlar kesirli kalani en buyuk gunlere birer birer verilir (esitlikte EN ERKEN);
+#   kuantum-alti artik (butce 7–8 ondalik tasiyabilir) en buyuk payli gune (esitlikte en
+#   erken) eklenir. Sonuc: her gun >= 0 ve Σ == butce TAM. ("Kalan son gune" yontemi kucuk
+#   butcede son gunu EKSIYE dusuruyordu — olcum `test_engine_spread.py` docstring'inde.)
+def largest_remainder(raw: list[Decimal], budget: Decimal, quantum: Decimal) -> list[Decimal]:
+    """Sirali ham paylari (gun sirasi) kuantuma boler; Σ == budget, her pay >= 0."""
+    floors = [r.quantize(quantum, rounding=ROUND_FLOOR) for r in raw]
+    target = budget.quantize(quantum, rounding=ROUND_FLOOR)
+    missing = int((target - sum(floors, Decimal(0))) / quantum)
+    if not 0 <= missing <= len(raw):
+        raise ArithmeticError(f"largest_remainder: eksik kuantum sayisi tutarsiz ({missing})")
+    by_fraction = sorted(range(len(raw)), key=lambda i: (-(raw[i] - floors[i]), i))
+    shares = list(floors)
+    for i in by_fraction[:missing]:
+        shares[i] += quantum
+    residue = budget - target
+    if residue and shares:
+        top = min(range(len(shares)), key=lambda i: (-shares[i], i))
+        shares[top] += residue
+    return shares
+
+
+# B1-2 — dagilim tipi disiplin × revizyon basina; ayar verilmediginde dogrusal.
+DEFAULT_DISTRIBUTION = Distribution.LINEAR
+
+# K10 — gereken kisi = planli a-s ÷ (is gunu × standart gunluk saat); standart gun 9 sa.
+DEFAULT_STANDARD_DAILY_HOURS = Decimal(9)
+
+
+def required_people(
+    mhr: Decimal, working_days: int, standard_daily_hours: Decimal
+) -> Decimal | None:
+    """K10: haftanin gereken kisi sayisi; is gunu yoksa tanimsiz (None)."""
+    if working_days == 0:
+        return None
+    return mhr / (Decimal(working_days) * standard_daily_hours)
+
+
+# K10 (B1.1 uygulama karari, CEO onayina acik) — haftalik kova son haftada ARALIK SONUNA
+#   kirpilir: aralik Sali biterse son hafta Pzt–Sal (2 is gunu). Ilk haftanin kisa olmasi
+#   (hafta basi aralik basindan once olmaz, calendar.py) ile simetrik; kirpilmasaydi son
+#   haftanin a-s'i 6 is gunune bolunur ve gereken kisi oldugundan dusuk gorunurdu.
+WEEK_LOAD_CLIPPED_TO_RANGE_END = True
+
+# K9 — girdide YAPRAK anahtarli planned_mhr varsa satirlarin planlisi yaprak egrilerinden
+#   (satirin nokta kumesindeki yapraklarin egri toplami) kurulur; disiplin (curve) noktalari
+#   YOK SAYILIR. Yaprak egrisi hic yoksa B0 davranisi (disiplin egrisi + S1) aynen.
+LEAF_CURVES_OVERRIDE_DISCIPLINE_CURVES = True
+
+
+def use_leaf_curves(has_leaf_points: bool, has_curve_points: bool) -> bool:
+    """K9: bu rapor planliyi yaprak egrilerinden mi kurar?"""
+    if has_leaf_points and has_curve_points:
+        return LEAF_CURVES_OVERRIDE_DISCIPLINE_CURVES
+    return has_leaf_points

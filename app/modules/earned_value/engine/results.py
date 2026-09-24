@@ -58,6 +58,9 @@ class NodeMetrics:
     progress_pct_day: Decimal | None
     progress_pct_cum: Decimal | None
     progress_pct_week: Decimal | None
+    # K9: yaprak modunda alt agactaki yaprak egrilerinin toplamindan; egri modunda None
+    planned_pct_day: Decimal | None
+    planned_pct_cum: Decimal | None
     # onceki revizyon (QURR a / f / m)
     prev_planned_qty: Decimal | None
     prev_unit_mhr: Decimal | None

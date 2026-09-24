@@ -412,7 +412,10 @@ def test_permission_module_is_seeded_as_21st():
     # kendi sırasının KAYMADIĞI**dır; `max(...)` iddiası her yeni modülde
     # ritüelle güncellenen bir sihirli sayıya dönüşürdü. Yerine: `equipment`ten
     # SONRA gelen modüller ADIYLA sayılır.
-    assert {m["key"] for m in MODULES if m["sort_order"] > row["sort_order"]} == {"ai"}
+    assert {m["key"] for m in MODULES if m["sort_order"] > row["sort_order"]} == {
+        "ai",
+        "earned_value",  # PLN-B1: 23. sira
+    }
     assert MODULE_KEY in MATRIX
 
 

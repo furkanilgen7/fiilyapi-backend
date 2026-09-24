@@ -22,7 +22,7 @@ async def test_list_roles_and_modules(client, user_factory):
     roles = await client.get("/roles", headers=h)
     assert roles.status_code == 200 and len(roles.json()) == 8
     modules = await client.get("/modules", headers=h)
-    assert modules.status_code == 200 and len(modules.json()) == 22
+    assert modules.status_code == 200 and len(modules.json()) == 23  # PLN-B1
 
 
 async def test_update_permission_cell(client, user_factory, seeded_db):

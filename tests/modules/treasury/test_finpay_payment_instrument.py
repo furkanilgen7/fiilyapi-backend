@@ -764,6 +764,13 @@ async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
     = 8 yol / 16 operasyon. Kökler `/sections` · `/units` · `/sales` ·
     `/subcontractor-contracts`. 245→**254** · 354→**371**.
 
+    🔴 **PLN-B1 (+20 yol / +25 operasyon, ölçüldü 274/396):** planlama (earned value)
+    bütçesi — şirket `/earned-value/{disciplines,catalog}` (5 yol / 8 operasyon) +
+    şantiye `/sites/{id}/earned-value/settings` (1 / 2) + `/sites/{id}/earned-value/
+    budget…` (14 / 15). Hepsi EK; mevcut yol/şema DEĞİŞMEDİ (baseline farkı yapısal
+    olarak ölçüldü). 254→**274** · 371→**396**. ⚠️ `earned-value` YENİ bir BFF kökü:
+    frontend `ALLOWED_ROOTS`a eklenmezse şirket uçları YALNIZ CANLIDA 404 döner.
+
     🔴 **BFF İZİN LİSTESİ — `units` KÖKÜ EKSİK (ölçüldü 2026-09-05).** Dört kökten
     ÜÇÜ frontend'in `ALLOWED_ROOTS`unda VAR (`sections` · `sales` ·
     `subcontractor-contracts`), **`units` YOK**. Ölçüm yöntemi kayda geçirilir —
@@ -798,5 +805,5 @@ async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
     # EXPORT-XLSX bunun ÜSTÜNE +6 yol / +6 operasyon ekler (aşağıdaki
     # docstring girdisi). Rebase sonrası sayılar YENİDEN ÖLÇÜLDÜ, eski
     # 243/351'den türetilmedi: 239→245 · 348→354.
-    assert len(yollar) == 254
-    assert operasyonlar == 371
+    assert len(yollar) == 274
+    assert operasyonlar == 396

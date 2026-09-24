@@ -541,6 +541,38 @@
         "title": "AiToolRead",
         "type": "object"
       },
+      "AmbiguousItemOut": {
+        "properties": {
+          "boq_item_id": {
+            "format": "uuid",
+            "title": "Boq Item Id",
+            "type": "string"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateOut"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          }
+        },
+        "required": [
+          "boq_item_id",
+          "code",
+          "description",
+          "candidates"
+        ],
+        "title": "AmbiguousItemOut",
+        "type": "object"
+      },
       "ApprovalDocumentType": {
         "description": "Zincire giren evrak aileleri (K4 — bu dilim YALNIZ bu ucudur).\n\nFatura ve bordro donemi OK-1B'nin isidir. IZIN TALEBI ve BORDRO SATIRI\nzincire HIC GIRMEZ (kullanici karari): izin talebinin ₺ tutari yoktur ve\nesik anlamsizdir; 48 personellik bir bordro ise 48 zincir acardi.",
         "enum": [
@@ -1446,6 +1478,105 @@
           }
         },
         "title": "BankAccountUpdate",
+        "type": "object"
+      },
+      "BarOut": {
+        "properties": {
+          "budget_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Budget Mhr",
+            "type": "string"
+          },
+          "discipline_id": {
+            "format": "uuid",
+            "title": "Discipline Id",
+            "type": "string"
+          },
+          "discipline_node_id": {
+            "title": "Discipline Node Id",
+            "type": "string"
+          },
+          "end_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Date"
+          },
+          "outside_section_dates": {
+            "title": "Outside Section Dates",
+            "type": "boolean"
+          },
+          "section_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Id"
+          },
+          "section_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Name"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "override",
+                  "section",
+                  "union",
+                  "snapshot"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "start_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Date"
+          }
+        },
+        "required": [
+          "discipline_node_id",
+          "discipline_id",
+          "section_id",
+          "section_name",
+          "start_date",
+          "end_date",
+          "source",
+          "outside_section_dates",
+          "budget_mhr"
+        ],
+        "title": "BarOut",
         "type": "object"
       },
       "BlockCreate": {
@@ -2842,6 +2973,152 @@
         "title": "BoqTotals",
         "type": "object"
       },
+      "BudgetTotals": {
+        "properties": {
+          "direct_budget_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Direct Budget Mhr",
+            "type": "string"
+          },
+          "empty_rate_leaf_count": {
+            "title": "Empty Rate Leaf Count",
+            "type": "integer"
+          },
+          "indirect_budget_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Indirect Budget Mhr",
+            "type": "string"
+          },
+          "item_count": {
+            "title": "Item Count",
+            "type": "integer"
+          },
+          "leaf_count": {
+            "title": "Leaf Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "direct_budget_mhr",
+          "indirect_budget_mhr",
+          "item_count",
+          "leaf_count",
+          "empty_rate_leaf_count"
+        ],
+        "title": "BudgetTotals",
+        "type": "object"
+      },
+      "BudgetView": {
+        "properties": {
+          "boq_synced_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boq Synced At"
+          },
+          "disciplines": {
+            "items": {
+              "$ref": "#/components/schemas/DisciplineOut"
+            },
+            "title": "Disciplines",
+            "type": "array"
+          },
+          "editable": {
+            "title": "Editable",
+            "type": "boolean"
+          },
+          "freeze_blockers": {
+            "items": {
+              "$ref": "#/components/schemas/FindingOut"
+            },
+            "title": "Freeze Blockers",
+            "type": "array"
+          },
+          "freeze_warnings": {
+            "items": {
+              "$ref": "#/components/schemas/FindingOut"
+            },
+            "title": "Freeze Warnings",
+            "type": "array"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RevisionOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "totals": {
+            "$ref": "#/components/schemas/BudgetTotals"
+          }
+        },
+        "required": [
+          "revision",
+          "editable",
+          "boq_synced_at",
+          "totals",
+          "disciplines",
+          "freeze_blockers",
+          "freeze_warnings"
+        ],
+        "title": "BudgetView",
+        "type": "object"
+      },
+      "CandidateOut": {
+        "properties": {
+          "catalog_item_id": {
+            "format": "uuid",
+            "title": "Catalog Item Id",
+            "type": "string"
+          },
+          "discipline_id": {
+            "format": "uuid",
+            "title": "Discipline Id",
+            "type": "string"
+          },
+          "match": {
+            "enum": [
+              "linked",
+              "exact",
+              "partial"
+            ],
+            "title": "Match",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "standard_unit_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Standard Unit Mhr",
+            "type": "string"
+          },
+          "uom": {
+            "title": "Uom",
+            "type": "string"
+          }
+        },
+        "required": [
+          "catalog_item_id",
+          "name",
+          "uom",
+          "standard_unit_mhr",
+          "discipline_id",
+          "match"
+        ],
+        "title": "CandidateOut",
+        "type": "object"
+      },
       "CashFlowBucket": {
         "description": "E9:92-101 serisinin TEK GÜNÜ. İki yön AYRI alandır, net DEĞİL.\n\nNet tek sayı basılsaydı grafiğin iki eğrisi (giriş/çıkış) çizilemezdi ve\nE9:104-105'in iki toplamı da tek bir farka çökerdi.",
         "properties": {
@@ -3035,6 +3312,333 @@
           "lines"
         ],
         "title": "CashFlowStatementSection",
+        "type": "object"
+      },
+      "CatalogActual": {
+        "description": "K4: yalniz tamamlanmis santiyeler, miktar agirlikli ortalama = Σspent / Σqty.",
+        "properties": {
+          "avg": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg"
+          },
+          "max": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max"
+          },
+          "min": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min"
+          },
+          "site_count": {
+            "title": "Site Count",
+            "type": "integer"
+          },
+          "sites": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogActualSite"
+            },
+            "title": "Sites",
+            "type": "array"
+          }
+        },
+        "required": [
+          "avg",
+          "min",
+          "max",
+          "site_count",
+          "sites"
+        ],
+        "title": "CatalogActual",
+        "type": "object"
+      },
+      "CatalogActualSite": {
+        "description": "Gercekleseni besleyen TAMAMLANMIS santiye (KAT acilir satir tablosu).\n\nB1'de hic uretilmez (`catalog_service.catalog_actuals` bos doner); sekil B3'te\nsaha verisiyle dolacak alanlari simdiden sabitler ki openapi devri tek sefer olsun.",
+        "properties": {
+          "end_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Date"
+          },
+          "qty": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Qty",
+            "type": "string"
+          },
+          "rate": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Rate",
+            "type": "string"
+          },
+          "site_id": {
+            "format": "uuid",
+            "title": "Site Id",
+            "type": "string"
+          },
+          "site_name": {
+            "title": "Site Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "site_id",
+          "site_name",
+          "end_date",
+          "qty",
+          "rate"
+        ],
+        "title": "CatalogActualSite",
+        "type": "object"
+      },
+      "CatalogItemCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "default_contractor_type": {
+            "$ref": "#/components/schemas/ContractorType"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "discipline_id": {
+            "format": "uuid",
+            "title": "Discipline Id",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "standard_unit_mhr": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,8}|(?=[\\d.]{1,13}0*$)\\d{0,8}\\.\\d{0,4}0*$)",
+                "type": "string"
+              }
+            ],
+            "title": "Standard Unit Mhr"
+          },
+          "uom": {
+            "maxLength": 50,
+            "minLength": 1,
+            "title": "Uom",
+            "type": "string"
+          }
+        },
+        "required": [
+          "discipline_id",
+          "name",
+          "uom",
+          "standard_unit_mhr",
+          "default_contractor_type"
+        ],
+        "title": "CatalogItemCreate",
+        "type": "object"
+      },
+      "CatalogItemRead": {
+        "properties": {
+          "actual": {
+            "$ref": "#/components/schemas/CatalogActual"
+          },
+          "default_contractor_type": {
+            "$ref": "#/components/schemas/ContractorType"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "diff_pct": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diff Pct"
+          },
+          "discipline": {
+            "$ref": "#/components/schemas/DisciplineRef"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "standard_unit_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Standard Unit Mhr",
+            "type": "string"
+          },
+          "standard_updated_at": {
+            "format": "date-time",
+            "title": "Standard Updated At",
+            "type": "string"
+          },
+          "uom": {
+            "title": "Uom",
+            "type": "string"
+          },
+          "used_by_site_count": {
+            "title": "Used By Site Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "discipline",
+          "name",
+          "uom",
+          "standard_unit_mhr",
+          "default_contractor_type",
+          "description",
+          "standard_updated_at",
+          "used_by_site_count",
+          "actual",
+          "diff_pct"
+        ],
+        "title": "CatalogItemRead",
+        "type": "object"
+      },
+      "CatalogItemUpdate": {
+        "additionalProperties": false,
+        "description": "Kismi guncelleme. `description` nullable (`null` = temizle); digerleri 422.",
+        "properties": {
+          "default_contractor_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContractorType"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "discipline_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discipline Id"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "standard_unit_mhr": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,8}|(?=[\\d.]{1,13}0*$)\\d{0,8}\\.\\d{0,4}0*$)",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Standard Unit Mhr"
+          },
+          "uom": {
+            "anyOf": [
+              {
+                "maxLength": 50,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uom"
+          }
+        },
+        "title": "CatalogItemUpdate",
         "type": "object"
       },
       "ChartAccountCreate": {
@@ -3655,6 +4259,91 @@
         "title": "CompanyUpdate",
         "type": "object"
       },
+      "CompositeMeasure": {
+        "description": "Pacal metrigin TEK olcusu (K25).",
+        "enum": [
+          "spent",
+          "earned",
+          "budget"
+        ],
+        "title": "CompositeMeasure",
+        "type": "string"
+      },
+      "CompositeMetricInput": {
+        "additionalProperties": false,
+        "description": "Pacal metrik (K25): pay = is tipleri (BOQ kalemi) toplami, TEK olcu; payda = bir\nis tipinin miktari. Kalemler bu santiyenin BOQ'unda olmalidir (servis).",
+        "properties": {
+          "denominator_item_id": {
+            "format": "uuid",
+            "title": "Denominator Item Id",
+            "type": "string"
+          },
+          "measure": {
+            "$ref": "#/components/schemas/CompositeMeasure"
+          },
+          "name": {
+            "maxLength": 150,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "numerator_item_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Numerator Item Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "measure",
+          "numerator_item_ids",
+          "denominator_item_id"
+        ],
+        "title": "CompositeMetricInput",
+        "type": "object"
+      },
+      "CompositeMetricRead": {
+        "properties": {
+          "denominator_item_id": {
+            "format": "uuid",
+            "title": "Denominator Item Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "measure": {
+            "$ref": "#/components/schemas/CompositeMeasure"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "numerator_item_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Numerator Item Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "measure",
+          "numerator_item_ids",
+          "denominator_item_id"
+        ],
+        "title": "CompositeMetricRead",
+        "type": "object"
+      },
       "ConsumptionStatus": {
         "description": "Tüketim rozeti — M4'ün `✓ Normal` / `⚠ %7 yüksek` / kırmızı üçlüsü.\n\nDB'de kolon DEĞİLDİR: her okumada sapmadan türer. Saklansaydı norm\ngüncellendiğinde geçmiş rozetler eski norma göre donup kalırdı.",
         "enum": [
@@ -4248,6 +4937,14 @@
         "title": "ContractingCard",
         "type": "object"
       },
+      "ContractorType": {
+        "enum": [
+          "own",
+          "subcon"
+        ],
+        "title": "ContractorType",
+        "type": "string"
+      },
       "CountPlaceholder": {
         "description": "Sayac alaninin zarfi (\"48 isci\", \"3 hissedar\" gibi).\n\n⚠️ Eski baslik *\"veri kaynagi henuz YAZILMAMIS sayac alani\"* diyordu;\n2026-08-22 denetimi bunu OLCEREK curuttu ve P-YT4 (2026-08-23) burada da\nduzeltti: `pending_module` \"modul yok\" DEMEZ, \"veri hangi modulun\nMULKIYETINDE\" der (`projects/cards.py::_metric` kanonu). Bos kalmanin\ngercek sebebi her CAGRI YERINDE yazilidir.\n\n`MetricPlaceholder`in P10 T3'te kazandigi \"dolu zarf `pending_module`\nTASIMAZ\" kurali BURAYA UYGULANMAZ: puantaj sayaci (`_worker_count`)\n`available=True` + `pending_module=\"timesheet\"` doner ve bu BILINCLI bir\nemsaldir — ayni serit uzerindeki diger sayaclar hâlâ yer tutucudur, ekran\nseridin kaynagini oradan okur. Kirmak, canli taahhut kartini bozardi.",
         "properties": {
@@ -4552,6 +5249,86 @@
         "title": "CustomerUpdate",
         "type": "object"
       },
+      "DailyPfBands-Input": {
+        "additionalProperties": false,
+        "description": "Gunluk PF: < `red_below` kirmizi · [`green_from`; `high_above`] yesil ·\n> `high_above` \"supheli yuksek\" (S6, K19). Sira: red ≤ green ≤ high.",
+        "properties": {
+          "green_from": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,2}|(?=[\\d.]{1,6}0*$)\\d{0,2}\\.\\d{0,3}0*$)",
+                "type": "string"
+              }
+            ],
+            "title": "Green From"
+          },
+          "high_above": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,2}|(?=[\\d.]{1,6}0*$)\\d{0,2}\\.\\d{0,3}0*$)",
+                "type": "string"
+              }
+            ],
+            "title": "High Above"
+          },
+          "red_below": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,2}|(?=[\\d.]{1,6}0*$)\\d{0,2}\\.\\d{0,3}0*$)",
+                "type": "string"
+              }
+            ],
+            "title": "Red Below"
+          }
+        },
+        "required": [
+          "red_below",
+          "green_from",
+          "high_above"
+        ],
+        "title": "DailyPfBands",
+        "type": "object"
+      },
+      "DailyPfBands-Output": {
+        "additionalProperties": false,
+        "description": "Gunluk PF: < `red_below` kirmizi · [`green_from`; `high_above`] yesil ·\n> `high_above` \"supheli yuksek\" (S6, K19). Sira: red ≤ green ≤ high.",
+        "properties": {
+          "green_from": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,2}|(?=[\\d.]{1,6}0*$)\\d{0,2}\\.\\d{0,3}0*$)",
+            "title": "Green From",
+            "type": "string"
+          },
+          "high_above": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,2}|(?=[\\d.]{1,6}0*$)\\d{0,2}\\.\\d{0,3}0*$)",
+            "title": "High Above",
+            "type": "string"
+          },
+          "red_below": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,2}|(?=[\\d.]{1,6}0*$)\\d{0,2}\\.\\d{0,3}0*$)",
+            "title": "Red Below",
+            "type": "string"
+          }
+        },
+        "required": [
+          "red_below",
+          "green_from",
+          "high_above"
+        ],
+        "title": "DailyPfBands",
+        "type": "object"
+      },
       "DashboardProjectCard": {
         "properties": {
           "budget": {
@@ -4652,6 +5429,45 @@
         "title": "DashboardSummaryResponse",
         "type": "object"
       },
+      "DayOut": {
+        "properties": {
+          "cumulative_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Cumulative Mhr",
+            "type": "string"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Mhr",
+            "type": "string"
+          },
+          "planned_pct_cum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Pct Cum"
+          }
+        },
+        "required": [
+          "day",
+          "mhr",
+          "cumulative_mhr",
+          "planned_pct_cum"
+        ],
+        "title": "DayOut",
+        "type": "object"
+      },
       "DeedCondition": {
         "description": "F156 \"Tapu Devir Kosulu\": Tum odeme tamamlaninca · Pesinat sonrasi · Sozlesme imzasinda.",
         "enum": [
@@ -4670,6 +5486,422 @@
         ],
         "title": "DiaryStatus",
         "type": "string"
+      },
+      "DisciplineCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "maxLength": 20,
+            "minLength": 1,
+            "title": "Code",
+            "type": "string"
+          },
+          "color": {
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "title": "Color",
+            "type": "string"
+          },
+          "default_contractor_type": {
+            "$ref": "#/components/schemas/ContractorType"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "sort_order": {
+            "default": 0,
+            "title": "Sort Order",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "code",
+          "name",
+          "color",
+          "default_contractor_type"
+        ],
+        "title": "DisciplineCreate",
+        "type": "object"
+      },
+      "DisciplineOut": {
+        "properties": {
+          "budget_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Budget Mhr",
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color"
+          },
+          "default_contractor_type": {
+            "$ref": "#/components/schemas/ContractorType"
+          },
+          "direct_budget_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Direct Budget Mhr",
+            "type": "string"
+          },
+          "discipline_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discipline Id"
+          },
+          "distribution": {
+            "enum": [
+              "linear",
+              "bell",
+              "front",
+              "back"
+            ],
+            "title": "Distribution",
+            "type": "string"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/GroupOut"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "share": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Share"
+          }
+        },
+        "required": [
+          "budget_mhr",
+          "direct_budget_mhr",
+          "share",
+          "id",
+          "discipline_id",
+          "code",
+          "name",
+          "color",
+          "default_contractor_type",
+          "distribution",
+          "groups"
+        ],
+        "title": "DisciplineOut",
+        "type": "object"
+      },
+      "DisciplinePreviewOut": {
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color"
+          },
+          "discipline_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discipline Id"
+          },
+          "discipline_node_id": {
+            "title": "Discipline Node Id",
+            "type": "string"
+          },
+          "distribution": {
+            "enum": [
+              "linear",
+              "bell",
+              "front",
+              "back"
+            ],
+            "title": "Distribution",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "series": {
+            "$ref": "#/components/schemas/SeriesOut"
+          },
+          "share": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Share"
+          }
+        },
+        "required": [
+          "discipline_node_id",
+          "discipline_id",
+          "code",
+          "name",
+          "color",
+          "distribution",
+          "share",
+          "series"
+        ],
+        "title": "DisciplinePreviewOut",
+        "type": "object"
+      },
+      "DisciplineRead": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "color": {
+            "title": "Color",
+            "type": "string"
+          },
+          "default_contractor_type": {
+            "$ref": "#/components/schemas/ContractorType"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "sort_order": {
+            "title": "Sort Order",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "name",
+          "color",
+          "default_contractor_type",
+          "sort_order"
+        ],
+        "title": "DisciplineRead",
+        "type": "object"
+      },
+      "DisciplineRef": {
+        "description": "Katalog satirina gomulu disiplin ozeti (rozet + renk).",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "color": {
+            "title": "Color",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "name",
+          "color"
+        ],
+        "title": "DisciplineRef",
+        "type": "object"
+      },
+      "DisciplineUpdate": {
+        "additionalProperties": false,
+        "description": "Kismi guncelleme. Butun kolonlar NOT NULL → acik `null` her alanda 422.",
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "color": {
+            "anyOf": [
+              {
+                "pattern": "^#[0-9A-Fa-f]{6}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color"
+          },
+          "default_contractor_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContractorType"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "sort_order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sort Order"
+          }
+        },
+        "title": "DisciplineUpdate",
+        "type": "object"
+      },
+      "DistributionPair": {
+        "properties": {
+          "discipline_id": {
+            "format": "uuid",
+            "title": "Discipline Id",
+            "type": "string"
+          },
+          "distribution": {
+            "enum": [
+              "linear",
+              "bell",
+              "front",
+              "back"
+            ],
+            "title": "Distribution",
+            "type": "string"
+          }
+        },
+        "required": [
+          "discipline_id",
+          "distribution"
+        ],
+        "title": "DistributionPair",
+        "type": "object"
+      },
+      "DistributionsBody": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DistributionPair"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "DistributionsBody",
+        "type": "object"
       },
       "DocumentFolderCreate": {
         "description": "`POST /projects/{id}/document-folders` gövdesi.\n\n`project_id` GÖVDEDE YOKTUR — yol parametresidir; iki yerden gelseydi\nhangisinin kazandığı belirsiz olur ve kapsam süzgeci atlatılabilirdi.",
@@ -8130,6 +9362,42 @@
         "title": "ExpiredReservation",
         "type": "object"
       },
+      "FillOut": {
+        "properties": {
+          "ambiguous": {
+            "items": {
+              "$ref": "#/components/schemas/AmbiguousItemOut"
+            },
+            "title": "Ambiguous",
+            "type": "array"
+          },
+          "ambiguous_count": {
+            "title": "Ambiguous Count",
+            "type": "integer"
+          },
+          "filled_item_count": {
+            "title": "Filled Item Count",
+            "type": "integer"
+          },
+          "filled_leaf_count": {
+            "title": "Filled Leaf Count",
+            "type": "integer"
+          },
+          "unmatched_count": {
+            "title": "Unmatched Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "filled_item_count",
+          "filled_leaf_count",
+          "ambiguous_count",
+          "unmatched_count",
+          "ambiguous"
+        ],
+        "title": "FillOut",
+        "type": "object"
+      },
       "FinancialInstrumentCreate": {
         "additionalProperties": false,
         "description": "`POST /financial-instruments` — E10 tablosunun yazma yolu.\n\n⚠️ **MOCKUP'TA FORM YOKTUR.** E10:65'te `+ Cek Ekle` dugmesi cizilmis ama\nacildiginda gorunecek form CIZILMEMISTIR. Alan kumesi bu yuzden UYDURULMADI:\ntablonun sutunlarindan (E10:104-110) ve emrin K1 tablosundan BIREBIR alindi.\nFormun kendisi frontend dilimi icin ACIK BORCTUR (rapor).",
@@ -8651,6 +9919,62 @@
         "title": "FinancialInstrumentUpdate",
         "type": "object"
       },
+      "FindingOut": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "node_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Node Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "code",
+          "count",
+          "node_ids"
+        ],
+        "title": "FindingOut",
+        "type": "object"
+      },
+      "FreezeBody": {
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 150,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "FreezeBody",
+        "type": "object"
+      },
       "FuelLogCreate": {
         "description": "`POST /equipment/fuel-logs` — M4 kaydı.\n\n`liters`/`unit_price` DB `CHECK`i ile aynı sınırı (`> 0`) burada da taşır:\n422'nin anlaşılır olması için (İK-3/K2 emsali) — DB'ye düşseydi kullanıcı\nbütünlük hatası görürdü. `entered_by_id` GÖVDEDE YOKTUR (K14): oturum\nkullanıcısından serviste damgalanır, istemci başka birini giren gösteremez.",
         "properties": {
@@ -9123,6 +10447,121 @@
         "title": "Gender",
         "type": "string"
       },
+      "GroupDisciplinePair": {
+        "properties": {
+          "boq_group_id": {
+            "format": "uuid",
+            "title": "Boq Group Id",
+            "type": "string"
+          },
+          "discipline_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discipline Id"
+          }
+        },
+        "required": [
+          "boq_group_id",
+          "discipline_id"
+        ],
+        "title": "GroupDisciplinePair",
+        "type": "object"
+      },
+      "GroupDisciplinesBody": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GroupDisciplinePair"
+            },
+            "maxItems": 2000,
+            "minItems": 1,
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "GroupDisciplinesBody",
+        "type": "object"
+      },
+      "GroupOut": {
+        "properties": {
+          "budget_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Budget Mhr",
+            "type": "string"
+          },
+          "direct_budget_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Direct Budget Mhr",
+            "type": "string"
+          },
+          "discipline_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discipline Id"
+          },
+          "group_id": {
+            "format": "uuid",
+            "title": "Group Id",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ItemOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "share": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Share"
+          }
+        },
+        "required": [
+          "budget_mhr",
+          "direct_budget_mhr",
+          "share",
+          "id",
+          "group_id",
+          "name",
+          "discipline_id",
+          "items"
+        ],
+        "title": "GroupOut",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -9134,6 +10573,65 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HolidayInput": {
+        "additionalProperties": false,
+        "description": "Elle tatil; tek gun icin `date_to` = `date_from`.",
+        "properties": {
+          "date_from": {
+            "format": "date",
+            "title": "Date From",
+            "type": "string"
+          },
+          "date_to": {
+            "format": "date",
+            "title": "Date To",
+            "type": "string"
+          },
+          "note": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Note",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date_from",
+          "date_to"
+        ],
+        "title": "HolidayInput",
+        "type": "object"
+      },
+      "HolidayRead": {
+        "properties": {
+          "date_from": {
+            "format": "date",
+            "title": "Date From",
+            "type": "string"
+          },
+          "date_to": {
+            "format": "date",
+            "title": "Date To",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "date_from",
+          "date_to",
+          "note"
+        ],
+        "title": "HolidayRead",
         "type": "object"
       },
       "HrDocumentTypeBreakdown": {
@@ -11248,6 +12746,156 @@
         "title": "InvoiceUpdate",
         "type": "object"
       },
+      "ItemOut": {
+        "properties": {
+          "budget_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Budget Mhr",
+            "type": "string"
+          },
+          "catalog_item_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Catalog Item Id"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "contractor_source": {
+            "enum": [
+              "inherited",
+              "item"
+            ],
+            "title": "Contractor Source",
+            "type": "string"
+          },
+          "contractor_type": {
+            "$ref": "#/components/schemas/ContractorType"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "direct_budget_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Direct Budget Mhr",
+            "type": "string"
+          },
+          "empty_rate_count": {
+            "title": "Empty Rate Count",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "is_direct": {
+            "title": "Is Direct",
+            "type": "boolean"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "leaves": {
+            "items": {
+              "$ref": "#/components/schemas/LeafOut"
+            },
+            "title": "Leaves",
+            "type": "array"
+          },
+          "planned_qty": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Planned Qty",
+            "type": "string"
+          },
+          "share": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Share"
+          },
+          "uom": {
+            "title": "Uom",
+            "type": "string"
+          }
+        },
+        "required": [
+          "budget_mhr",
+          "direct_budget_mhr",
+          "share",
+          "id",
+          "item_id",
+          "code",
+          "description",
+          "uom",
+          "planned_qty",
+          "contractor_type",
+          "contractor_source",
+          "is_direct",
+          "catalog_item_id",
+          "empty_rate_count",
+          "leaves"
+        ],
+        "title": "ItemOut",
+        "type": "object"
+      },
+      "ItemPatch": {
+        "additionalProperties": false,
+        "description": "`contractor_type=null` BILINCLI: \"disiplin varsayilanina don\" (miras). `is_direct` null\nolamaz.",
+        "properties": {
+          "catalog_item_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Catalog Item Id"
+          },
+          "contractor_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContractorType"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "is_direct": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Direct"
+          }
+        },
+        "title": "ItemPatch",
+        "type": "object"
+      },
       "JournalEntryCreate": {
         "additionalProperties": false,
         "description": "`POST /journal-entries` (E8:67 `+ Yevmiye Kaydı`).\n\n🔴 K-Ş1: form mockup'ı YOKTUR ve alan İCAT EDİLMEZ — gövde yalnızca E8'in\nçizili sütunlarından türer: `Tarih` (E8:101) · `Açıklama` üst satırı\n(E8:103/113) · `Açıklama` alt satırı (`detail_note`) · satırlar.\n\n`detail_note` bir FK DEĞİLDİR: E8'in altı örneğinden biri\n(`48 personel · SGK dahil`) hiçbir varlığa çözülmez — heterojen küme =\nSERBEST METİN. FK açılsaydı MU-3'ün (entegrasyon) işi buraya sızardı.",
@@ -12582,6 +14230,372 @@
         "title": "LandShareValueBalance",
         "type": "object"
       },
+      "LeafDiffOut": {
+        "properties": {
+          "budget_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Budget Mhr",
+            "type": "string"
+          },
+          "delta_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Delta Mhr",
+            "type": "string"
+          },
+          "item_code": {
+            "title": "Item Code",
+            "type": "string"
+          },
+          "item_description": {
+            "title": "Item Description",
+            "type": "string"
+          },
+          "leaf_id": {
+            "title": "Leaf Id",
+            "type": "string"
+          },
+          "prev_budget_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Prev Budget Mhr",
+            "type": "string"
+          },
+          "prev_qty": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prev Qty"
+          },
+          "prev_unit_mhr": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prev Unit Mhr"
+          },
+          "qty": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Qty"
+          },
+          "reason": {
+            "enum": [
+              "new",
+              "removed",
+              "qty_changed",
+              "rate_changed",
+              "qty_and_rate_changed"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "section_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Name"
+          },
+          "unit_mhr": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Mhr"
+          },
+          "uom": {
+            "title": "Uom",
+            "type": "string"
+          }
+        },
+        "required": [
+          "leaf_id",
+          "item_code",
+          "item_description",
+          "section_name",
+          "uom",
+          "prev_qty",
+          "qty",
+          "prev_unit_mhr",
+          "unit_mhr",
+          "prev_budget_mhr",
+          "budget_mhr",
+          "delta_mhr",
+          "reason"
+        ],
+        "title": "LeafDiffOut",
+        "type": "object"
+      },
+      "LeafOut": {
+        "properties": {
+          "budget_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Budget Mhr",
+            "type": "string"
+          },
+          "contractor_source": {
+            "enum": [
+              "inherited",
+              "override"
+            ],
+            "title": "Contractor Source",
+            "type": "string"
+          },
+          "contractor_type": {
+            "$ref": "#/components/schemas/ContractorType"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "is_direct": {
+            "title": "Is Direct",
+            "type": "boolean"
+          },
+          "is_direct_source": {
+            "enum": [
+              "inherited",
+              "override"
+            ],
+            "title": "Is Direct Source",
+            "type": "string"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "outside_section_dates": {
+            "title": "Outside Section Dates",
+            "type": "boolean"
+          },
+          "planned_qty": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Planned Qty",
+            "type": "string"
+          },
+          "rate_source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RateSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "section_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Id"
+          },
+          "section_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Name"
+          },
+          "share": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Share"
+          },
+          "unit_mhr": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Mhr"
+          },
+          "window_end": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window End"
+          },
+          "window_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "override",
+                  "section",
+                  "union",
+                  "snapshot"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Source"
+          },
+          "window_start": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Start"
+          }
+        },
+        "required": [
+          "id",
+          "item_id",
+          "section_id",
+          "section_name",
+          "planned_qty",
+          "unit_mhr",
+          "rate_source",
+          "contractor_type",
+          "contractor_source",
+          "is_direct",
+          "is_direct_source",
+          "budget_mhr",
+          "share",
+          "window_start",
+          "window_end",
+          "window_source",
+          "outside_section_dates"
+        ],
+        "title": "LeafOut",
+        "type": "object"
+      },
+      "LeafPatch": {
+        "additionalProperties": false,
+        "description": "Govdede GELEN alanlar yazilir. `unit_mhr=null` orani (ve kaynagini) siler;\n`contractor_type`/`is_direct` null → ezmeyi kaldir (is tipinden miras).",
+        "properties": {
+          "boq_item_id": {
+            "format": "uuid",
+            "title": "Boq Item Id",
+            "type": "string"
+          },
+          "contractor_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContractorType"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "is_direct": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Direct"
+          },
+          "rate_source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RateSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "section_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Id"
+          },
+          "unit_mhr": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,8}|(?=[\\d.]{1,13}0*$)\\d{0,8}\\.\\d{0,4}0*$)",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Mhr"
+          }
+        },
+        "required": [
+          "boq_item_id"
+        ],
+        "title": "LeafPatch",
+        "type": "object"
+      },
       "LeaveApproveRequest": {
         "additionalProperties": false,
         "description": "Onay gövdesi — **ALAN YOKTUR** (spec §5 K4: onay TEK adım, veri taşımaz).\n\nGövde tümüyle İSTEĞE BAĞLIDIR (uç gövdesiz de çağrılabilir); ama BOŞ OLMAYAN\nbir gövde gönderilirse `extra=\"forbid\"` onu reddeder. Şemayı büsbütün\nkaldırmak bu reddi de kaldırır ve `{\"decided_by\": ...}` sessizce yutulurdu.",
@@ -13121,6 +15135,24 @@
           "sort_order"
         ],
         "title": "LeaveTypeResponse",
+        "type": "object"
+      },
+      "LeavesPatch": {
+        "properties": {
+          "leaves": {
+            "items": {
+              "$ref": "#/components/schemas/LeafPatch"
+            },
+            "maxItems": 5000,
+            "minItems": 1,
+            "title": "Leaves",
+            "type": "array"
+          }
+        },
+        "required": [
+          "leaves"
+        ],
+        "title": "LeavesPatch",
         "type": "object"
       },
       "LedgerResponse": {
@@ -16482,6 +18514,40 @@
         "title": "PersonnelUpdate",
         "type": "object"
       },
+      "PfBands-Input": {
+        "additionalProperties": false,
+        "properties": {
+          "daily": {
+            "$ref": "#/components/schemas/DailyPfBands-Input"
+          },
+          "weekly": {
+            "$ref": "#/components/schemas/WeeklyPfBands-Input"
+          }
+        },
+        "required": [
+          "daily",
+          "weekly"
+        ],
+        "title": "PfBands",
+        "type": "object"
+      },
+      "PfBands-Output": {
+        "additionalProperties": false,
+        "properties": {
+          "daily": {
+            "$ref": "#/components/schemas/DailyPfBands-Output"
+          },
+          "weekly": {
+            "$ref": "#/components/schemas/WeeklyPfBands-Output"
+          }
+        },
+        "required": [
+          "daily",
+          "weekly"
+        ],
+        "title": "PfBands",
+        "type": "object"
+      },
       "PlanCellTag": {
         "description": "Hucrenin renk kodu (planlama spec §2, P127-179).\n\nMockup'un rengi YORUMLANMADAN tasinir: kategori/durum ayrimi mockup'ta\nkarisik, anlam frontend'de renkle birebir eslesir. `NULL` = renksiz hucre.",
         "enum": [
@@ -16618,6 +18684,103 @@
           }
         },
         "title": "PreferencesUpdate",
+        "type": "object"
+      },
+      "PreviewBody": {
+        "description": "Kalici OLMAYAN ezmeler (frontend istegi 2): kaydedilmeden egri canli degisir.",
+        "properties": {
+          "distributions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DistributionPair"
+            },
+            "maxItems": 200,
+            "title": "Distributions",
+            "type": "array"
+          },
+          "revision_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision Id"
+          },
+          "windows": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/WindowIn"
+            },
+            "maxItems": 5000,
+            "title": "Windows",
+            "type": "array"
+          }
+        },
+        "title": "PreviewBody",
+        "type": "object"
+      },
+      "PreviewOut": {
+        "properties": {
+          "disciplines": {
+            "items": {
+              "$ref": "#/components/schemas/DisciplinePreviewOut"
+            },
+            "title": "Disciplines",
+            "type": "array"
+          },
+          "end": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End"
+          },
+          "indirect_budget_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Indirect Budget Mhr",
+            "type": "string"
+          },
+          "start": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start"
+          },
+          "total": {
+            "$ref": "#/components/schemas/SeriesOut"
+          },
+          "unspreadable": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unspreadable",
+            "type": "array"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "disciplines",
+          "total",
+          "indirect_budget_mhr",
+          "unspreadable"
+        ],
+        "title": "PreviewOut",
         "type": "object"
       },
       "PriceIndexType": {
@@ -20837,6 +23000,16 @@
         "title": "QuantitySource",
         "type": "string"
       },
+      "RateSource": {
+        "description": "Oranin nereden geldigi (K4) — atama aninda kopyalanir, kaynak saklanir.",
+        "enum": [
+          "catalog",
+          "history",
+          "manual"
+        ],
+        "title": "RateSource",
+        "type": "string"
+      },
       "RefreshPricesResponse": {
         "properties": {
           "refreshed_count": {
@@ -21940,6 +24113,147 @@
         "title": "ReservedKpi",
         "type": "object"
       },
+      "RevisionDiffOut": {
+        "properties": {
+          "against": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RevisionOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "direct_after_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Direct After Mhr",
+            "type": "string"
+          },
+          "direct_before_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Direct Before Mhr",
+            "type": "string"
+          },
+          "direct_delta_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Direct Delta Mhr",
+            "type": "string"
+          },
+          "leaves": {
+            "items": {
+              "$ref": "#/components/schemas/LeafDiffOut"
+            },
+            "title": "Leaves",
+            "type": "array"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/RevisionOut"
+          }
+        },
+        "required": [
+          "revision",
+          "against",
+          "direct_before_mhr",
+          "direct_after_mhr",
+          "direct_delta_mhr",
+          "leaves"
+        ],
+        "title": "RevisionDiffOut",
+        "type": "object"
+      },
+      "RevisionOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "frozen_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Frozen At"
+          },
+          "frozen_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_edited_at": {
+            "format": "date-time",
+            "title": "Last Edited At",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "number": {
+            "title": "Number",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RevisionStatus"
+          }
+        },
+        "required": [
+          "id",
+          "number",
+          "name",
+          "description",
+          "status",
+          "frozen_at",
+          "frozen_by",
+          "created_at",
+          "last_edited_at"
+        ],
+        "title": "RevisionOut",
+        "type": "object"
+      },
+      "RevisionStatus": {
+        "enum": [
+          "draft",
+          "active",
+          "archived"
+        ],
+        "title": "RevisionStatus",
+        "type": "string"
+      },
       "RiskAlert": {
         "description": "Kartin TEK satiri — mockup'in her satirinda UC olgu vardir.\n\n`title` ust satir (`13px`), `detail` alt satir (`11px`), `severity` sol\nseridin rengi. `items: list[str]` bunlarin YALNIZ BIRINI tasiyabiliyordu; uc\nolguyu tek metne yapistirmak, ekranin ayristirmak zorunda kalacagi bir sunum\nkararini sunucuda uretmek olurdu (K10, `_pending_approvals` notunun emsali).\n\n🔴 `module` var, `link` YOK ve bu bilinclidir. Emir bir `baglanti?` alani\nonerdi; ISTEMCI ROTASI SUNUCUDA URETILMEZ — bir URL (\"/stok\") frontend'in\nyonlendirme haritasini backend'e kopyalardi ve rota degistigi gun panel\nsessizce olu baglanti basardi. Bunun yerine satir KAYNAK MODULUNU tasir;\nhangi ekrana gidilecegi istemcinin karari kalir.",
         "properties": {
@@ -22470,6 +24784,47 @@
         "title": "SalesSummaryResponse",
         "type": "object"
       },
+      "ScheduleOut": {
+        "properties": {
+          "bars": {
+            "items": {
+              "$ref": "#/components/schemas/BarOut"
+            },
+            "title": "Bars",
+            "type": "array"
+          },
+          "holidays": {
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "title": "Holidays",
+            "type": "array"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/SectionOut"
+            },
+            "title": "Sections",
+            "type": "array"
+          },
+          "weekly_off_days": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Weekly Off Days",
+            "type": "array"
+          }
+        },
+        "required": [
+          "sections",
+          "bars",
+          "weekly_off_days",
+          "holidays"
+        ],
+        "title": "ScheduleOut",
+        "type": "object"
+      },
       "Scope": {
         "description": "Veri kapsamı — aktörün modül içinde hangi kayıtları görebildiği.",
         "enum": [
@@ -22985,6 +25340,63 @@
           "sort_order"
         ],
         "title": "SectionMilestoneResponse",
+        "type": "object"
+      },
+      "SectionOut": {
+        "properties": {
+          "end_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Date"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "planned_worker_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Worker Count"
+          },
+          "start_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Date"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "start_date",
+          "end_date",
+          "planned_worker_count"
+        ],
+        "title": "SectionOut",
         "type": "object"
       },
       "SectionResponse": {
@@ -23624,6 +26036,231 @@
           "end_date"
         ],
         "title": "SelfLeaveRequestCreate",
+        "type": "object"
+      },
+      "SeriesOut": {
+        "properties": {
+          "budget_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Budget Mhr",
+            "type": "string"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/DayOut"
+            },
+            "title": "Days",
+            "type": "array"
+          },
+          "end": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End"
+          },
+          "peak_week": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WeekOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "start": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start"
+          },
+          "weeks": {
+            "items": {
+              "$ref": "#/components/schemas/WeekOut"
+            },
+            "title": "Weeks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "budget_mhr",
+          "start",
+          "end",
+          "days",
+          "weeks",
+          "peak_week"
+        ],
+        "title": "SeriesOut",
+        "type": "object"
+      },
+      "SettingsRead": {
+        "description": "GET/PUT yaniti. Ayar satiri yoksa `defaults.py` degerleri, `is_default` = true.",
+        "properties": {
+          "composite_metrics": {
+            "items": {
+              "$ref": "#/components/schemas/CompositeMetricRead"
+            },
+            "title": "Composite Metrics",
+            "type": "array"
+          },
+          "holidays": {
+            "items": {
+              "$ref": "#/components/schemas/HolidayRead"
+            },
+            "title": "Holidays",
+            "type": "array"
+          },
+          "is_default": {
+            "title": "Is Default",
+            "type": "boolean"
+          },
+          "pf_bands": {
+            "$ref": "#/components/schemas/PfBands-Output"
+          },
+          "standard_daily_hours": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Standard Daily Hours",
+            "type": "string"
+          },
+          "tolerance_points": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Tolerance Points",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "updated_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "week_start_dow": {
+            "title": "Week Start Dow",
+            "type": "integer"
+          },
+          "weekly_off_days": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Weekly Off Days",
+            "type": "array"
+          }
+        },
+        "required": [
+          "week_start_dow",
+          "weekly_off_days",
+          "standard_daily_hours",
+          "tolerance_points",
+          "pf_bands",
+          "holidays",
+          "composite_metrics",
+          "is_default",
+          "updated_at",
+          "updated_by"
+        ],
+        "title": "SettingsRead",
+        "type": "object"
+      },
+      "SettingsSave": {
+        "additionalProperties": false,
+        "description": "PUT govdesi — santiyenin ayar kumesinin TAMAMI.",
+        "properties": {
+          "composite_metrics": {
+            "items": {
+              "$ref": "#/components/schemas/CompositeMetricInput"
+            },
+            "title": "Composite Metrics",
+            "type": "array"
+          },
+          "holidays": {
+            "items": {
+              "$ref": "#/components/schemas/HolidayInput"
+            },
+            "title": "Holidays",
+            "type": "array"
+          },
+          "pf_bands": {
+            "$ref": "#/components/schemas/PfBands-Input"
+          },
+          "standard_daily_hours": {
+            "anyOf": [
+              {
+                "maximum": 16.0,
+                "minimum": 1.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,2}|(?=[\\d.]{1,5}0*$)\\d{0,2}\\.\\d{0,2}0*$)",
+                "type": "string"
+              }
+            ],
+            "title": "Standard Daily Hours"
+          },
+          "tolerance_points": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,3}|(?=[\\d.]{1,6}0*$)\\d{0,3}\\.\\d{0,2}0*$)",
+                "type": "string"
+              }
+            ],
+            "title": "Tolerance Points"
+          },
+          "week_start_dow": {
+            "maximum": 6.0,
+            "minimum": 0.0,
+            "title": "Week Start Dow",
+            "type": "integer"
+          },
+          "weekly_off_days": {
+            "items": {
+              "maximum": 6.0,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "maxItems": 7,
+            "title": "Weekly Off Days",
+            "type": "array"
+          }
+        },
+        "required": [
+          "week_start_dow",
+          "weekly_off_days",
+          "standard_daily_hours",
+          "tolerance_points",
+          "pf_bands"
+        ],
+        "title": "SettingsSave",
         "type": "object"
       },
       "ShareholderInput": {
@@ -30559,6 +33196,30 @@
         "title": "SubcontractorUpdate",
         "type": "object"
       },
+      "SuggestionsOut": {
+        "properties": {
+          "catalog": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateOut"
+            },
+            "title": "Catalog",
+            "type": "array"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateOut"
+            },
+            "title": "History",
+            "type": "array"
+          }
+        },
+        "required": [
+          "catalog",
+          "history"
+        ],
+        "title": "SuggestionsOut",
+        "type": "object"
+      },
       "SupplierCard": {
         "description": "TED kartinin TAMAMI: kunye + \"Bu Yil Toplam Siparis\" TUREVI (TED 52).\n\nTurev iki parcalidir cunku kart tutari basar ama kullanici \"kac siparis\"\nsorusunu da sorar; sayac olmadan buyuk bir tutarin tek dev siparisten mi\nyoksa yuzlerce kucuk alimdan mi geldigi anlasilmazdi.\n\nSiparissiz tedarikcide deger `null` DEGIL SIFIRDIR: ekran \"veri yok\" ile\n\"hic siparis verilmedi\"yi ayirt etmek zorunda kalmasin.\n\n**KAPSAM:** turev yalnizca AKTORUN GORDUGU projelerin siparislerini sayar\n(`repository` gerekcesi) — katalog global olsa da PARA degildir.",
         "properties": {
@@ -34861,6 +37522,25 @@
         "title": "UserListResponse",
         "type": "object"
       },
+      "UserRef": {
+        "properties": {
+          "full_name": {
+            "title": "Full Name",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "full_name"
+        ],
+        "title": "UserRef",
+        "type": "object"
+      },
       "UserResponse": {
         "properties": {
           "email": {
@@ -35285,6 +37965,183 @@
         ],
         "title": "Weather",
         "type": "string"
+      },
+      "WeekOut": {
+        "properties": {
+          "mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Mhr",
+            "type": "string"
+          },
+          "planned_people": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned People"
+          },
+          "required_people": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Required People"
+          },
+          "week_end": {
+            "format": "date",
+            "title": "Week End",
+            "type": "string"
+          },
+          "week_no": {
+            "title": "Week No",
+            "type": "integer"
+          },
+          "week_start": {
+            "format": "date",
+            "title": "Week Start",
+            "type": "string"
+          },
+          "working_days": {
+            "title": "Working Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "week_no",
+          "week_start",
+          "week_end",
+          "mhr",
+          "working_days",
+          "required_people",
+          "planned_people"
+        ],
+        "title": "WeekOut",
+        "type": "object"
+      },
+      "WeeklyPfBands-Input": {
+        "additionalProperties": false,
+        "description": "Haftalik (ve kumulatif, K19) PF: < `red_below` kirmizi · < `green_from` sari.",
+        "properties": {
+          "green_from": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,2}|(?=[\\d.]{1,6}0*$)\\d{0,2}\\.\\d{0,3}0*$)",
+                "type": "string"
+              }
+            ],
+            "title": "Green From"
+          },
+          "red_below": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,2}|(?=[\\d.]{1,6}0*$)\\d{0,2}\\.\\d{0,3}0*$)",
+                "type": "string"
+              }
+            ],
+            "title": "Red Below"
+          }
+        },
+        "required": [
+          "red_below",
+          "green_from"
+        ],
+        "title": "WeeklyPfBands",
+        "type": "object"
+      },
+      "WeeklyPfBands-Output": {
+        "additionalProperties": false,
+        "description": "Haftalik (ve kumulatif, K19) PF: < `red_below` kirmizi · < `green_from` sari.",
+        "properties": {
+          "green_from": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,2}|(?=[\\d.]{1,6}0*$)\\d{0,2}\\.\\d{0,3}0*$)",
+            "title": "Green From",
+            "type": "string"
+          },
+          "red_below": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,2}|(?=[\\d.]{1,6}0*$)\\d{0,2}\\.\\d{0,3}0*$)",
+            "title": "Red Below",
+            "type": "string"
+          }
+        },
+        "required": [
+          "red_below",
+          "green_from"
+        ],
+        "title": "WeeklyPfBands",
+        "type": "object"
+      },
+      "WindowIn": {
+        "properties": {
+          "discipline_id": {
+            "format": "uuid",
+            "title": "Discipline Id",
+            "type": "string"
+          },
+          "end_date": {
+            "format": "date",
+            "title": "End Date",
+            "type": "string"
+          },
+          "section_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Id"
+          },
+          "start_date": {
+            "format": "date",
+            "title": "Start Date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "discipline_id",
+          "start_date",
+          "end_date"
+        ],
+        "title": "WindowIn",
+        "type": "object"
+      },
+      "WindowsBody": {
+        "description": "TAM DEGISTIRME: gonderilmeyen ezme silinir (bolum tarihine doner).",
+        "properties": {
+          "windows": {
+            "items": {
+              "$ref": "#/components/schemas/WindowIn"
+            },
+            "maxItems": 5000,
+            "title": "Windows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "windows"
+        ],
+        "title": "WindowsBody",
+        "type": "object"
       },
       "WorkLogCreate": {
         "description": "`POST /equipment/work-logs` — M3 kaydı.\n\n🔴 **K11:** `hours` gövdede VARDIR ama YALNIZ aralıksız kayıt içindir\n(M3:283 arıza satırı saat basar, aralık basmaz). `start_time`+`end_time`\nverilmişken `hours` göndermek **422**'dir — sunucu hesabının üzerine\nyazılamaz. Kural `service._resolve_hours`ta tek yerdedir (modül docstring'i).\n\n`site_id` KAYDIN KENDİ şantiyesidir (K9), ekipmanın bugünkü ataması değil:\nmakine taşındığında geçmiş aylar geriye dönük başka projeye yazılmasın.",
@@ -40006,6 +42863,459 @@
         "summary": "Download Document Endpoint",
         "tags": [
           "documents"
+        ]
+      }
+    },
+    "/earned-value/catalog": {
+      "get": {
+        "description": "Birim oran katalogu (KAT). `q` is tipi adinda harf duyarsiz arar.\n\n`actual` (gerceklesen) ve `diff_pct` K4 kuralindadir; saha verisi PLN-B2'de\ndogdugu icin B1'de her satirda bostur (`catalog_service.catalog_actuals`).",
+        "operationId": "list_catalog_endpoint_earned_value_catalog_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "discipline_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Discipline Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CatalogItemRead"
+                  },
+                  "title": "Response List Catalog Endpoint Earned Value Catalog Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Catalog Endpoint",
+        "tags": [
+          "earned-value"
+        ]
+      },
+      "post": {
+        "description": "Katalog is tipi ekler. (disiplin, ad, birim) benzersiz → 409 `CATALOG_ITEM_TAKEN`.",
+        "operationId": "create_catalog_item_endpoint_earned_value_catalog_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CatalogItemCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogItemRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Catalog Item Endpoint",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/earned-value/catalog/{item_id}": {
+      "patch": {
+        "description": "Kismi guncelleme. Standart oran DEGISIRSE `standard_updated_at` yenilenir.",
+        "operationId": "update_catalog_item_endpoint_earned_value_catalog__item_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CatalogItemUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogItemRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Catalog Item Endpoint",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/earned-value/catalog/{item_id}/adopt-actual": {
+      "post": {
+        "description": "KAT \"Gerceklesen standart yap\": gerceklesen ortalama yoksa 409 `CATALOG_NO_ACTUAL`.\n\n⚠️ B1'de gerceklesen hic yoktur → bu uc PLN-B3'e kadar HER ZAMAN 409 doner.",
+        "operationId": "adopt_actual_endpoint_earned_value_catalog__item_id__adopt_actual_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogItemRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Adopt Actual Endpoint",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/earned-value/disciplines": {
+      "get": {
+        "description": "Sirket disiplinleri (K2) — `sort_order`, sonra `code` sirasiyla.",
+        "operationId": "list_disciplines_endpoint_earned_value_disciplines_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DisciplineRead"
+                  },
+                  "title": "Response List Disciplines Endpoint Earned Value Disciplines Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Disciplines Endpoint",
+        "tags": [
+          "earned-value"
+        ]
+      },
+      "post": {
+        "description": "Disiplin ekler. Kod benzersizdir → 409 `DISCIPLINE_CODE_TAKEN`.",
+        "operationId": "create_discipline_endpoint_earned_value_disciplines_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DisciplineCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisciplineRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Discipline Endpoint",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/earned-value/disciplines/{discipline_id}": {
+      "delete": {
+        "description": "Disiplini siler — yalniz HICBIR EV kaydinda kullanilmiyorsa (B1-9), yoksa 409.",
+        "operationId": "delete_discipline_endpoint_earned_value_disciplines__discipline_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "discipline_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Discipline Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Discipline Endpoint",
+        "tags": [
+          "earned-value"
+        ]
+      },
+      "patch": {
+        "description": "Kismi guncelleme; gecmeyen alan dokunulmaz, acik `null` 422 (alan adli).",
+        "operationId": "update_discipline_endpoint_earned_value_disciplines__discipline_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "discipline_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Discipline Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DisciplineUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisciplineRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Discipline Endpoint",
+        "tags": [
+          "earned-value"
         ]
       }
     },
@@ -54467,6 +57777,1087 @@
         "summary": "Get Site Diary Summary Endpoint",
         "tags": [
           "site-diary"
+        ]
+      }
+    },
+    "/sites/{site_id}/earned-value/budget": {
+      "get": {
+        "description": "Butce agaci (L1 disiplin · L2 BOQ grubu · L3 is tipi · L4 kalem × bolum) + ozet.\n\nVarsayilan revizyon: taslak varsa taslak, yoksa aktif. Hic revizyon yoksa CANLI BOQ'tan\nbos bir taslak gorunumu (`revision: null`, `editable: true`) — ilk yazma Rev 0'i acar.\nDondurma engelleri/uyarilari yalniz duzenlenebilir gorunumde doner (frontend istegi 1).",
+        "operationId": "get_budget_sites__site_id__earned_value_budget_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "revision_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Revision Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Budget",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/sites/{site_id}/earned-value/budget/distributions": {
+      "put": {
+        "description": "Disiplin basina dagilim tipi (B1-2) — KISMI upsert.",
+        "operationId": "put_budget_distributions_sites__site_id__earned_value_budget_distributions_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DistributionsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Put Budget Distributions",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/sites/{site_id}/earned-value/budget/fill-from-catalog": {
+      "post": {
+        "description": "\"Katalogdan oner (bosları doldur)\" (B1-4; frontend istegi 3).",
+        "operationId": "fill_budget_from_catalog_sites__site_id__earned_value_budget_fill_from_catalog_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FillOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Fill Budget From Catalog",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/sites/{site_id}/earned-value/budget/freeze": {
+      "post": {
+        "description": "Baseline dondur (K8): engel varsa 422; taslak → aktif, onceki aktif → arsiv.",
+        "operationId": "freeze_budget_sites__site_id__earned_value_budget_freeze_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FreezeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevisionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Freeze Budget",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/sites/{site_id}/earned-value/budget/group-disciplines": {
+      "put": {
+        "description": "BOQ grubu → disiplin eslemesi (K2) — KISMI: yalniz listelenen gruplar; null kaldirir.",
+        "operationId": "put_group_disciplines_sites__site_id__earned_value_budget_group_disciplines_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupDisciplinesBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Put Group Disciplines",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/sites/{site_id}/earned-value/budget/items/{boq_item_id}": {
+      "patch": {
+        "description": "Is tipi (L3) kendi/taseron + dogrudan/dolayli + katalog bagi (K3).",
+        "operationId": "patch_budget_item_sites__site_id__earned_value_budget_items__boq_item_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "boq_item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Boq Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Patch Budget Item",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/sites/{site_id}/earned-value/budget/items/{boq_item_id}/suggestions": {
+      "get": {
+        "description": "Oran onerisi popover'i: katalog adaylari (bagli · tam · kismi). Gecmis B3'te dolar.",
+        "operationId": "get_budget_item_suggestions_sites__site_id__earned_value_budget_items__boq_item_id__suggestions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "boq_item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Boq Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuggestionsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Budget Item Suggestions",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/sites/{site_id}/earned-value/budget/leaves": {
+      "patch": {
+        "description": "Yaprak orani (+kaynak) ve ezmeleri — tekil ya da TOPLU (\"secili satirlara toplu oran\").",
+        "operationId": "patch_budget_leaves_sites__site_id__earned_value_budget_leaves_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LeavesPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Patch Budget Leaves",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/sites/{site_id}/earned-value/budget/preview": {
+      "post": {
+        "description": "KALICI OLMAYAN egri onizlemesi (frontend istegi 2): govdedeki dagilim/pencere ezmeleri\nkaydedilmeden uygulanir. Donmus revizyon snapshot egrisinden gelir (K8).",
+        "operationId": "preview_budget_sites__site_id__earned_value_budget_preview_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Preview Budget",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/sites/{site_id}/earned-value/budget/revisions": {
+      "get": {
+        "operationId": "list_budget_revisions_sites__site_id__earned_value_budget_revisions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RevisionOut"
+                  },
+                  "title": "Response List Budget Revisions Sites  Site Id  Earned Value Budget Revisions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Budget Revisions",
+        "tags": [
+          "earned-value"
+        ]
+      },
+      "post": {
+        "description": "\"Taslak revizyon ac\": aktifin girdileri yeni taslaga kopyalanir. Taslak varken 409.",
+        "operationId": "open_budget_draft_sites__site_id__earned_value_budget_revisions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevisionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Open Budget Draft",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/sites/{site_id}/earned-value/budget/revisions/{revision_id}": {
+      "delete": {
+        "description": "Yalniz TASLAK silinir (onay duzeyi); donmus revizyon 409.",
+        "operationId": "delete_budget_draft_sites__site_id__earned_value_budget_revisions__revision_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "revision_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Revision Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Budget Draft",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/sites/{site_id}/earned-value/budget/revisions/{revision_id}/diff": {
+      "get": {
+        "description": "Onceki DONMUS revizyona gore yaprak farki (yeni / cikan / miktar / oran).",
+        "operationId": "get_budget_revision_diff_sites__site_id__earned_value_budget_revisions__revision_id__diff_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "revision_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Revision Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevisionDiffOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Budget Revision Diff",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/sites/{site_id}/earned-value/budget/schedule": {
+      "get": {
+        "description": "Adim 2 Gantt: bolumler, disiplin × bolum cubuklari, tatiller.",
+        "operationId": "get_budget_schedule_sites__site_id__earned_value_budget_schedule_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "revision_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Revision Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Budget Schedule",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/sites/{site_id}/earned-value/budget/windows": {
+      "put": {
+        "description": "Disiplin × bolum pencere EZMELERI — TAM DEGISTIRME (B1-3).",
+        "operationId": "put_budget_windows_sites__site_id__earned_value_budget_windows_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WindowsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Put Budget Windows",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/sites/{site_id}/earned-value/settings": {
+      "get": {
+        "description": "Santiyenin EV ayarlari. Satir yoksa sabit varsayilanlar, `is_default` = true (K1).",
+        "operationId": "get_settings_endpoint_sites__site_id__earned_value_settings_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Settings Endpoint",
+        "tags": [
+          "earned-value"
+        ]
+      },
+      "put": {
+        "description": "TAM DEGISTIRME: govde santiyenin ayar kumesinin TAMAMIDIR.\n\n⚠️ Govdede gecmeyen tatil ve pacal metrik SILINIR. Baslangic/bitis tarihi alan\nDEGILDIR (K7); \"her n. haftanin X gunu\" kurali YOKTUR (S5). Yanit guncel GET govdesi.",
+        "operationId": "save_settings_endpoint_sites__site_id__earned_value_settings_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsSave"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Save Settings Endpoint",
+        "tags": [
+          "earned-value"
         ]
       }
     },

@@ -3,8 +3,9 @@
 Motor butun hesabi `ENGINE_CONTEXT` icinde yapar: sonuc cagiranin global decimal
 baglamina bagli olmaz. Toplama/carpma girdiler kadar kesindir; yalniz BOLME 28 anlamli
 haneye iner (IEEE 754R ROUND_HALF_EVEN) — bu sunum yuvarlamasi degil bolme hassasiyetidir.
-Tek istisna prorata payi: toplanan bir ara deger oldugu icin `PRORATA_QUANTUM`a iner
-(Σ pay = kaynak esitligi TOPLAMADAN SONRA da kesin kalsin diye).
+Iki istisna: prorata payi (`PRORATA_QUANTUM`) ve yayma gun payi (`SPREAD_QUANTUM`) —
+toplanan/saklanan ara degerler oldugu icin sabit kuantuma iner (Σ pay = kaynak esitligi
+TOPLAMADAN ve DB'ye yazildiktan SONRA da kesin kalsin diye).
 """
 
 from __future__ import annotations
@@ -26,6 +27,14 @@ ZERO = Decimal(0)
 
 #: Prorata payinin sabit kuantumu (saat). Gerekce: `accumulate.prorata_parts`.
 PRORATA_QUANTUM = Decimal("1e-12")
+
+#: Yayma gun payinin sabit kuantumu (a-s). Gerekce: yaprak × gun egrisi DB'de
+#: `Numeric(24, 8)` kolonuna (donmus baseline snapshot'i, K8) BIREBIR yazilir: 1e-6
+#: kuantumlu paylar ve son gunun KALANI (butce − Σ pay; butce = qty × oran, <= 7 ondalik)
+#: kolonun 8 ondaligina kayipsiz sigar → okunan egri motorun urettigiyle ayni, Σ pay ==
+#: butce DB'den sonra da tutar. Kalan son gune verilir (`spread.spread_leaf`).
+#: 1e-6 a-s ≈ 3,6 ms: sunumda hicbir basamagi degistirmez.
+SPREAD_QUANTUM = Decimal("0.000001")
 
 
 def ratio(numerator: Decimal | None, denominator: Decimal | None) -> Decimal | None:

@@ -107,7 +107,7 @@ class IfsaSeviyesi(str, enum.Enum):
     ACIK = "acik"
 
 
-#: 🔴 **VARSAYILAN YOK.** 22 izin modülünün 22'si de burada ADIYLA geçer ve
+#: 🔴 **VARSAYILAN YOK.** 23 izin modülünün 23'ü de burada ADIYLA geçer ve
 #: `test_ai2a_korkuluklar.py::test_ifsa_haritasi_TUM_IZIN_MODULLERINI_ADIYLA_KAPSAR`
 #: küme eşitliğiyle bunu kilitler (🔴 bu satır eskiden var olmayan bir
 #: `test_ifsa_haritasi_TUM_MODULLERI_KAPSAR` adını gösteriyordu)
@@ -115,7 +115,7 @@ class IfsaSeviyesi(str, enum.Enum):
 #: ekleyen kişi **bilinçli bir KVKK kararı** vermek zorunda kalır; sessiz bir
 #: `ACIK` varsayılanına düşemez.
 #:
-#: Kaynak: `app/modules/roles/seed_data.py::MODULES` (ölçüldü: 22 anahtar).
+#: Kaynak: `app/modules/roles/seed_data.py::MODULES` (ölçüldü: 23 anahtar).
 AI_IFSA: Final[Mapping[str, IfsaSeviyesi]] = {
     # --- K1: KAPALI ---------------------------------------------------------
     # 🔴 **K1 DÖRT AD SAYAR AMA BU DEPODA ÜÇ İZİN MODÜLÜ VARDIR.** Ölçüldü:
@@ -146,6 +146,10 @@ AI_IFSA: Final[Mapping[str, IfsaSeviyesi]] = {
     "boq": IfsaSeviyesi.ACIK,
     "contracts": IfsaSeviyesi.ACIK,
     "dashboard": IfsaSeviyesi.ACIK,
+    # PLN-B1: adam-saat butcesi, birim oranlar, ilerleme. Kisi adi/S5(c) tasimaz
+    # (timesheet/site_diary emsali). ⚠️ CEO'ya soruldu (PLN-B1 raporu); karar
+    # degisirse bu satir degisir.
+    "earned_value": IfsaSeviyesi.ACIK,
     # ⚠️ `ACIK` burada "belge İÇERİĞİ açıktır" DEMEK DEĞİLDİR. Belge içeriği
     # AYRI bir korkulukla (S4: `documents.origin_module` + `can_read`) ve AYRI
     # bir dilimde (AI-4) ele alınır. Bu harita **modülün** kapısıdır, o

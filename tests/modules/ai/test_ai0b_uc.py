@@ -30,7 +30,7 @@ async def _bearer(client, user):
 def test_ai_modulu_MATRISTE_ve_MODULLERDE_var() -> None:
     anahtarlar = [m["key"] for m in MODULES]
     assert "ai" in anahtarlar
-    assert len(MODULES) == 22
+    assert len(MODULES) == 23  # PLN-B1: 23. modül earned_value (ai 22. kalır)
     assert set(MATRIX) == set(anahtarlar)
 
 
@@ -318,7 +318,7 @@ async def test_ozel_rol_olusturma_TUM_modullere_satir_yazar(seeded_db) -> None:
         .all()
     )
     modul_sayisi = len((await seeded_db.execute(select(Module))).scalars().all())
-    assert len(satirlar) == modul_sayisi == 22
+    assert len(satirlar) == modul_sayisi == 23  # PLN-B1: +earned_value
 
 
 async def test_roller_ve_moduller_ucu_22_modul_doner(client, user_factory) -> None:
@@ -327,7 +327,8 @@ async def test_roller_ve_moduller_ucu_22_modul_doner(client, user_factory) -> No
     assert yanit.status_code == 200
     anahtarlar = [m["key"] for m in yanit.json()]
     assert "ai" in anahtarlar
-    assert anahtarlar[-1] == "ai", "sort_order 22 → listenin SONUNDA"
+    # PLN-B1: `ai` artık son DEĞİL — 23. modül `earned_value` sona eklendi (kaydırma yok).
+    assert anahtarlar[-2:] == ["ai", "earned_value"], "sort_order 22, 23 → listenin SONUNDA"
 
 
 async def test_izin_matrisi_ekrani_ai_satirini_GORUR(client, user_factory) -> None:

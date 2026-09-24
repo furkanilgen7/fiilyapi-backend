@@ -14,6 +14,7 @@ from app.modules.earned_value.engine import (
     CalendarSettings,
     ContractorMix,
     ContractorType,
+    Distribution,
     EngineInput,
     HoursEntry,
     Node,
@@ -21,19 +22,30 @@ from app.modules.earned_value.engine import (
     ProjectCalendar,
     QtyEntry,
     RowKind,
+    SpreadLeaf,
     Status,
     classify_status,
     compute_daily_report,
+    compute_spread_preview,
     pf_band,
 )
 from app.modules.earned_value.engine.policy import (
     DEFAULT_CUMULATIVE_PF_BANDS,
     DEFAULT_DAILY_PF_BANDS,
+    DEFAULT_DISTRIBUTION,
+    DEFAULT_STANDARD_DAILY_HOURS,
+    DISTRIBUTION_WEIGHTS,
+    NON_WORKING_DAY_WEIGHT,
+    largest_remainder,
+    required_people,
+    spread_position,
 )
 
 from ._fixture import NODES, REPORT_DATE, build_input
+from ._fixture_leaf import build_leaf_input
 
 D = Decimal
+LIN = Distribution.LINEAR
 
 
 def _report(nodes: tuple[Node, ...] = NODES):  # noqa: ANN202
@@ -227,3 +239,73 @@ def test_S7_split_rows_only_for_mixed_discipline() -> None:
     r2 = _report(all_subcon)
     assert r2.row(RowKind.DISCIPLINE, "D1").contractor_mix is ContractorMix.SUBCON
     assert (RowKind.DISCIPLINE_SUBCON, "D1") not in {(r.kind, r.node_id) for r in r2.rows}
+
+
+# --- PLN-B1.1 ----------------------------------------------------------------------------
+
+
+def test_B1_1_distribution_weights_are_mockup_formulas() -> None:
+    # BÜT:701 aynen: doğrusal 1 · çan 6u(1−u)+0,05 · ön 2(1−u)+0,05 · arka 2u+0,05
+    w = DISTRIBUTION_WEIGHTS
+    quarter = D("0.25")
+    assert w[Distribution.LINEAR](quarter) == 1
+    assert w[Distribution.BELL](quarter) == D("1.175")
+    assert w[Distribution.FRONT](quarter) == D("1.55")
+    assert w[Distribution.BACK](quarter) == D("0.55")
+    assert {w[x](D(0)) for x in (Distribution.BELL, Distribution.BACK)} == {D("0.05")}
+    assert w[Distribution.FRONT](D(1)) == D("0.05")
+    assert set(w) == set(Distribution)
+
+
+def test_B1_1_holiday_weight_is_zero() -> None:
+    assert NON_WORKING_DAY_WEIGHT == 0
+
+
+def test_B1_1_u_is_calendar_days_over_max_1_span() -> None:
+    s = date(2026, 9, 3)
+    assert spread_position(date(2026, 9, 4), s, date(2026, 9, 7)) == D("0.25")  # 1 / 4
+    assert spread_position(s, s, s) == 0  # payda max(1, 0) = 1
+
+
+def test_B1_2_default_distribution_is_linear() -> None:
+    assert DEFAULT_DISTRIBUTION is Distribution.LINEAR
+
+
+def test_K10_required_people_is_mhr_over_workdays_times_standard_hours() -> None:
+    assert DEFAULT_STANDARD_DAILY_HOURS == 9
+    assert required_people(D(108), 6, D(9)) == 2
+    assert required_people(D(90), 3, D(9)) == D(90) / D(27)
+    assert required_people(D(0), 0, D(9)) is None  # iş günü yok → tanımsız
+
+
+def test_K10_week_load_is_clipped_to_range_end() -> None:
+    # policy.WEEK_LOAD_CLIPPED_TO_RANGE_END
+    # son hafta aralık sonunda biter: 14–15.09 (2 iş günü), 7 günlük hafta DEĞİL
+    leaves = (SpreadLeaf("A", "K", D(36), date(2026, 9, 14), date(2026, 9, 15), LIN, True),)
+    week = compute_spread_preview(leaves).total.weeks[-1]
+    assert (week.week_end, week.working_days, week.required_people) == (
+        date(2026, 9, 15),
+        2,
+        2,
+    )
+
+
+def test_K9_mixed_input_leaf_curves_win_over_discipline_curves() -> None:
+    # policy.LEAF_CURVES_OVERRIDE_DISCIPLINE_CURVES
+    mixed = compute_daily_report(build_leaf_input(mixed=True), REPORT_DATE)
+    leaf_only = compute_daily_report(build_leaf_input(), REPORT_DATE)
+    assert mixed.rows == leaf_only.rows
+    assert mixed.nodes == leaf_only.nodes
+    # disiplin eğrisi kazansaydı D1–own = D1 (S1 payı) olurdu: 180/400
+    assert mixed.row(RowKind.DISCIPLINE_OWN, "D1").planned_pct_cum == D(220) / D(300)
+
+
+def test_B1_1_largest_remainder_floor_then_biggest_fractions_earliest_on_tie() -> None:
+    q = D("0.000001")
+    # ham (×1e-6) 1,4 · 1,6 · 1,6 → taban 1·1·1 (Σ 3) · hedef taban(4,6) = 4 → 1 kuantum eksik;
+    # kesir ,4 · ,6 · ,6 → EŞİT, en erken (2. gün) +1 → 1 · 2 · 1;
+    # artık 0,6 → en büyük pay (2. gün) → 1 · 2,6 · 1
+    raw = [D("0.0000014"), D("0.0000016"), D("0.0000016")]
+    shares = largest_remainder(raw, D("0.0000046"), q)
+    assert shares == [D("0.000001"), D("0.0000026"), D("0.000001")]
+    assert sum(shares) == D("0.0000046")

@@ -26,6 +26,7 @@ from app.modules.company import models as company_models  # noqa: F401
 from app.modules.contracts import models as contracts_models  # noqa: F401
 from app.modules.customers import models as customers_models  # noqa: F401
 from app.modules.documents import models as documents_models  # noqa: F401
+from app.modules.earned_value import models as earned_value_models  # noqa: F401
 from app.modules.equipment import models as equipment_models  # noqa: F401
 from app.modules.inventory import models as inventory_models  # noqa: F401
 from app.modules.invoicing import models as invoicing_models  # noqa: F401

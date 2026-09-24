@@ -22,7 +22,7 @@ async def test_create_custom_role_seeds_full_matrix(seeded_db):
             .where(RolePermission.role_id == role.id)
         )
     ).scalar_one()
-    assert count == 22  # her modul icin bir hucre (none/all)
+    assert count == 23  # her modul icin bir hucre (none/all) — PLN-B1: +earned_value
 
 
 async def test_create_custom_role_duplicate_key_raises(seeded_db):
@@ -57,7 +57,7 @@ async def test_delete_role_in_use_rejected(seeded_db, user_factory):
 async def test_get_role_matrix_returns_all_modules(seeded_db):
     patron = (await seeded_db.execute(select(Role).where(Role.key == "patron"))).scalar_one()
     matrix = await repository.get_role_matrix(seeded_db, patron.id)
-    assert len(matrix) == 22
+    assert len(matrix) == 23  # PLN-B1
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +94,7 @@ async def test_matris_sonradan_inen_modulu_de_dondurur(seeded_db):
 
     matrix = await repository.get_role_matrix(seeded_db, role.id)
 
-    assert len(matrix) == 23
+    assert len(matrix) == 24  # 23 seed + sonradan inen
     hucre = {module.key: perm for module, perm in matrix}["yeni_modul"]
     assert hucre.access_level is AccessLevel.none  # varsayılan KAPALI
     assert hucre.scope is Scope.all
@@ -108,7 +108,7 @@ async def test_sistem_rolu_icin_de_ayni_varsayilan_hucre(seeded_db):
 
     matrix = await repository.get_role_matrix(seeded_db, patron.id)
 
-    assert len(matrix) == 23
+    assert len(matrix) == 24  # 23 seed + sonradan inen
 
 
 async def test_varsayilan_hucre_veritabanina_YAZILMAZ(seeded_db):
@@ -129,7 +129,7 @@ async def test_varsayilan_hucre_veritabanina_YAZILMAZ(seeded_db):
             .where(RolePermission.role_id == role.id)
         )
     ).scalar_one()
-    assert count == 22  # sentetik hücre sayılmaz
+    assert count == 23  # sentetik hücre sayılmaz — PLN-B1: +earned_value
 
 
 async def test_izin_guncelleme_eksik_hucreyi_OLUSTURUR(seeded_db):

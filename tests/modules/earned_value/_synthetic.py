@@ -3,6 +3,9 @@
 Kötü durum seçildi: HER yaprak HER iş gününe miktar alır (~1 M giriş), HER iş tipi her
 iş günü bir prorata kodu, HER disiplin bir direct kodu yazar; rapor günü son gündür
 (her hareket t <= d). Ağaç: 5 disiplin × 5 alt grup × 10 iş tipi + 1.220 yaprak = 1.500.
+
+`leaf_curves=True` (K9 varyantı): disiplin eğrisi yerine HER yaprağa rastgele bir
+başlangıçtan ~60 iş günlük yaprak eğrisi verilir (1.220 × 60 ≈ 73 bin nokta).
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ from app.modules.earned_value.engine import (
 
 START = date(2024, 1, 1)
 SUNDAY = 6
+LEAF_CURVE_WORKDAYS = 60
 
 
 def build(
@@ -33,6 +37,7 @@ def build(
     leaves_total: int = 1220,
     days: int = 1000,
     seed: int = 7,
+    leaf_curves: bool = False,
 ) -> tuple[EngineInput, date]:
     rng = random.Random(seed)
     qty_pool = [Decimal(k) / 4 for k in range(1, 80)]
@@ -87,6 +92,16 @@ def build(
         for day in workdays
         for d in range(disciplines)
     ]
+    if leaf_curves:
+        # varsayılan yoldaki rastgele dizi DEĞİŞMESİN diye ek çekilişler en sonda
+        span = min(LEAF_CURVE_WORKDAYS, len(workdays))
+        planned = []
+        for leaf in leaves:
+            first = rng.randrange(len(workdays) - span + 1)
+            planned += [
+                PlannedMhr.for_leaf(leaf, day, rng.choice(hours_pool))
+                for day in workdays[first : first + span]
+            ]
     end = START + timedelta(days=days - 1)
     inp = EngineInput(
         calendar=CalendarSettings(START, end),
