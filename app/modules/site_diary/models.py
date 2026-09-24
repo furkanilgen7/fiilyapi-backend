@@ -37,6 +37,13 @@ class Weather(str, enum.Enum):
     cloudy = "cloudy"
     rainy = "rainy"
     snowy = "snowy"
+    # PLN-B2.1 (B2-1): mockup `Şantiye - Günlük Kayıt (İlerleme)` İ:283-291 anahtarları.
+    # Mevcut beş değer DEĞİŞMEZ (eşleme gerekmez); yalnız EKLEME — sözleşme kırılmaz.
+    heavy_rain = "heavy_rain"  # "Sağanak"
+    drizzle = "drizzle"  # "Hafif yağmur"
+    windy = "windy"  # "Rüzgârlı"
+    dusty = "dusty"  # "Tozlu"
+    foggy = "foggy"  # "Sisli"
 
 
 class DiaryStatus(str, enum.Enum):
@@ -96,6 +103,24 @@ class SiteDiaryEntry(Base):
             "temperature_c IS NULL OR temperature_c BETWEEN -60 AND 60",
             name="ck_site_diary_entries_temperature_range",
         ),
+        # PLN-B2.1 (B2-2): min/max sicaklik + ruzgar. Sinirlar semadaki alan
+        # dogrulamasiyla BIREBIR (`schemas._TEMP_*`, `_WIND_MAX`).
+        CheckConstraint(
+            "temp_min_c IS NULL OR temp_min_c BETWEEN -60 AND 60",
+            name="ck_site_diary_entries_temp_min_range",
+        ),
+        CheckConstraint(
+            "temp_max_c IS NULL OR temp_max_c BETWEEN -60 AND 60",
+            name="ck_site_diary_entries_temp_max_range",
+        ),
+        CheckConstraint(
+            "temp_min_c IS NULL OR temp_max_c IS NULL OR temp_min_c <= temp_max_c",
+            name="ck_site_diary_entries_temp_min_le_max",
+        ),
+        CheckConstraint(
+            "wind_ms IS NULL OR wind_ms BETWEEN 0 AND 80",
+            name="ck_site_diary_entries_wind_range",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -122,7 +147,18 @@ class SiteDiaryEntry(Base):
     # Hava/sicaklik/aciklama alanlari NULLABLE: taslak yarim doldurulabilir
     # (P6 `is_draft` gerekcesinin aynisi — zorunluluk `submit` katmanindadir).
     weather: Mapped[Weather | None] = mapped_column(Enum(Weather, name="weather"), nullable=True)
+    # 🔴 KULLANIMDAN KALKIYOR (PLN-B2.1, B2-2): tek dogruluk kaynagi `temp_max_c`dir.
+    # Kolon BU SURUMDE KALIR (genislet/daralt): Railway acilista `alembic upgrade`
+    # kosar ve eski konteyner yeni migration'dan sonra bir sure daha trafik alir —
+    # kolon dusurulseydi eski kodun SELECT'i o pencerede 500 verirdi; kod geri
+    # alinirsa (redeploy) da ayni. Servis her yazmada `temperature_c = temp_max_c`
+    # esitler (`service._sync_legacy_temperature`, TEK yer). Alan F2 merge'unden
+    # sonra ayri gorevle kolonla birlikte kalkar.
     temperature_c: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), nullable=True)
+    temp_min_c: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), nullable=True)
+    temp_max_c: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), nullable=True)
+    # m/s (mockup "Rüzgâr m/s"; km/s istemci türevi).
+    wind_ms: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), nullable=True)
     work_done: Mapped[str | None] = mapped_column(Text, nullable=True)
     # E7 143 — GK'de yok, korunur (spec §2).
     chief_note: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -159,7 +195,9 @@ class SiteDiaryEntry(Base):
     lines: Mapped[list["SiteDiaryLine"]] = relationship(
         lazy="selectin",
         cascade="all, delete-orphan",
-        order_by="SiteDiaryLine.code",
+        # PLN-B2.1: ayni kalemin yapraklari ayni `code`u tasir — Bolumsuz once,
+        # sonra bolum kimligi (deterministik sira; ekran ve anlik goruntu testleri).
+        order_by="(SiteDiaryLine.code, SiteDiaryLine.section_id.nulls_first())",
     )
     worker_counts: Mapped[list["SiteDiaryWorkerCount"]] = relationship(
         lazy="selectin",
@@ -190,12 +228,26 @@ class SiteDiaryLine(Base):
         CheckConstraint("unit_price >= 0", name="ck_site_diary_lines_unit_price_nonneg"),
         # Kismi benzersiz indeks (repo deseni): bagi kopmus (NULL) satirlar
         # coklanabilir, yoksa tek bir poz silindiginde tum NULL satirlar catisirdi.
+        #
+        # PLN-B2.1 (B2-8 / spec §2 "yaprak = kalem × bolum"): tekillik
+        # (kayit, poz) → (kayit, poz, bolum). Bir UNIQUE'te NULL'lar birbirinden
+        # FARKLI sayildigi icin "Bolumsuz" (section_id IS NULL) dali AYRI bir
+        # kismi indeksle korunur — tek indeks (entry, poz, bolum) iki Bolumsuz
+        # satiri sessizce coklardi.
         Index(
-            "uq_site_diary_lines_boq_item",
+            "uq_site_diary_lines_item_section",
+            "entry_id",
+            "boq_item_id",
+            "section_id",
+            unique=True,
+            postgresql_where=text("boq_item_id IS NOT NULL AND section_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_site_diary_lines_item_nosection",
             "entry_id",
             "boq_item_id",
             unique=True,
-            postgresql_where=text("boq_item_id IS NOT NULL"),
+            postgresql_where=text("boq_item_id IS NOT NULL AND section_id IS NULL"),
         ),
     )
 
@@ -213,10 +265,30 @@ class SiteDiaryLine(Base):
         nullable=True,
         index=True,
     )
+    # PLN-B2.1: satirin BOLUMU (yaprak = kalem × bolum). NULL = "Bolumsuz": kalemin
+    # bolume tahsis EDILMEMIS kalani (spec §3.9 B1-3) — ve eski istemcinin tek
+    # yazabildigi dal (geri uyum).
+    #
+    # 🔴 RESTRICT (SET NULL DEGIL): SET NULL bolum silininde (poz, S1) satirini
+    # (poz, NULL)a cevirir ve ayni kayittaki Bolumsuz satirla
+    # `uq_site_diary_lines_item_nosection` uzerinde CAKISIRDI (IntegrityError);
+    # cakismasa bile S1'de yapilan uretim sessizce "Bolumsuz"a tasinirdi.
+    # CASCADE gonderilmis gunlugun miktarini silerdi. Bolum silme yolunda
+    # "iliskili kayit var" korkulugu YOK (`sites/service/deletes.py::delete_section`
+    # bilincli kosulsuz) → bu gecici karardir, CEO sorusu PLN-B2.1 raporunda.
+    section_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sections.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
     code: Mapped[str] = mapped_column(String(50), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     unit: Mapped[str] = mapped_column(String(50), nullable=False)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    # PLN-B2.1 (B2-8): planli miktar asildiginda gerekce. Zorunlulugu cekirdekte
+    # DEGIL, Gonder portundadir (`app.core.day_hooks`, EV'li santiyede).
+    overrun_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     # GK228 "Bugun Yapilan". 0 mesru: BOQ iskeleti tum pozlari acar, o gun
     # dokunulmayan poz 0 kalir.
     quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False)
@@ -237,10 +309,34 @@ class SiteDiaryWorkerCount(Base):
 
     __tablename__ = "site_diary_worker_counts"
     __table_args__ = (
-        UniqueConstraint(
-            "entry_id", "trade", "source", name="uq_site_diary_worker_counts_entry_trade_source"
+        # PLN-B2.1 (B2-5): eski (meslek, kaynak) tekilligi YALNIZ firmasiz satirlarda
+        # korunur (kismi indeks). Firma satiri firma basina tekildir — ayni meslek
+        # iki farkli taseronda mesrudur.
+        Index(
+            "uq_site_diary_worker_counts_entry_trade_source",
+            "entry_id",
+            "trade",
+            "source",
+            unique=True,
+            postgresql_where=text("subcontractor_id IS NULL"),
+        ),
+        Index(
+            "uq_site_diary_worker_counts_entry_subcontractor",
+            "entry_id",
+            "subcontractor_id",
+            unique=True,
+            postgresql_where=text("subcontractor_id IS NOT NULL"),
         ),
         CheckConstraint("count >= 0", name="ck_site_diary_worker_counts_count_nonneg"),
+        CheckConstraint(
+            "hours IS NULL OR (hours > 0 AND hours <= 24)",
+            name="ck_site_diary_worker_counts_hours_range",
+        ),
+        # Firma bagi yalniz taseron kaynakli satirda anlamlidir.
+        CheckConstraint(
+            "subcontractor_id IS NULL OR source = 'subcontractor'",
+            name="ck_site_diary_worker_counts_subcontractor_source",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -255,6 +351,18 @@ class SiteDiaryWorkerCount(Base):
         Enum(WorkerSource, name="worker_source"), nullable=False
     )
     count: Mapped[int] = mapped_column(Integer, nullable=False)
+    # PLN-B2.1 (B2-5): taseron FIRMA satiri — "puantaji tutulmayan firma ekibi".
+    # 🔴 RESTRICT: satir o gunun firma adam-saatinin kaniti; firma silinince
+    # SET NULL eski (meslek, kaynak) kismi tekilligiyle cakisabilir ve saat kimin
+    # oldugunu kaybederdi. Emsal `invoicing.models` (subcontractors → RESTRICT).
+    subcontractor_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("subcontractors.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    # Kisi basi saat (0 < h <= 24). Firma adam-saati = count × hours (turev).
+    hours: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -10,6 +10,7 @@ buradan hiçbir şey İMPORT ETMEZ — döngüsel import doğmaz.
 
 import uuid
 from decimal import Decimal
+from typing import NamedTuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -52,23 +53,86 @@ def worker_total(entry: SiteDiaryEntry) -> int:
     return sum(row.count for row in entry.worker_counts)
 
 
-def cumulative_quantity(line: SiteDiaryLine, prior: dict[uuid.UUID, Decimal]) -> Decimal:
-    """GK229 kümülatifi — TÜREV (kolon yok, spec §2).
+def cumulative_quantity(
+    line: SiteDiaryLine, prior: dict[uuid.UUID, Decimal], own: dict[uuid.UUID, Decimal]
+) -> Decimal:
+    """GK229 kümülatifi — TÜREV (kolon yok, spec §2). **KALEM düzeyinde, AY içinde.**
 
     `prior` = ay başından bu güne kadarki **gönderilmiş** kayıtların poz bazlı
-    toplamı (`repository.cumulative_quantities_before`); üstüne BU kaydın kendi
-    miktarı eklenir. Gerekçe `schemas.SiteDiaryLineRead.cumulative_quantity`
-    docstring'indedir.
+    toplamı (`repository.cumulative_quantities_before`); üstüne BU kaydın o
+    kaleme ait BÜTÜN satırlarının (PLN-B2.1: bölümler dahil) miktarı eklenir
+    (`own`). Böylece ayın son gönderilmiş kaydında değer `summary`nin kalem
+    miktarına BİREBİR eşit kalır (summary docstring'indeki değişmez). Bölüm
+    kırılımsız (eski) veride satır başına bir kalem olduğundan değer AYNIDIR.
+    Yaprak (kalem × bölüm) kümülatifi ayrı alandır: `leaf_cumulative`.
 
     Bağı kopmuş satırın (`boq_item_id IS NULL`) geçmişi ADRESLENEMEZ: yalnız
     kendi miktarını gösterir, sessizce başka bir pozun toplamına yazılmaz.
     """
     if line.boq_item_id is None:
         return line.quantity
-    return prior.get(line.boq_item_id, _ZERO_QUANTITY) + line.quantity
+    return prior.get(line.boq_item_id, _ZERO_QUANTITY) + own[line.boq_item_id]
 
 
-def _line_read(line: SiteDiaryLine, prior: dict[uuid.UUID, Decimal]) -> SiteDiaryLineRead:
+class _LeafContext(NamedTuple):
+    """Yaprak türevlerinin girdileri — kayıt başına SABİT sayıda toplu sorgu."""
+
+    prior: dict[tuple[uuid.UUID, uuid.UUID | None], Decimal]
+    allocations: dict[tuple[uuid.UUID, uuid.UUID], Decimal]
+    item_quantities: dict[uuid.UUID, Decimal]
+
+
+async def _leaf_context(session: AsyncSession, entry: SiteDiaryEntry) -> _LeafContext:
+    """Üç toplu sorgu (yaprak ön-toplamı · tahsisler · kalem miktarları); satırsız
+    ya da yalnız bağı kopmuş satırlı kayıtta HİÇ sorgu açılmaz (N+1 yok)."""
+    item_ids = {line.boq_item_id for line in entry.lines if line.boq_item_id is not None}
+    if not item_ids:
+        return _LeafContext(prior={}, allocations={}, item_quantities={})
+    prior = await repository.leaf_cumulative_before(
+        session, entry.site_id, entry.entry_date, item_ids
+    )
+    allocations = await repository.allocations_for_items(session, item_ids)
+    items = await repository.get_boq_items_by_ids(session, list(item_ids))
+    return _LeafContext(
+        prior=prior,
+        allocations=allocations,
+        item_quantities={item_id: item.quantity for item_id, item in items.items()},
+    )
+
+
+def planned_quantity(line: SiteDiaryLine, leaf: _LeafContext) -> Decimal | None:
+    """Yaprağın planlı miktarı (spec §3.9 B1-3).
+
+    Bölümlü: kalemin o bölüme tahsisi (tahsisi sonradan kalkmışsa 0). Bölümsüz:
+    kalem miktarı − Σ tahsis, 0'ın altına inmez (K3 invariantı Σ tahsis ≤ miktar;
+    korkuluk yine de burada durur). Bağı kopmuş satırda `None`.
+    """
+    if line.boq_item_id is None or line.boq_item_id not in leaf.item_quantities:
+        return None
+    if line.section_id is not None:
+        return leaf.allocations.get((line.boq_item_id, line.section_id), _ZERO_QUANTITY)
+    allocated = sum(
+        (qty for (item_id, _), qty in leaf.allocations.items() if item_id == line.boq_item_id),
+        _ZERO_QUANTITY,
+    )
+    return max(leaf.item_quantities[line.boq_item_id] - allocated, _ZERO_QUANTITY)
+
+
+def leaf_cumulative(line: SiteDiaryLine, leaf: _LeafContext) -> Decimal | None:
+    """Yaprak kümülatifi: bu günden ÖNCEKİ gönderilmişler (tüm zamanlar) + bu satır."""
+    if line.boq_item_id is None:
+        return None
+    return leaf.prior.get((line.boq_item_id, line.section_id), _ZERO_QUANTITY) + line.quantity
+
+
+def _line_read(
+    line: SiteDiaryLine,
+    prior: dict[uuid.UUID, Decimal],
+    own: dict[uuid.UUID, Decimal],
+    leaf: _LeafContext,
+) -> SiteDiaryLineRead:
+    planned = planned_quantity(line, leaf)
+    cumulative = leaf_cumulative(line, leaf)
     return SiteDiaryLineRead(
         id=line.id,
         boq_item_id=line.boq_item_id,
@@ -77,9 +141,24 @@ def _line_read(line: SiteDiaryLine, prior: dict[uuid.UUID, Decimal]) -> SiteDiar
         unit=line.unit,
         unit_price=line.unit_price,
         quantity=line.quantity,
-        cumulative_quantity=cumulative_quantity(line, prior),
+        cumulative_quantity=cumulative_quantity(line, prior, own),
         line_amount=line_amount(line),
+        section_id=line.section_id,
+        overrun_reason=line.overrun_reason,
+        leaf_cumulative_quantity=cumulative,
+        planned_quantity=planned,
+        remaining_quantity=(
+            None if planned is None or cumulative is None else planned - cumulative
+        ),
     )
+
+
+def _own_item_totals(entry: SiteDiaryEntry) -> dict[uuid.UUID, Decimal]:
+    totals: dict[uuid.UUID, Decimal] = {}
+    for line in entry.lines:
+        if line.boq_item_id is not None:
+            totals[line.boq_item_id] = totals.get(line.boq_item_id, _ZERO_QUANTITY) + line.quantity
+    return totals
 
 
 async def build_detail(session: AsyncSession, context: EntryContext) -> SiteDiaryEntryDetail:
@@ -89,11 +168,16 @@ async def build_detail(session: AsyncSession, context: EntryContext) -> SiteDiar
     KEZ koşardı.
 
     T3'te `async` oldu: kümülatif türevi (GK229) TEK toplu sorgu ister
-    (`prior`, satır başına sorgu YOK). Sorgu ilişkilere DOKUNMAZ, bu yüzden
-    `worker_counts`/`lines` `selectin` yüklemesi bozulmaz.
+    (`prior`, satır başına sorgu YOK). PLN-B2.1 yaprak türevleri üç toplu sorgu
+    daha ekler (`_leaf_context`) — kayıt başına SABİT. Sorgular ilişkilere
+    DOKUNMAZ, bu yüzden `worker_counts`/`lines` `selectin` yüklemesi bozulmaz.
+
+    `temperature_c` (kullanımdan kalkıyor, B2-2) `temp_max_c`den TÜRETİLİR.
     """
     entry = context.entry
     prior = await repository.cumulative_quantities_before(session, entry.site_id, entry.entry_date)
+    own = _own_item_totals(entry)
+    leaf = await _leaf_context(session, entry)
     return SiteDiaryEntryDetail(
         id=entry.id,
         site_id=entry.site_id,
@@ -101,7 +185,10 @@ async def build_detail(session: AsyncSession, context: EntryContext) -> SiteDiar
         entry_date=entry.entry_date,
         section_id=entry.section_id,
         weather=entry.weather,
-        temperature_c=entry.temperature_c,
+        temperature_c=entry.temp_max_c,
+        temp_min_c=entry.temp_min_c,
+        temp_max_c=entry.temp_max_c,
+        wind_ms=entry.wind_ms,
         work_done=entry.work_done,
         chief_note=entry.chief_note,
         safety_meeting_held=entry.safety_meeting_held,
@@ -113,9 +200,16 @@ async def build_detail(session: AsyncSession, context: EntryContext) -> SiteDiar
         created_by=entry.created_by,
         created_at=entry.created_at,
         updated_at=entry.updated_at,
-        lines=[_line_read(line, prior) for line in entry.lines],
+        lines=[_line_read(line, prior, own, leaf) for line in entry.lines],
         worker_counts=[
-            SiteDiaryWorkerCountRead(id=row.id, trade=row.trade, source=row.source, count=row.count)
+            SiteDiaryWorkerCountRead(
+                id=row.id,
+                trade=row.trade,
+                source=row.source,
+                count=row.count,
+                subcontractor_id=row.subcontractor_id,
+                hours=row.hours,
+            )
             for row in entry.worker_counts
         ],
         lines_total=lines_total(entry),

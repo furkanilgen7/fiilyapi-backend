@@ -11,7 +11,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.modules.progress_payments.schemas import ProgressPaymentLineInput
 from app.modules.site_diary import guards
@@ -42,6 +42,21 @@ __all__ = [
 # gövdesi hangi alanın yanlış olduğunu söyler.
 _TEMP_MIN = Decimal("-60")
 _TEMP_MAX = Decimal("60")
+# PLN-B2.1 (B2-2): `ck_site_diary_entries_wind_range` ile BİREBİR.
+_WIND_MIN = Decimal("0")
+_WIND_MAX = Decimal("80")
+# `Numeric(4,1)` — yeni alanlar ölçeği Pydantic'te zorlar (eski `temperature_c`
+# ZORLAMAZ: onun sözleşmesi değişmez, PG yuvarlar).
+_TENTHS_DIGITS = 4
+_TENTHS_DECIMALS = 1
+# PLN-B2.1 (B2-5): `ck_site_diary_worker_counts_hours_range` ile BİREBİR (0 < h ≤ 24).
+_HOURS_MAX = Decimal("24")
+
+_TEMPERATURE_C_DEPRECATED = (
+    "KULLANIMDAN KALKIYOR (PLN-B2.1): `temp_min_c` + `temp_max_c` kullanın. İstekte "
+    "yeni alanlar YOKSA kabul edilir ve ikisine de yazılır; yeni alanlardan biri "
+    "gelirse bu alan YOK SAYILIR. Yanıtta `temp_max_c`nin salt okunur kopyasıdır."
+)
 
 
 # `Numeric(14,3)` ile BİREBİR: 11 tam + 3 ondalık basamak. Sınır Pydantic'te
@@ -70,6 +85,22 @@ class SiteDiaryLineInput(BaseModel):
     boq_item_id: uuid.UUID
     quantity: Decimal = Field(ge=0, max_digits=_QUANTITY_DIGITS, decimal_places=_QUANTITY_DECIMALS)
     """0 meşrudur: iskelet TÜM pozları açar, o gün dokunulmayan poz sıfır kalır (GK228)."""
+    section_id: uuid.UUID | None = None
+    """PLN-B2.1 — yaprak = kalem × bölüm. `None` = "Bölümsüz" (kalemin bölüme tahsis
+    edilmemiş kalanı; eski istemcinin tek dalı). Dolu ise bölüm şantiyeye ait VE
+    kalemin o bölüme tahsisi (`boq_item_section_allocations`) olmalıdır — yoksa 422.
+    Satır kimliği artık (`boq_item_id`, `section_id`) ikilisidir."""
+    overrun_reason: str | None = None
+    """PLN-B2.1 (B2-8) — planlı miktar aşımının gerekçesi. Boşluk kırpılır, boş = `None`.
+    Zorunluluğu çekirdekte DEĞİL Gönder portundadır (EV'li şantiyede)."""
+
+    @field_validator("overrun_reason")
+    @classmethod
+    def _gerekce_kirp(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        kirpilmis = value.strip()
+        return kirpilmis or None
 
 
 class SiteDiaryLinesSave(BaseModel):
@@ -92,6 +123,24 @@ class SiteDiaryWorkerCountInput(BaseModel):
     trade: str = Field(max_length=100)
     source: WorkerSource
     count: int = Field(ge=0)
+    subcontractor_id: uuid.UUID | None = None
+    """PLN-B2.1 (B2-5) — taşeron FİRMA satırı (puantajı tutulmayan firma ekibi). Dolu
+    ise `source` `subcontractor` olmalıdır; satır kimliği o zaman FİRMADIR (firma
+    başına tek satır). Boşsa eski (`trade`, `source`) kimliği geçerlidir."""
+    hours: Decimal | None = Field(
+        default=None,
+        gt=0,
+        le=_HOURS_MAX,
+        max_digits=_TENTHS_DIGITS,
+        decimal_places=_TENTHS_DECIMALS,
+    )
+    """PLN-B2.1 (B2-5) — kişi başı saat (0 < h ≤ 24). Adam-saat = `count × hours`."""
+
+    @model_validator(mode="after")
+    def _firma_yalniz_taseronda(self) -> "SiteDiaryWorkerCountInput":
+        if self.subcontractor_id is not None and self.source is not WorkerSource.subcontractor:
+            raise ValueError(guards.WORKER_SUBCONTRACTOR_SOURCE)
+        return self
 
     @field_validator("trade")
     @classmethod
@@ -122,13 +171,47 @@ class SiteDiaryEntryCreate(BaseModel):
     entry_date: date
     section_id: uuid.UUID | None = None
     weather: Weather | None = None
-    temperature_c: Decimal | None = Field(default=None, ge=_TEMP_MIN, le=_TEMP_MAX)
+    temperature_c: Decimal | None = Field(
+        default=None,
+        ge=_TEMP_MIN,
+        le=_TEMP_MAX,
+        deprecated=True,
+        description=_TEMPERATURE_C_DEPRECATED,
+    )
+    temp_min_c: Decimal | None = Field(
+        default=None,
+        ge=_TEMP_MIN,
+        le=_TEMP_MAX,
+        max_digits=_TENTHS_DIGITS,
+        decimal_places=_TENTHS_DECIMALS,
+    )
+    temp_max_c: Decimal | None = Field(
+        default=None,
+        ge=_TEMP_MIN,
+        le=_TEMP_MAX,
+        max_digits=_TENTHS_DIGITS,
+        decimal_places=_TENTHS_DECIMALS,
+    )
+    wind_ms: Decimal | None = Field(
+        default=None,
+        ge=_WIND_MIN,
+        le=_WIND_MAX,
+        max_digits=_TENTHS_DIGITS,
+        decimal_places=_TENTHS_DECIMALS,
+    )
     work_done: str | None = None
     chief_note: str | None = None
     safety_meeting_held: bool = False
     ppe_checked: bool = False
     has_incident: bool = False
     incident_note: str | None = None
+
+    @model_validator(mode="after")
+    def _min_max(self) -> "SiteDiaryEntryCreate":
+        """Gövde İÇİ min ≤ max. PATCH'te karar birleşik değer üzerinden serviste verilir."""
+        if not guards.temp_order_ok(self.temp_min_c, self.temp_max_c):
+            raise ValueError(guards.TEMP_ORDER)
+        return self
 
 
 class SiteDiaryEntryUpdate(BaseModel):
@@ -154,7 +237,34 @@ class SiteDiaryEntryUpdate(BaseModel):
     entry_date: date | None = None
     section_id: uuid.UUID | None = None
     weather: Weather | None = None
-    temperature_c: Decimal | None = Field(default=None, ge=_TEMP_MIN, le=_TEMP_MAX)
+    temperature_c: Decimal | None = Field(
+        default=None,
+        ge=_TEMP_MIN,
+        le=_TEMP_MAX,
+        deprecated=True,
+        description=_TEMPERATURE_C_DEPRECATED,
+    )
+    temp_min_c: Decimal | None = Field(
+        default=None,
+        ge=_TEMP_MIN,
+        le=_TEMP_MAX,
+        max_digits=_TENTHS_DIGITS,
+        decimal_places=_TENTHS_DECIMALS,
+    )
+    temp_max_c: Decimal | None = Field(
+        default=None,
+        ge=_TEMP_MIN,
+        le=_TEMP_MAX,
+        max_digits=_TENTHS_DIGITS,
+        decimal_places=_TENTHS_DECIMALS,
+    )
+    wind_ms: Decimal | None = Field(
+        default=None,
+        ge=_WIND_MIN,
+        le=_WIND_MAX,
+        max_digits=_TENTHS_DIGITS,
+        decimal_places=_TENTHS_DECIMALS,
+    )
     work_done: str | None = None
     chief_note: str | None = None
     safety_meeting_held: bool | None = None
@@ -203,6 +313,22 @@ class SiteDiaryLineRead(BaseModel):
     line_amount: Decimal
     """GK230 ₺ katkısı = `quantity × unit_price`, KATSAYISIZ (spec §2): fiyat
     farkı katsayısı hakediş katmanının işidir, günlüğün değil. TÜREV — kolon yok."""
+    section_id: uuid.UUID | None = None
+    """PLN-B2.1 — satırın bölümü; `None` = "Bölümsüz"."""
+    overrun_reason: str | None = None
+    """PLN-B2.1 (B2-8) — planlı miktar aşımı gerekçesi."""
+    leaf_cumulative_quantity: Decimal | None = None
+    """PLN-B2.1 — YAPRAK (kalem × bölüm) kümülatifi, TÜM ZAMANLAR: aynı şantiye + aynı
+    kalem + AYNI bölüm (Bölümsüz = Bölümsüz) için bu günden ÖNCEKİ **gönderilmiş**
+    günlüklerin toplamı + BU satırın miktarı (kaydın durumu ne olursa olsun).
+    `cumulative_quantity`den FARKI: ay sınırı YOK ve bölüm kırılımlıdır (planlı
+    miktarla kıyaslanan budur). Bağı kopmuş satırda `None`."""
+    planned_quantity: Decimal | None = None
+    """PLN-B2.1 — yaprağın planlı miktarı: bölümlü satırda kalemin o bölüme TAHSİSİ;
+    Bölümsüz'de kalem miktarı − Σ tahsis (tahsis edilmemiş kalan, ≥ 0). Tahsisi
+    sonradan kaldırılmış bölümlü satırda 0. Bağı kopmuş satırda `None`."""
+    remaining_quantity: Decimal | None = None
+    """PLN-B2.1 — `planned_quantity − leaf_cumulative_quantity`; NEGATİF = aşım."""
 
 
 class SiteDiaryWorkerCountRead(BaseModel):
@@ -212,6 +338,10 @@ class SiteDiaryWorkerCountRead(BaseModel):
     trade: str = Field(max_length=100)
     source: WorkerSource
     count: int
+    subcontractor_id: uuid.UUID | None = None
+    """PLN-B2.1 (B2-5) — taşeron firma satırı ise firma."""
+    hours: Decimal | None = None
+    """PLN-B2.1 (B2-5) — kişi başı saat."""
 
 
 class SiteDiaryEntryListItem(BaseModel):
@@ -253,7 +383,7 @@ class SiteDiaryEntryDetail(BaseModel):
     entry_date: date
     section_id: uuid.UUID | None
     weather: Weather | None
-    temperature_c: Decimal | None
+    temperature_c: Decimal | None = Field(deprecated=True, description=_TEMPERATURE_C_DEPRECATED)
     work_done: str | None
     chief_note: str | None
     safety_meeting_held: bool
@@ -269,6 +399,9 @@ class SiteDiaryEntryDetail(BaseModel):
     worker_counts: list[SiteDiaryWorkerCountRead]
     lines_total: Decimal
     worker_total: int
+    temp_min_c: Decimal | None = None
+    temp_max_c: Decimal | None = None
+    wind_ms: Decimal | None = None
     dropped_orphan_count: int | None = None
     """YALNIZ `PUT …/lines` yanıtında dolar (T3). Bağı kopmuş satır (`boq_item_id
     IS NULL`, FK `SET NULL`) gövdeden ADRESLENEMEZ, bu yüzden ilk kaydetmede

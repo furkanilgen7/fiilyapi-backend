@@ -30,6 +30,7 @@ kayıt üzerinde tüm kurallar koşar. Bu koşullama servis katmanının (C8/C9)
 — `validate_subcontract` yalnız `is_draft` bayrağına göre kararı verir.
 """
 
+from datetime import date
 from typing import Protocol
 
 from app.core.errors import SiteValidationError
@@ -102,6 +103,20 @@ def boq_code_taken_in_site(site_name: str, code: str) -> str:
 # (`sites/guards.py`'deki `BLOCK_HAS_UNITS` dersi).
 SUBCONTRACTOR_HAS_CONTRACTS = "Bu taşeronun sözleşmesi var, önce sözleşmeleri silin"
 GROUP_HAS_ITEMS = "Bu grupta poz var, önce pozları silin"
+
+
+def subcontractor_has_diary_rows(entry_count: int, row_count: int, first_date: date) -> str:
+    """PLN-B2.11 — taşeronun günlük FİRMA işçi satırı varken taşeron silinemez (409).
+
+    "Adet verilmez" kuralının BİLİNÇLİ istisnası (CEO kararı, PLN-B2.10/11 ikizi):
+    firma satırı o günün firma adam-saatinin kanıtıdır; kullanıcı hangi
+    günlükleri düzelteceğini bilmeden engeli aşamaz.
+    """
+    return (
+        f"Taşeronun {entry_count} günlükte {row_count} işçi satırı var "
+        f"(ilk: {first_date:%d.%m.%Y}); silinemez"
+    )
+
 
 # 403 — `DELETE /subcontractor-contracts/{id}` `can_delete` (app/core/access.py)
 # taslak istisnasını sağlamayan aktöre döner. `require_permission`in ürettiği

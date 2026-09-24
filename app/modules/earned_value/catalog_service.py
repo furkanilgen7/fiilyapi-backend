@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from sqlalchemy import exists, func, or_, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, DuplicateError, NotFoundError, RelatedRecordsExistError
@@ -48,16 +48,6 @@ from app.modules.earned_value.schemas_catalog import (
 
 #: Katalog oran kolonunun kuantumu (Numeric(12,4)) — benimsenen ortalama buna oturur.
 _RATE_QUANTUM = Decimal(1).scaleb(-RATE_PRECISION[1])
-
-#: Disiplini "kullanimda" sayan tablolar (B1-9). FK'leri RESTRICT'tir; bu liste
-#: 409'u Turkce metinle vermek icindir, DB kisiti ikinci katmandir.
-_DISCIPLINE_USERS = (
-    EvGroupDiscipline.discipline_id,
-    EvCatalogItem.discipline_id,
-    EvDistribution.discipline_id,
-    EvWindow.discipline_id,
-    EvBaselineLeaf.discipline_id,
-)
 
 
 @dataclass(frozen=True)
@@ -116,16 +106,64 @@ async def update_discipline(
     return discipline
 
 
-async def discipline_in_use(session: AsyncSession, discipline_id: uuid.UUID) -> bool:
-    clauses = [exists().where(column == discipline_id) for column in _DISCIPLINE_USERS]
-    return bool((await session.execute(select(or_(*clauses)))).scalar_one())
+@dataclass(frozen=True)
+class DisciplineUsage:
+    item_count: int  # katalog is tipi sayisi
+    site_count: int  # disipline BOQ grubu eslenmis (ya da donmus baseline'i olan) santiye
+
+
+async def discipline_usage(
+    session: AsyncSession, discipline_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, DisciplineUsage]:
+    """Liste icin TOPLU sayim — iki sorgu, disiplin basina sorgu YOK (N+1 degil).
+
+    Santiye sayisi = grup eslemesi (aktif/taslak/arsiv fark etmez) ∪ donmus baseline yapragi.
+    🔴 Baseline'i da saymak zorunlu: BOQ grubu silinince eslemesi CASCADE ile gider ama
+    baseline yapragi disipline RESTRICT ile bagli kalir — saymasaydik "0 santiye" deyip
+    silmeye izin verir, sonra FK'ya carpardik (500).
+    """
+    if not discipline_ids:
+        return {}
+    items = dict(
+        (
+            await session.execute(
+                select(EvCatalogItem.discipline_id, func.count())
+                .where(EvCatalogItem.discipline_id.in_(discipline_ids))
+                .group_by(EvCatalogItem.discipline_id)
+            )
+        ).all()
+    )
+    mapped = select(EvGroupDiscipline.discipline_id.label("d"), EvRevision.site_id.label("s")).join(
+        EvRevision, EvRevision.id == EvGroupDiscipline.revision_id
+    )
+    frozen = select(EvBaselineLeaf.discipline_id.label("d"), EvRevision.site_id.label("s")).join(
+        EvRevision, EvRevision.id == EvBaselineLeaf.revision_id
+    )
+    both = mapped.union_all(frozen).subquery()
+    sites = dict(
+        (
+            await session.execute(
+                select(both.c.d, func.count(func.distinct(both.c.s)))
+                .where(both.c.d.in_(discipline_ids))
+                .group_by(both.c.d)
+            )
+        ).all()
+    )
+    return {d: DisciplineUsage(items.get(d, 0), sites.get(d, 0)) for d in discipline_ids}
 
 
 async def delete_discipline(session: AsyncSession, discipline_id: uuid.UUID) -> EvDiscipline:
-    """Kullanilmayan disiplini siler; silinen kaydi (denetim metni icin) doner."""
+    """Kullanilmayan disiplini siler (kural = sayaclar: is tipi 0 VE santiye 0).
+
+    Sayaclar sifirken kalabilecek tek iz, eslemesi kalmamis revizyonlardaki dagilim tipi /
+    pencere EZMESIDIR — grubu olmayan disiplin icin anlamsizdir, disiplinle birlikte silinir.
+    """
     discipline = await get_discipline(session, discipline_id)
-    if await discipline_in_use(session, discipline.id):
+    usage = (await discipline_usage(session, [discipline.id]))[discipline.id]
+    if usage.item_count or usage.site_count:
         raise RelatedRecordsExistError(guards.DISCIPLINE_IN_USE)
+    for model in (EvDistribution, EvWindow):
+        await session.execute(delete(model).where(model.discipline_id == discipline.id))
     await session.delete(discipline)
     await session.flush()
     return discipline

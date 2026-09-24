@@ -16,6 +16,7 @@ from typing import NamedTuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import day_hooks
 from app.core.access import AccessLevel, can_delete
 from app.core.errors import (
     ConflictError,
@@ -165,6 +166,55 @@ async def _assert_date_free(
         raise DuplicateError(guards.ENTRY_DATE_TAKEN)
 
 
+async def assert_entry_days_unlocked(
+    session: AsyncSession, entry: SiteDiaryEntry, *extra_days: date
+) -> None:
+    """PLN-B2.6 KİLİT PORTU — günlüğün HER yazma yolu bunu çağırır (409).
+
+    Kilit kararı çekirdeğin DEĞİLDİR: port (`app.core.day_hooks`) kayıtlı modüle
+    (EV rapor onayı) sorar; kayıt yoksa no-op, yani modülsüz kurulum bugünkü gibi
+    çalışır (spec §2.7). `extra_days`: tarihi DEĞİŞEN PATCH'in hedef günü — kilitli
+    güne kayıt TAŞINAMAZ, kilitli günden de kaçırılamaz.
+    """
+    await day_hooks.assert_days_unlocked(session, entry.site_id, [entry.entry_date, *extra_days])
+
+
+_NEW_TEMPERATURE_FIELDS = frozenset({"temp_min_c", "temp_max_c"})
+
+
+def _translate_legacy_temperature(
+    changes: dict[str, object], fields_set: set[str]
+) -> dict[str, object]:
+    """B2-2 geri uyumu — `temperature_c` (kullanımdan kalkıyor) → `temp_min_c`/`temp_max_c`.
+
+    Kural (CEO, §3.12 B2-2): istekte YENİ alanların İKİSİ DE YOKSA ve `temperature_c`
+    VARSA değer ikisine de yazılır; yeni alanlardan biri geldiyse `temperature_c`
+    YOK SAYILIR (yeni alanlar kazanır). `temperature_c` kolonu bu sözlükten DÜŞER —
+    kolonun tek yazarı `_sync_legacy_temperature`dır. Yeni sözlük döner (girdi
+    değişmez).
+    """
+    result = {key: value for key, value in changes.items() if key != "temperature_c"}
+    if "temperature_c" in fields_set and not (fields_set & _NEW_TEMPERATURE_FIELDS):
+        result["temp_min_c"] = changes["temperature_c"]
+        result["temp_max_c"] = changes["temperature_c"]
+    return result
+
+
+def _sync_legacy_temperature(entry: SiteDiaryEntry) -> None:
+    """`temperature_c` kolonu = `temp_max_c` — TEK yazar (model notu: genişlet/daralt).
+
+    Eski konteyner/geri alınmış kod bu kolonu okur; yanıt ise alanı `temp_max_c`den
+    türetir (`read.build_detail`), yani kolon bu sürümde yalnız GERİ UYUM kopyasıdır.
+    """
+    entry.temperature_c = entry.temp_max_c
+
+
+def _assert_temperature_order(entry: SiteDiaryEntry) -> None:
+    """BİRLEŞİK değer (gövde + mevcut) üzerinden min ≤ max — PATCH tek alan getirebilir."""
+    if not guards.temp_order_ok(entry.temp_min_c, entry.temp_max_c):
+        raise SiteValidationError(guards.TEMP_ORDER)
+
+
 # --- Satır iskeleti (GK: satır ekle/sil YOK, liste BOQ'dan gelir) ---
 
 
@@ -208,19 +258,23 @@ async def create(
     bırakmaz.
     """
     site, project = await visible_site(session, actor, site_id)
+    await day_hooks.assert_days_unlocked(session, site.id, [data.entry_date])
     await _assert_date_free(session, site.id, data.entry_date)
     await _validate_section(session, data.section_id, site)
 
     # `**model_dump()` güvenlidir çünkü `SiteDiaryEntryCreate`in HER alanı bir
     # kolondur ve `status`/`submitted_at`/`created_by` şemada YOKTUR — gövdeden
     # durum ya da damga yazılamaz. Şemaya kolon olmayan bir alan eklenirse bu
-    # satır `TypeError` ile patlar; sessizce yok saymaz.
+    # satır `TypeError` ile patlar; sessizce yok saymaz. `temperature_c` (B2-2)
+    # `_translate_legacy_temperature` ile yeni alanlara çevrilir.
     entry = SiteDiaryEntry(
         site_id=site.id,
         project_id=site.project_id,
         created_by=actor.id,
-        **data.model_dump(),
+        **_translate_legacy_temperature(data.model_dump(), data.model_fields_set),
     )
+    _assert_temperature_order(entry)
+    _sync_legacy_temperature(entry)
     entry.lines = await _build_lines(session, site.id)
     session.add(entry)
     await session.flush()
@@ -245,10 +299,16 @@ async def update(
     boş liste gönderilirse TEMİZLENİR (T3).
     """
     context = await visible_entry_locked(session, actor, entry_id)
+    new_date = data.entry_date if "entry_date" in data.model_fields_set else None
+    await assert_entry_days_unlocked(
+        session, context.entry, *([new_date] if new_date is not None else [])
+    )
     if context.entry.status != DiaryStatus.draft:
         raise ConflictError(guards.ENTRY_NOT_EDITABLE)
 
-    changes = data.model_dump(exclude_unset=True)
+    changes = _translate_legacy_temperature(
+        data.model_dump(exclude_unset=True), data.model_fields_set
+    )
     # İşçi kırılımı bir KOLON DEĞİL bir İLİŞKİDİR: aşağıdaki `setattr` döngüsüne
     # girseydi ham `dict` listesi ilişkiye atanır, SQLAlchemy patlardı. Pydantic
     # nesneleri `data`dan okunur — `model_dump` onları `dict`e çevirmiştir.
@@ -263,8 +323,10 @@ async def update(
 
     for field, value in changes.items():
         setattr(context.entry, field, value)
+    _assert_temperature_order(context.entry)
+    _sync_legacy_temperature(context.entry)
     if worker_counts is not None:
-        lines.apply_worker_counts(context.entry, worker_counts)
+        await lines.apply_worker_counts(session, context.entry, worker_counts)
     await session.flush()
     await session.refresh(context.entry)
     return context
@@ -289,6 +351,7 @@ async def save_lines(
     İkinci öğe: gövdeden adreslenemediği için düşen bağı-kopmuş satır sayısı.
     """
     context = await visible_entry_locked(session, actor, entry_id)
+    await assert_entry_days_unlocked(session, context.entry)
     if context.entry.status != DiaryStatus.draft:
         raise ConflictError(guards.ENTRY_NOT_EDITABLE)
 
@@ -311,6 +374,7 @@ async def delete_entry(
     ondan SONRA koşsaydı hiç çalışmazdı.
     """
     entry, site, project = await visible_entry_locked(session, actor, entry_id)
+    await assert_entry_days_unlocked(session, entry)
 
     if entry.status != DiaryStatus.draft:
         raise ConflictError(guards.ENTRY_NOT_DELETABLE)

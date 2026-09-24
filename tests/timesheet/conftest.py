@@ -30,6 +30,7 @@ from app.modules.site_diary.models import WorkerSource
 from app.modules.sites.models import Section, Site
 from app.modules.timesheet.models import TimesheetCode, TimesheetEntry
 from app.modules.users.models import User, UserProjectAccess
+from tests.site_diary._port import port  # noqa: F401 — PLN-B2.1 port ikizi
 
 # Mockup dönemi: E5 139 "Temmuz 2026".
 YIL = 2026

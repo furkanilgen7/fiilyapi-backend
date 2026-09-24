@@ -8,6 +8,11 @@
 🔴 Eszamanlilik: her yazma `_lock_site` ile santiye satirini `FOR UPDATE` kilitler.
 Kilitsiz iki esanli "ilk yazma" iki Rev 0 acmaya calisir; kismi UQ ikincisini
 IntegrityError ile keserdi (500). Kilit onu siraya sokar ve ikinci yazma ayni taslagi gorur.
+Bekci: `tests/earned_value_budget/test_budget_concurrency.py` (B1-13).
+
+* Tamamlanmis santiyede butce yazmalari SALT OKUNUR (409, §3.11 B1-12). Kural TEK yerde:
+  `_writable_site` (kilit + durum). Taslak yolu `_draft_for_write` uzerinden, taslak
+  ac/sil ve dondur ile "bosları doldur" dogrudan cagirir. Okumalar serbesttir.
 """
 
 from __future__ import annotations
@@ -40,7 +45,7 @@ from app.modules.earned_value.models import (
     RateSource,
     RevisionStatus,
 )
-from app.modules.sites.models import Section, Site
+from app.modules.sites.models import Section, Site, SiteStatus
 from app.modules.users.models import User
 
 
@@ -54,6 +59,19 @@ class BudgetState:
 
 async def _lock_site(session: AsyncSession, site_id: uuid.UUID) -> None:
     await session.execute(select(Site.id).where(Site.id == site_id).with_for_update())
+
+
+async def _writable_site(session: AsyncSession, ctx: SiteContext) -> None:
+    """Her butce YAZMASININ girisi: santiye satirini kilitler, tamamlanmissa 409 (B1-12).
+
+    Durum kilit ALTINDA yeniden okunur (`ctx.site` kilitten once yuklendi): santiyeyi
+    "tamamlandi"ya ceken esanli bir guncelleme ayni satiri kilitler, dolayisiyla ya
+    ondan once biter ya da bizim yazmamiz tamamlanmis durumu gorur.
+    """
+    await _lock_site(session, ctx.site.id)
+    status = await session.scalar(select(Site.status).where(Site.id == ctx.site.id))
+    if status is SiteStatus.completed:
+        raise ConflictError(guards.SITE_COMPLETED_BUDGET_READ_ONLY)
 
 
 async def get_revision(session: AsyncSession, ctx: SiteContext, rev_id: uuid.UUID) -> EvRevision:
@@ -92,7 +110,7 @@ async def load_state(
 
 
 async def _draft_for_write(session: AsyncSession, ctx: SiteContext, actor: User) -> EvRevision:
-    await _lock_site(session, ctx.site.id)
+    await _writable_site(session, ctx)
     draft = await repo.revision_by_status(session, ctx.site.id, RevisionStatus.DRAFT)
     if draft is not None:
         return draft
@@ -123,7 +141,7 @@ async def _touch(session: AsyncSession, rev: EvRevision) -> None:
 
 async def open_draft(session: AsyncSession, ctx: SiteContext, actor: User) -> EvRevision:
     """ "Taslak revizyon ac": aktifin duzenlenebilir girdileri Rev N+1 taslagina kopyalanir."""
-    await _lock_site(session, ctx.site.id)
+    await _writable_site(session, ctx)
     if await repo.revision_by_status(session, ctx.site.id, RevisionStatus.DRAFT):
         raise ConflictError(guards.DRAFT_EXISTS)
     revisions = await repo.list_revisions(session, ctx.site.id)
@@ -152,7 +170,7 @@ async def _copy_inputs(session: AsyncSession, src: uuid.UUID, dst: uuid.UUID) ->
 
 
 async def delete_draft(session: AsyncSession, ctx: SiteContext, rev_id: uuid.UUID) -> EvRevision:
-    await _lock_site(session, ctx.site.id)
+    await _writable_site(session, ctx)
     rev = await get_revision(session, ctx, rev_id)
     if rev.status is not RevisionStatus.DRAFT:
         raise ConflictError(guards.NOT_DRAFT)

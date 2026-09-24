@@ -59,11 +59,21 @@ async def _audit(
 # ------------------------------------------------------------------ disiplin
 
 
+def _discipline_read(row, usage: catalog_service.DisciplineUsage) -> DisciplineRead:  # noqa: ANN001
+    return DisciplineRead.model_validate(row).model_copy(
+        update={
+            "used_by_item_count": usage.item_count,
+            "used_by_site_count": usage.site_count,
+        }
+    )
+
+
 @router.get("/earned-value/disciplines", response_model=list[DisciplineRead], dependencies=[VIEW])
 async def list_disciplines_endpoint(session: _Session) -> list[DisciplineRead]:
     """Sirket disiplinleri (K2) — `sort_order`, sonra `code` sirasiyla."""
     rows = await catalog_service.list_disciplines(session)
-    return [DisciplineRead.model_validate(row) for row in rows]
+    usage = await catalog_service.discipline_usage(session, [r.id for r in rows])
+    return [_discipline_read(row, usage[row.id]) for row in rows]
 
 
 @router.post(
@@ -98,7 +108,8 @@ async def update_discipline_endpoint(
     discipline = await catalog_service.update_discipline(session, discipline_id, data)
     detail = audit_messages.discipline_updated(discipline.code, discipline.name)
     await _audit(session, request, user, AuditAction.update, detail)
-    return DisciplineRead.model_validate(discipline)
+    usage = await catalog_service.discipline_usage(session, [discipline.id])
+    return _discipline_read(discipline, usage[discipline.id])
 
 
 @router.delete(

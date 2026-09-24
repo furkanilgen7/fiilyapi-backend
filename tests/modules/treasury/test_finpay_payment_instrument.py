@@ -771,6 +771,12 @@ async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
     olarak ölçüldü). 254→**274** · 371→**396**. ⚠️ `earned-value` YENİ bir BFF kökü:
     frontend `ALLOWED_ROOTS`a eklenmezse şirket uçları YALNIZ CANLIDA 404 döner.
 
+    🔴 **PLN-B2 (+5 yol / +5 operasyon, ölçüldü 279/401):** saha saat dağıtımı —
+    `/sites/{id}/earned-value/code-tree` · `…/days/{day}` · `…/days/{day}/allocation` ·
+    `…/days/{day}/previous-allocation` · `…/days/{day}/unlock`. Mevcut yol DEĞİŞMEDİ;
+    mevcut şemalarda yalnız EK alan + `temperature_c` deprecated (yapısal olarak ölçüldü).
+    274→**279** · 396→**401**.
+
     🔴 **BFF İZİN LİSTESİ — `units` KÖKÜ EKSİK (ölçüldü 2026-09-05).** Dört kökten
     ÜÇÜ frontend'in `ALLOWED_ROOTS`unda VAR (`sections` · `sales` ·
     `subcontractor-contracts`), **`units` YOK**. Ölçüm yöntemi kayda geçirilir —
@@ -805,5 +811,5 @@ async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
     # EXPORT-XLSX bunun ÜSTÜNE +6 yol / +6 operasyon ekler (aşağıdaki
     # docstring girdisi). Rebase sonrası sayılar YENİDEN ÖLÇÜLDÜ, eski
     # 243/351'den türetilmedi: 239→245 · 348→354.
-    assert len(yollar) == 274
-    assert operasyonlar == 396
+    assert len(yollar) == 279
+    assert operasyonlar == 401

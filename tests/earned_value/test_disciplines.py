@@ -54,7 +54,16 @@ async def test_liste_sort_order_sonra_kod_sirali(
     assert resp.status_code == 200
     rows = resp.json()
     assert [r["code"] for r in rows] == ["DUV", "KAB", "ELK"]
-    assert set(rows[1]) == {"id", "code", "name", "color", "default_contractor_type", "sort_order"}
+    assert set(rows[1]) == {
+        "id",
+        "code",
+        "name",
+        "color",
+        "default_contractor_type",
+        "sort_order",
+        "used_by_item_count",
+        "used_by_site_count",
+    }
     assert rows[1]["color"] == "#123ABC"
 
 
@@ -205,8 +214,8 @@ async def _use_baseline(session, site, rev, disc) -> None:
 
 @pytest.mark.parametrize(
     "use",
-    [_use_group, _use_catalog, _use_distribution, _use_window, _use_baseline],
-    ids=["grup-eslemesi", "katalog", "dagilim", "pencere", "baseline"],
+    [_use_group, _use_catalog, _use_baseline],
+    ids=["grup-eslemesi", "katalog", "baseline"],
 )
 async def test_kullanimdaki_disiplin_409(
     client: AsyncClient,
@@ -234,3 +243,56 @@ async def test_baska_disiplinin_kullanimi_engellemez(
     await _use_distribution(seeded_db, santiye, rev, used)
     await seeded_db.flush()
     assert (await client.delete(f"{URL}/{free.id}", headers=admin)).status_code == 204
+
+
+# --- sayaçlar ve tutarlı silme kuralı (CEO, PLN-B2 eki) ------------------------------
+
+
+@pytest.mark.parametrize(
+    ("use", "items", "sites"),
+    [(_use_group, 0, 1), (_use_catalog, 1, 0), (_use_baseline, 0, 1)],
+    ids=["grup-eslemesi", "katalog", "baseline"],
+)
+async def test_sayaclar_listede_ve_silme_kurali_tutarli(
+    client: AsyncClient,
+    admin,
+    kab: EvDiscipline,
+    santiye: Site,
+    seeded_db: AsyncSession,
+    use,
+    items,
+    sites,
+) -> None:
+    rev = await _revision(seeded_db, santiye)
+    await use(seeded_db, santiye, rev, kab)
+    await seeded_db.flush()
+    row = next(r for r in (await client.get(URL, headers=admin)).json() if r["id"] == str(kab.id))
+    assert (row["used_by_item_count"], row["used_by_site_count"]) == (items, sites)
+    assert (await client.delete(f"{URL}/{kab.id}", headers=admin)).status_code == 409
+
+
+@pytest.mark.parametrize("use", [_use_distribution, _use_window], ids=["dagilim", "pencere"])
+async def test_eslemesiz_dagilim_pencere_artigi_silmeyi_engellemez_ve_temizlenir(
+    client: AsyncClient, admin, kab: EvDiscipline, santiye: Site, seeded_db: AsyncSession, use
+) -> None:
+    """Sayaçlar 0 → silinebilir; grubu olmayan disiplinin dağılım/pencere ezmesi anlamsızdır,
+    disiplinle birlikte gider (FK'ye çarpıp 500 VERMEZ)."""
+    rev = await _revision(seeded_db, santiye)
+    await use(seeded_db, santiye, rev, kab)
+    await seeded_db.flush()
+    row = next(r for r in (await client.get(URL, headers=admin)).json() if r["id"] == str(kab.id))
+    assert (row["used_by_item_count"], row["used_by_site_count"]) == (0, 0)
+    assert (await client.delete(f"{URL}/{kab.id}", headers=admin)).status_code == 204
+    assert await seeded_db.get(EvDiscipline, kab.id) is None
+
+
+async def test_santiye_sayaci_ayni_santiyeyi_bir_kez_sayar(
+    client: AsyncClient, admin, kab: EvDiscipline, santiye: Site, seeded_db: AsyncSession
+) -> None:
+    rev = await _revision(seeded_db, santiye)
+    await _use_group(seeded_db, santiye, rev, kab)
+    await _use_group(seeded_db, santiye, rev, kab)  # ikinci grup, aynı şantiye
+    await _use_baseline(seeded_db, santiye, rev, kab)
+    await seeded_db.flush()
+    row = next(r for r in (await client.get(URL, headers=admin)).json() if r["id"] == str(kab.id))
+    assert row["used_by_site_count"] == 1

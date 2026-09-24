@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
+from app.core.day_hooks import DiarySubmitBlockedError
 from app.core.errors import (
     AccountingValidationError,
     ApprovalNotAllowedError,
@@ -62,6 +63,16 @@ async def _project_validation_handler(
 ) -> JSONResponse:
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content={"detail": str(exc)}
+    )
+
+
+async def _diary_submit_blocked_handler(
+    request: Request, exc: DiarySubmitBlockedError
+) -> JSONResponse:
+    """422 + `reasons` listesi (istemci kontrol cubugunu buna gore boyar)."""
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": str(exc), "reasons": exc.reasons},
     )
 
 
@@ -254,6 +265,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ProjectValidationError, _project_validation_handler)
     app.add_exception_handler(SiteValidationError, _site_validation_handler)
     app.add_exception_handler(EarnedValueValidationError, _earned_value_validation_handler)
+    app.add_exception_handler(DiarySubmitBlockedError, _diary_submit_blocked_handler)
     app.add_exception_handler(InventoryValidationError, _inventory_validation_handler)
     app.add_exception_handler(DuplicateError, _duplicate_error_handler)
     app.add_exception_handler(RelatedRecordsExistError, _related_records_exist_handler)

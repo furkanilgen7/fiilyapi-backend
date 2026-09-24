@@ -27,6 +27,7 @@ carpar. PATCH'te yalniz tutarlilik kurallari, `is_draft: true -> false`
 gecisinde ise BIRLESIK kayit uzerinde tum kurallar kosar.
 """
 
+from datetime import date
 from typing import Protocol
 
 from app.core.errors import SiteValidationError
@@ -141,6 +142,22 @@ SITE_HAS_TIMESHEET = "Bu şantiyede puantaj kaydı var, önce puantaj kayıtlar�
 SITE_HAS_DIARY = "Bu şantiyede şantiye günlüğü var, önce günlükleri silin"
 SITE_HAS_DOCUMENTS = "Bu şantiyede belge arşivi kaydı var, önce belge ve klasörleri silin"
 SITE_HAS_PLAN = "Bu şantiyede plan ızgarası var, önce planı temizleyin"
+
+
+def section_has_diary_lines(entry_count: int, line_count: int, first_date: date) -> str:
+    """PLN-B2.10 — bölüme yazılmış günlük MİKTAR satırı varken bölüm silinemez (409).
+
+    🔴 Yukarıdaki "metinde adet verilmez" kuralının BİLİNÇLİ istisnası (CEO kararı,
+    PLN-B2.10): gönderilmiş günlük miktarı hakedişin kaynağıdır ve kullanıcı hangi
+    günlükleri düzelteceğini bilmeden bu engeli aşamaz — metin o yüzden kaç
+    günlükte kaç satır olduğunu ve İLK tarihi söyler. Aynı şantiyenin verisidir;
+    silme ucu admin kapılıdır, görünürlük dışı bilgi taşımaz.
+    """
+    return (
+        f"Bölümün {entry_count} günlükte {line_count} miktar satırı var "
+        f"(ilk: {first_date:%d.%m.%Y}); silinemez"
+    )
+
 
 # GPS BICIM HATASI SABITI YOKTUR (§3.5 revize karari): sunucu GPS metnini
 # dogrulamaz, dolayisiyla boyle bir hata uretmez.

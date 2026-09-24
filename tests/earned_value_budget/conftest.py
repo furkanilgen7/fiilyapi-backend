@@ -209,3 +209,85 @@ async def muhasebe(client, seeded_db, user_factory, proje) -> dict[str, str]:
 @pytest.fixture
 async def ik(client, seeded_db, user_factory, proje) -> dict[str, str]:
     return await _headers(client, seeded_db, user_factory, "hr_manager", "ik@ev-b1.co", proje)
+
+
+# --- saha günü (PLN-B2): dondurulmuş baseline + puantaj + günlük -------------------------
+
+#: 05.05.2026 Salı — S1 penceresi içinde. Puantaj: Ali 9 · Veli 8. Günlük: I1 Bölümsüz 5 m3.
+DAY = date(2026, 5, 5)
+
+
+@pytest.fixture
+async def baseline(client, admin, santiye, boq, disiplinler) -> None:
+    from .test_budget_api import _map, _rates, _url
+
+    await _map(client, santiye, admin, boq, disiplinler)
+    await _rates(client, santiye, admin, boq)
+    assert (await client.post(_url(santiye, "/freeze"), headers=admin, json={})).status_code == 200
+
+
+@pytest.fixture
+async def saha_gunu(seeded_db: AsyncSession, santiye: Site, boq, admin) -> dict:
+    from app.modules.personnel.models import Personnel
+    from app.modules.site_diary.models import (
+        DiaryStatus,
+        SiteDiaryEntry,
+        SiteDiaryLine,
+        WorkerSource,
+    )
+    from app.modules.timesheet.models import TimesheetEntry
+
+    creator = (
+        await seeded_db.execute(select(User).where(User.email == "admin@ev-b1.co"))
+    ).scalar_one()
+    people = {
+        name: Personnel(
+            full_name=name,
+            trade=trade,
+            source=WorkerSource.company,
+            is_active=True,
+            is_draft=False,
+        )
+        for name, trade in (("Ali Usta", "Kalıpçı"), ("Veli Usta", "Betoncu"))
+    }
+    seeded_db.add_all(people.values())
+    await seeded_db.flush()
+    ts = {}
+    for name, hours in (("Ali Usta", "9"), ("Veli Usta", "8")):
+        entry = TimesheetEntry(
+            personnel_id=people[name].id,
+            site_id=santiye.id,
+            project_id=santiye.project_id,
+            work_date=DAY,
+            hours=D(hours),
+            created_by=creator.id,
+        )
+        seeded_db.add(entry)
+        ts[name] = entry
+    diary = SiteDiaryEntry(
+        site_id=santiye.id,
+        project_id=santiye.project_id,
+        entry_date=DAY,
+        status=DiaryStatus.draft,
+        created_by=creator.id,
+    )
+    seeded_db.add(diary)
+    await seeded_db.flush()
+    line = SiteDiaryLine(
+        entry_id=diary.id,
+        boq_item_id=boq["i1"].id,
+        code="01.001",
+        description="Beton",
+        unit="m3",
+        unit_price=D(0),
+        quantity=D(5),
+    )
+    seeded_db.add(line)
+    await seeded_db.flush()
+    return {
+        "ali": people["Ali Usta"],
+        "veli": people["Veli Usta"],
+        "diary": diary,
+        "line": line,
+        "ts": ts,
+    }
