@@ -47,6 +47,7 @@ from app.modules.procurement.models import PaymentTerms, Supplier
 from app.modules.roles.models import Role
 from app.modules.treasury.models import BankAccount, Payment
 from app.modules.users.models import User
+from tests._yaris import YARIS_TAVANI_SN
 from tests.conftest import test_engine
 
 from ._mk2_para_gercek import kira_parasini_yatir
@@ -316,7 +317,7 @@ async def _yaris(kurulum: _Kurulum, eylem: str) -> tuple[str, str]:
         task1 = asyncio.create_task(
             _eylem_ve_tut(kurulum, kurulum.actor_ids[0], eylem, kilit_alindi, kilidi_birak)
         )
-        await asyncio.wait_for(kilit_alindi.wait(), timeout=5)
+        await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_eylem(kurulum, kurulum.actor_ids[1], eylem))
         await asyncio.sleep(0.3)
@@ -326,8 +327,8 @@ async def _yaris(kurulum: _Kurulum, eylem: str) -> tuple[str, str]:
         )
 
         kilidi_birak.set()
-        sonuc1 = await asyncio.wait_for(task1, timeout=5)
-        sonuc2 = await asyncio.wait_for(task2, timeout=5)
+        sonuc1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
+        sonuc2 = await asyncio.wait_for(task2, timeout=YARIS_TAVANI_SN)
         return sonuc1, sonuc2
     finally:
         await _gorevleri_bosalt(task1, task2)

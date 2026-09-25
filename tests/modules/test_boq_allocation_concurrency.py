@@ -37,6 +37,7 @@ from app.modules.projects.models import Project, ProjectStatus, ProjectType
 from app.modules.roles.models import Role
 from app.modules.sites.models import Section, Site
 from app.modules.users.models import User, UserProjectAccess
+from tests._yaris import YARIS_TAVANI_SN
 from tests.conftest import test_engine
 
 pytestmark = pytest.mark.asyncio
@@ -238,7 +239,7 @@ async def test_iki_esZamanli_REPLACE_serilesir_ve_toplam_kotayi_asmaz() -> None:
         task1 = asyncio.create_task(
             _tahsis_et_ve_tut(kurulum, kurulum.section_ids[0], kilit_alindi, kilidi_birak)
         )
-        await asyncio.wait_for(kilit_alindi.wait(), timeout=5)
+        await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_tahsis_et(kurulum, kurulum.section_ids[1]))
         await asyncio.sleep(0.3)
@@ -249,8 +250,8 @@ async def test_iki_esZamanli_REPLACE_serilesir_ve_toplam_kotayi_asmaz() -> None:
         )
 
         kilidi_birak.set()
-        assert await asyncio.wait_for(task1, timeout=5) == "ok"
-        assert await asyncio.wait_for(task2, timeout=5) == "ok"
+        assert await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN) == "ok"
+        assert await asyncio.wait_for(task2, timeout=YARIS_TAVANI_SN) == "ok"
 
         async with _SessionFactory() as dogrula:
             satirlar = (
@@ -306,7 +307,7 @@ async def test_esZamanli_PATCH_kota_dusurmesi_de_serilesir() -> None:
         task1 = asyncio.create_task(
             _tahsis_et_ve_tut(kurulum, kurulum.section_ids[0], kilit_alindi, kilidi_birak)
         )
-        await asyncio.wait_for(kilit_alindi.wait(), timeout=5)
+        await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_kotayi_dusur())
         await asyncio.sleep(0.3)
@@ -317,8 +318,8 @@ async def test_esZamanli_PATCH_kota_dusurmesi_de_serilesir() -> None:
         )
 
         kilidi_birak.set()
-        assert await asyncio.wait_for(task1, timeout=5) == "ok"
-        assert await asyncio.wait_for(task2, timeout=5) == "conflict", (
+        assert await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN) == "ok"
+        assert await asyncio.wait_for(task2, timeout=YARIS_TAVANI_SN) == "conflict", (
             "kota tahsis toplamının altına indirildi — invariant kırıldı"
         )
     finally:
@@ -404,15 +405,15 @@ async def test_TERS_YON_tahsis_TAZELENMIS_kotayi_okur() -> None:
 
     try:
         task1 = asyncio.create_task(_kotayi_dusur_ve_tut())
-        await asyncio.wait_for(kilit_alindi.wait(), timeout=5)
+        await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_tahsis_et(kurulum, kurulum.section_ids[0]))
         await asyncio.sleep(0.3)
         assert not task2.done(), "tahsis, kota düşürmenin kilidi serbest bırakılmadan ilerleyebildi"
 
         kilidi_birak.set()
-        assert await asyncio.wait_for(task1, timeout=5) == "ok"
-        assert await asyncio.wait_for(task2, timeout=5) == "conflict", (
+        assert await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN) == "ok"
+        assert await asyncio.wait_for(task2, timeout=YARIS_TAVANI_SN) == "conflict", (
             "tahsis BAYAT kotayı (1.200) okudu — kilit alındı ama tazelenmedi"
         )
     finally:

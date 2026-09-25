@@ -53,6 +53,7 @@ from app.modules.posting.models import PostingRule
 from app.modules.roles.models import Role
 from app.modules.site_diary.models import WorkerSource
 from app.modules.users.models import User
+from tests._yaris import YARIS_TAVANI_SN
 from tests.conftest import test_engine
 
 pytestmark = pytest.mark.asyncio
@@ -379,7 +380,7 @@ async def test_ayni_satira_iki_esZamanli_onay_TEK_onay_birakir() -> None:
         task1 = asyncio.create_task(
             _satiri_onayla_ve_tut(kurulum.payable_line_id, kilit_alindi, kilidi_birak)
         )
-        await asyncio.wait_for(kilit_alindi.wait(), timeout=5)
+        await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_satiri_onayla(kurulum.payable_line_id))
         await asyncio.sleep(0.3)
@@ -389,8 +390,8 @@ async def test_ayni_satira_iki_esZamanli_onay_TEK_onay_birakir() -> None:
         )
 
         kilidi_birak.set()
-        sonuc1 = await asyncio.wait_for(task1, timeout=5)
-        sonuc2 = await asyncio.wait_for(task2, timeout=5)
+        sonuc1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
+        sonuc2 = await asyncio.wait_for(task2, timeout=YARIS_TAVANI_SN)
         assert sorted([sonuc1, sonuc2]) == ["approved", "conflict"]
 
         async with _SessionFactory() as dogrula:
@@ -450,7 +451,7 @@ async def test_ayni_doneme_iki_esZamanli_ODEME_toplami_iki_kez_saymaz() -> None:
         task1 = asyncio.create_task(
             _odeme_yap_ve_tut(kurulum.period_id, kilit_alindi, kilidi_birak)
         )
-        await asyncio.wait_for(kilit_alindi.wait(), timeout=5)
+        await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_odeme_yap(kurulum.period_id))
         await asyncio.sleep(0.3)
@@ -460,8 +461,8 @@ async def test_ayni_doneme_iki_esZamanli_ODEME_toplami_iki_kez_saymaz() -> None:
         )
 
         kilidi_birak.set()
-        sonuc1 = await asyncio.wait_for(task1, timeout=5)
-        sonuc2 = await asyncio.wait_for(task2, timeout=5)
+        sonuc1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
+        sonuc2 = await asyncio.wait_for(task2, timeout=YARIS_TAVANI_SN)
         assert sonuc1 == SIRKET_NET
         assert sonuc2 == "conflict", "ikinci ödeme de geçti — aynı bordro İKİ KEZ ödendi"
 
@@ -533,7 +534,7 @@ async def test_iki_esZamanli_TOPLU_onay_satiri_iki_kez_onaylamaz() -> None:
                 kurulum.period_id, kurulum.actor_ids[0], kilit_alindi, kilidi_birak
             )
         )
-        await asyncio.wait_for(kilit_alindi.wait(), timeout=5)
+        await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_toplu_onayla(kurulum.period_id, kurulum.actor_ids[1]))
         await asyncio.sleep(0.3)
@@ -543,8 +544,8 @@ async def test_iki_esZamanli_TOPLU_onay_satiri_iki_kez_onaylamaz() -> None:
         )
 
         kilidi_birak.set()
-        sayi1, durum1 = await asyncio.wait_for(task1, timeout=5)
-        sayi2, durum2 = await asyncio.wait_for(task2, timeout=5)
+        sayi1, durum1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
+        sayi2, durum2 = await asyncio.wait_for(task2, timeout=YARIS_TAVANI_SN)
         assert (sayi1, sayi2) == (1, 0), "satır iki kez onaylandı"
         assert durum1 == PayrollPeriodStatus.pending_approval.value
         assert durum2 == PayrollPeriodStatus.approved.value, (
@@ -704,7 +705,7 @@ async def test_oran_yazimi_esZamanli_DONEM_ONAYINI_bekler() -> None:
                 kurulum.period_id, kurulum.actor_ids[0], kilit_alindi, kilidi_birak
             )
         )
-        await asyncio.wait_for(kilit_alindi.wait(), timeout=5)
+        await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_yaz_orani(_YIL))
         await asyncio.sleep(0.3)
@@ -715,8 +716,8 @@ async def test_oran_yazimi_esZamanli_DONEM_ONAYINI_bekler() -> None:
         )
 
         kilidi_birak.set()
-        _, durum1 = await asyncio.wait_for(task1, timeout=5)
-        sonuc2 = await asyncio.wait_for(task2, timeout=5)
+        _, durum1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
+        sonuc2 = await asyncio.wait_for(task2, timeout=YARIS_TAVANI_SN)
         assert durum1 == PayrollPeriodStatus.approved.value
         assert sonuc2 == "conflict", "oran yazıldı — onaylanmış dönemin hesabı değişti"
     finally:

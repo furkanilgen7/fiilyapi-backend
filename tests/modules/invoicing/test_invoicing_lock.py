@@ -73,6 +73,7 @@ from app.modules.invoicing.schemas import InvoiceLineCreate, InvoiceLinesReplace
 from app.modules.invoicing.transitions import InvoiceAction
 from app.modules.roles.models import Role
 from app.modules.users.models import User
+from tests._yaris import YARIS_TAVANI_SN
 from tests.conftest import test_engine
 
 _SessionFactory = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
@@ -246,7 +247,7 @@ async def test_put_lines_faturayi_denetimden_ONCE_kilitler() -> None:
     task2: asyncio.Task | None = None
     try:
         task1 = asyncio.create_task(_kilidi_al_ve_tut(kurulum, kilit_alindi, kilidi_birak))
-        await asyncio.wait_for(kilit_alindi.wait(), timeout=5)
+        await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_kalemleri_yaz(kurulum))
         await asyncio.sleep(0.3)
@@ -256,8 +257,8 @@ async def test_put_lines_faturayi_denetimden_ONCE_kilitler() -> None:
         )
 
         kilidi_birak.set()
-        assert await asyncio.wait_for(task1, timeout=5) == "locked"
-        assert await asyncio.wait_for(task2, timeout=5) == "written"
+        assert await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN) == "locked"
+        assert await asyncio.wait_for(task2, timeout=YARIS_TAVANI_SN) == "written"
     finally:
         await _gorevleri_bosalt(task1, task2)
         await _temizle(kurulum)

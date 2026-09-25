@@ -41,6 +41,7 @@ from app.modules.procurement.numbering import (
     _REQUEST_LOCK_KEY,
 )
 from tests._time import YIL_SINIRI_UTC, sabit_saat
+from tests._yaris import YARIS_TAVANI_SN
 
 
 def _invoice_values(
@@ -342,7 +343,7 @@ async def test_eszamanli_uretim_ayni_numarayi_vermez():
             )
 
             await birinci.commit()
-            ikinci_numara = await asyncio.wait_for(gorev, timeout=10)
+            ikinci_numara = await asyncio.wait_for(gorev, timeout=YARIS_TAVANI_SN)
 
         assert ilk_numara == "FIL2026000001"
         assert ikinci_numara == "FIL2026000002"

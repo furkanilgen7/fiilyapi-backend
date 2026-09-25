@@ -58,6 +58,7 @@ from app.modules.accounting.models import ChartAccount, ChartAccountType, Journa
 from app.modules.accounting.schemas import JournalEntryCreate, JournalLineInput
 from app.modules.roles.models import Role
 from app.modules.users.models import User
+from tests._yaris import YARIS_TAVANI_SN
 
 #: Yarışan iki fişin ayları. 🔴 AYNI OLAMAZLAR (modül docstring'i): dönem satırı
 #: kilidi bekçiyi kör ederdi. Yıl ORTAKTIR — sayaç yıl bazlıdır.
@@ -202,7 +203,7 @@ async def _bekleyen_gorevi_olc(
     )
 
     await birinci.commit()
-    ikincisi = await asyncio.wait_for(gorev, timeout=10)
+    ikincisi = await asyncio.wait_for(gorev, timeout=YARIS_TAVANI_SN)
     return ilk, ikincisi
 
 

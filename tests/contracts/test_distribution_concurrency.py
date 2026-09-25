@@ -33,6 +33,7 @@ from app.modules.projects.models import Project, ProjectContract
 from app.modules.roles.models import Role
 from app.modules.sites.models import Site
 from app.modules.users.models import User, UserProjectAccess
+from tests._yaris import YARIS_TAVANI_SN
 from tests.conftest import test_engine
 
 pytestmark = pytest.mark.asyncio
@@ -91,7 +92,7 @@ async def test_esZamanli_dagitim_sozlesme_miktarini_asamaz(kurulum: _Kurulum) ->
     )
     task2: asyncio.Task[str] | None = None
     try:
-        await asyncio.wait_for(lock_acquired.wait(), timeout=5)
+        await asyncio.wait_for(lock_acquired.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_kaydet(kurulum, kurulum.site_b_id))
         await asyncio.sleep(0.3)
@@ -101,8 +102,8 @@ async def test_esZamanli_dagitim_sozlesme_miktarini_asamaz(kurulum: _Kurulum) ->
         )
 
         release_lock.set()
-        sonuc1 = await asyncio.wait_for(task1, timeout=5)
-        sonuc2 = await asyncio.wait_for(task2, timeout=5)
+        sonuc1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
+        sonuc2 = await asyncio.wait_for(task2, timeout=YARIS_TAVANI_SN)
         assert sorted([sonuc1, sonuc2]) == ["exceeds", "saved"]
     finally:
         # Bir iddia KIRMIZI döndüğünde tx1 hâlâ `release_lock`'u bekliyor ve
@@ -196,7 +197,7 @@ async def _sonlandir(*tasks: "asyncio.Task[str] | None") -> None:
             continue
         if not task.done():
             with contextlib.suppress(BaseException):
-                await asyncio.wait_for(asyncio.shield(task), timeout=5)
+                await asyncio.wait_for(asyncio.shield(task), timeout=YARIS_TAVANI_SN)
         if not task.done():
             task.cancel()
         with contextlib.suppress(BaseException):

@@ -43,6 +43,7 @@ from app.modules.sales.schemas import (
 from app.modules.sites.models import Site
 from app.modules.units.models import Block, Unit, UnitKind
 from app.modules.users.models import User, UserProjectAccess
+from tests._yaris import YARIS_TAVANI_SN
 from tests.conftest import test_engine
 
 pytestmark = pytest.mark.asyncio
@@ -86,7 +87,7 @@ async def test_esZamanli_tahsilat_taksit_tutarini_asamaz(kurulum: _Kurulum) -> N
     task1 = asyncio.create_task(_ode_ve_tut(kurulum, lock_acquired, release_lock))
     task2: asyncio.Task[str] | None = None
     try:
-        await asyncio.wait_for(lock_acquired.wait(), timeout=5)
+        await asyncio.wait_for(lock_acquired.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_ode(kurulum))
         await asyncio.sleep(0.3)
@@ -96,8 +97,8 @@ async def test_esZamanli_tahsilat_taksit_tutarini_asamaz(kurulum: _Kurulum) -> N
         )
 
         release_lock.set()
-        sonuc1 = await asyncio.wait_for(task1, timeout=5)
-        sonuc2 = await asyncio.wait_for(task2, timeout=5)
+        sonuc1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
+        sonuc2 = await asyncio.wait_for(task2, timeout=YARIS_TAVANI_SN)
         assert sorted([sonuc1, sonuc2]) == ["exceeds", "paid"]
     finally:
         # Kırmızı, ASILMADAN kırmızı görünmek ZORUNDA: bir iddia patlarsa tx1
@@ -199,7 +200,7 @@ async def _sonlandir(*tasks: "asyncio.Task[str] | None") -> None:
             continue
         if not task.done():
             with contextlib.suppress(BaseException):
-                await asyncio.wait_for(asyncio.shield(task), timeout=5)
+                await asyncio.wait_for(asyncio.shield(task), timeout=YARIS_TAVANI_SN)
         if not task.done():
             task.cancel()
         with contextlib.suppress(BaseException):
