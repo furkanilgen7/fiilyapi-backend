@@ -13,6 +13,7 @@ verisini GERÇEKTEN commit eder ve sonunda GERÇEKTEN temizler.
 """
 
 import asyncio
+import contextlib
 import uuid
 from decimal import Decimal
 
@@ -28,7 +29,7 @@ from app.modules.progress_payments.models import ProgressPayment, ProgressPaymen
 from app.modules.projects.models import Project, ProjectContract
 from app.modules.roles.models import Module, ModuleGroup, Role, RolePermission
 from app.modules.users.models import User
-from tests._yaris import YARIS_TAVANI_SN
+from tests._yaris import YARIS_TAVANI_SN, kilitte_bekleyen_sorgu
 from tests.conftest import test_engine
 
 pytestmark = pytest.mark.asyncio
@@ -46,21 +47,26 @@ async def test_iki_esZamanli_olusturma_yalniz_biri_gecer() -> None:
     hatayla patlar) ve bu iddia KIRMIZI döner.
     """
     project_id, user_id = await _kurulum()
+    lock_acquired = asyncio.Event()
+    release_lock = asyncio.Event()
+    task1: asyncio.Task[str] | None = None
+    task2: asyncio.Task[str] | None = None
     try:
-        lock_acquired = asyncio.Event()
-        release_lock = asyncio.Event()
-
         task1 = asyncio.create_task(
             _attempt_create_and_hold(project_id, user_id, lock_acquired, release_lock)
         )
         await asyncio.wait_for(lock_acquired.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_attempt_create(project_id, user_id))
-        await asyncio.sleep(0.3)
-        assert not task2.done(), (
-            "tx2, tx1 kilidi serbest bırakmadan ilerleyebildi — "
-            "`get_contract_locked` artık satırı KİLİTLEMİYOR olabilir"
+        bekleyen = await kilitte_bekleyen_sorgu(
+            test_engine,
+            task2,
+            mesaj="tx2, tx1 kilidi serbest bırakmadan ilerleyebildi — "
+            "`get_contract_locked` artık satırı KİLİTLEMİYOR olabilir",
         )
+        # Sorgu 1024 baytta kırpılır (`track_activity_query_size`); kilitte bekleyen SELECT ancak
+        # KİLİTLİ okumadır — kilitsiz mutant `INSERT`/`UPDATE`te bekler (TEST-B1, ölçüldü).
+        assert bekleyen.startswith("SELECT project_contracts."), bekleyen
 
         release_lock.set()
         result1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
@@ -76,6 +82,10 @@ async def test_iki_esZamanli_olusturma_yalniz_biri_gecer() -> None:
         assert len(listed.items) == 1
         assert listed.items[0].sequence_no == 1
     finally:
+        # TEST-B1: iddia ORTADA düşerse tx1 kilidi TUTUYORDU ve `_temizle` süresiz
+        # beklerdi (ölçüldü: koşu asılı kaldı). Önce kilit, sonra görevler, sonra temizlik.
+        release_lock.set()
+        await _gorevleri_bosalt(task1, task2)
         await _temizle(project_id, user_id)
 
 
@@ -204,21 +214,28 @@ async def test_iki_esZamanli_onay_yalniz_biri_gecer() -> None:
     yazılır — son iddia kırmızı.
     """
     project_id, user_id, payment_id, ikinci_user_id = await _onay_kurulumu()
+    lock_acquired = asyncio.Event()
+    release_lock = asyncio.Event()
+    task1: asyncio.Task[str] | None = None
+    task2: asyncio.Task[str] | None = None
     try:
-        lock_acquired = asyncio.Event()
-        release_lock = asyncio.Event()
-
         task1 = asyncio.create_task(
             _attempt_approve_and_hold(payment_id, user_id, lock_acquired, release_lock)
         )
         await asyncio.wait_for(lock_acquired.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_attempt_approve(payment_id, ikinci_user_id))
-        await asyncio.sleep(0.3)
-        assert not task2.done(), (
-            "tx2, tx1 kilidi serbest bırakmadan ilerleyebildi — "
-            "`approve` artık hakediş satırını KİLİTLEMİYOR olabilir"
+        bekleyen = await kilitte_bekleyen_sorgu(
+            test_engine,
+            task2,
+            mesaj="tx2, tx1 kilidi serbest bırakmadan ilerleyebildi — "
+            "`approve` artık hakediş satırını KİLİTLEMİYOR olabilir",
         )
+        # Onayı SERİLEŞTİREN ilk kilit sözleşme satırıdır (`visible_payment_locked`:
+        # sözleşme → hakediş); tx2 orada bekler.
+        # Sorgu 1024 baytta kırpılır (`track_activity_query_size`); kilitte bekleyen SELECT ancak
+        # KİLİTLİ okumadır — kilitsiz mutant `INSERT`/`UPDATE`te bekler (TEST-B1, ölçüldü).
+        assert bekleyen.startswith("SELECT project_contracts."), bekleyen
 
         release_lock.set()
         result1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
@@ -231,6 +248,10 @@ async def test_iki_esZamanli_onay_yalniz_biri_gecer() -> None:
             # Damga TEK kez atıldı: ikinci aktör üzerine YAZAMADI.
             assert payment.approved_by == user_id
     finally:
+        # TEST-B1: iddia ORTADA düşerse tx1 kilidi TUTUYORDU ve `_temizle` süresiz
+        # beklerdi (ölçüldü: koşu asılı kaldı). Önce kilit, sonra görevler, sonra temizlik.
+        release_lock.set()
+        await _gorevleri_bosalt(task1, task2)
         await _onay_temizligi(project_id, user_id, ikinci_user_id)
 
 
@@ -321,6 +342,7 @@ async def test_gecis_hakedis_satirinin_kilidini_bekler() -> None:
     yarış testi yazılmalıdır.
     """
     project_id, user_id, payment_id, ikinci_user_id = await _onay_kurulumu()
+    task: asyncio.Task[str] | None = None
     try:
         async with _SessionFactory() as tutan:
             await tutan.execute(
@@ -329,15 +351,21 @@ async def test_gecis_hakedis_satirinin_kilidini_bekler() -> None:
             )
 
             task = asyncio.create_task(_attempt_approve(payment_id, user_id))
-            await asyncio.sleep(0.3)
-            assert not task.done(), (
-                "geçiş, hakediş satırı DIŞARIDAN kilitliyken ilerledi — "
-                "`get_payment_locked` artık `SELECT … FOR UPDATE` yapmıyor olabilir"
+            bekleyen = await kilitte_bekleyen_sorgu(
+                test_engine,
+                task,
+                mesaj="geçiş, hakediş satırı DIŞARIDAN kilitliyken ilerledi — "
+                "`get_payment_locked` artık `SELECT … FOR UPDATE` yapmıyor olabilir",
             )
+            # Sorgu 1024 baytta kırpılır; kilitte bekleyen SELECT ancak KİLİTLİ okumadır —
+            # kilitsiz mutant `UPDATE`te bekler (TEST-B1, ölçüldü).
+            assert bekleyen.startswith("SELECT progress_payments."), bekleyen
             await tutan.rollback()
 
         assert await asyncio.wait_for(task, timeout=YARIS_TAVANI_SN) == "approved"
     finally:
+        # TEST-B1: iddia düşerse görev başıboş kalmasın (temizlikten ÖNCE boşalt).
+        await _gorevleri_bosalt(task)
         await _onay_temizligi(project_id, user_id, ikinci_user_id)
 
 
@@ -361,22 +389,28 @@ async def test_silinirken_esZamanli_onay_kazanirsa_409_alir() -> None:
     alır — satır DB'de duruyor kalır.
     """
     project_id, user_id, payment_id, ikinci_user_id = await _onay_kurulumu()
+    lock_acquired = asyncio.Event()
+    release_lock = asyncio.Event()
+    task_approve: asyncio.Task[str] | None = None
+    task_delete: asyncio.Task[str] | None = None
     try:
-        lock_acquired = asyncio.Event()
-        release_lock = asyncio.Event()
-
         task_approve = asyncio.create_task(
             _attempt_approve_and_hold(payment_id, user_id, lock_acquired, release_lock)
         )
         await asyncio.wait_for(lock_acquired.wait(), timeout=YARIS_TAVANI_SN)
 
         task_delete = asyncio.create_task(_attempt_delete(payment_id, ikinci_user_id))
-        await asyncio.sleep(0.3)
-        assert not task_delete.done(), (
-            "silme, onay kilidi serbest bırakılmadan ilerleyebildi — "
+        bekleyen = await kilitte_bekleyen_sorgu(
+            test_engine,
+            task_delete,
+            mesaj="silme, onay kilidi serbest bırakılmadan ilerleyebildi — "
             "`delete_payment` artık `visible_payment_locked` KULLANMIYOR olabilir "
-            "(K1 regresyonu, H8 denetimi)"
+            "(K1 regresyonu, H8 denetimi)",
         )
+        # Silme de `visible_payment_locked`tan geçer: ilk kilit sözleşme satırı.
+        # Sorgu 1024 baytta kırpılır (`track_activity_query_size`); kilitte bekleyen SELECT ancak
+        # KİLİTLİ okumadır — kilitsiz mutant `INSERT`/`UPDATE`te bekler (TEST-B1, ölçüldü).
+        assert bekleyen.startswith("SELECT project_contracts."), bekleyen
 
         release_lock.set()
         onay_sonucu = await asyncio.wait_for(task_approve, timeout=YARIS_TAVANI_SN)
@@ -393,6 +427,10 @@ async def test_silinirken_esZamanli_onay_kazanirsa_409_alir() -> None:
             assert payment is not None, "approved/paid kayıt yarışta silinmiş — K8 ihlali"
             assert payment.status is ProgressPaymentStatus.approved
     finally:
+        # TEST-B1: iddia ORTADA düşerse tx1 kilidi TUTUYORDU ve `_temizle` süresiz
+        # beklerdi (ölçüldü: koşu asılı kaldı). Önce kilit, sonra görevler, sonra temizlik.
+        release_lock.set()
+        await _gorevleri_bosalt(task_approve, task_delete)
         await _onay_temizligi(project_id, user_id, ikinci_user_id)
 
 
@@ -500,6 +538,21 @@ async def _onay_temizligi(
         await session.execute(delete(User).where(User.id.in_([user_id, ikinci_user_id])))
         await _referans_temizle(session)
         await session.commit()
+
+
+async def _gorevleri_bosalt(*gorevler: "asyncio.Task[str] | None") -> None:
+    """TEST-B1: görevleri HER YOLDA kapat — temizlik bağlantıyı görev çalışırken çekmesin ve
+    asıl iddia hatası asyncpg "another operation is in progress" gürültüsüyle ezilmesin."""
+    for gorev in gorevler:
+        if gorev is None:
+            continue
+        if not gorev.done():
+            with contextlib.suppress(BaseException):
+                await asyncio.wait_for(asyncio.shield(gorev), timeout=YARIS_TAVANI_SN)
+        if not gorev.done():
+            gorev.cancel()
+        with contextlib.suppress(BaseException):
+            await gorev
 
 
 async def _temizle(project_id: uuid.UUID, user_id: uuid.UUID) -> None:

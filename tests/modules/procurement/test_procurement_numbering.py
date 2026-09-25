@@ -10,6 +10,7 @@ yasardi). Kilit gercek OLDUGUNDA ikinci islem birincinin commit'ini BEKLER.
 """
 
 import asyncio
+import contextlib
 import uuid
 from datetime import date
 from decimal import Decimal
@@ -38,7 +39,7 @@ from app.modules.procurement.numbering import (
     generate_request_number,
 )
 from tests._time import YIL_SINIRI_UTC, sabit_saat
-from tests._yaris import YARIS_TAVANI_SN
+from tests._yaris import YARIS_TAVANI_SN, kilitte_bekleyen_sorgu
 
 
 async def _add_request(
@@ -301,13 +302,26 @@ async def test_eszamanli_uretim_ayni_numarayi_vermez():
 
             # Ikinci oturum HENUZ commit edilmemis birincinin ustune biner.
             gorev = asyncio.create_task(_uret_ve_yaz(ikinci))
-            await asyncio.sleep(0.3)
-            assert not gorev.done(), (
-                "ikinci uretim beklemedi — kilit yok, iki istek ayni numarayi alir"
-            )
+            try:
+                bekleyen = await kilitte_bekleyen_sorgu(
+                    engine,
+                    gorev,
+                    mesaj="ikinci uretim beklemedi — kilit yok, iki istek ayni numarayi alir",
+                )
+                # Doğru kilit: numara üretiminin danışma kilidi (kilitsiz mutantta ikinci
+                # oturum UQ'nun INSERT'inde bekler — TEST-B1).
+                assert "pg_advisory_xact_lock" in bekleyen, bekleyen
 
-            await birinci.commit()
-            ikinci_numara = await asyncio.wait_for(gorev, timeout=YARIS_TAVANI_SN)
+                await birinci.commit()
+                ikinci_numara = await asyncio.wait_for(gorev, timeout=YARIS_TAVANI_SN)
+            finally:
+                # İddia düşerse görev hâlâ `ikinci`nin bağlantısında bekler; oturumlar
+                # kapanmadan ÖNCE birincinin kilidi bırakılır ve görev BOŞALTILIR —
+                # yoksa asyncpg "another operation is in progress" asıl hatayı ezer.
+                if not gorev.done():
+                    await birinci.rollback()
+                with contextlib.suppress(BaseException):
+                    await asyncio.wait_for(gorev, timeout=YARIS_TAVANI_SN)
 
         assert ilk_numara == "SAT-2026-0001"
         assert ikinci_numara == "SAT-2026-0002"

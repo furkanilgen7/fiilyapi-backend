@@ -53,7 +53,7 @@ from app.modules.posting.models import PostingRule
 from app.modules.roles.models import Role
 from app.modules.site_diary.models import WorkerSource
 from app.modules.users.models import User
-from tests._yaris import YARIS_TAVANI_SN
+from tests._yaris import YARIS_TAVANI_SN, kilitte_bekleyen_sorgu
 from tests.conftest import test_engine
 
 pytestmark = pytest.mark.asyncio
@@ -383,11 +383,16 @@ async def test_ayni_satira_iki_esZamanli_onay_TEK_onay_birakir() -> None:
         await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_satiri_onayla(kurulum.payable_line_id))
-        await asyncio.sleep(0.3)
-        assert not task2.done(), (
-            "tx2, tx1 kilidi serbest bırakmadan ilerleyebildi — satır onayı artık "
-            "dönem/satır satırını KİLİTLEMİYOR olabilir (çift onay yarışı yeniden açık)"
+        bekleyen = await kilitte_bekleyen_sorgu(
+            test_engine,
+            task2,
+            mesaj="tx2, tx1 kilidi serbest bırakmadan ilerleyebildi — satır onayı artık "
+            "dönem/satır satırını KİLİTLEMİYOR olabilir (çift onay yarışı yeniden açık)",
         )
+        # Doğru kilit: dönem satırı `_lock_period` (`FOR UPDATE`); kilitsiz mutantta tx2
+        # hiç beklemez ya da başka bir satırda bekler (TEST-B1).
+        assert "FROM payroll_periods WHERE payroll_periods.id = " in bekleyen, bekleyen
+        assert bekleyen.endswith("FOR UPDATE"), bekleyen
 
         kilidi_birak.set()
         sonuc1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
@@ -454,11 +459,16 @@ async def test_ayni_doneme_iki_esZamanli_ODEME_toplami_iki_kez_saymaz() -> None:
         await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_odeme_yap(kurulum.period_id))
-        await asyncio.sleep(0.3)
-        assert not task2.done(), (
-            "ikinci ödeme, birincinin kilidi serbest bırakılmadan ilerleyebildi — "
-            "`pay` dönem satırını KİLİTLEMİYOR olabilir (ÇİFT ÖDEME penceresi açık)"
+        bekleyen = await kilitte_bekleyen_sorgu(
+            test_engine,
+            task2,
+            mesaj="ikinci ödeme, birincinin kilidi serbest bırakılmadan ilerleyebildi — "
+            "`pay` dönem satırını KİLİTLEMİYOR olabilir (ÇİFT ÖDEME penceresi açık)",
         )
+        # Doğru kilit: dönem satırı `_lock_period` (`FOR UPDATE`); kilitsiz mutantta tx2
+        # hiç beklemez ya da başka bir satırda bekler (TEST-B1).
+        assert "FROM payroll_periods WHERE payroll_periods.id = " in bekleyen, bekleyen
+        assert bekleyen.endswith("FOR UPDATE"), bekleyen
 
         kilidi_birak.set()
         sonuc1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
@@ -537,11 +547,16 @@ async def test_iki_esZamanli_TOPLU_onay_satiri_iki_kez_onaylamaz() -> None:
         await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_toplu_onayla(kurulum.period_id, kurulum.actor_ids[1]))
-        await asyncio.sleep(0.3)
-        assert not task2.done(), (
-            "ikinci toplu onay beklemedi — `approve_period` dönem satırını "
-            "KİLİTLEMİYOR olabilir (çift onay/çift toplam penceresi açık)"
+        bekleyen = await kilitte_bekleyen_sorgu(
+            test_engine,
+            task2,
+            mesaj="ikinci toplu onay beklemedi — `approve_period` dönem satırını "
+            "KİLİTLEMİYOR olabilir (çift onay/çift toplam penceresi açık)",
         )
+        # Doğru kilit: dönem satırı `_lock_period` (`FOR UPDATE`); kilitsiz mutantta tx2
+        # hiç beklemez ya da başka bir satırda bekler (TEST-B1).
+        assert "FROM payroll_periods WHERE payroll_periods.id = " in bekleyen, bekleyen
+        assert bekleyen.endswith("FOR UPDATE"), bekleyen
 
         kilidi_birak.set()
         sayi1, durum1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
@@ -708,12 +723,16 @@ async def test_oran_yazimi_esZamanli_DONEM_ONAYINI_bekler() -> None:
         await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_yaz_orani(_YIL))
-        await asyncio.sleep(0.3)
-        assert not task2.done(), (
-            "oran yazımı, dönem onayının kilidi serbest bırakılmadan ilerledi — "
+        bekleyen = await kilitte_bekleyen_sorgu(
+            test_engine,
+            task2,
+            mesaj="oran yazımı, dönem onayının kilidi serbest bırakılmadan ilerledi — "
             "`upsert_rate` yılın dönem satırlarını KİLİTLEMİYOR olabilir "
-            "(onaylanmış dönemin hesabı geriye dönük değişebilir)"
+            "(onaylanmış dönemin hesabı geriye dönük değişebilir)",
         )
+        # Doğru kilit: yılın dönem satırları `year_has_locked_period` (`FOR UPDATE`, EŞİK = KİLİT).
+        assert "FROM payroll_periods WHERE payroll_periods.year = " in bekleyen, bekleyen
+        assert bekleyen.endswith("FOR UPDATE"), bekleyen
 
         kilidi_birak.set()
         _, durum1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)

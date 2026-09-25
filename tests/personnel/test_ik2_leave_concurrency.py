@@ -46,7 +46,7 @@ from app.modules.personnel.schemas import LeaveBalanceUpdate, LeaveRejectRequest
 from app.modules.roles.models import Role
 from app.modules.site_diary.models import WorkerSource
 from app.modules.users.models import User
-from tests._yaris import YARIS_TAVANI_SN
+from tests._yaris import YARIS_TAVANI_SN, kilitte_bekleyen_sorgu
 from tests.conftest import test_engine
 
 pytestmark = pytest.mark.asyncio
@@ -279,11 +279,13 @@ async def test_iki_esZamanli_onay_hak_asimini_atlatamaz() -> None:
         await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_onayla(kurulum.request_ids[1], kurulum.actor_ids[1]))
-        await asyncio.sleep(0.3)
-        assert not task2.done(), (
-            "tx2, tx1 kilidi serbest bırakmadan ilerleyebildi — `approve` artık "
-            "personel satırını KİLİTLEMİYOR olabilir (K5 yarışı yeniden açık)"
+        bekleyen = await kilitte_bekleyen_sorgu(
+            test_engine,
+            task2,
+            mesaj="tx2, tx1 kilidi serbest bırakmadan ilerleyebildi — `approve` artık "
+            "personel satırını KİLİTLEMİYOR olabilir (K5 yarışı yeniden açık)",
         )
+        assert "FROM personnel WHERE" in bekleyen and bekleyen.endswith("FOR UPDATE"), bekleyen
 
         kilidi_birak.set()
         sonuc1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
@@ -339,11 +341,13 @@ async def test_iki_esZamanli_onay_cakismayi_atlatamaz() -> None:
         await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_onayla(kurulum.request_ids[1], kurulum.actor_ids[1]))
-        await asyncio.sleep(0.3)
-        assert not task2.done(), (
-            "tx2 beklemedi — `approve` personel satırını KİLİTLEMİYOR olabilir "
-            "(K3 yarışı yeniden açık)"
+        bekleyen = await kilitte_bekleyen_sorgu(
+            test_engine,
+            task2,
+            mesaj="tx2 beklemedi — `approve` personel satırını KİLİTLEMİYOR olabilir "
+            "(K3 yarışı yeniden açık)",
         )
+        assert "FROM personnel WHERE" in bekleyen and bekleyen.endswith("FOR UPDATE"), bekleyen
 
         kilidi_birak.set()
         sonuc1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
@@ -390,11 +394,13 @@ async def test_ayni_talebe_esZamanli_onay_ve_red_tek_damga_birakir() -> None:
         await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_reddet(talep_id, kurulum.actor_ids[1]))
-        await asyncio.sleep(0.3)
-        assert not task2.done(), (
-            "red, onay kilidi serbest bırakılmadan ilerleyebildi — `reject` artık "
-            "karar satırını KİLİTLEMİYOR olabilir (K4 damga yarışı)"
+        bekleyen = await kilitte_bekleyen_sorgu(
+            test_engine,
+            task2,
+            mesaj="red, onay kilidi serbest bırakılmadan ilerleyebildi — `reject` artık "
+            "karar satırını KİLİTLEMİYOR olabilir (K4 damga yarışı)",
         )
+        assert "FROM personnel WHERE" in bekleyen and bekleyen.endswith("FOR UPDATE"), bekleyen
 
         kilidi_birak.set()
         sonuc1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
@@ -453,17 +459,14 @@ async def test_ayni_talebe_esZamanli_onay_ve_geri_cekme_tek_damga_birakir() -> N
         await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_geri_cek(talep_id, kurulum.actor_ids[1]))
-        await asyncio.sleep(0.3)
-        # 🔴 Once GERCEK hatayi yuzeye cikar: beklenmedik bir istisnayla OLEN gorev
-        # de `done()`dur ve asagidaki korkuluk onu "kilit yok" diye RAPORLARDI —
-        # yanlis teshis, kirmizinin en pahali hali.
-        if task2.done() and task2.exception() is not None:
-            raise task2.exception()
-        assert not task2.done(), (
-            "geri çekme, onay kilidi serbest bırakılmadan ilerleyebildi — "
+        bekleyen = await kilitte_bekleyen_sorgu(
+            test_engine,
+            task2,
+            mesaj="geri çekme, onay kilidi serbest bırakılmadan ilerleyebildi — "
             "`withdraw_leave_request` artık karar satırını KİLİTLEMİYOR olabilir "
-            "(K4 damga yarışı geri çekme yolunda açık)"
+            "(K4 damga yarışı geri çekme yolunda açık)",
         )
+        assert "FROM personnel WHERE" in bekleyen and bekleyen.endswith("FOR UPDATE"), bekleyen
 
         kilidi_birak.set()
         sonuc1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
@@ -588,11 +591,13 @@ async def test_iki_esZamanli_bakiye_putu_tek_satir_birakir() -> None:
         await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(yaz())
-        await asyncio.sleep(0.3)
-        assert not task2.done(), (
-            "ikinci PUT beklemedi — `upsert_leave_balance` personel satırını "
-            "KİLİTLEMİYOR olabilir (çift INSERT → UQ ihlali penceresi)"
+        bekleyen = await kilitte_bekleyen_sorgu(
+            test_engine,
+            task2,
+            mesaj="ikinci PUT beklemedi — `upsert_leave_balance` personel satırını "
+            "KİLİTLEMİYOR olabilir (çift INSERT → UQ ihlali penceresi)",
         )
+        assert "FROM personnel WHERE" in bekleyen and bekleyen.endswith("FOR UPDATE"), bekleyen
 
         kilidi_birak.set()
         await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)

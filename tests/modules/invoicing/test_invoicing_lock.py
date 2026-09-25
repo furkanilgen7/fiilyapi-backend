@@ -73,7 +73,7 @@ from app.modules.invoicing.schemas import InvoiceLineCreate, InvoiceLinesReplace
 from app.modules.invoicing.transitions import InvoiceAction
 from app.modules.roles.models import Role
 from app.modules.users.models import User
-from tests._yaris import YARIS_TAVANI_SN
+from tests._yaris import YARIS_TAVANI_SN, kilitte_bekleyen_sorgu
 from tests.conftest import test_engine
 
 _SessionFactory = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
@@ -250,11 +250,17 @@ async def test_put_lines_faturayi_denetimden_ONCE_kilitler() -> None:
         await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_kalemleri_yaz(kurulum))
-        await asyncio.sleep(0.3)
-        assert not task2.done(), (
-            "tx2, tx1 kilidi bırakmadan ilerleyebildi — `visible_invoice(for_update=True)` "
-            "artık `invoices` satırını KİLİTLEMİYOR (TOCTOU penceresi yeniden açık)"
+        bekleyen = await kilitte_bekleyen_sorgu(
+            test_engine,
+            task2,
+            mesaj="tx2, tx1 kilidi bırakmadan ilerleyebildi — `visible_invoice(for_update=True)` "
+            "artık `invoices` satırını KİLİTLEMİYOR (TOCTOU penceresi yeniden açık)",
         )
+        # `pg_stat_activity.query` `track_activity_query_size`da (1024 bayt) KIRPILIR: bu
+        # uzun SELECT'in `FROM … FOR UPDATE` sonu görünmez. Kilitsiz düz SELECT satır
+        # kilidinde ASLA beklemez — Lock beklemesindeki bir `SELECT invoices.` yalnız
+        # kilitli okuma olabilir (kilitsiz mutantta tx2 hiç beklemez: TEST-B1 ölçümü).
+        assert bekleyen.startswith("SELECT invoices."), bekleyen
 
         kilidi_birak.set()
         assert await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN) == "locked"

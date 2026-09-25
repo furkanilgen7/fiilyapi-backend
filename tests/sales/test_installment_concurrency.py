@@ -43,7 +43,7 @@ from app.modules.sales.schemas import (
 from app.modules.sites.models import Site
 from app.modules.units.models import Block, Unit, UnitKind
 from app.modules.users.models import User, UserProjectAccess
-from tests._yaris import YARIS_TAVANI_SN
+from tests._yaris import YARIS_TAVANI_SN, kilitte_bekleyen_sorgu
 from tests.conftest import test_engine
 
 pytestmark = pytest.mark.asyncio
@@ -90,11 +90,16 @@ async def test_esZamanli_tahsilat_taksit_tutarini_asamaz(kurulum: _Kurulum) -> N
         await asyncio.wait_for(lock_acquired.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_ode(kurulum))
-        await asyncio.sleep(0.3)
-        assert not task2.done(), (
-            "tx2, tx1 kilidi serbest bırakmadan ilerleyebildi — `pay_installment` "
-            "taksit satırını `SELECT … FOR UPDATE` ile KİLİTLEMİYOR olabilir"
+        bekleyen = await kilitte_bekleyen_sorgu(
+            test_engine,
+            task2,
+            mesaj="tx2, tx1 kilidi serbest bırakmadan ilerleyebildi — `pay_installment` "
+            "taksit satırını `SELECT … FOR UPDATE` ile KİLİTLEMİYOR olabilir",
         )
+        # `pg_stat_activity.query` 1024 baytta KIRPILIR (`track_activity_query_size`): uzun
+        # SELECT'te `FOR UPDATE` görünmeyebilir. Kilitte bekleyen bir SELECT ancak KİLİTLİ
+        # okumadır; kilitsiz mutant `UPDATE sale_installments`te bekler (ölçüldü).
+        assert bekleyen.startswith("SELECT sale_installments."), bekleyen
 
         release_lock.set()
         sonuc1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
