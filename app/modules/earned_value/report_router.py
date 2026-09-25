@@ -61,7 +61,11 @@ XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 #: `{"detail": <metin>}`). Metin mesaj sabitlerinden — beyan ile yanit kaymaz.
 _QURR_409 = {409: {"description": NO_BASELINE}}
 _APPROVE_409 = {
-    409: {"description": f"{report_daily.NOT_GENERATED} · {SITE_COMPLETED_BUDGET_READ_ONLY}"}
+    409: {
+        "description": (  # EV-BORC-8: baseline yoksa NOT_GENERATED DEGIL, NO_BASELINE
+            f"{report_daily.NOT_GENERATED} · {SITE_COMPLETED_BUDGET_READ_ONLY} · {NO_BASELINE}"
+        )
+    }
 }
 
 

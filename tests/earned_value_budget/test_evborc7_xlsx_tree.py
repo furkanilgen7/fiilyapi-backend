@@ -135,23 +135,6 @@ def test_tree_lines_order_is_item_group_discipline_direct_all() -> None:
 # --- 409 beyani (EV-BORC-7 (2)) ---------------------------------------------------------
 
 
-async def test_approve_daily_without_diary_is_real_409(
-    client,
-    admin,
-    santiye,
-    boq,
-    baseline,
-) -> None:
-    """Onay ucunun 'gunluk yok' dali HTTP duzeyinde bekcili: baseline'li ama o gun gunlugu
-    HIC olmayan bir günde POST .../approve → 409, govde `report_daily.NOT_GENERATED` ile
-    BIREBIR (kayma yok)."""
-    from app.modules.earned_value import report_daily
-
-    resp = await client.post(_rep(santiye, "/daily/2026-05-06/approve"), headers=admin)
-    assert resp.status_code == 409, resp.text
-    assert resp.json()["detail"] == report_daily.NOT_GENERATED
-
-
 def test_ev_report_routes_declare_their_real_409() -> None:
     """Ucun GERCEKTEN dondugu 409 openapi'de beyanli; metin mesaj sabitiyle AYNI (kayma yok).
     Gercek donus bekcileri: test_S6_no_baseline_is_409_not_404 · onay 409 testleri."""

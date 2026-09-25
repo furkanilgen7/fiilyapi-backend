@@ -303,6 +303,10 @@ async def approve(
     await assert_site_writable(session, site_id, message=SITE_COMPLETED_BUDGET_READ_ONLY)
     live = await build_live(session, site_id, day)
     if live.status == "not_generated":
+        # `calendar_start` yalnız baseline yoksa None kalır (bkz. `_empty`/`build_live`):
+        # bu, ikinci bir "baseline var mı" kuralı yazmadan mevcut sinyali yeniden kullanır.
+        if live.calendar_start is None:
+            raise ConflictError(adp.NO_BASELINE)
         raise ConflictError(NOT_GENERATED)
     drafts = [d for d in live.draft_diary_dates if d <= day]
     if drafts:

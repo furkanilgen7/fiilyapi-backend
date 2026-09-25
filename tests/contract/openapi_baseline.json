@@ -64009,7 +64009,7 @@
             "description": "Kayıt bulunamadı"
           },
           "409": {
-            "description": "Bu günün günlüğü yok — rapor üretilemedi · Tamamlanmış şantiyenin bütçesi salt okunurdur"
+            "description": "Bu günün günlüğü yok — rapor üretilemedi · Tamamlanmış şantiyenin bütçesi salt okunurdur · Şantiyede aktif (dondurulmuş) baseline yok"
           },
           "422": {
             "content": {
