@@ -36,7 +36,8 @@ from app.core.day_hooks import SubmitContext
 from app.core.errors import ConflictError, EarnedValueValidationError
 from app.modules.contracts.models import Subcontractor
 from app.modules.earned_value import budget_repository as repo
-from app.modules.earned_value.access import PERMISSION_MODULE
+from app.modules.earned_value import guards
+from app.modules.earned_value.access import PERMISSION_MODULE, assert_site_writable
 from app.modules.earned_value.budget_snapshot import frozen_tree
 from app.modules.earned_value.budget_tree import BudgetTree
 from app.modules.earned_value.models import (
@@ -58,7 +59,6 @@ from app.modules.site_diary.models import (
     SiteDiaryLine,
     SiteDiaryWorkerCount,
 )
-from app.modules.sites.models import Site, SiteStatus
 from app.modules.timesheet.models import TimesheetEntry
 from app.modules.users.models import User
 
@@ -70,8 +70,12 @@ UNKNOWN_CODE = "İş kodu aktif baseline'da yok: {node}"
 UNRATED_CODE = "Oransız yaprak iş kodu olamaz: {node}"
 UNKNOWN_ROW = "Dağıtım satırı bu günün puantajında/taşeron kaydında yok"
 CELL_CODE_MISSING = "Hücrenin iş kodu gün kodlarında yok: {node}"
-SITE_COMPLETED = "Tamamlanmış şantiyede planlama kaydı salt okunurdur"
 NOT_LOCKED = "Bu gün kilitli değil"
+
+
+async def _assert_site_writable(session: AsyncSession, site_id: uuid.UUID) -> None:
+    """Tamamlanmis santiyede gun yazmalari (dagitim, kilit acma) SALT OKUNUR — TEK kural."""
+    await assert_site_writable(session, site_id, message=guards.SITE_COMPLETED_DAY_READ_ONLY)
 
 
 # ------------------------------------------------------------------ kilit (B2-6)
@@ -126,6 +130,7 @@ async def day_lock(session: AsyncSession, site_id: uuid.UUID, day: date) -> str 
 async def unlock_day(
     session: AsyncSession, site_id: uuid.UUID, day: date, actor: User, reason: str
 ) -> EvDayUnlock:
+    await _assert_site_writable(session, site_id)
     if not (await lock_state(session, site_id, day)).locked:
         raise ConflictError(NOT_LOCKED)
     row = EvDayUnlock(site_id=site_id, day=day, reason=reason.strip(), unlocked_by_user_id=actor.id)
@@ -317,9 +322,7 @@ def _node_index(tree: BudgetTree) -> dict[str, bool | None]:
 
 
 async def _assert_writable(session: AsyncSession, site_id: uuid.UUID, day: date) -> None:
-    site = await session.get(Site, site_id)
-    if site is not None and site.status is SiteStatus.completed:
-        raise ConflictError(SITE_COMPLETED)
+    await _assert_site_writable(session, site_id)
     await day_hooks.assert_days_unlocked(session, site_id, [day])
 
 

@@ -33,6 +33,16 @@ def point_class(node: Node) -> tuple[bool, ContractorType]:
 #   "Dogrudan olmayan" satiri acilir. Agac dugumu metrikleri TUM alt agaci tasir.
 KPI_ROWS_DIRECT_ONLY = True
 
+
+# K26 (CEO 2026-09-25) — togo YAPRAK duzeyinde, spec §3.4 AYNEN: kalan miktar × YAPRAGIN
+#   orani, KIRPMASIZ (asimda negatif katki; Σ yaprak = Σ butce − Σ earned = g − h). Baslik
+#   togo'su = Σ yaprak (B0: baslik = Σ cocuk) — ortalama oran × toplam kalan (d × n) DEGIL:
+#   bolum bazinda farkli yaprak oranlarinda (K3 ezmeleri) o yanlis bolume yanlis oran uygular.
+#   Asimda 0'da kirpma KULLANICI KARARI bekliyor (KARARLAR-BEKLEYEN); onaylanirsa TEK yer burasi.
+def leaf_togo(remaining_qty: Decimal, rate: Decimal) -> Decimal:
+    return remaining_qty * rate
+
+
 # S4 — karma birimli baslik: qty tabanli alanlar yaprak birimleri ayni degilse None;
 #   ayniysa baslik planned_unit_mhr = budget / planned_qty. Adam-saat alanlari her zaman Σ.
 HEADER_QTY_REQUIRES_UNIFORM_UOM = True

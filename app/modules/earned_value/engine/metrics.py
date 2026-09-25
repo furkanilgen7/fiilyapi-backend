@@ -14,7 +14,7 @@ from .accumulate import Points, Triple
 from .classify import pf_band
 from .numeric import ZERO, diff, ratio
 from .plan import LeafPlan
-from .policy import HEADER_QTY_REQUIRES_UNIFORM_UOM
+from .policy import HEADER_QTY_REQUIRES_UNIFORM_UOM, leaf_togo
 from .results import NodeMetrics
 from .tree import Tree
 from .types import PfBands
@@ -45,9 +45,20 @@ def _add_opt(a: Decimal | None, b: Decimal | None) -> Decimal | None:
     return b if a is None else a + b
 
 
+def leaf_budgets(tree: Tree) -> list[Decimal]:
+    """Yaprak NOKTA butcesi: planned_qty × unit_mhr (K12: oransiz → 0); baslik 0 (spec §3.2)."""
+    budget = [ZERO] * len(tree)
+    for i, node in enumerate(tree.nodes):
+        if tree.is_leaf[i]:
+            pq = node.planned_qty
+            assert pq is not None  # build_tree dogruladi
+            budget[i] = pq * (node.unit_mhr if node.unit_mhr is not None else ZERO)
+    return budget
+
+
 def rollup(tree: Tree, points: Points) -> Rollup:
     n = len(tree)
-    budget, planned_qty, togo = [ZERO] * n, [ZERO] * n, [ZERO] * n
+    budget, planned_qty, togo = leaf_budgets(tree), [ZERO] * n, [ZERO] * n
     prev_budget: list[Decimal | None] = [None] * n
     prev_planned_qty: list[Decimal | None] = [None] * n
     for i, node in enumerate(tree.nodes):
@@ -56,9 +67,8 @@ def rollup(tree: Tree, points: Points) -> Rollup:
         pq = node.planned_qty
         assert pq is not None  # build_tree dogruladi
         rate = node.unit_mhr if node.unit_mhr is not None else ZERO  # K12: oransiz → 0
-        budget[i] = pq * rate
         planned_qty[i] = pq
-        togo[i] = (pq - points.qty.cum[i]) * rate  # togo = remaining_qty × unit_mhr
+        togo[i] = leaf_togo(pq - points.qty.cum[i], rate)  # K26: kirpmasiz (spec §3.4)
         if node.prev_planned_qty is not None and node.prev_unit_mhr is not None:
             prev_planned_qty[i] = node.prev_planned_qty
             prev_budget[i] = node.prev_planned_qty * node.prev_unit_mhr

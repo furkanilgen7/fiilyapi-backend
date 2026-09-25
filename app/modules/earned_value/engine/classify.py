@@ -18,12 +18,17 @@ from .policy import (
 from .types import PfBand, PfBands, Status
 
 
+def variance_points(variance: Decimal) -> Decimal:
+    """K27 GOSTERILEN sapma: round_half_up(variance × 100, 1) puan (durum karari buna bakar)."""
+    return (variance * STATUS_POINTS_SCALE).quantize(STATUS_QUANTUM, rounding=STATUS_ROUNDING)
+
+
 def classify_status(variance: Decimal | None, tolerance_points: Decimal) -> Status | None:
-    """v = round_half_up(variance × 100, 1) puan · |v| <= tol → Normal · v > tol → Ahead
+    """v = `variance_points(variance)` · |v| <= tol → Normal · v > tol → Ahead
     · v < −tol → Late (spec §3.5 + K27)."""
     if variance is None:
         return None
-    points = (variance * STATUS_POINTS_SCALE).quantize(STATUS_QUANTUM, rounding=STATUS_ROUNDING)
+    points = variance_points(variance)
     if points > tolerance_points:
         return Status.AHEAD
     if points < -tolerance_points:

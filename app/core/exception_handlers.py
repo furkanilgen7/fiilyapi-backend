@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
-from app.core.day_hooks import DiarySubmitBlockedError
+from app.core.day_hooks import DaysLockedError, DiarySubmitBlockedError
 from app.core.errors import (
     AccountingValidationError,
     ApprovalNotAllowedError,
@@ -73,6 +73,14 @@ async def _diary_submit_blocked_handler(
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={"detail": str(exc), "reasons": exc.reasons},
+    )
+
+
+async def _days_locked_handler(request: Request, exc: DaysLockedError) -> JSONResponse:
+    """409 + `locked_days` (ISO tarih listesi) — istemci kilitli gunleri salt okunur basar."""
+    return JSONResponse(
+        status_code=status.HTTP_409_CONFLICT,
+        content={"detail": str(exc), "locked_days": [d.isoformat() for d in exc.locked_days]},
     )
 
 
@@ -266,6 +274,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(SiteValidationError, _site_validation_handler)
     app.add_exception_handler(EarnedValueValidationError, _earned_value_validation_handler)
     app.add_exception_handler(DiarySubmitBlockedError, _diary_submit_blocked_handler)
+    app.add_exception_handler(DaysLockedError, _days_locked_handler)
     app.add_exception_handler(InventoryValidationError, _inventory_validation_handler)
     app.add_exception_handler(DuplicateError, _duplicate_error_handler)
     app.add_exception_handler(RelatedRecordsExistError, _related_records_exist_handler)

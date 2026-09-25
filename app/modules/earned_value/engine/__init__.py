@@ -22,7 +22,8 @@ from .calendar import (
     expand_holiday_ranges,
     working_day_predicate,
 )
-from .classify import classify_status, pf_band
+from .classify import classify_status, pf_band, variance_points
+from .panel import compute_panel
 from .preview import (
     DisciplinePreview,
     SeriesPreview,
@@ -33,6 +34,8 @@ from .preview import (
 )
 from .report import compute_daily_report
 from .results import DailyReport, NodeMetrics, SummaryRow, Totals
+from .scope import Scope, scope_for_row
+from .series import ScopeSeries, SeriesPoint, SeriesResult, compute_series
 from .spread import NoWorkingDayError, spread_leaf
 from .types import (
     AllocationRule,
@@ -72,6 +75,10 @@ __all__ = [
     "ProjectCalendar",
     "QtyEntry",
     "RowKind",
+    "Scope",
+    "ScopeSeries",
+    "SeriesPoint",
+    "SeriesResult",
     "SeriesPreview",
     "SpreadLeaf",
     "SpreadPreview",
@@ -81,10 +88,14 @@ __all__ = [
     "WeekLoad",
     "classify_status",
     "compute_daily_report",
+    "compute_panel",
+    "compute_series",
     "compute_spread_preview",
     "expand_holiday_ranges",
     "pf_band",
+    "variance_points",
     "preview_from_curves",
+    "scope_for_row",
     "spread_leaf",
     "working_day_predicate",
 ]

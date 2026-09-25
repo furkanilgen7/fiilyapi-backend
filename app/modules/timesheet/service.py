@@ -333,7 +333,14 @@ async def save_week(
     await _assert_person_days_free(session, site, plan)
     # Kapsam okunduktan SONRA koşar: "değişti mi" sorusu MEVCUT satırları ister.
     _assert_odenebilir_personel(existing, plan)
-    await day_hooks.assert_days_unlocked(session, site.id, _changed_days(existing, plan))
+    # P5 (spec §3.14): kilitli gunu DEGISMEDEN tasiyan govde no-op'tur — yalniz DEGISEN
+    # gunler sorulur; 409 yaniti haftanin kilitli gunlerini tasir (atomik: yazmadan once).
+    await day_hooks.assert_days_unlocked(
+        session,
+        site.id,
+        _changed_days(existing, plan),
+        report_days=repository.week_days(iso_year, iso_week),
+    )
 
     # --- Buradan itibaren yazma; dogrulama YOK (yukaridaki sira kisiti). ---
     yeniler, silinecekler = _apply(site, existing, plan, actor)

@@ -17,7 +17,7 @@ olur, S1 bu modda kullanilmaz. "Dogrudan olmayan" satirinin planlisi her iki mod
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -25,21 +25,20 @@ from decimal import Decimal
 from .accumulate import Points
 from .classify import classify_status, pf_band
 from .numeric import ZERO, diff, ratio
-from .plan import LeafPlan
+from .plan import LeafPlan, planned_pct
 from .policy import (
-    KPI_ROWS_DIRECT_ONLY,
     OWN_SUBCON_PLAN_BY_BUDGET_SHARE,
     contractor_mix,
     discipline_has_split_rows,
     point_class,
 )
 from .results import SummaryRow
+from .scope import Scope, ShareFn, curve_weights, has_plan, row_scope, scope_keep, scope_span
 from .tree import Tree
 from .types import (
     ContractorMix,
     ContractorType,
     CurveKey,
-    Node,
     NodeId,
     PfBands,
     PlannedMhr,
@@ -69,54 +68,22 @@ def curve_totals(planned: Iterable[PlannedMhr], report_date: date) -> dict[Curve
     return {k: CurveTotals(*v) for k, v in acc.items()}
 
 
-@dataclass(frozen=True, slots=True)
-class _Context:
-    tree: Tree
-    points: Points
-    budget: list[Decimal]  # yaprak nokta butcesi (baslik 0)
-    curves: Mapping[CurveKey, CurveTotals]
-    leaf_plan: LeafPlan | None
-    tolerance_points: Decimal
-    daily_bands: PfBands
-    cumulative_bands: PfBands
-
-
-Predicate = Callable[[Node], bool]
-#: Satirin secili dugum dizinlerinden (gun, kum) planli %.
-PlanFn = Callable[[list[int]], tuple[Decimal | None, Decimal | None]]
-
-
-def _is_direct(node: Node) -> bool:
-    return point_class(node)[0]
-
-
-def _is_non_direct(node: Node) -> bool:
-    return not point_class(node)[0]
-
-
-def _direct_of(kind: ContractorType) -> Predicate:
-    return lambda node: point_class(node) == (True, kind)
-
-
-def _discipline_filter(node: Node) -> bool:
-    # S3: disiplin KPI satiri yalniz direct noktalari tasir.
-    return point_class(node)[0] or not KPI_ROWS_DIRECT_ONLY
-
-
-def _share_weights(ctx: _Context, kind: ContractorType) -> dict[CurveKey, Decimal] | None:
-    """S1: w_D = budget_kind(D) / budget(D), direct yapraklar uzerinden."""
+def share_weights(
+    tree: Tree, budget: Sequence[Decimal], kind: ContractorType
+) -> dict[CurveKey, Decimal] | None:
+    """S1: w_D = budget_kind(D) / budget(D), direct yapraklar uzerinden (bayrak kapali → None)."""
     if not OWN_SUBCON_PLAN_BY_BUDGET_SHARE:
         return None
     whole: dict[CurveKey, Decimal] = {}
     part: dict[CurveKey, Decimal] = {}
-    for i, node in enumerate(ctx.tree.nodes):
-        curve = ctx.tree.curve_of[i]
+    for i, node in enumerate(tree.nodes):
+        curve = tree.curve_of[i]
         is_direct, contractor = point_class(node)
-        if not ctx.tree.is_leaf[i] or not is_direct or curve is None:
+        if not tree.is_leaf[i] or not is_direct or curve is None:
             continue
-        whole[curve] = whole.get(curve, ZERO) + ctx.budget[i]
+        whole[curve] = whole.get(curve, ZERO) + budget[i]
         if contractor is kind:
-            part[curve] = part.get(curve, ZERO) + ctx.budget[i]
+            part[curve] = part.get(curve, ZERO) + budget[i]
     return {
         curve: share
         for curve, total in whole.items()
@@ -124,40 +91,66 @@ def _share_weights(ctx: _Context, kind: ContractorType) -> dict[CurveKey, Decima
     }
 
 
-def _plan(ctx: _Context, weights: Mapping[CurveKey, Decimal] | None) -> PlanFn | None:
-    """K9: yaprak modunda HER KPI satiri yaprak egrisinden; aksi halde disiplin egrisi (S1)."""
-    if ctx.leaf_plan is not None:
-        return ctx.leaf_plan.pct
-    if weights is None:
-        return None
-    return lambda _sel: _planned(ctx, weights)
+def share_fn(tree: Tree, budget: Sequence[Decimal]) -> ShareFn:
+    """Iki yuklenici tipinin S1 paylarini BIR KEZ hesaplar."""
+    shares = {kind: share_weights(tree, budget, kind) for kind in ContractorType}
+    return shares.__getitem__
 
 
-def _planned(
-    ctx: _Context, weights: Mapping[CurveKey, Decimal]
-) -> tuple[Decimal | None, Decimal | None]:
+def curve_mix(
+    curves: Mapping[CurveKey, CurveTotals], weights: Mapping[CurveKey, Decimal]
+) -> tuple[Decimal, Decimal, Decimal]:
+    """Disiplin egrisi modu: satirin planli (gun, kum, toplam) = Σ_D w_D × egri(D)."""
     day = cum = total = ZERO
     for curve, w in weights.items():
-        c = ctx.curves.get(curve)
+        c = curves.get(curve)
         if c is None:
             continue
         day += w * c.day
         cum += w * c.cum
         total += w * c.total
-    return ratio(day, total), ratio(cum, total)
+    return day, cum, total
+
+
+@dataclass(frozen=True, slots=True)
+class _Context:
+    tree: Tree
+    points: Points
+    budget: list[Decimal]  # yaprak nokta butcesi (baslik 0)
+    curves: Mapping[CurveKey, CurveTotals]
+    leaf_plan: LeafPlan | None
+    share: ShareFn
+    tolerance_points: Decimal
+    daily_bands: PfBands
+    cumulative_bands: PfBands
+
+
+#: Satirin secili dugum dizinlerinden (gun, kum) planli %.
+PlanFn = Callable[[list[int]], tuple[Decimal | None, Decimal | None]]
+
+
+def _plan(ctx: _Context, scope: Scope) -> PlanFn | None:
+    """K9: yaprak modunda HER KPI satiri yaprak egrisinden; aksi halde disiplin egrisi (S1)."""
+    if not has_plan(scope):
+        return None
+    if ctx.leaf_plan is not None:
+        return ctx.leaf_plan.pct
+    weights = curve_weights(ctx.tree, scope, ctx.curves, ctx.share)
+    if weights is None:
+        return None
+    return lambda _sel: planned_pct(*curve_mix(ctx.curves, weights))
 
 
 def _row(
     ctx: _Context,
     kind: RowKind,
-    indices: range,
-    keep: Predicate,
-    plan: PlanFn | None,
     node_id: NodeId | None = None,
     mix: ContractorMix | None = None,
 ) -> SummaryRow:
+    scope = row_scope(kind, node_id)
     p, nodes = ctx.points, ctx.tree.nodes
-    sel = [i for i in indices if keep(nodes[i])]
+    keep = scope_keep(scope)
+    sel = [i for i in scope_span(ctx.tree, scope) if keep(nodes[i])]
 
     def total(values: list[Decimal]) -> Decimal:
         return sum((values[i] for i in sel), ZERO)
@@ -167,6 +160,7 @@ def _row(
     sd, sc, sw = total(p.spent.day), total(p.spent.cum), total(p.spent.week)
     pf_day, pf_cum, pf_week = ratio(ed, sd), ratio(ec, sc), ratio(ew, sw)
     progress_cum = ratio(ec, budget)
+    plan = _plan(ctx, scope)
     planned_day, planned_cum = (None, None) if plan is None else plan(sel)
     variance = diff(progress_cum, planned_cum)
     return SummaryRow(
@@ -211,55 +205,44 @@ def summary_rows(
     cumulative_bands: PfBands,
 ) -> tuple[SummaryRow, ...]:
     ctx = _Context(
-        tree, points, budget, curves, leaf_plan, tolerance_points, daily_bands, cumulative_bands
+        tree,
+        points,
+        budget,
+        curves,
+        leaf_plan,
+        share_fn(tree, budget),
+        tolerance_points,
+        daily_bands,
+        cumulative_bands,
     )
-    everything = range(len(tree))
-    all_curves = dict.fromkeys(curves, Decimal(1))
-    own, subcon = ContractorType.OWN, ContractorType.SUBCON
-    own_w, subcon_w = _share_weights(ctx, own), _share_weights(ctx, subcon)
     rows = [
-        _row(ctx, RowKind.OVERALL, everything, _is_direct, _plan(ctx, all_curves)),
-        _row(ctx, RowKind.OVERALL_OWN, everything, _direct_of(own), _plan(ctx, own_w)),
-        _row(ctx, RowKind.OVERALL_SUBCON, everything, _direct_of(subcon), _plan(ctx, subcon_w)),
+        _row(ctx, RowKind.OVERALL),
+        _row(ctx, RowKind.OVERALL_OWN),
+        _row(ctx, RowKind.OVERALL_SUBCON),
     ]
     for r in tree.roots:
-        rows.extend(_discipline_rows(ctx, r, own_w, subcon_w))
-    if any(_is_non_direct(node) for node in tree.nodes):
-        rows.append(_row(ctx, RowKind.NON_DIRECT, everything, _is_non_direct, None))
+        rows.extend(_discipline_rows(ctx, r))
+    non_direct = scope_keep(row_scope(RowKind.NON_DIRECT, None))
+    if any(non_direct(node) for node in tree.nodes):
+        rows.append(_row(ctx, RowKind.NON_DIRECT))
     return tuple(rows)
 
 
-def _discipline_rows(
-    ctx: _Context,
-    root: int,
-    own_w: Mapping[CurveKey, Decimal] | None,
-    subcon_w: Mapping[CurveKey, Decimal] | None,
-) -> list[SummaryRow]:
+def _discipline_rows(ctx: _Context, root: int) -> list[SummaryRow]:
     tree = ctx.tree
-    span = range(root, tree.subtree_end[root])
     node_id = tree.nodes[root].id
+    scope = row_scope(RowKind.DISCIPLINE, node_id)
+    keep = scope_keep(scope)
     mix = contractor_mix(
         {
             point_class(tree.nodes[i])[1]
-            for i in span
-            if tree.is_leaf[i] and _discipline_filter(tree.nodes[i])
+            for i in scope_span(tree, scope)
+            if tree.is_leaf[i] and keep(tree.nodes[i])
         }
     )
-    curve = tree.curve_of[root]
-    weights = None if curve is None else {curve: Decimal(1)}
-    plan = _plan(ctx, weights)
-    rows = [_row(ctx, RowKind.DISCIPLINE, span, _discipline_filter, plan, node_id, mix)]
+    rows = [_row(ctx, RowKind.DISCIPLINE, node_id, mix)]
     if not discipline_has_split_rows(mix):
         return rows
-    for kind, row_kind, share in (
-        (ContractorType.OWN, RowKind.DISCIPLINE_OWN, own_w),
-        (ContractorType.SUBCON, RowKind.DISCIPLINE_SUBCON, subcon_w),
-    ):
-        w = None if curve is None or share is None else {curve: share.get(curve, ZERO)}
-        keep = _split_filter(kind)
-        rows.append(_row(ctx, row_kind, span, keep, _plan(ctx, w), node_id))
+    rows.append(_row(ctx, RowKind.DISCIPLINE_OWN, node_id))
+    rows.append(_row(ctx, RowKind.DISCIPLINE_SUBCON, node_id))
     return rows
-
-
-def _split_filter(kind: ContractorType) -> Predicate:
-    return lambda node: _discipline_filter(node) and point_class(node)[1] is kind

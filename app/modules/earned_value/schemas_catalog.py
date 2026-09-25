@@ -16,12 +16,12 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
-from decimal import Decimal
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 from app.core.text import FREE_TEXT_MAX_LENGTH
+from app.modules.earned_value.decimal_out import EvDecimal
 from app.modules.earned_value.engine import ContractorType
 from app.modules.earned_value.models import RATE_PRECISION
 
@@ -42,7 +42,7 @@ Description = Annotated[str, StringConstraints(max_length=FREE_TEXT_MAX_LENGTH)]
 #: `ck_ev_catalog_items_rate_positive` (> 0) + Numeric(12,4): fazla ondalik SESSIZ
 #: yuvarlanmasin diye semada reddedilir.
 StandardRate = Annotated[
-    Decimal, Field(gt=0, max_digits=RATE_PRECISION[0], decimal_places=RATE_PRECISION[1])
+    EvDecimal, Field(gt=0, max_digits=RATE_PRECISION[0], decimal_places=RATE_PRECISION[1])
 ]
 
 
@@ -151,16 +151,16 @@ class CatalogActualSite(BaseModel):
     site_id: uuid.UUID
     site_name: str
     end_date: date | None
-    qty: Decimal
-    rate: Decimal
+    qty: EvDecimal
+    rate: EvDecimal
 
 
 class CatalogActual(BaseModel):
     """K4: yalniz tamamlanmis santiyeler, miktar agirlikli ortalama = Σspent / Σqty."""
 
-    avg: Decimal | None
-    min: Decimal | None
-    max: Decimal | None
+    avg: EvDecimal | None
+    min: EvDecimal | None
+    max: EvDecimal | None
     site_count: int
     sites: list[CatalogActualSite]
 
@@ -170,7 +170,7 @@ class CatalogItemRead(BaseModel):
     discipline: DisciplineRef
     name: str
     uom: str
-    standard_unit_mhr: Decimal
+    standard_unit_mhr: EvDecimal
     default_contractor_type: ContractorType
     description: str | None
     standard_updated_at: datetime
@@ -178,4 +178,4 @@ class CatalogItemRead(BaseModel):
     actual: CatalogActual
     #: (avg − standart) ÷ standart, ORAN (0,139 = %13,9); avg yoksa `null`. Yuvarlama
     #: yalniz sunumda (spec §3.6); ±%10 "buyuk fark" esigi (K4) istemcide uygulanir.
-    diff_pct: Decimal | None
+    diff_pct: EvDecimal | None

@@ -22,6 +22,7 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import day_hooks
 from app.modules.personnel.models import Personnel
 from app.modules.projects.models import Project
 from app.modules.sites.models import Section, Site
@@ -176,6 +177,7 @@ async def build(
         ),
         rows=week_rows,
         day_totals=[total.to_schema(day) for day, total in day_totals.items()],
+        locked_days=await day_hooks.locked_days(session, site.id, days),
         month_year=anchor.year,
         month_month=anchor.month,
         month_total_hours=month_total,

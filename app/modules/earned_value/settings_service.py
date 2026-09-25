@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import EarnedValueValidationError
 from app.modules.boq.models import BoqItem
 from app.modules.earned_value import defaults, guards
+from app.modules.earned_value.access import assert_site_writable
 from app.modules.earned_value.models import (
     EvCompositeMetric,
     EvCompositeMetricTerm,
@@ -264,7 +265,11 @@ async def _replace_composite_metrics(
 async def save_settings(
     session: AsyncSession, site_id: uuid.UUID, data: SettingsSave, actor: User
 ) -> SettingsRead:
-    """TAM DEGISTIRME: ayar satiri + tatiller + pacal metrikler govdeyle ayni olur."""
+    """TAM DEGISTIRME: ayar satiri + tatiller + pacal metrikler govdeyle ayni olur.
+
+    Tamamlanmis santiye SALT OKUNUR (§3.10 F0-8): kilit + durum kilit altinda (TEK kural).
+    """
+    await assert_site_writable(session, site_id, message=guards.SITE_COMPLETED_READ_ONLY)
     await validate(session, site_id, data)
     await _upsert_row(session, site_id, data, actor)
     await _replace_holidays(session, site_id, data.holidays)

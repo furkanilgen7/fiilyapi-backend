@@ -64,26 +64,110 @@ def _resolve(tree: Tree, calendar: ProjectCalendar, node_id: object, day: date, 
     return i
 
 
+def resolve_qty(tree: Tree, calendar: ProjectCalendar, e: QtyEntry) -> int:
+    """Miktar girisinin yaprak dizini; bilinmeyen dugum / takvim disi / baslik → ValueError."""
+    i = _resolve(tree, calendar, e.node_id, e.day, "Miktar")
+    if not tree.is_leaf[i]:
+        raise ValueError(f"Miktar yalniz yapraga girilir: {e.node_id!r} bir baslik")
+    return i
+
+
+def resolve_hours(tree: Tree, calendar: ProjectCalendar, h: HoursEntry) -> int:
+    """Saat girisinin dugum (M) dizini; bilinmeyen dugum / takvim disi → ValueError."""
+    return _resolve(tree, calendar, h.node_id, h.day, "Saat")
+
+
+def leaf_rates(tree: Tree) -> list[Decimal]:
+    """Dugum basina kazanilmis orani. K12: oransiz (bos) yaprak 0 → kazanilmisa GIRMEZ."""
+    return [node.unit_mhr if node.unit_mhr is not None else ZERO for node in tree.nodes]
+
+
+def land_hours(
+    tree: Tree, rates: list[Decimal], day_index: DayIndex, m: int, h: HoursEntry
+) -> tuple[list[tuple[int, Decimal]], bool]:
+    """Saatin indigi (dugum, saat) listesi ve "M'de unallocated mi" bayragi (spec §3.3).
+
+    direct: M'de kalir (M ve atalari gorur, alttaki yapraklara DAGILMAZ). prorata: M'nin
+    yapraklarina o gunku agirlik payiyla; pay yoksa M'de kalir ve unallocated sayilir.
+    """
+    if h.rule is AllocationRule.DIRECT:
+        return [(m, h.hours)], False
+    weights = day_index.leaves_in(h.day, m, tree.subtree_end[m])
+    if prorata_by_earned(tree.uom_of[m]):
+        # K11: karma birimli M'de miktarlar toplanamaz → pay = qty × unit_mhr (kazanilmis).
+        weights = [(i, q * rates[i]) for i, q in weights]
+    parts = prorata_parts(h.hours, weights)
+    if parts is None:
+        return [(m, h.hours)], True
+    return parts, False
+
+
+@dataclass(frozen=True, slots=True)
+class Landing:
+    """Bir saat girisinin inisi — rapor gunune BAGLI DEGIL (pay yalniz o gunun miktariyla)."""
+
+    day: date
+    node: int  # M
+    hours: Decimal
+    parts: list[tuple[int, Decimal]]
+    unallocated: bool
+
+
+@dataclass(frozen=True, slots=True)
+class Resolved:
+    """Dogrulanmis + indirilmis hareketler: bir kez kurulur, rapor ve seri PAYLASIR (panel)."""
+
+    rates: list[Decimal]
+    qty: list[tuple[int, QtyEntry]]  # (yaprak dizini, giris)
+    hours: list[Landing]
+
+
+def resolve_all(
+    tree: Tree,
+    calendar: ProjectCalendar,
+    qty_entries: Iterable[QtyEntry],
+    hours_entries: Iterable[HoursEntry],
+) -> Resolved:
+    """TUM girisleri dogrular (bilinmeyen dugum / takvim disi → ValueError) ve saatleri indirir.
+
+    Inis gunden bagimsizdir: t gunundeki prorata payi yalniz t'nin miktarlarina bakar, bu
+    yuzden d'ye kadar suzmek (rapor) ile gun < days suzmek (seri) AYNI payi verir.
+    """
+    rates = leaf_rates(tree)
+    qty: list[tuple[int, QtyEntry]] = []
+    qty_by_day: dict[date, dict[int, Decimal]] = defaultdict(dict)
+    for e in qty_entries:
+        i = resolve_qty(tree, calendar, e)
+        qty.append((i, e))
+        day_map = qty_by_day[e.day]
+        day_map[i] = day_map.get(i, ZERO) + e.qty
+    day_index = DayIndex(qty_by_day)
+    hours: list[Landing] = []
+    for h in hours_entries:
+        m = resolve_hours(tree, calendar, h)
+        parts, is_unallocated = land_hours(tree, rates, day_index, m, h)
+        hours.append(Landing(h.day, m, h.hours, parts, is_unallocated))
+    return Resolved(rates, qty, hours)
+
+
 def accumulate(
     tree: Tree,
     calendar: ProjectCalendar,
     qty_entries: Iterable[QtyEntry],
     hours_entries: Iterable[HoursEntry],
     report_date: date,
+    resolved: Resolved | None = None,
 ) -> Points:
+    if resolved is None:
+        resolved = resolve_all(tree, calendar, qty_entries, hours_entries)
     n = len(tree)
     window_start, _ = calendar.window(report_date)
     qty, earned = Triple(n), Triple(n)
     # K12: oransiz (bos/0) yaprak orani 0 sayilir → kazanilmisa GIRMEZ; giris listede doner.
-    rates = [node.unit_mhr if node.unit_mhr is not None else ZERO for node in tree.nodes]
+    rates = resolved.rates
     unrated: list[QtyEntry] = []
-    # Prorata paydasi icin gun → {yaprak dizini: o gunku miktar} (yalniz t <= d).
-    qty_by_day: dict[date, dict[int, Decimal]] = defaultdict(dict)
 
-    for e in qty_entries:
-        i = _resolve(tree, calendar, e.node_id, e.day, "Miktar")
-        if not tree.is_leaf[i]:
-            raise ValueError(f"Miktar yalniz yapraga girilir: {e.node_id!r} bir baslik")
+    for i, e in resolved.qty:
         if e.day > report_date:
             continue
         if not rates[i] and e.qty:
@@ -99,40 +183,25 @@ def accumulate(
             if e.day == report_date:
                 qty.day[i] += v
                 earned.day[i] += ev
-        day_map = qty_by_day[e.day]
-        day_map[i] = day_map.get(i, ZERO) + v
 
     spent, unallocated = Triple(n), Triple(n)
     source_day = source_cum = ZERO
-    day_index = _DayIndex(qty_by_day)
-    for h in hours_entries:
-        m = _resolve(tree, calendar, h.node_id, h.day, "Saat")
+    for h in resolved.hours:
         if h.day > report_date:
             continue
         is_day, in_week = h.day == report_date, h.day >= window_start
         source_cum += h.hours
         if is_day:
             source_day += h.hours
-        if h.rule is AllocationRule.DIRECT:
-            # direct: M'de kalir; M ve atalari gorur, alttaki yapraklara DAGILMAZ.
-            _add(spent, m, h.hours, is_day, in_week)
-            continue
-        weights = day_index.leaves_in(h.day, m, tree.subtree_end[m])
-        if prorata_by_earned(tree.uom_of[m]):
-            # K11: karma birimli M'de miktarlar toplanamaz → pay = qty × unit_mhr (kazanilmis).
-            weights = [(i, q * rates[i]) for i, q in weights]
-        parts = prorata_parts(h.hours, weights)
-        if parts is None:
-            _add(spent, m, h.hours, is_day, in_week)
-            _add(unallocated, m, h.hours, is_day, in_week)
-            continue
-        for leaf, part in parts:
-            _add(spent, leaf, part, is_day, in_week)
+        for i, part in h.parts:
+            _add(spent, i, part, is_day, in_week)
+        if h.unallocated:
+            _add(unallocated, h.node, h.hours, is_day, in_week)
 
     return Points(qty, earned, spent, unallocated, source_day, source_cum, tuple(unrated))
 
 
-class _DayIndex:
+class DayIndex:
     """Gun basina miktarli yapraklar, on-sira dizinine gore sirali (bisect icin)."""
 
     def __init__(self, qty_by_day: dict[date, dict[int, Decimal]]) -> None:

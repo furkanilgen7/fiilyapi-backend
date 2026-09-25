@@ -167,6 +167,9 @@ class TimesheetWeek(BaseModel):
     temporary_duty_day_count: int
     rows: list[TimesheetWeekRow]
     day_totals: list[TimesheetDayTotal]
+    #: PLN-B2.x-B: rapor onayiyla KILITLI gunler (`app.core.day_hooks` portu; EV kurulu
+    #: degilse bos). Kilitli gunde hucre yazmasi 409 — istemci hucreyi salt okunur basar.
+    locked_days: list[date] = Field(default_factory=list)
     #: Ay şeridi (E5 137-176). Haftanın İÇİNDE bulunduğu takvim ayıdır.
     month_year: int
     month_month: int

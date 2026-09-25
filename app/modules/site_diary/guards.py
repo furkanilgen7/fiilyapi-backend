@@ -179,3 +179,7 @@ WORKER_SUBCONTRACTOR_UNKNOWN = "Seçilen taşeron firması bulunamadı"
 
 # 409 — kısmi UQ `uq_site_diary_worker_counts_entry_subcontractor` gövde içinde.
 DUPLICATE_WORKER_SUBCONTRACTOR = "Aynı taşeron firması için birden fazla işçi satırı gönderildi"
+
+# PLN-B2.x-A — ESKİ ISTEMCI BEKCISI: bolum/firma alanlarini hic tasimayan (B2 oncesi) bir
+# istemci DEGISTIRME semantigiyle kaydedince yeni alanli satirlari sessizce silerdi.
+STALE_CLIENT = "Sayfa güncellendi, yenileyip tekrar deneyin"

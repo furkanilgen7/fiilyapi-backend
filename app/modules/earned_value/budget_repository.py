@@ -67,7 +67,7 @@ async def load_boq(session: AsyncSession, site_id: uuid.UUID) -> BoqSnapshot:
         allocations=allocations,
         sections=tuple(
             SectionInfo(
-                s.id, s.name, s.start_date, s.end_date, s.planned_worker_count, s.sort_order
+                s.id, s.name, s.start_date, s.end_date, s.planned_worker_count, s.sort_order, s.code
             )
             for s in sections
         ),

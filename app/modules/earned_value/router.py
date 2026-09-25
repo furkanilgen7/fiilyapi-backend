@@ -1,6 +1,8 @@
 """Adam-saat butcesi uclari (BUT ekrani) — `/sites/{site_id}/earned-value/budget…`.
 
-Kapilar `access.py` (VIEW/WRITE/APPROVE). Her yazma TEK denetim olayi yazar; GET'ler
+Kapilar `access.py` (VIEW/WRITE/APPROVE). Yazma uclari kapsami `_Writable` bagimliligindan
+alir: gorunmeyen 404 → tamamlanmis santiye 409 → govde 422 (PLN-B3.0; kilitli yetkili
+denetim serviste). Her yazma TEK denetim olayi yazar; GET'ler
 ve kalici olmayan onizleme yazmaz. Yazma uclari guncel butce gorunumunu doner.
 Kurallar servis katmanindadir (`budget_service`, `budget_ops`) ve burada TEKRARLANMAZ.
 """
@@ -8,6 +10,7 @@ Kurallar servis katmanindadir (`budget_service`, `budget_ops`) ve burada TEKRARL
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
@@ -24,7 +27,16 @@ from app.modules.earned_value import budget_ops as ops
 from app.modules.earned_value import budget_present as present
 from app.modules.earned_value import budget_repository as repo
 from app.modules.earned_value import budget_service as svc
-from app.modules.earned_value.access import APPROVE, VIEW, WRITE, SiteContext, visible_site
+from app.modules.earned_value.access import (
+    APPROVE,
+    VIEW,
+    WRITE,
+    SiteContext,
+    completed_site_guard,
+    visible_site,
+)
+from app.modules.earned_value.actuals import SiteItemActual, recent_site_actuals
+from app.modules.earned_value.guards import SITE_COMPLETED_BUDGET_READ_ONLY
 from app.modules.earned_value.schemas_budget import (
     AmbiguousItemOut,
     BudgetView,
@@ -37,12 +49,14 @@ from app.modules.earned_value.schemas_budget import (
     LeavesPatch,
     PreviewBody,
     PreviewOut,
+    RecentActualOut,
     RevisionDiffOut,
     RevisionOut,
     ScheduleOut,
     SuggestionsOut,
     WindowsBody,
 )
+from app.modules.earned_value.schemas_catalog import CatalogActualSite
 from app.modules.users.models import User
 
 router = APIRouter(tags=["earned-value"], responses=COMMON_ERROR_RESPONSES)
@@ -50,6 +64,8 @@ router = APIRouter(tags=["earned-value"], responses=COMMON_ERROR_RESPONSES)
 _BASE = "/sites/{site_id}/earned-value/budget"
 _User = Annotated[User, Depends(get_current_user)]
 _Db = Annotated[AsyncSession, Depends(get_db)]
+#: Yazma uclarinin kapsami + "tamamlanmis santiye salt okunur" (PLN-B3.0): 404 → 409 → 422.
+_Writable = Annotated[SiteContext, Depends(completed_site_guard(SITE_COMPLETED_BUDGET_READ_ONLY))]
 
 
 async def _audit(session: AsyncSession, request: Request, user: User, detail: str) -> None:
@@ -110,10 +126,9 @@ async def list_budget_revisions(site_id: uuid.UUID, user: _User, session: _Db) -
     dependencies=[WRITE],
 )
 async def open_budget_draft(
-    request: Request, site_id: uuid.UUID, user: _User, session: _Db
+    request: Request, site_id: uuid.UUID, ctx: _Writable, user: _User, session: _Db
 ) -> RevisionOut:
     """ "Taslak revizyon ac": aktifin girdileri yeni taslaga kopyalanir. Taslak varken 409."""
-    ctx = await visible_site(session, user, site_id)
     rev = await svc.open_draft(session, ctx, user)
     await _audit(
         session, request, user, msg.draft_opened(ctx.project.name, ctx.site.name, rev.number)
@@ -127,10 +142,14 @@ async def open_budget_draft(
     dependencies=[APPROVE],
 )
 async def delete_budget_draft(
-    request: Request, site_id: uuid.UUID, revision_id: uuid.UUID, user: _User, session: _Db
+    request: Request,
+    site_id: uuid.UUID,
+    ctx: _Writable,
+    revision_id: uuid.UUID,
+    user: _User,
+    session: _Db,
 ) -> Response:
     """Yalniz TASLAK silinir (onay duzeyi); donmus revizyon 409."""
-    ctx = await visible_site(session, user, site_id)
     rev = await svc.delete_draft(session, ctx, revision_id)
     await _audit(
         session, request, user, msg.draft_deleted(ctx.project.name, ctx.site.name, rev.number)
@@ -151,10 +170,14 @@ async def get_budget_revision_diff(
 
 @router.put(f"{_BASE}/group-disciplines", response_model=BudgetView, dependencies=[WRITE])
 async def put_group_disciplines(
-    request: Request, site_id: uuid.UUID, body: GroupDisciplinesBody, user: _User, session: _Db
+    request: Request,
+    site_id: uuid.UUID,
+    ctx: _Writable,
+    body: GroupDisciplinesBody,
+    user: _User,
+    session: _Db,
 ) -> BudgetView:
     """BOQ grubu → disiplin eslemesi (K2) — KISMI: yalniz listelenen gruplar; null kaldirir."""
-    ctx = await visible_site(session, user, site_id)
     pairs = [(p.boq_group_id, p.discipline_id) for p in body.items]
     count = await svc.set_group_disciplines(session, ctx, user, pairs)
     await _audit(
@@ -167,13 +190,13 @@ async def put_group_disciplines(
 async def patch_budget_item(
     request: Request,
     site_id: uuid.UUID,
+    ctx: _Writable,
     boq_item_id: uuid.UUID,
     body: ItemPatch,
     user: _User,
     session: _Db,
 ) -> BudgetView:
     """Is tipi (L3) kendi/taseron + dogrudan/dolayli + katalog bagi (K3)."""
-    ctx = await visible_site(session, user, site_id)
     changes = body.model_dump(include=body.model_fields_set)
     item = await svc.patch_item(session, ctx, user, boq_item_id, changes)
     await _audit(
@@ -184,10 +207,14 @@ async def patch_budget_item(
 
 @router.patch(f"{_BASE}/leaves", response_model=BudgetView, dependencies=[WRITE])
 async def patch_budget_leaves(
-    request: Request, site_id: uuid.UUID, body: LeavesPatch, user: _User, session: _Db
+    request: Request,
+    site_id: uuid.UUID,
+    ctx: _Writable,
+    body: LeavesPatch,
+    user: _User,
+    session: _Db,
 ) -> BudgetView:
     """Yaprak orani (+kaynak) ve ezmeleri — tekil ya da TOPLU ("secili satirlara toplu oran")."""
-    ctx = await visible_site(session, user, site_id)
     changes = [
         svc.LeafChange(
             lf.boq_item_id,
@@ -207,18 +234,45 @@ async def patch_budget_leaves(
 async def get_budget_item_suggestions(
     site_id: uuid.UUID, boq_item_id: uuid.UUID, user: _User, session: _Db
 ) -> SuggestionsOut:
-    """Oran onerisi popover'i: katalog adaylari (bagli · tam · kismi). Gecmis B3'te dolar."""
+    """Oran onerisi popover'i: katalog adaylari (bagli · tam · kismi) + her aday icin
+    "son 3 santiye gerceklesen" (K4: yalniz TAMAMLANMIS santiye, miktar agirlikli)."""
     ctx = await visible_site(session, user, site_id)
     cands = await ops.suggestions(session, ctx, boq_item_id)
-    return SuggestionsOut(catalog=[_candidate(c) for c in cands], history=[])
+    recent = await recent_site_actuals(session, [c.item.id for c in cands])
+    return SuggestionsOut(
+        catalog=[_candidate(c) for c in cands],
+        history=[],
+        recent_actuals=[_recent(c, recent.get(c.item.id, [])) for c in cands],
+    )
+
+
+def _recent(c: ops.Candidate, sites: list[SiteItemActual]) -> RecentActualOut:
+    qty = sum((s.qty for s in sites), Decimal(0))
+    spent = sum((s.spent for s in sites), Decimal(0))
+    return RecentActualOut(
+        catalog_item_id=c.item.id,
+        name=c.item.name,
+        uom=c.item.uom,
+        avg=spent / qty if qty else None,
+        site_count=len(sites),
+        sites=[
+            CatalogActualSite(
+                site_id=s.site_id,
+                site_name=s.site_name,
+                end_date=s.end_date,
+                qty=s.qty,
+                rate=s.rate,
+            )
+            for s in sites
+        ],
+    )
 
 
 @router.post(f"{_BASE}/fill-from-catalog", response_model=FillOut, dependencies=[WRITE])
 async def fill_budget_from_catalog(
-    request: Request, site_id: uuid.UUID, user: _User, session: _Db
+    request: Request, site_id: uuid.UUID, ctx: _Writable, user: _User, session: _Db
 ) -> FillOut:
     """ "Katalogdan oner (bosları doldur)" (B1-4; frontend istegi 3)."""
-    ctx = await visible_site(session, user, site_id)
     result = await ops.fill_from_catalog(session, ctx, user)
     if result.filled_leaf_count:
         await _audit(
@@ -246,10 +300,14 @@ async def fill_budget_from_catalog(
 
 @router.put(f"{_BASE}/distributions", response_model=BudgetView, dependencies=[WRITE])
 async def put_budget_distributions(
-    request: Request, site_id: uuid.UUID, body: DistributionsBody, user: _User, session: _Db
+    request: Request,
+    site_id: uuid.UUID,
+    ctx: _Writable,
+    body: DistributionsBody,
+    user: _User,
+    session: _Db,
 ) -> BudgetView:
     """Disiplin basina dagilim tipi (B1-2) — KISMI upsert."""
-    ctx = await visible_site(session, user, site_id)
     pairs = [(p.discipline_id, p.distribution) for p in body.items]
     count = await svc.put_distributions(session, ctx, user, pairs)
     await _audit(
@@ -260,10 +318,14 @@ async def put_budget_distributions(
 
 @router.put(f"{_BASE}/windows", response_model=BudgetView, dependencies=[WRITE])
 async def put_budget_windows(
-    request: Request, site_id: uuid.UUID, body: WindowsBody, user: _User, session: _Db
+    request: Request,
+    site_id: uuid.UUID,
+    ctx: _Writable,
+    body: WindowsBody,
+    user: _User,
+    session: _Db,
 ) -> BudgetView:
     """Disiplin × bolum pencere EZMELERI — TAM DEGISTIRME (B1-3)."""
-    ctx = await visible_site(session, user, site_id)
     rows = [(w.discipline_id, w.section_id, w.start_date, w.end_date) for w in body.windows]
     count = await svc.put_windows(session, ctx, user, rows)
     await _audit(session, request, user, msg.windows_saved(ctx.project.name, ctx.site.name, count))
@@ -299,15 +361,20 @@ async def preview_budget(
         {p.discipline_id: p.distribution for p in body.distributions},
         {(w.discipline_id, w.section_id): (w.start_date, w.end_date) for w in body.windows},
     )
-    return present.preview_out(result)
+    hours = (await repo.load_calendar(session, ctx.site.id)).standard_daily_hours
+    return present.preview_out(result).model_copy(update={"standard_daily_hours": hours})
 
 
 @router.post(f"{_BASE}/freeze", response_model=RevisionOut, dependencies=[APPROVE])
 async def freeze_budget(
-    request: Request, site_id: uuid.UUID, body: FreezeBody, user: _User, session: _Db
+    request: Request,
+    site_id: uuid.UUID,
+    ctx: _Writable,
+    body: FreezeBody,
+    user: _User,
+    session: _Db,
 ) -> RevisionOut:
     """Baseline dondur (K8): engel varsa 422; taslak → aktif, onceki aktif → arsiv."""
-    ctx = await visible_site(session, user, site_id)
     rev = await ops.freeze(session, ctx, user, body.name, body.description)
     await _audit(
         session,

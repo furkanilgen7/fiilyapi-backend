@@ -26,6 +26,17 @@ from .tree import Tree
 from .types import PlannedMhr
 
 
+def planned_pct(
+    day: Decimal, cum: Decimal, total: Decimal
+) -> tuple[Decimal | None, Decimal | None]:
+    """Planli serinin (gun, t <= d kumulatif, toplam) uclusunden planli % (gun, kum).
+
+    Her iki mod (yaprak egrisi K9 / disiplin egrisi S1) ve seri (`series`) bu tek
+    formulden gecer: planned_pct_day = gun / toplam · planned_pct_cum = kum / toplam.
+    """
+    return ratio(day, total), ratio(cum, total)
+
+
 @dataclass(frozen=True, slots=True)
 class LeafPlan:
     """Dugum dizini basina yaprak egrisi toplamlari (baslik ve egrisiz yaprak 0)."""
@@ -41,7 +52,7 @@ class LeafPlan:
             day += self.day[i]
             cum += self.cum[i]
             total += self.total[i]
-        return ratio(day, total), ratio(cum, total)
+        return planned_pct(day, cum, total)
 
     def subtree_pct(self, tree: Tree) -> list[tuple[Decimal | None, Decimal | None]]:
         """Her dugum icin ALT AGACINDAKI yaprak egrilerinden planli % (tek geriye tarama)."""
@@ -53,7 +64,7 @@ class LeafPlan:
             day[p] += day[i]
             cum[p] += cum[i]
             total[p] += total[i]
-        return [(ratio(d, t), ratio(c, t)) for d, c, t in zip(day, cum, total, strict=True)]
+        return [planned_pct(d, c, t) for d, c, t in zip(day, cum, total, strict=True)]
 
 
 def validate_planned(
@@ -77,12 +88,19 @@ def validate_planned(
     return has_leaf, has_curve
 
 
+def plan_uses_leaf_curves(
+    tree: Tree, calendar: ProjectCalendar, planned: Sequence[PlannedMhr]
+) -> bool:
+    """Noktalari dogrular ve modu secer (K9): True = yaprak egrisi, False = disiplin egrisi."""
+    has_leaf, has_curve = validate_planned(tree, calendar, planned)
+    return use_leaf_curves(has_leaf, has_curve)
+
+
 def leaf_plan(
     tree: Tree, calendar: ProjectCalendar, planned: Sequence[PlannedMhr], report_date: date
 ) -> LeafPlan | None:
     """Yaprak modunda yaprak egrisi toplamlari; disiplin egrisi modunda None."""
-    has_leaf, has_curve = validate_planned(tree, calendar, planned)
-    if not use_leaf_curves(has_leaf, has_curve):
+    if not plan_uses_leaf_curves(tree, calendar, planned):
         return None
     n = len(tree)
     day, cum, total = [ZERO] * n, [ZERO] * n, [ZERO] * n
