@@ -31654,6 +31654,28 @@
             ],
             "title": "Section Id"
           },
+          "section_line_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Line Count"
+          },
+          "section_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Name"
+          },
           "site_id": {
             "format": "uuid",
             "title": "Site Id",
@@ -31683,6 +31705,8 @@
           "project_id",
           "entry_date",
           "section_id",
+          "section_name",
+          "section_line_count",
           "weather",
           "has_incident",
           "status",

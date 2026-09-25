@@ -360,6 +360,11 @@ class SiteDiaryEntryListItem(BaseModel):
     project_id: uuid.UUID
     entry_date: date
     section_id: uuid.UUID | None
+    section_name: str | None
+    """DET-1.B ek (#129) — başlık bölümünün ANLIK adı; başlıksız kayıtta `None`."""
+    section_line_count: int | None
+    """DET-1.B ek (#129) — YALNIZ `?section_id=` verilince: o bölüme düşen miktar satırı
+    sayısı (başlık kolundan gelen, satırı olmayan günde 0); süzgeçsiz listede `None`."""
     weather: Weather | None
     has_incident: bool
     status: DiaryStatus
