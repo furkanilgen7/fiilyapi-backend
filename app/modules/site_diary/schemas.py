@@ -45,18 +45,24 @@ _TEMP_MAX = Decimal("60")
 # PLN-B2.1 (B2-2): `ck_site_diary_entries_wind_range` ile BİREBİR.
 _WIND_MIN = Decimal("0")
 _WIND_MAX = Decimal("80")
-# `Numeric(4,1)` — yeni alanlar ölçeği Pydantic'te zorlar (eski `temperature_c`
-# ZORLAMAZ: onun sözleşmesi değişmez, PG yuvarlar).
+# `Numeric(4,1)` — sıcaklık/rüzgâr alanları ölçeği Pydantic'te zorlar.
 _TENTHS_DIGITS = 4
 _TENTHS_DECIMALS = 1
 # PLN-B2.1 (B2-5): `ck_site_diary_worker_counts_hours_range` ile BİREBİR (0 < h ≤ 24).
 _HOURS_MAX = Decimal("24")
 
-_TEMPERATURE_C_DEPRECATED = (
-    "KULLANIMDAN KALKIYOR (PLN-B2.1): `temp_min_c` + `temp_max_c` kullanın. İstekte "
-    "yeni alanlar YOKSA kabul edilir ve ikisine de yazılır; yeni alanlardan biri "
-    "gelirse bu alan YOK SAYILIR. Yanıtta `temp_max_c`nin salt okunur kopyasıdır."
-)
+#: CLEAN-B1 Faz 1: `temperature_c` API'den KALDIRILDI (PLN-B2.1'de kullanımdan kalkmıştı).
+#: Kolon Faz 2'ye kadar DB'de kalır (eski konteyner okur; `service._sync_legacy_temperature`).
+TEMPERATURE_C_REMOVED = "`temperature_c` kaldırıldı — `temp_min_c` ve `temp_max_c` kullanın"
+
+
+def _reject_temperature_c(data: object) -> object:
+    """Eski istemci imzası (`temperature_c`) AÇIK 422 alır: Create'te `extra` serbest olduğu
+    için alan aksi hâlde SESSİZCE yutulur ve sıcaklık kaybolurdu; Update'te genel
+    `extra_forbidden` yerine ne yapılacağını söyleyen metin döner."""
+    if isinstance(data, dict) and "temperature_c" in data:
+        raise ValueError(TEMPERATURE_C_REMOVED)
+    return data
 
 
 # `Numeric(14,3)` ile BİREBİR: 11 tam + 3 ondalık basamak. Sınır Pydantic'te
@@ -171,13 +177,6 @@ class SiteDiaryEntryCreate(BaseModel):
     entry_date: date
     section_id: uuid.UUID | None = None
     weather: Weather | None = None
-    temperature_c: Decimal | None = Field(
-        default=None,
-        ge=_TEMP_MIN,
-        le=_TEMP_MAX,
-        deprecated=True,
-        description=_TEMPERATURE_C_DEPRECATED,
-    )
     temp_min_c: Decimal | None = Field(
         default=None,
         ge=_TEMP_MIN,
@@ -205,6 +204,11 @@ class SiteDiaryEntryCreate(BaseModel):
     ppe_checked: bool = False
     has_incident: bool = False
     incident_note: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _eski_sicaklik_alani(cls, data: object) -> object:
+        return _reject_temperature_c(data)
 
     @model_validator(mode="after")
     def _min_max(self) -> "SiteDiaryEntryCreate":
@@ -234,16 +238,14 @@ class SiteDiaryEntryUpdate(BaseModel):
 
     model_config = {"extra": "forbid"}
 
+    @model_validator(mode="before")
+    @classmethod
+    def _eski_sicaklik_alani(cls, data: object) -> object:
+        return _reject_temperature_c(data)
+
     entry_date: date | None = None
     section_id: uuid.UUID | None = None
     weather: Weather | None = None
-    temperature_c: Decimal | None = Field(
-        default=None,
-        ge=_TEMP_MIN,
-        le=_TEMP_MAX,
-        deprecated=True,
-        description=_TEMPERATURE_C_DEPRECATED,
-    )
     temp_min_c: Decimal | None = Field(
         default=None,
         ge=_TEMP_MIN,
@@ -401,7 +403,6 @@ class SiteDiaryEntryDetail(BaseModel):
     entry_date: date
     section_id: uuid.UUID | None
     weather: Weather | None
-    temperature_c: Decimal | None = Field(deprecated=True, description=_TEMPERATURE_C_DEPRECATED)
     work_done: str | None
     chief_note: str | None
     safety_meeting_held: bool

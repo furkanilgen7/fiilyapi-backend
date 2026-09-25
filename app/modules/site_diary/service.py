@@ -180,32 +180,12 @@ async def assert_entry_days_unlocked(
     await day_hooks.assert_days_unlocked(session, entry.site_id, [entry.entry_date, *extra_days])
 
 
-_NEW_TEMPERATURE_FIELDS = frozenset({"temp_min_c", "temp_max_c"})
-
-
-def _translate_legacy_temperature(
-    changes: dict[str, object], fields_set: set[str]
-) -> dict[str, object]:
-    """B2-2 geri uyumu — `temperature_c` (kullanımdan kalkıyor) → `temp_min_c`/`temp_max_c`.
-
-    Kural (CEO, §3.12 B2-2): istekte YENİ alanların İKİSİ DE YOKSA ve `temperature_c`
-    VARSA değer ikisine de yazılır; yeni alanlardan biri geldiyse `temperature_c`
-    YOK SAYILIR (yeni alanlar kazanır). `temperature_c` kolonu bu sözlükten DÜŞER —
-    kolonun tek yazarı `_sync_legacy_temperature`dır. Yeni sözlük döner (girdi
-    değişmez).
-    """
-    result = {key: value for key, value in changes.items() if key != "temperature_c"}
-    if "temperature_c" in fields_set and not (fields_set & _NEW_TEMPERATURE_FIELDS):
-        result["temp_min_c"] = changes["temperature_c"]
-        result["temp_max_c"] = changes["temperature_c"]
-    return result
-
-
 def _sync_legacy_temperature(entry: SiteDiaryEntry) -> None:
     """`temperature_c` kolonu = `temp_max_c` — TEK yazar (model notu: genişlet/daralt).
 
-    Eski konteyner/geri alınmış kod bu kolonu okur; yanıt ise alanı `temp_max_c`den
-    türetir (`read.build_detail`), yani kolon bu sürümde yalnız GERİ UYUM kopyasıdır.
+    CLEAN-B1 Faz 1: alan API'den kalktı, kolon DB'de KALIR — geçiş sırasında eski konteyner
+    (ya da geri alınmış kod) okur. Faz 2 (en az bir sürüm sonra) kolonla birlikte bu
+    fonksiyonu kaldırır.
     """
     entry.temperature_c = entry.temp_max_c
 
@@ -266,13 +246,12 @@ async def create(
     # `**model_dump()` güvenlidir çünkü `SiteDiaryEntryCreate`in HER alanı bir
     # kolondur ve `status`/`submitted_at`/`created_by` şemada YOKTUR — gövdeden
     # durum ya da damga yazılamaz. Şemaya kolon olmayan bir alan eklenirse bu
-    # satır `TypeError` ile patlar; sessizce yok saymaz. `temperature_c` (B2-2)
-    # `_translate_legacy_temperature` ile yeni alanlara çevrilir.
+    # satır `TypeError` ile patlar; sessizce yok saymaz.
     entry = SiteDiaryEntry(
         site_id=site.id,
         project_id=site.project_id,
         created_by=actor.id,
-        **_translate_legacy_temperature(data.model_dump(), data.model_fields_set),
+        **data.model_dump(),
     )
     _assert_temperature_order(entry)
     _sync_legacy_temperature(entry)
@@ -307,9 +286,7 @@ async def update(
     if context.entry.status != DiaryStatus.draft:
         raise ConflictError(guards.ENTRY_NOT_EDITABLE)
 
-    changes = _translate_legacy_temperature(
-        data.model_dump(exclude_unset=True), data.model_fields_set
-    )
+    changes = data.model_dump(exclude_unset=True)
     # İşçi kırılımı bir KOLON DEĞİL bir İLİŞKİDİR: aşağıdaki `setattr` döngüsüne
     # girseydi ham `dict` listesi ilişkiye atanır, SQLAlchemy patlardı. Pydantic
     # nesneleri `data`dan okunur — `model_dump` onları `dict`e çevirmiştir.
