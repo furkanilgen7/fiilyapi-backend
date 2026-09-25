@@ -56,6 +56,14 @@ def lines_total(entry: SiteDiaryEntry) -> Decimal:
     return sum((line_amount(line) for line in entry.lines), _ZERO_MONEY)
 
 
+def section_line_count(entry: SiteDiaryEntry, section_id: uuid.UUID | None) -> int | None:
+    """DET-1.B ek (#129): bölüm bağlamında o bölüme düşen MİKTAR satırı sayısı; bağlam yoksa
+    `None`. `lines` sayfa başına toplu yüklüdür (`selectin`) — ek sorgu YOK."""
+    if section_id is None:
+        return None
+    return sum(1 for line in entry.lines if line.section_id == section_id)
+
+
 def worker_total(entry: SiteDiaryEntry) -> int:
     """İşçi toplamı — TÜREV (kolon yok, spec §2)."""
     return sum(row.count for row in entry.worker_counts)
@@ -311,6 +319,10 @@ async def list_entries(
     total = await repository.count_entries(
         session, site.id, year=year, month=month, section_id=section_id
     )
+    # DET-1.B ek (#129): başlık bölümü adları sayfa başına TEK `IN (…)` sorgusu.
+    names = await repository.section_names(
+        session, {entry.section_id for entry in entries} - {None}
+    )
     return SiteDiaryEntryListResponse(
         items=[
             SiteDiaryEntryListItem(
@@ -319,6 +331,8 @@ async def list_entries(
                 project_id=entry.project_id,
                 entry_date=entry.entry_date,
                 section_id=entry.section_id,
+                section_name=names.get(entry.section_id) if entry.section_id else None,
+                section_line_count=section_line_count(entry, section_id),
                 weather=entry.weather,
                 has_incident=entry.has_incident,
                 status=entry.status,

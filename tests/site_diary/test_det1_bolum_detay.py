@@ -18,11 +18,14 @@ Kurgu (şantiye SD-A; B1 = "A Blok", B2 = "B Blok"):
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import day_hooks
@@ -37,6 +40,7 @@ from app.modules.site_diary.models import (
 )
 from app.modules.sites.models import Section
 from app.modules.users.models import User
+from tests.conftest import test_engine
 
 pytestmark = pytest.mark.asyncio
 
@@ -90,6 +94,21 @@ async def kurgu(seeded_db: AsyncSession, santiye, bolum: Section, admin_kullanic
         entries.append(entry)
     await seeded_db.flush()
     return site, b1, b2, entries
+
+
+@contextmanager
+def _sorgu_sayaci() -> Iterator[list[str]]:
+    """Sürücüye giden HER ifade (`test_work_category._sorgu_sayaci` deseni)."""
+    ifadeler: list[str] = []
+
+    def kaydet(conn, cursor, statement, parameters, context, executemany) -> None:  # noqa: ANN001
+        ifadeler.append(" ".join(statement.split()))
+
+    event.listen(test_engine.sync_engine, "before_cursor_execute", kaydet)
+    try:
+        yield ifadeler
+    finally:
+        event.remove(test_engine.sync_engine, "before_cursor_execute", kaydet)
 
 
 def _ids(body: dict) -> list[str]:
@@ -371,3 +390,57 @@ async def test_detay_baska_santiyenin_bolumu_422(
     )
     assert yanit.status_code == 422, yanit.text
     assert yanit.json()["detail"] == guards.SECTION_MISMATCH
+
+
+# ------------------------------------------------------------------ liste satırı · ek (#129)
+
+
+async def test_liste_satiri_bolum_adi_ve_bolum_satir_sayisi(
+    client: AsyncClient, admin_headers, kurgu
+) -> None:
+    site, b1, _, e = kurgu
+    yanit = await client.get(
+        f"/sites/{site.id}/diary", params={"section_id": str(b1.id)}, headers=admin_headers
+    )
+    assert yanit.status_code == 200, yanit.text
+    satirlar = {item["id"]: item for item in yanit.json()["items"]}
+    # (başlık bölümünün adı, B1'e düşen satır sayısı) — d6 başlığı B2 ama bir B1 satırı taşır
+    beklenen = {
+        e[5].id: ("B Blok", 1),
+        e[2].id: ("A Blok", 2),
+        e[1].id: (None, 1),
+        e[0].id: ("A Blok", 0),
+    }
+    assert {
+        uuid.UUID(k): (v["section_name"], v["section_line_count"]) for k, v in satirlar.items()
+    } == beklenen
+
+
+async def test_liste_satiri_bolumsuz_sorguda_satir_sayisi_null(
+    client: AsyncClient, admin_headers, kurgu
+) -> None:
+    site, _, _, e = kurgu
+    items = (await client.get(f"/sites/{site.id}/diary", headers=admin_headers)).json()["items"]
+    assert {item["section_line_count"] for item in items} == {None}
+    adlar = {uuid.UUID(item["id"]): item["section_name"] for item in items}
+    assert (adlar[e[0].id], adlar[e[3].id], adlar[e[4].id]) == ("A Blok", "B Blok", None)
+
+
+async def test_liste_bolum_adlari_sabit_sorgu_n_arti_bir_yok(
+    client: AsyncClient, admin_headers, kurgu
+) -> None:
+    """Bölüm adı sayfa başına TEK `IN (…)` sorgusu; satır sayısı yüklenmiş satırlardan
+    (ek sorgu YOK). 6 kayıtlı sayfa ile 1 kayıtlı sayfa AYNI sayıda `sections` sorgusu atar."""
+    site, b1, _, _ = kurgu
+
+    async def _bolum_sorgulari(limit: int) -> int:
+        with _sorgu_sayaci() as ifadeler:
+            yanit = await client.get(
+                f"/sites/{site.id}/diary",
+                params={"section_id": str(b1.id), "limit": limit},
+                headers=admin_headers,
+            )
+        assert yanit.status_code == 200, yanit.text
+        return sum(1 for s in ifadeler if "from sections" in s.lower())
+
+    assert await _bolum_sorgulari(1) == await _bolum_sorgulari(4)
