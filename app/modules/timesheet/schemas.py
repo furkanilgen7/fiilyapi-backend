@@ -141,6 +141,11 @@ class TimesheetWeekSummary(BaseModel):
     has_entries: bool
 
 
+class TimesheetDayLock(BaseModel):
+    day: date
+    report_date: date | None
+
+
 class TimesheetWeek(BaseModel):
     """E5 ekranının tamamı: hafta şeridi + KPI + 7 günlük ızgara + tfoot."""
 
@@ -170,6 +175,9 @@ class TimesheetWeek(BaseModel):
     #: PLN-B2.x-B: rapor onayiyla KILITLI gunler (`app.core.day_hooks` portu; EV kurulu
     #: degilse bos). Kilitli gunde hucre yazmasi 409 — istemci hucreyi salt okunur basar.
     locked_days: list[date] = Field(default_factory=list)
+    #: EV-BORC-4: kilitli gun + kilidi koyan rapor tarihi ("25.09.2026 raporuyla kilitli");
+    #: gunler ardisik olmayabilir, farkli raporlara bagli olabilir. `locked_days` = gun kolonu.
+    day_locks: list[TimesheetDayLock] = Field(default_factory=list)
     #: Ay şeridi (E5 137-176). Haftanın İÇİNDE bulunduğu takvim ayıdır.
     month_year: int
     month_month: int

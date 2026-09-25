@@ -53,13 +53,26 @@ class DaysLockedError(ConflictError):
     """409 + `locked_days` (PLN-B2.x-B, spec §3.14): istemci kilitli gunleri salt okunur
     basabilsin diye yanit KILITLI GUN LISTESINI tasir (`exception_handlers`)."""
 
-    def __init__(self, message: str, locked: list[date]) -> None:
+    def __init__(self, message: str, locks: list[DayLock]) -> None:
         super().__init__(message)
-        self.locked_days = locked
+        self.day_locks = locks
+        self.locked_days = [lock.day for lock in locks]
 
 
 #: Kilitli gun icin kullaniciya gosterilecek metni (kilitliyse) ya da None doner.
 DayLockCheck = Callable[[AsyncSession, uuid.UUID, date], Awaitable[str | None]]
+#: EV-BORC-4: kilitli gunu KOYAN raporun tarihi (kilitli degilse None) — ekranda
+#: "25.09.2026 raporuyla kilitli". Istege bagli; `register_day_lock(check, report_date=…)`.
+DayLockReport = Callable[[AsyncSession, uuid.UUID, date], Awaitable[date | None]]
+
+
+@dataclass(frozen=True, slots=True)
+class DayLock:
+    """Kilitli gun + onu koyan rapor tarihi (gunler ardisik olmayabilir, farkli raporlara
+    bagli olabilir: kilit gun bazinda acilabilir)."""
+
+    day: date
+    report_date: date | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,11 +89,16 @@ SubmitGuard = Callable[[AsyncSession, SubmitContext], Awaitable[list[str | Submi
 
 _day_locks: list[DayLockCheck] = []
 _submit_guards: list[SubmitGuard] = []
+#: kilit kontrolu → rapor tarihi saglayicisi. `registered()`/`restore()` demetine GIRMEZ
+#: (2'li demet sozlesmesi korunur); kontrol kaydi geri yuklenince eslesmesi de gecerli olur.
+_lock_reports: dict[DayLockCheck, DayLockReport] = {}
 
 
-def register_day_lock(check: DayLockCheck) -> None:
+def register_day_lock(check: DayLockCheck, *, report_date: DayLockReport | None = None) -> None:
     if check not in _day_locks:
         _day_locks.append(check)
+    if report_date is not None:
+        _lock_reports[check] = report_date
 
 
 def register_submit_guard(guard: SubmitGuard) -> None:
@@ -124,23 +142,33 @@ async def assert_days_unlocked(
             message = await check(session, site_id, day)
             if message:
                 scope = days if report_days is None else report_days
-                raise DaysLockedError(message, await locked_days(session, site_id, scope))
+                raise DaysLockedError(message, await day_locks(session, site_id, scope))
+
+
+async def day_locks(
+    session: AsyncSession, site_id: uuid.UUID, days: Iterable[date]
+) -> list[DayLock]:
+    """Kilitli gunler + onlari koyan rapor tarihi (sirali). Ayni `DayLockCheck` kayitlarini
+    sorar; kilidi bulan kontrolun rapor saglayicisi yoksa `report_date` None. Kayit YOKSA bos
+    liste (modulsuz kurulum)."""
+    if not _day_locks:
+        return []
+    out: list[DayLock] = []
+    for day in sorted(set(days)):
+        for check in _day_locks:
+            if await check(session, site_id, day):
+                reporter = _lock_reports.get(check)
+                report = await reporter(session, site_id, day) if reporter else None
+                out.append(DayLock(day, report))
+                break
+    return out
 
 
 async def locked_days(
     session: AsyncSession, site_id: uuid.UUID, days: Iterable[date]
 ) -> list[date]:
-    """Kilitli gunlerin listesi (sirali) — ekran bilgisi (PLN-B2.x-B: puantaj haftasi).
-    Ayni `DayLockCheck` kayitlarini sorar; kayit YOKSA bos liste (modulsuz kurulum)."""
-    if not _day_locks:
-        return []
-    out = []
-    for day in sorted(set(days)):
-        for check in _day_locks:
-            if await check(session, site_id, day):
-                out.append(day)
-                break
-    return out
+    """Kilitli gunlerin listesi (sirali) — `day_locks`in gun kolonu (PLN-B2.x-B)."""
+    return [lock.day for lock in await day_locks(session, site_id, days)]
 
 
 async def assert_submit_allowed(session: AsyncSession, ctx: SubmitContext) -> None:

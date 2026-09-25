@@ -126,6 +126,12 @@ async def day_lock(session: AsyncSession, site_id: uuid.UUID, day: date) -> str 
     return LOCKED_MESSAGE.format(report=state.approval.report_date.strftime("%d.%m.%Y"))  # type: ignore[union-attr]
 
 
+async def lock_report_date(session: AsyncSession, site_id: uuid.UUID, day: date) -> date | None:
+    """`day_hooks.DayLockReport` uygulamasi: kilidi KOYAN (en son) onayin rapor tarihi."""
+    state = await lock_state(session, site_id, day)
+    return state.approval.report_date if state.locked else None  # type: ignore[union-attr]
+
+
 async def unlock_day(
     session: AsyncSession, site_id: uuid.UUID, day: date, actor: User, reason: str
 ) -> EvDayUnlock:
@@ -501,5 +507,5 @@ async def submit_blockers(session: AsyncSession, ctx: SubmitContext) -> list[Sub
 
 def register() -> None:
     """Porta kaydol (idempotent). `earned_value.router` import edilince cagrilir."""
-    day_hooks.register_day_lock(day_lock)
+    day_hooks.register_day_lock(day_lock, report_date=lock_report_date)
     day_hooks.register_submit_guard(submit_blockers)
