@@ -90,16 +90,34 @@ class LeafProgressOut(BaseModel):
     pf_day: EvDecimal | None
 
 
-class ProgressOut(BaseModel):
-    leaves: list[LeafProgressOut]
+class ItemProgressOut(BaseModel):
+    """Is tipi (kalem, `i:<kalem>`) dugumu: TUM alt agac + kaleme DOGRUDAN yazilan saat
+    (EV-BORC-2: `direct` kuralla kalem koduna yazilan saat yapraklarda gorunmez)."""
+
+    node_id: str
+    qty_day: EvDecimal | None
     earned_day: EvDecimal
     spent_day: EvDecimal
     pf_day: EvDecimal | None
 
 
+class ProgressOut(BaseModel):
+    leaves: list[LeafProgressOut]
+    earned_day: EvDecimal
+    spent_day: EvDecimal
+    pf_day: EvDecimal | None
+    items: list[ItemProgressOut] = Field(default_factory=list)  # EV-BORC-2, ek alan
+
+
+class SubmitReasonOut(BaseModel):
+    code: str  # diary_adapter.SUBMIT_* (yapisal; metin degisse de sabit)
+    message: str
+
+
 class SubmitCheckOut(BaseModel):
     can_submit: bool
     reasons: list[str]
+    reason_items: list[SubmitReasonOut] = Field(default_factory=list)  # EV-BORC-2, ek alan
 
 
 class DayView(BaseModel):

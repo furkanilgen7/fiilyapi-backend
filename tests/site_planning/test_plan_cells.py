@@ -314,7 +314,7 @@ async def test_audit_tek_hafta_ozeti_olayi(
 ) -> None:
     """Hücre başına olay basılmaz (7 gün × N satır denetim günlüğünü boğardı)."""
     satir = await satir_fabrikasi(santiye, "Kalıpçı", sort_order=1)
-    onceki = len((await seeded_db.execute(select(AuditLog))).scalars().all())
+    onceki = set((await seeded_db.execute(select(AuditLog.id))).scalars().all())
 
     yanit = await _kaydet(
         client,
@@ -325,8 +325,11 @@ async def test_audit_tek_hafta_ozeti_olayi(
     assert yanit.status_code == 200, yanit.text
 
     kayitlar = (await seeded_db.execute(select(AuditLog))).scalars().all()
-    assert len(kayitlar) == onceki + 1
-    detay = kayitlar[-1].detail
+    yeniler = [
+        k for k in kayitlar if k.id not in onceki
+    ]  # FIX-B1: kimlikle bul (select ORDER BY'siz; occurred_at islem ici esit)
+    assert len(yeniler) == 1, [k.detail for k in yeniler]
+    detay = yeniler[0].detail
     assert "A-Blok Şantiyesi" in detay
     assert HAFTA.isoformat() in detay
     assert "3 hücre" in detay

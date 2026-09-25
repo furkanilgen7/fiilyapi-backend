@@ -24,12 +24,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ConflictError, DomainError
 
 
-class DiarySubmitBlockedError(DomainError):
-    """EV on-kosulu saglanmadi — 422. `reasons` kullaniciya gosterilir (Turkce)."""
+@dataclass(frozen=True, slots=True)
+class SubmitReason:
+    """Gonder engeli: YAPISAL `code` (istemci metne bakmaz — EV-BORC-2) + Turkce metin."""
 
-    def __init__(self, reasons: list[str]) -> None:
-        super().__init__("; ".join(reasons))
-        self.reasons = reasons
+    code: str
+    message: str
+
+
+#: Duz metin donduren (eski) koruyucunun maddesi bu kodla sarilir.
+UNSPECIFIED_REASON = "unspecified"
+
+
+def as_reason(item: str | SubmitReason) -> SubmitReason:
+    return item if isinstance(item, SubmitReason) else SubmitReason(UNSPECIFIED_REASON, item)
+
+
+class DiarySubmitBlockedError(DomainError):
+    """EV on-kosulu saglanmadi — 422. `reasons` metinleri (geri uyum) + `items` kodlu."""
+
+    def __init__(self, reasons: list[str | SubmitReason]) -> None:
+        self.items = [as_reason(r) for r in reasons]
+        self.reasons = [r.message for r in self.items]
+        super().__init__("; ".join(self.reasons))
 
 
 class DaysLockedError(ConflictError):
@@ -53,8 +70,9 @@ class SubmitContext:
     actor_id: uuid.UUID
 
 
-#: Gonder'i engelleyen nedenlerin listesini doner; bos liste = engel yok.
-SubmitGuard = Callable[[AsyncSession, SubmitContext], Awaitable[list[str]]]
+#: Gonder'i engelleyen nedenlerin listesini doner; bos liste = engel yok. Madde `SubmitReason`
+#: (kodlu) ya da duz metin (eski imza; `UNSPECIFIED_REASON` koduyla sarilir).
+SubmitGuard = Callable[[AsyncSession, SubmitContext], Awaitable[list[str | SubmitReason]]]
 
 _day_locks: list[DayLockCheck] = []
 _submit_guards: list[SubmitGuard] = []
@@ -127,7 +145,7 @@ async def locked_days(
 
 async def assert_submit_allowed(session: AsyncSession, ctx: SubmitContext) -> None:
     """Gonder on-kosullari; engel varsa 422 `DiarySubmitBlockedError`. Kayit yoksa no-op."""
-    reasons: list[str] = []
+    reasons: list[str | SubmitReason] = []
     for guard in _submit_guards:
         reasons.extend(await guard(session, ctx))
     if reasons:

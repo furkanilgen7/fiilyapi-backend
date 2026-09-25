@@ -281,3 +281,26 @@ async def daily_hours_between(
         .group_by(TimesheetEntry.work_date)
     )
     return {work_date: Decimal(total) for work_date, total in rows.all()}
+
+
+async def day_person_hours(
+    session: AsyncSession, site_id: uuid.UUID, day: date
+) -> list[tuple[TimesheetEntry, Personnel, Subcontractor | None]]:
+    """Santiyenin o gunku SAATLI puantaj hucreleri, kisi basi (personel + firmasi) — TEK kaynak.
+
+    Tuketiciler: gunluk detayindaki `own_crew_from_timesheet` (cekirdek, `site_diary.read`)
+    ve EV dagitim izgarasi (`earned_value.diary_adapter.source_rows`). Kodlu (saatsiz)
+    hucre GIRMEZ. UQ (personel, gun) → kisi basina tek satir. Sira: ad soyad.
+    """
+    rows = await session.execute(
+        select(TimesheetEntry, Personnel, Subcontractor)
+        .join(Personnel, Personnel.id == TimesheetEntry.personnel_id)
+        .outerjoin(Subcontractor, Subcontractor.id == Personnel.subcontractor_id)
+        .where(
+            TimesheetEntry.site_id == site_id,
+            TimesheetEntry.work_date == day,
+            TimesheetEntry.hours.is_not(None),
+        )
+        .order_by(Personnel.full_name)
+    )
+    return [(ts, person, sub) for ts, person, sub in rows.all()]

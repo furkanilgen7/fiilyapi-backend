@@ -322,8 +322,13 @@ async def test_kaydedilen_satirlar_okuma_ucunda_gorunur(
 async def test_audit_tek_ozet_olayi(
     client: AsyncClient, sef_headers: dict[str, str], seeded_db: AsyncSession, santiye
 ) -> None:
-    """Satır başına olay basılmaz: TEK özet satırı (spec §3)."""
-    onceki = len((await seeded_db.execute(select(AuditLog))).scalars().all())
+    """Satır başına olay basılmaz: TEK özet satırı (spec §3).
+
+    🔴 FIX-B1: yeni kayıt SIRAYA değil KİMLİĞE göre bulunur. `select(AuditLog)` ORDER BY'sız;
+    Postgres sıra garantisi vermez ve `occurred_at` (= `now()`, işlem başı) aynı işlemdeki
+    satırlarda EŞİTTİR — `[-1]` CI'da giriş olayını ("Sisteme giriş yapıldı") getirdi.
+    """
+    onceki = set((await seeded_db.execute(select(AuditLog.id))).scalars().all())
 
     yanit = await _kaydet(
         client,
@@ -334,8 +339,9 @@ async def test_audit_tek_ozet_olayi(
     assert yanit.status_code == 200, yanit.text
 
     kayitlar = (await seeded_db.execute(select(AuditLog))).scalars().all()
-    assert len(kayitlar) == onceki + 1
-    detay = kayitlar[-1].detail
+    yeniler = [k for k in kayitlar if k.id not in onceki]
+    assert len(yeniler) == 1, [k.detail for k in yeniler]
+    detay = yeniler[0].detail
     assert "A-Blok Şantiyesi" in detay
     assert "3 satır" in detay
 

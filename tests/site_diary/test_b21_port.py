@@ -16,6 +16,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import day_hooks
 from app.modules.site_diary.models import DiaryStatus, SiteDiaryEntry
 from tests.site_diary._port import KILIT_METNI
 from tests.site_diary.conftest import VARSAYILAN_TARIH
@@ -191,6 +192,11 @@ async def test_gonder_engeli_422_reasons_ve_db_yazilmaz(
 
     assert yanit.status_code == 422, yanit.text
     assert yanit.json()["reasons"] == ["Hava eksik", "Dağıtılmamış saat gerekçesiz"]
+    # EV-BORC-2: düz metin döndüren (eski imzalı) koruyucunun maddesi "unspecified" kodludur.
+    assert [i["code"] for i in yanit.json()["reason_items"]] == [
+        day_hooks.UNSPECIFIED_REASON,
+        day_hooks.UNSPECIFIED_REASON,
+    ]
     assert await _durum(seeded_db, kayit["id"]) is DiaryStatus.draft
     (ctx,) = port.gonder_baglamlari
     assert (str(ctx.entry_id), ctx.site_id, ctx.entry_date, ctx.actor_id) == (
