@@ -608,17 +608,22 @@ async def test_yazmalar_denetim_satiri_uretir_okuma_URETMEZ(
     slot = _ilk_slot(slot_katalogu, sahip)
     belge = await belge_fabrikasi(proje, "a.pdf")
 
-    async def _sayi() -> int:
-        return len((await seeded_db.execute(select(AuditLog.detail))).scalars().all())
+    async def _kimlikler() -> set:
+        return set((await seeded_db.execute(select(AuditLog.id))).scalars().all())
 
-    onceki = await _sayi()
+    onceki = await _kimlikler()
     await client.get(_owner_path(sahip, sahip.owner_id), headers=pm_headers)
-    assert await _sayi() == onceki, "GET denetlenmez"
+    assert await _kimlikler() == onceki, "GET denetlenmez"
 
     govde = await _bagla(client, pm_headers, sahip, slot, belge)
     await client.patch(_link_path(sahip, govde["id"]), json={"note": "x"}, headers=pm_headers)
     await client.delete(_link_path(sahip, govde["id"]), headers=pm_headers)
-    detaylar = (await seeded_db.execute(select(AuditLog.detail))).scalars().all()[onceki:]
+    # FIX-B1: `[onceki:]` dilimi yeni satırların SONDA geldiğini varsayıyordu (ORDER BY yok).
+    detaylar = [
+        k.detail
+        for k in (await seeded_db.execute(select(AuditLog))).scalars().all()
+        if k.id not in onceki
+    ]
     assert len(detaylar) == 3
     assert all(slot.name in d and sahip.spec.label in d for d in detaylar), detaylar
 

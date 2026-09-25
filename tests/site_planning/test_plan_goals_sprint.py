@@ -268,16 +268,18 @@ async def test_goals_audit_tek_ozet_olayi(
         )
         return list((await seeded_db.execute(stmt)).scalars().all())
 
-    onceki = len(await _bu_haftanin_kayitlari())
+    onceki = {k.id for k in await _bu_haftanin_kayitlari()}
 
     yanit = await _kaydet(client, sef_headers, santiye.id, [_hedef("A"), _hedef("B")])
     assert yanit.status_code == 200, yanit.text
 
-    kayitlar = await _bu_haftanin_kayitlari()
-    assert len(kayitlar) == onceki + 1, (
-        f"{HAFTA.isoformat()} haftası için TEK özet olayı beklenirdi: {onceki} → {len(kayitlar)}"
+    # FIX-B1: `ORDER BY occurred_at, id` EKLEME sırası DEĞİLDİR (id = uuid4, rastgele) —
+    # `[-1]` yalnız önceki küme boşken doğruydu. Yeni kayıt kimlik farkıyla bulunur.
+    yeniler = [k for k in await _bu_haftanin_kayitlari() if k.id not in onceki]
+    assert len(yeniler) == 1, (
+        f"{HAFTA.isoformat()} haftası için TEK özet olayı beklenirdi: {[k.detail for k in yeniler]}"
     )
-    detay = kayitlar[-1].detail
+    detay = yeniler[0].detail
     assert "A-Blok Şantiyesi" in detay
     assert HAFTA.isoformat() in detay
     assert "2 hedef" in detay
@@ -400,11 +402,14 @@ async def test_sprint_gorunmeyen_santiye_404(
 async def test_sprint_audit_yazilir(
     client: AsyncClient, sef_headers: dict[str, str], seeded_db: AsyncSession, santiye
 ) -> None:
-    onceki = len((await seeded_db.execute(select(AuditLog))).scalars().all())
+    onceki = set((await seeded_db.execute(select(AuditLog.id))).scalars().all())
 
     yanit = await _sprint_kaydet(client, sef_headers, santiye.id, "Kat 8–9 Tamamlama")
     assert yanit.status_code == 200, yanit.text
 
     kayitlar = (await seeded_db.execute(select(AuditLog))).scalars().all()
-    assert len(kayitlar) == onceki + 1
-    assert "Kat 8–9 Tamamlama" in kayitlar[-1].detail
+    yeniler = [
+        k for k in kayitlar if k.id not in onceki
+    ]  # FIX-B1: kimlikle bul (select ORDER BY'siz; occurred_at islem ici esit)
+    assert len(yeniler) == 1, [k.detail for k in yeniler]
+    assert "Kat 8–9 Tamamlama" in yeniler[0].detail
