@@ -192,8 +192,6 @@ async def build_detail(
     daha ekler (`_leaf_context`) — kayıt başına SABİT. Sorgular ilişkilere
     DOKUNMAZ, bu yüzden `worker_counts`/`lines` `selectin` yüklemesi bozulmaz.
 
-    `temperature_c` (kullanımdan kalkıyor, B2-2) `temp_max_c`den TÜRETİLİR.
-
     DET-1.B: adlar · gün kilidi · önceki/sonraki `detail_context`ten (kayıt başına sabit
     sorgu). `section_context` yalnız önceki/sonraki bağlamıdır; yazma uçları vermez
     (şantiye bağlamı).
@@ -210,7 +208,6 @@ async def build_detail(
         entry_date=entry.entry_date,
         section_id=entry.section_id,
         weather=entry.weather,
-        temperature_c=entry.temp_max_c,
         temp_min_c=entry.temp_min_c,
         temp_max_c=entry.temp_max_c,
         wind_ms=entry.wind_ms,

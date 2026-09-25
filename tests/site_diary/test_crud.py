@@ -69,7 +69,7 @@ async def test_olusturma_bos_govdeyle_taslak_acar(
     site, _, _ = santiye
     govde = (await _olustur(client, admin_headers, site.id)).json()
     assert govde["weather"] is None
-    assert govde["temperature_c"] is None
+    assert govde["temp_max_c"] is None and "temperature_c" not in govde  # CLEAN-B1 Faz 1
     assert govde["work_done"] is None
     assert govde["safety_meeting_held"] is False
     assert govde["has_incident"] is False
@@ -87,7 +87,8 @@ async def test_olusturma_bolum_ve_isg_alanlarini_yazar(
         site.id,
         section_id=str(bolum.id),
         weather="rainy",
-        temperature_c="18.5",
+        temp_min_c="12",
+        temp_max_c="18.5",
         work_done="Kalıp söküm",
         chief_note="Beton dökümü ertelendi",
         safety_meeting_held=True,
@@ -99,7 +100,7 @@ async def test_olusturma_bolum_ve_isg_alanlarini_yazar(
     govde = yanit.json()
     assert govde["section_id"] == str(bolum.id)
     assert govde["weather"] == "rainy"
-    assert Decimal(govde["temperature_c"]) == Decimal("18.5")
+    assert Decimal(govde["temp_max_c"]) == Decimal("18.5")
     assert govde["work_done"] == "Kalıp söküm"
     assert govde["chief_note"] == "Beton dökümü ertelendi"
     assert govde["safety_meeting_held"] is True

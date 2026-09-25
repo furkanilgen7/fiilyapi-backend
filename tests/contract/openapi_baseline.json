@@ -31173,25 +31173,6 @@
             ],
             "title": "Temp Min C"
           },
-          "temperature_c": {
-            "anyOf": [
-              {
-                "maximum": 60.0,
-                "minimum": -60.0,
-                "type": "number"
-              },
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "deprecated": true,
-            "description": "KULLANIMDAN KALKIYOR (PLN-B2.1): `temp_min_c` + `temp_max_c` kullanın. İstekte yeni alanlar YOKSA kabul edilir ve ikisine de yazılır; yeni alanlardan biri gelirse bu alan YOK SAYILIR. Yanıtta `temp_max_c`nin salt okunur kopyasıdır.",
-            "title": "Temperature C"
-          },
           "weather": {
             "anyOf": [
               {
@@ -31502,20 +31483,6 @@
             ],
             "title": "Temp Min C"
           },
-          "temperature_c": {
-            "anyOf": [
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "deprecated": true,
-            "description": "KULLANIMDAN KALKIYOR (PLN-B2.1): `temp_min_c` + `temp_max_c` kullanın. İstekte yeni alanlar YOKSA kabul edilir ve ikisine de yazılır; yeni alanlardan biri gelirse bu alan YOK SAYILIR. Yanıtta `temp_max_c`nin salt okunur kopyasıdır.",
-            "title": "Temperature C"
-          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
@@ -31573,7 +31540,6 @@
           "entry_date",
           "section_id",
           "weather",
-          "temperature_c",
           "work_done",
           "chief_note",
           "safety_meeting_held",
@@ -31866,25 +31832,6 @@
               }
             ],
             "title": "Temp Min C"
-          },
-          "temperature_c": {
-            "anyOf": [
-              {
-                "maximum": 60.0,
-                "minimum": -60.0,
-                "type": "number"
-              },
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "deprecated": true,
-            "description": "KULLANIMDAN KALKIYOR (PLN-B2.1): `temp_min_c` + `temp_max_c` kullanın. İstekte yeni alanlar YOKSA kabul edilir ve ikisine de yazılır; yeni alanlardan biri gelirse bu alan YOK SAYILIR. Yanıtta `temp_max_c`nin salt okunur kopyasıdır.",
-            "title": "Temperature C"
           },
           "weather": {
             "anyOf": [
