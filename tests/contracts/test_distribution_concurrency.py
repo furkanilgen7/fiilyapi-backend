@@ -33,7 +33,7 @@ from app.modules.projects.models import Project, ProjectContract
 from app.modules.roles.models import Role
 from app.modules.sites.models import Site
 from app.modules.users.models import User, UserProjectAccess
-from tests._yaris import YARIS_TAVANI_SN
+from tests._yaris import YARIS_TAVANI_SN, kilitte_bekleyen_sorgu
 from tests.conftest import test_engine
 
 pytestmark = pytest.mark.asyncio
@@ -95,11 +95,13 @@ async def test_esZamanli_dagitim_sozlesme_miktarini_asamaz(kurulum: _Kurulum) ->
         await asyncio.wait_for(lock_acquired.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_kaydet(kurulum, kurulum.site_b_id))
-        await asyncio.sleep(0.3)
-        assert not task2.done(), (
-            "tx2, tx1 kilidi serbest bırakmadan ilerleyebildi — `save_distribution` "
-            "sözleşme kalemlerini `SELECT … FOR UPDATE` ile KİLİTLEMİYOR olabilir"
+        bekleyen = await kilitte_bekleyen_sorgu(
+            test_engine,
+            task2,
+            mesaj="tx2, tx1 kilidi serbest bırakmadan ilerleyebildi — `save_distribution` "
+            "sözleşme kalemlerini `SELECT … FOR UPDATE` ile KİLİTLEMİYOR olabilir",
         )
+        assert "FROM employer_contract_items" in bekleyen and "FOR UPDATE" in bekleyen, bekleyen
 
         release_lock.set()
         sonuc1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)

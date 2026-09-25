@@ -42,6 +42,7 @@ kalabilir. Bu dosya HEM TEK BAŞINA HEM DOSYA BÜTÜN koşturulup raporlanır.
 """
 
 import asyncio
+import contextlib
 import uuid
 from contextlib import asynccontextmanager
 from datetime import date
@@ -49,7 +50,12 @@ from decimal import Decimal
 
 import asyncpg
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from app.core.config import settings
 from app.core.db import Base
@@ -58,7 +64,7 @@ from app.modules.accounting.models import ChartAccount, ChartAccountType, Journa
 from app.modules.accounting.schemas import JournalEntryCreate, JournalLineInput
 from app.modules.roles.models import Role
 from app.modules.users.models import User
-from tests._yaris import YARIS_TAVANI_SN
+from tests._yaris import YARIS_TAVANI_SN, kilitte_bekleyen_sorgu
 
 #: Yarışan iki fişin ayları. 🔴 AYNI OLAMAZLAR (modül docstring'i): dönem satırı
 #: kilidi bekçiyi kör ederdi. Yıl ORTAKTIR — sayaç yıl bazlıdır.
@@ -102,8 +108,10 @@ class _Ortam:
         actor_id: uuid.UUID,
         borc_hesap_id: uuid.UUID,
         alacak_hesap_id: uuid.UUID,
+        engine: AsyncEngine,
     ) -> None:
         self.Session = session_factory
+        self.engine = engine  # TEST-B1: bariyer bu veritabanının `pg_stat_activity`sine bakar
         self.actor_id = actor_id
         self.borc_hesap_id = borc_hesap_id
         self.alacak_hesap_id = alacak_hesap_id
@@ -143,7 +151,7 @@ async def _yaris_ortami():  # noqa: ANN201
             kurulum.add_all([kasa, karsi])
             await kurulum.flush()
             await kurulum.commit()
-            ortam = _Ortam(session_factory, user.id, kasa.id, karsi.id)
+            ortam = _Ortam(session_factory, user.id, kasa.id, karsi.id, engine)
 
         yield ortam
     finally:
@@ -184,23 +192,47 @@ async def _yarat_ve_commit(ortam: _Ortam, session: AsyncSession, ay: int) -> Jou
     return entry
 
 
+#: tx2'nin beklemesi gereken kilit: sayaç satırının UPSERT-SONRA-KİLİTLE ifadesi.
+SAYAC_KILIDI = ("INSERT INTO journal_entry_counters", "ON CONFLICT (year) DO UPDATE")
+#: Aynı ayda tx2 sayaca VARMADAN dönem katmanında durur (KONTROL).
+DONEM_KILIDI = ("accounting_periods",)
+
+
 async def _bekleyen_gorevi_olc(
-    ortam: _Ortam, birinci: AsyncSession, ikinci: AsyncSession, aylar: tuple[int, int]
+    ortam: _Ortam,
+    birinci: AsyncSession,
+    ikinci: AsyncSession,
+    aylar: tuple[int, int],
+    beklenen: tuple[str, ...] = SAYAC_KILIDI,
 ) -> tuple[JournalEntry, JournalEntry]:
     """tx1 numarayı ALIR ama COMMIT ETMEZ; tx2'nin BEKLEDİĞİ ölçülür.
 
-    `asyncio.sleep(0.3)` + `not done` bariyeri ŞARTTIR: yalın bir
-    `asyncio.gather` iki görevi kritik anda kesiştirmez, yarış penceresi hiç
-    açılmaz ve kilitsiz kod da yeşil kalırdı (FAT-1'in kalıcı dersi).
+    Yalın bir `asyncio.gather` iki görevi kritik anda kesiştirmez (FAT-1'in kalıcı
+    dersi); bu yüzden tx2'nin KİLİTTE beklediği `pg_stat_activity`den okunur
+    (TEST-B1). Eski `asyncio.sleep(0.3)` + `not done` bariyeri SAHTE YEŞİLDİ: tx2 0,5 sn
+    geciktirilince kilitsiz bir üretici (düz `SELECT`, satır yoksa `DO NOTHING`) iki
+    testte de yeşil kalıyordu — tx2 kilide hiç varmadan birinci commit ediyordu.
+    Bekleyen sorgunun METNİ de iddia edilir: `DO NOTHING` bile commit edilmemiş
+    çakışmada bekler, "bekliyor" tek başına kilidin DOĞRU yerde olduğunu söylemez.
     """
     ilk = await _yarat(ortam, birinci, aylar[0])
 
     gorev = asyncio.create_task(_yarat_ve_commit(ortam, ikinci, aylar[1]))
-    await asyncio.sleep(0.3)
-    assert not gorev.done(), (
-        "ikinci fiş beklemedi — numara üretimi KİLİTSİZ: iki eşzamanlı istek "
-        "aynı `entry_no`yu alır (ya da tekillik kısıtına düşüp 500 üretir)"
-    )
+    try:
+        bekleyen = await kilitte_bekleyen_sorgu(
+            ortam.engine,
+            gorev,
+            mesaj="ikinci fiş beklemedi — numara üretimi KİLİTSİZ: iki eşzamanlı istek "
+            "aynı `entry_no`yu alır (ya da tekillik kısıtına düşüp 500 üretir)",
+        )
+        assert all(parca in bekleyen for parca in beklenen), bekleyen
+    except BaseException:
+        # TEST-B1: iddia düşerse görev `ikinci` oturumundayken oturum kapanır ve asyncpg
+        # gürültüsü ("another operation is in progress") ASIL hatayı ezer (ölçüldü).
+        await birinci.rollback()
+        with contextlib.suppress(BaseException):
+            await asyncio.wait_for(gorev, timeout=YARIS_TAVANI_SN)
+        raise
 
     await birinci.commit()
     ikincisi = await asyncio.wait_for(gorev, timeout=YARIS_TAVANI_SN)
@@ -270,4 +302,6 @@ async def test_KONTROL_ayni_AYDA_donem_kilidi_yarisi_zaten_MASKELER() -> None:
     """
     async with _yaris_ortami() as ortam:
         async with ortam.Session() as birinci, ortam.Session() as ikinci:
-            await _bekleyen_gorevi_olc(ortam, birinci, ikinci, (AYLAR[0], AYLAR[0]))
+            await _bekleyen_gorevi_olc(
+                ortam, birinci, ikinci, (AYLAR[0], AYLAR[0]), beklenen=DONEM_KILIDI
+            )

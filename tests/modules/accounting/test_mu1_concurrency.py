@@ -32,16 +32,18 @@ bloke olduğu DOĞRUDAN kanıtlanır.
 """
 
 import asyncio
+import contextlib
 import uuid
 from decimal import Decimal
 
+import pytest
 from sqlalchemy import delete, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import ConflictError
 from app.core.security import hash_password
 from app.core.timezone import today
-from app.modules.accounting import numbering, state_service
+from app.modules.accounting import numbering, periods_service, state_service
 from app.modules.accounting.models import (
     AccountingPeriod,
     ChartAccount,
@@ -53,7 +55,7 @@ from app.modules.accounting.models import (
 from app.modules.accounting.transitions import JournalAction
 from app.modules.roles.models import Role
 from app.modules.users.models import User
-from tests._yaris import YARIS_TAVANI_SN
+from tests._yaris import YARIS_TAVANI_SN, kilitte_bekleyen_sorgu
 from tests.conftest import test_engine
 
 _SessionFactory = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
@@ -224,28 +226,54 @@ async def _gecis(entry_id: uuid.UUID, actor_id: uuid.UUID, action: JournalAction
             return "conflict"
 
 
-async def _yarisi_kos(kurulum: _Kurulum, action: JournalAction) -> list[str]:
+async def _yarisi_kos(
+    kurulum: _Kurulum, action: JournalAction, *, fis_kilidi_yalniz: bool = False
+) -> list[str]:
+    """TEST-B1: tx2'nin KİLİTTE beklediği `pg_stat_activity`den ölçülür (sabit uyku DEĞİL).
+
+    🔴 Aynı fiş her zaman AYNI döneme düşer: kilit sırası dönem → fiş olduğundan tx2 ÖNCE
+    dönem katmanında (`accounting_periods` UPSERT/`FOR UPDATE`) bekler ve FİŞ satırı
+    kilidi bu senaryoda MASKELİDİR — fiş kilidini kaldıran mutant burada ölçülemez
+    (ölçüldü: gecikmesiz de yeşil kalıyordu). Fiş kilidinin KENDİ bekçisi
+    `fis_kilidi_yalniz=True`: dönem kilidi devre dışıyken tx2 `journal_entries … FOR UPDATE`te
+    beklemek ZORUNDADIR.
+    """
     kilit_alindi = asyncio.Event()
     birak = asyncio.Event()
 
     task1 = asyncio.create_task(
         _gecis_ve_tut(kurulum.entry_id, kurulum.actor_id, action, kilit_alindi, birak)
     )
-    await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
+    task2: asyncio.Task[str] | None = None
+    try:
+        await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
-    task2 = asyncio.create_task(_gecis(kurulum.entry_id, kurulum.ikinci_actor_id, action))
-    await asyncio.sleep(0.3)
-    assert not task2.done(), (
-        "tx2, tx1 kilidi serbest bırakmadan ilerleyebildi — "
-        "`perform_transition` artık fiş satırını KİLİTLEMİYOR olabilir "
-        "(`for_update=True` ya da `populate_existing` düşmüş)"
-    )
+        task2 = asyncio.create_task(_gecis(kurulum.entry_id, kurulum.ikinci_actor_id, action))
+        bekleyen = await kilitte_bekleyen_sorgu(
+            test_engine,
+            task2,
+            mesaj="tx2, tx1 kilidi serbest bırakmadan ilerleyebildi — "
+            "`perform_transition` artık fiş satırını KİLİTLEMİYOR olabilir "
+            "(`for_update=True` ya da `populate_existing` düşmüş)",
+        )
+        if fis_kilidi_yalniz:
+            assert "FROM journal_entries" in bekleyen and "FOR UPDATE" in bekleyen, bekleyen
+        else:
+            assert "accounting_periods" in bekleyen, bekleyen
 
-    birak.set()
-    sonuclar = [
-        await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN),
-        await asyncio.wait_for(task2, timeout=YARIS_TAVANI_SN),
-    ]
+        birak.set()
+        sonuclar = [
+            await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN),
+            await asyncio.wait_for(task2, timeout=YARIS_TAVANI_SN),
+        ]
+    finally:
+        # TEST-B1: bir iddia düşerse tx1 kilidi tutmaya devam eder ve `_temizle`
+        # o kilitte SÜRESİZ beklerdi (bariyer dönüşümünde ölçüldü: koşu asıldı).
+        birak.set()
+        for task in (task1, task2):
+            if task is not None:
+                with contextlib.suppress(BaseException):
+                    await asyncio.wait_for(task, timeout=YARIS_TAVANI_SN)
     return sorted(sonuclar)
 
 
@@ -292,5 +320,27 @@ async def test_iki_esZamanli_reverse_YALNIZ_BIR_storno_uretir() -> None:
             assert len(stornolar) == 1
             orijinal = await session.get(JournalEntry, kurulum.entry_id)
             assert orijinal.status is JournalEntryStatus.reversed
+    finally:
+        await _temizle(kurulum)
+
+
+async def test_donem_kilidi_olmasa_da_FIS_SATIRI_kilitlenir(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """🔴 TEST-B1 — fiş satırı kilidinin (`entry_or_404(for_update=True)`) KENDİ bekçisi.
+
+    Üstteki iki yarışta dönem kilidi tx2'yi fiş kilidine varmadan durdurur; fiş kilidi
+    düşse de onlar yeşil kalır. Burada dönem kontrolü no-op'tur: tx2'yi sıraya sokan TEK
+    şey fiş satırının `FOR UPDATE` kilididir.
+    """
+
+    async def _donem_kilidi_yok(session, donemler) -> None:  # noqa: ANN001, ARG001
+        return None
+
+    monkeypatch.setattr(periods_service, "assert_periods_open", _donem_kilidi_yok)
+    kurulum = await _kur(JournalEntryStatus.draft)
+    try:
+        sonuc = await _yarisi_kos(kurulum, JournalAction.post, fis_kilidi_yalniz=True)
+        assert sonuc == ["conflict", "ok"]
     finally:
         await _temizle(kurulum)

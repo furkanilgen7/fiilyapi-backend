@@ -37,7 +37,7 @@ from app.modules.projects.models import Project, ProjectStatus, ProjectType
 from app.modules.roles.models import Role
 from app.modules.sites.models import Section, Site
 from app.modules.users.models import User, UserProjectAccess
-from tests._yaris import YARIS_TAVANI_SN
+from tests._yaris import YARIS_TAVANI_SN, kilitte_bekleyen_sorgu
 from tests.conftest import test_engine
 
 pytestmark = pytest.mark.asyncio
@@ -242,12 +242,14 @@ async def test_iki_esZamanli_REPLACE_serilesir_ve_toplam_kotayi_asmaz() -> None:
         await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_tahsis_et(kurulum, kurulum.section_ids[1]))
-        await asyncio.sleep(0.3)
-        assert not task2.done(), (
-            "ikinci tahsis, birincinin kilidi serbest bırakılmadan ilerleyebildi — "
+        bekleyen = await kilitte_bekleyen_sorgu(
+            test_engine,
+            task2,
+            mesaj="ikinci tahsis, birincinin kilidi serbest bırakılmadan ilerleyebildi — "
             "`replace_allocations` poz satırını KİLİTLEMİYOR olabilir "
-            "(iki yazma kapısı arasındaki serileşme kaybolur)"
+            "(iki yazma kapısı arasındaki serileşme kaybolur)",
         )
+        assert "FROM boq_items" in bekleyen and "FOR UPDATE" in bekleyen, bekleyen
 
         kilidi_birak.set()
         assert await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN) == "ok"
@@ -310,12 +312,14 @@ async def test_esZamanli_PATCH_kota_dusurmesi_de_serilesir() -> None:
         await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_kotayi_dusur())
-        await asyncio.sleep(0.3)
-        assert not task2.done(), (
-            "kota düşürme, tahsisin kilidi serbest bırakılmadan ilerleyebildi — "
+        bekleyen = await kilitte_bekleyen_sorgu(
+            test_engine,
+            task2,
+            mesaj="kota düşürme, tahsisin kilidi serbest bırakılmadan ilerleyebildi — "
             "`update_item` poz satırını KİLİTLEMİYOR olabilir "
-            "(SUM > quantity kalıcı olarak yazılabilir)"
+            "(SUM > quantity kalıcı olarak yazılabilir)",
         )
+        assert "FROM boq_items" in bekleyen and "FOR UPDATE" in bekleyen, bekleyen
 
         kilidi_birak.set()
         assert await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN) == "ok"
@@ -408,8 +412,12 @@ async def test_TERS_YON_tahsis_TAZELENMIS_kotayi_okur() -> None:
         await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_tahsis_et(kurulum, kurulum.section_ids[0]))
-        await asyncio.sleep(0.3)
-        assert not task2.done(), "tahsis, kota düşürmenin kilidi serbest bırakılmadan ilerleyebildi"
+        bekleyen = await kilitte_bekleyen_sorgu(
+            test_engine,
+            task2,
+            mesaj="tahsis, kota düşürmenin kilidi serbest bırakılmadan ilerleyebildi",
+        )
+        assert "FROM boq_items" in bekleyen and "FOR UPDATE" in bekleyen, bekleyen
 
         kilidi_birak.set()
         assert await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN) == "ok"

@@ -41,7 +41,7 @@ from app.modules.equipment.models import Equipment, EquipmentCategory, Equipment
 from app.modules.equipment.schemas import WorkLogCreate
 from app.modules.roles.models import Role
 from app.modules.users.models import User
-from tests._yaris import YARIS_TAVANI_SN
+from tests._yaris import YARIS_TAVANI_SN, kilitte_bekleyen_sorgu
 from tests.conftest import test_engine
 
 pytestmark = pytest.mark.asyncio
@@ -192,11 +192,16 @@ async def test_iki_esZamanli_kayit_gunluk_tavani_atlatamaz() -> None:
         await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_kaydet(kurulum.equipment_id, kurulum.actor_ids[1], "20"))
-        await asyncio.sleep(0.3)
-        assert not task2.done(), (
-            "tx2, tx1 kilidi serbest bırakmadan ilerleyebildi — `create_work_log` "
-            "artık `equipment` satırını KİLİTLEMİYOR olabilir (K12 yarışı yeniden açık)"
+        bekleyen = await kilitte_bekleyen_sorgu(
+            test_engine,
+            task2,
+            mesaj="tx2, tx1 kilidi serbest bırakmadan ilerleyebildi — `create_work_log` "
+            "artık `equipment` satırını KİLİTLEMİYOR olabilir (K12 yarışı yeniden açık)",
         )
+        # Metin 1024 baytta kırpılır (`track_activity_query_size`): `FOR UPDATE` görünmez.
+        # Kilitte bekleyen bir SELECT yalnız kilitli okuma olabilir; kilitsiz mutant
+        # UPDATE/INSERT'te beklerdi.
+        assert bekleyen.startswith("SELECT equipment."), bekleyen
 
         kilidi_birak.set()
         sonuc1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
@@ -244,11 +249,16 @@ async def test_esZamanli_silme_ve_kayit_ayni_kilit_sirasini_paylasir() -> None:
                 return "deleted"
 
         task2 = asyncio.create_task(sil())
-        await asyncio.sleep(0.3)
-        assert not task2.done(), (
-            "silme, POST'un `equipment` kilidini beklemedi — `delete_work_log` "
-            "kilit sırasını PAYLAŞMIYOR (karşılıklı kilitlenme penceresi)"
+        bekleyen = await kilitte_bekleyen_sorgu(
+            test_engine,
+            task2,
+            mesaj="silme, POST'un `equipment` kilidini beklemedi — `delete_work_log` "
+            "kilit sırasını PAYLAŞMIYOR (karşılıklı kilitlenme penceresi)",
         )
+        # Metin 1024 baytta kırpılır (`track_activity_query_size`): `FOR UPDATE` görünmez.
+        # Kilitte bekleyen bir SELECT yalnız kilitli okuma olabilir; kilitsiz mutant
+        # UPDATE/INSERT'te beklerdi.
+        assert bekleyen.startswith("SELECT equipment."), bekleyen
 
         kilidi_birak.set()
         assert await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN) == "created"

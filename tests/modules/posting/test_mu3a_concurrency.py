@@ -59,6 +59,7 @@ from app.modules.posting.models import PostingRule
 from app.modules.posting.service import PostingLine
 from app.modules.roles.models import Role
 from app.modules.users.models import User
+from tests._yaris import kilitte_bekleyen_sorgu
 
 KAYNAK = JournalSourceType.invoice
 TARIH = date(2026, 7, 17)
@@ -105,9 +106,10 @@ async def _drop_scratch_database(database: str) -> None:
 
 
 class _Ortam:
-    def __init__(self, session_factory, actor_id: uuid.UUID) -> None:  # noqa: ANN001
+    def __init__(self, session_factory, actor_id: uuid.UUID, engine) -> None:  # noqa: ANN001
         self.Session = session_factory
         self.actor_id = actor_id
+        self.engine = engine  # TEST-B1: `kilitte_bekleyen_sorgu` tek kullanımlık DB'yi yoklar
 
 
 @asynccontextmanager
@@ -151,7 +153,7 @@ async def _yaris_ortami():  # noqa: ANN201
                 ]
             )
             await kurulum.commit()
-            ortam = _Ortam(session_factory, user.id)
+            ortam = _Ortam(session_factory, user.id, engine)
 
         yield ortam
     finally:
@@ -353,16 +355,23 @@ async def test_KILIT_OLMASA_DA_DB_ikinci_fisi_REDDEDER():
             await birinci.flush()
 
             gorev = asyncio.create_task(_yaz_ve_commit(ikinci, _fis("YEV-2026-9002")))
-            await asyncio.sleep(0.3)
-            assert not gorev.done(), (
-                "ikinci satır BEKLEMEDİ — `uq_journal_entries_source` yok: aynı "
-                "belgeye iki fiş yazılabiliyor"
-            )
+            try:
+                bekleyen = await kilitte_bekleyen_sorgu(
+                    ortam.engine,
+                    gorev,
+                    mesaj="ikinci satır BEKLEMEDİ — `uq_journal_entries_source` yok: aynı "
+                    "belgeye iki fiş yazılabiliyor",
+                )
+                # İkinci INSERT, birincinin commit edilmemiş satırında UQ için bekler.
+                assert bekleyen.startswith("INSERT INTO journal_entries "), bekleyen
 
-            await birinci.commit()
-            with pytest.raises(IntegrityError) as hata:
-                await gorev
-            assert "uq_journal_entries_source" in str(hata.value.orig)
+                await birinci.commit()
+                with pytest.raises(IntegrityError) as hata:
+                    await gorev
+                assert "uq_journal_entries_source" in str(hata.value.orig)
+            finally:
+                # Görev önce, oturumlar sonra (`test_eszamanli_iki_onay_TEK_fis_uretir` notu).
+                await _gorevi_sonlandir(gorev)
 
         async with ortam.Session() as denetci:
             toplam = await denetci.scalar(select(func.count()).select_from(JournalEntry))

@@ -47,7 +47,7 @@ from app.modules.procurement.models import PaymentTerms, Supplier
 from app.modules.roles.models import Role
 from app.modules.treasury.models import BankAccount, Payment
 from app.modules.users.models import User
-from tests._yaris import YARIS_TAVANI_SN
+from tests._yaris import YARIS_TAVANI_SN, kilitte_bekleyen_sorgu
 from tests.conftest import test_engine
 
 from ._mk2_para_gercek import kira_parasini_yatir
@@ -320,11 +320,15 @@ async def _yaris(kurulum: _Kurulum, eylem: str) -> tuple[str, str]:
         await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_eylem(kurulum, kurulum.actor_ids[1], eylem))
-        await asyncio.sleep(0.3)
-        assert not task2.done(), (
-            f"tx2, tx1 kilidi serbest bırakmadan ilerleyebildi — `rental_service.{eylem}` "
-            "artık fatura satırını KİLİTLEMİYOR olabilir (çift damga yarışı yeniden açık)"
+        bekleyen = await kilitte_bekleyen_sorgu(
+            test_engine,
+            task2,
+            mesaj=f"tx2, tx1 kilidi serbest bırakmadan ilerleyebildi — `rental_service.{eylem}` "
+            "artık fatura satırını KİLİTLEMİYOR olabilir (çift damga yarışı yeniden açık)",
         )
+        # Metin 1024 baytta kırpılır (`FOR UPDATE` görünmez); kilitte bekleyen bir SELECT
+        # yalnız kilitli okuma olabilir — kilitsiz mutant UPDATE'te beklerdi.
+        assert bekleyen.startswith("SELECT equipment_rental_invoices."), bekleyen
 
         kilidi_birak.set()
         sonuc1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
