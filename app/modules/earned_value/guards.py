@@ -6,7 +6,11 @@ DISCIPLINE_MISSING = "Disiplin bulunamadı"
 DISCIPLINE_CODE_TAKEN = "Bu disiplin kodu zaten kayıtlı"
 DISCIPLINE_IN_USE = "Disiplin kullanımda (BOQ grubu eşlemesi, katalog ya da baseline); silinemez"
 CATALOG_ITEM_MISSING = "Katalog iş tipi bulunamadı"
-CATALOG_ITEM_TAKEN = "Bu disiplinde aynı ad ve birimle bir iş tipi zaten var"
+#: EV-BORC-5: ad alanına özel — normalize eşleşmede VAR OLAN kaydın yazımı gösterilir.
+CATALOG_ITEM_TAKEN_AS = (
+    "Ad: bu disiplinde aynı ad ve birimle bir iş tipi zaten var — «{name}» ({uom}). "
+    "Büyük/küçük harf, İ/I ve boşluk farkı ayrı iş tipi sayılmaz"
+)
 CATALOG_NO_ACTUAL = "Bu iş tipi için tamamlanmış şantiye gerçekleşeni yok"
 
 HOLIDAY_RANGE_INVALID = "Tatil bitişi başlangıçtan önce olamaz"

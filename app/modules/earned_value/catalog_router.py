@@ -139,8 +139,9 @@ async def list_catalog_endpoint(
 ) -> list[CatalogItemRead]:
     """Birim oran katalogu (KAT). `q` is tipi adinda harf duyarsiz arar.
 
-    `actual` (gerceklesen) ve `diff_pct` K4 kuralindadir; saha verisi PLN-B2'de
-    dogdugu icin B1'de her satirda bostur (`catalog_service.catalog_actuals`).
+    `actual` (gerceklesen) ve `diff_pct` K4 kuralindadir: TAMAMLANMIS santiyelerin miktar
+    agirlikli ortalamasi (`catalog_service.catalog_actuals`); tamamlanmis santiye verisi
+    yoksa bostur.
     """
     rows = await catalog_service.list_catalog(session, discipline_id, q)
     return [catalog_service.to_read(row) for row in rows]
@@ -155,7 +156,8 @@ async def list_catalog_endpoint(
 async def create_catalog_item_endpoint(
     request: Request, data: CatalogItemCreate, user: _User, session: _Session
 ) -> CatalogItemRead:
-    """Katalog is tipi ekler. (disiplin, ad, birim) benzersiz → 409 `CATALOG_ITEM_TAKEN`."""
+    """Katalog is tipi ekler. (disiplin, ad, birim) benzersiz — ad/birim NORMALIZE
+    karsilastirilir (buyuk/kucuk harf, İ/I, bosluk) → 409 `CATALOG_ITEM_TAKEN_AS`."""
     row = await catalog_service.create_catalog_item(session, data)
     detail = audit_messages.catalog_item_created(row.item.name, row.item.uom)
     await _audit(session, request, user, AuditAction.create, detail)
@@ -189,7 +191,8 @@ async def adopt_actual_endpoint(
 ) -> CatalogItemRead:
     """KAT "Gerceklesen standart yap": gerceklesen ortalama yoksa 409 `CATALOG_NO_ACTUAL`.
 
-    ⚠️ B1'de gerceklesen hic yoktur → bu uc PLN-B3'e kadar HER ZAMAN 409 doner.
+    Gerceklesen = TAMAMLANMIS santiyelerin miktar agirlikli ortalamasi (K4; PLN-B3'ten beri
+    `actuals.completed_site_actuals`); hic tamamlanmis santiye verisi yoksa 409.
     """
     result = await catalog_service.adopt_actual(session, item_id)
     item = result.row.item

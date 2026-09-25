@@ -211,11 +211,11 @@ async def test_ekle_201_ve_audit(
 async def test_ayni_disiplin_ad_birim_409_alana_ozel(
     client: AsyncClient, admin, kab: EvDiscipline, katalog_fabrikasi, seeded_db: AsyncSession
 ) -> None:
-    await katalog_fabrikasi(kab, "Beton döküm")
+    var = await katalog_fabrikasi(kab, "Beton döküm")
     before = await audit_count(seeded_db)
     resp = await client.post(URL, json=new(kab), headers=admin)
     assert resp.status_code == 409
-    assert resp.json()["detail"] == guards.CATALOG_ITEM_TAKEN
+    assert resp.json()["detail"] == guards.CATALOG_ITEM_TAKEN_AS.format(name=var.name, uom=var.uom)
     assert await audit_count(seeded_db) == before
 
 
@@ -303,13 +303,13 @@ async def test_patch_baska_kalemle_cakisirsa_409(
 ) -> None:
     kab = await disiplin_fabrikasi("KAB")
     duv = await disiplin_fabrikasi("DUV")
-    await katalog_fabrikasi(kab, "Beton döküm")
+    var = await katalog_fabrikasi(kab, "Beton döküm")
     moving = await katalog_fabrikasi(duv, "Beton döküm")
     resp = await client.patch(
         f"{URL}/{moving.id}", json={"discipline_id": str(kab.id)}, headers=admin
     )
     assert resp.status_code == 409
-    assert resp.json()["detail"] == guards.CATALOG_ITEM_TAKEN
+    assert resp.json()["detail"] == guards.CATALOG_ITEM_TAKEN_AS.format(name=var.name, uom=var.uom)
 
 
 async def test_patch_olmayan_kalem_404(client: AsyncClient, admin) -> None:
@@ -366,3 +366,42 @@ async def test_adopt_olmayan_kalem_404(client: AsyncClient, admin) -> None:
     resp = await client.post(f"{URL}/{uuid.uuid4()}/adopt-actual", headers=admin)
     assert resp.status_code == 404
     assert resp.json()["detail"] == guards.CATALOG_ITEM_MISSING
+
+
+# --- EV-BORC-5: tekillik öneri eşleşmesiyle AYNI normalizasyonla ---------------------------
+
+
+@pytest.mark.parametrize(
+    ("ad", "birim"),
+    [("BETON DÖKÜM", "m³"), ("  beton   döküm ", "m³"), ("Beton döküm", "M3")],
+    ids=["buyuk-harf", "bosluk", "birim-ust-simge"],
+)
+async def test_EVBORC5_normalized_duplicate_is_409(
+    client: AsyncClient, admin, kab: EvDiscipline, katalog_fabrikasi, ad: str, birim: str
+) -> None:
+    var = await katalog_fabrikasi(kab, "Beton döküm")
+    resp = await client.post(URL, json=new(kab, name=ad, uom=birim), headers=admin)
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == guards.CATALOG_ITEM_TAKEN_AS.format(name=var.name, uom=var.uom)
+
+
+async def test_EVBORC5_turkish_dotted_i_duplicate_is_409(
+    client: AsyncClient, admin, kab: EvDiscipline, katalog_fabrikasi
+) -> None:
+    """«KİREÇ SIVA» ile «kireç sıva» aynı iş tipidir.
+
+    `casefold` İ'yi "i̇" yapardı; `normalize_label` Türkçe harfleri elle çevirir."""
+    await katalog_fabrikasi(kab, "kireç sıva")
+    resp = await client.post(URL, json=new(kab, name="KİREÇ SIVA"), headers=admin)
+    assert resp.status_code == 409, resp.text
+
+
+async def test_EVBORC5_different_uom_is_not_duplicate_and_rename_to_variant_is_409(
+    client: AsyncClient, admin, kab: EvDiscipline, katalog_fabrikasi
+) -> None:
+    await katalog_fabrikasi(kab, "Beton döküm")
+    other = await client.post(URL, json=new(kab, name="beton DÖKÜM", uom="ton"), headers=admin)
+    assert other.status_code == 201, other.text  # birim farklı → ayrı iş tipi
+    kalip = await katalog_fabrikasi(kab, "Kalıp")
+    resp = await client.patch(f"{URL}/{kalip.id}", json={"name": "BETON DÖKÜM"}, headers=admin)
+    assert resp.status_code == 409, resp.text
