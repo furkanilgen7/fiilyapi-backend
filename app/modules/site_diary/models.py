@@ -181,6 +181,12 @@ class SiteDiaryEntry(Base):
         server_default="draft",
     )
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # DET-1.B: gonderen — `submitted_at` ile BIRLIKTE yazilir, reopen ikisini de temizler
+    # (`transitions._stamp`). DET-1.B oncesi gonderimlerde NULL: denetim satirinda varlik
+    # kimligi yok, metinden turetmek guvenilmez (geri doldurma YAPILMADI).
+    submitted_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     # can_delete korkulugu (app/core/access.py) created_by + is_draft ister.
     created_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False

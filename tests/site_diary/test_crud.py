@@ -313,6 +313,8 @@ async def test_detay_satirlari_ve_isci_kirilimini_ic_ice_doner(
             # PLN-B2.1 (B2-5) — YALNIZ EKLEME: firmasız satırda ikisi de boş.
             "subcontractor_id": None,
             "hours": None,
+            # DET-1.B — YALNIZ EKLEME: firmasız satırda firma adı da boş.
+            "subcontractor_name": None,
         }
     ]
     assert govde["worker_total"] == 4

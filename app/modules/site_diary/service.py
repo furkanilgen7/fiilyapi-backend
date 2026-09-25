@@ -135,11 +135,12 @@ async def visible_entry_locked(
 # --- Alan doğrulamaları ---
 
 
-async def _validate_section(
-    session: AsyncSession, section_id: uuid.UUID | None, site: Site
-) -> None:
+async def validate_section(session: AsyncSession, section_id: uuid.UUID | None, site: Site) -> None:
     """Bölüm bilgi alanıdır (GK198) ama SAHİPSİZ olamaz: günlüğün ŞANTİYESİNE
-    ait olmalıdır. Var olmayan bölüm de AYNI 422'yi alır (guards.SECTION_MISMATCH)."""
+    ait olmalıdır. Var olmayan bölüm de AYNI 422'yi alır (guards.SECTION_MISMATCH).
+
+    DET-1.B: liste süzgeci ve detayın bölüm bağlamı (`?section_id=`) da bu kapıdan geçer —
+    başka şantiyenin bölümüyle süzülen liste SESSİZCE boş dönmez, 422 alır."""
     if section_id is None:
         return
     row = await repository.get_section_with_site(session, section_id)
@@ -260,7 +261,7 @@ async def create(
     site, project = await visible_site(session, actor, site_id)
     await day_hooks.assert_days_unlocked(session, site.id, [data.entry_date])
     await _assert_date_free(session, site.id, data.entry_date)
-    await _validate_section(session, data.section_id, site)
+    await validate_section(session, data.section_id, site)
 
     # `**model_dump()` güvenlidir çünkü `SiteDiaryEntryCreate`in HER alanı bir
     # kolondur ve `status`/`submitted_at`/`created_by` şemada YOKTUR — gövdeden
@@ -321,7 +322,7 @@ async def update(
             session, context.entry.site_id, changes["entry_date"], exclude_entry_id=entry_id
         )
     if "section_id" in changes:
-        await _validate_section(session, changes["section_id"], context.site)
+        await validate_section(session, changes["section_id"], context.site)
 
     for field, value in changes.items():
         setattr(context.entry, field, value)
