@@ -41,11 +41,12 @@ from app.modules.earned_value.engine import DailyReport as EngineReport
 from app.modules.earned_value.ev_input import SiteInput, build_site_input
 from app.modules.earned_value.panel_headcount import daily_headcount
 from app.modules.earned_value.report_daily import day_footer
-from app.modules.earned_value.report_qurr import revision_ref, week_range
+from app.modules.earned_value.report_qurr import pf_bands_out, revision_ref, week_range
 from app.modules.earned_value.schemas_reports import (
     BarPoint,
     CurvePoint,
     HistogramWeek,
+    PanelDiscipline,
     PanelKpi,
     PanelReport,
     PanelRow,
@@ -258,6 +259,22 @@ def _item_rows(site: SiteInput, report: EngineReport, disc, q: PanelQuery) -> li
     return out
 
 
+def _disciplines(site: SiteInput, report: EngineReport) -> list[PanelDiscipline]:
+    """EV-BORC-3 G1: filtre acilir listesi — `discipline_id`den BAGIMSIZ, agacin tum kokleri."""
+    out = []
+    for d in site.tree.disciplines:
+        try:
+            mix = report.row(RowKind.DISCIPLINE, d.id).contractor_mix
+        except KeyError:
+            mix = None
+        out.append(
+            PanelDiscipline(
+                id=d.id, name=d.name or "Disiplinsiz", contractor_mix=mix.value if mix else None
+            )
+        )
+    return out
+
+
 def _curve(s: ScopeSeries, a: date, b: date) -> list[CurvePoint]:
     return [
         CurvePoint(
@@ -265,6 +282,8 @@ def _curve(s: ScopeSeries, a: date, b: date) -> list[CurvePoint]:
             is_future=p.is_future,
             planned_pct_cum=p.planned_pct_cum,
             progress_pct_cum=p.progress_pct_cum,
+            variance=p.variance,
+            status=p.status,
         )
         for p in s.points
         if a <= p.day <= b
@@ -295,6 +314,7 @@ def _pf_trend(s: ScopeSeries, a: date, b: date) -> list[PfPoint]:
 
 
 def _histogram(
+    cal: ProjectCalendar,
     s: ScopeSeries,
     weeks: list[tuple[date, date]],
     day: date,
@@ -318,6 +338,8 @@ def _histogram(
         out.append(
             HistogramWeek(
                 week_start=a,
+                week_no=cal.week_no(a),
+                week_end=b,
                 working_days=len(work),
                 is_future=a > day,
                 planned_people=planned_mhr / cap if cap else None,
@@ -422,9 +444,13 @@ async def build_panel(session: AsyncSession, site_id: uuid.UUID, q: PanelQuery) 
         s_curve=_curve(main, *win.curve),
         bars=_bars(site, main, *win.bars),
         pf_trend=_pf_trend(main, *win.pf),
-        histogram=_histogram(main, win.weeks, q.day, hours, heads),
+        histogram=_histogram(cal, main, win.weeks, q.day, hours, heads),
         actual_basis="equivalent" if heads is None else "headcount",
         standard_daily_hours=hours,
         rows=rows,
-        warnings=_warnings(site, report, q.day, footer),
+        warnings=_warnings(site, report, q.day, footer) + rw.empty_rate_warnings(site.tree),
+        disciplines=_disciplines(site, report),
+        pf_bands=pf_bands_out(site),
+        calendar_start=cal.start_date,
+        calendar_end=cal.end_date,
     )

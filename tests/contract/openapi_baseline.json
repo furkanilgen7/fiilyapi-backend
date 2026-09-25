@@ -4611,6 +4611,17 @@
             ],
             "title": "Actual"
           },
+          "denominator_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Denominator Name"
+          },
           "deviation": {
             "anyOf": [
               {
@@ -4640,6 +4651,13 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "numerator_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Numerator Names",
+            "type": "array"
           },
           "planned": {
             "anyOf": [
@@ -5487,6 +5505,28 @@
               }
             ],
             "title": "Progress Pct Cum"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Status"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "variance": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variance"
           }
         },
         "required": [
@@ -5920,6 +5960,30 @@
               }
             ]
           },
+          "calendar_end": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calendar End"
+          },
+          "calendar_start": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calendar Start"
+          },
           "day_no": {
             "anyOf": [
               {
@@ -5968,6 +6032,16 @@
             },
             "title": "Missing Diary Dates",
             "type": "array"
+          },
+          "pf_bands": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PfBandsOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "project_start": {
             "anyOf": [
@@ -11564,6 +11638,29 @@
             ],
             "title": "Planned People"
           },
+          "week_end": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Week End"
+          },
+          "week_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Week No"
+          },
           "week_start": {
             "format": "date",
             "title": "Week Start",
@@ -17097,6 +17194,37 @@
         "title": "OwnCrewFromTimesheet",
         "type": "object"
       },
+      "PanelDiscipline": {
+        "description": "EV-BORC-3 G1: filtre acilir listesi — `discipline_id` filtresinden BAGIMSIZ, tum kokler.",
+        "properties": {
+          "contractor_mix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contractor Mix"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "contractor_mix"
+        ],
+        "title": "PanelDiscipline",
+        "type": "object"
+      },
       "PanelKpi": {
         "properties": {
           "budget_mhr": {
@@ -17291,6 +17419,30 @@
             "title": "Bars",
             "type": "array"
           },
+          "calendar_end": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calendar End"
+          },
+          "calendar_start": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calendar Start"
+          },
           "contractor_type": {
             "anyOf": [
               {
@@ -17328,6 +17480,13 @@
             ],
             "title": "Discipline Id"
           },
+          "disciplines": {
+            "items": {
+              "$ref": "#/components/schemas/PanelDiscipline"
+            },
+            "title": "Disciplines",
+            "type": "array"
+          },
           "has_baseline": {
             "title": "Has Baseline",
             "type": "boolean"
@@ -17347,6 +17506,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/PanelKpi"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pf_bands": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PfBandsOut"
               },
               {
                 "type": "null"
@@ -20634,6 +20803,39 @@
         "title": "PfBand",
         "type": "string"
       },
+      "PfBandOut": {
+        "properties": {
+          "green_from": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Green From",
+            "type": "string"
+          },
+          "high_above": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "High Above"
+          },
+          "red_below": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Red Below",
+            "type": "string"
+          }
+        },
+        "required": [
+          "red_below",
+          "green_from",
+          "high_above"
+        ],
+        "title": "PfBandOut",
+        "type": "object"
+      },
       "PfBands-Input": {
         "additionalProperties": false,
         "properties": {
@@ -20666,6 +20868,23 @@
           "weekly"
         ],
         "title": "PfBands",
+        "type": "object"
+      },
+      "PfBandsOut": {
+        "description": "EV-BORC-3 G2: raporun KULLANDIGI PF esikleri. Haftalik PF kumulatif esigini kullanir\n(motor: `pf_week_band` = cumulative). Gunluk raporda SNAPSHOT'a girer.",
+        "properties": {
+          "cumulative": {
+            "$ref": "#/components/schemas/PfBandOut"
+          },
+          "daily": {
+            "$ref": "#/components/schemas/PfBandOut"
+          }
+        },
+        "required": [
+          "daily",
+          "cumulative"
+        ],
+        "title": "PfBandsOut",
         "type": "object"
       },
       "PfPoint": {
@@ -25308,6 +25527,28 @@
             "title": "Node Id",
             "type": "string"
           },
+          "pf_cum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pf Cum"
+          },
+          "pf_cum_band": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PfBand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "pf_day": {
             "anyOf": [
               {
@@ -25452,6 +25693,30 @@
       },
       "QurrReport": {
         "properties": {
+          "calendar_end": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calendar End"
+          },
+          "calendar_start": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calendar Start"
+          },
           "composites": {
             "items": {
               "$ref": "#/components/schemas/CompositeCard"
@@ -25467,12 +25732,56 @@
             "title": "Draft Diary Dates",
             "type": "array"
           },
+          "generated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated At"
+          },
+          "has_field_data": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has Field Data"
+          },
           "kpis": {
             "items": {
               "$ref": "#/components/schemas/KpiPf"
             },
             "title": "Kpis",
             "type": "array"
+          },
+          "last_week_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Week No"
+          },
+          "pf_bands": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PfBandsOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "previous_revision": {
             "anyOf": [
@@ -25754,6 +26063,17 @@
             ],
             "title": "P Actual Unit Mhr Week"
           },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
           "q_band": {
             "anyOf": [
               {
@@ -25848,6 +26168,28 @@
       "QurrTotal": {
         "description": "Ara toplam / Σ direct / Σ direct+non-direct — f–l + q, r.",
         "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "contractor_mix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contractor Mix"
+          },
           "f_prev_budget_mhr": {
             "anyOf": [
               {
@@ -25915,6 +26257,27 @@
             ],
             "title": "Node Id"
           },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "q_band": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PfBand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "q_pf_cum": {
             "anyOf": [
               {
@@ -25926,6 +26289,16 @@
               }
             ],
             "title": "Q Pf Cum"
+          },
+          "r_band": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PfBand"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "r_pf_week": {
             "anyOf": [
@@ -41914,14 +42287,61 @@
               "missing_diary",
               "draft_diary",
               "unrated_entry",
-              "unknown_line"
+              "unknown_line",
+              "empty_rate"
             ],
             "title": "Code",
             "type": "string"
           },
+          "item_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Name"
+          },
           "message": {
             "title": "Message",
             "type": "string"
+          },
+          "planned_qty": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Qty"
+          },
+          "qty_cum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Qty Cum"
+          },
+          "section_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Name"
           },
           "target": {
             "enum": [
@@ -41942,6 +42362,17 @@
               }
             ],
             "title": "Target Id"
+          },
+          "uom": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uom"
           },
           "value": {
             "anyOf": [
@@ -63408,7 +63839,7 @@
     },
     "/sites/{site_id}/earned-value/reports/weekly": {
       "get": {
-        "description": "Haftalik QURR (B3-2: onaylanmaz, canli).",
+        "description": "Haftalik QURR (B3-2: onaylanmaz, canli). `week` yoksa bugunun haftasi (takvime\nkirpilir, §3.15 S6). Baseline yok → 409 NO_BASELINE · hafta takvimde yok → 404 NO_WEEK.",
         "operationId": "get_weekly_report_sites__site_id__earned_value_reports_weekly_get",
         "parameters": [
           {
@@ -63424,12 +63855,19 @@
           {
             "in": "query",
             "name": "week",
-            "required": true,
+            "required": false,
             "schema": {
-              "maximum": 600,
-              "minimum": 1,
-              "title": "Week",
-              "type": "integer"
+              "anyOf": [
+                {
+                  "maximum": 600,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Week"
             }
           }
         ],
@@ -63490,12 +63928,19 @@
           {
             "in": "query",
             "name": "week",
-            "required": true,
+            "required": false,
             "schema": {
-              "maximum": 600,
-              "minimum": 1,
-              "title": "Week",
-              "type": "integer"
+              "anyOf": [
+                {
+                  "maximum": 600,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Week"
             }
           }
         ],

@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
 from app.core.deps import get_current_user
-from app.core.errors import NotFoundError
+from app.core.errors import ConflictError, NotFoundError
 from app.core.http import content_disposition
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.ratelimit import client_ip
@@ -35,6 +35,7 @@ from app.modules.earned_value.access import (
     completed_site_guard,
     visible_site,
 )
+from app.modules.earned_value.diary_adapter import NO_BASELINE
 from app.modules.earned_value.engine import ContractorType
 from app.modules.earned_value.ev_input import build_site_input
 from app.modules.earned_value.guards import SITE_COMPLETED_BUDGET_READ_ONLY
@@ -52,7 +53,8 @@ _User = Annotated[User, Depends(get_current_user)]
 _Db = Annotated[AsyncSession, Depends(get_db)]
 _Writable = Annotated[SiteContext, Depends(completed_site_guard(SITE_COMPLETED_BUDGET_READ_ONLY))]
 _BASE = "/sites/{site_id}/earned-value/reports"
-NO_WEEK = "Hafta proje takviminde yok ya da aktif baseline yok"
+NO_WEEK = "Hafta proje takviminde yok"
+#: §3.15 S6: baseline yoksa NO_WEEK DEGIL, `diary_adapter.NO_BASELINE` (409, durum) — tek metin.
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
@@ -102,12 +104,12 @@ async def approve_daily_report(
     return result
 
 
-async def _qurr(session: AsyncSession, site_id: uuid.UUID, week: int) -> QurrReport:
+async def _qurr(session: AsyncSession, site_id: uuid.UUID, week: int | None) -> QurrReport:
     from app.core.timezone import today
 
     site = await build_site_input(session, site_id, today())
     if site is None:
-        raise NotFoundError(NO_WEEK)
+        raise ConflictError(NO_BASELINE)
     report = await report_qurr.build_qurr(session, site_id, site, week)
     if report is None:
         raise NotFoundError(NO_WEEK)
@@ -116,67 +118,83 @@ async def _qurr(session: AsyncSession, site_id: uuid.UUID, week: int) -> QurrRep
 
 @router.get(f"{_BASE}/weekly", response_model=QurrReport, dependencies=[VIEW])
 async def get_weekly_report(
-    site_id: uuid.UUID, user: _User, session: _Db, week: Annotated[int, Query(ge=1, le=600)]
+    site_id: uuid.UUID,
+    user: _User,
+    session: _Db,
+    week: Annotated[int | None, Query(ge=1, le=600)] = None,
 ) -> QurrReport:
-    """Haftalik QURR (B3-2: onaylanmaz, canli)."""
+    """Haftalik QURR (B3-2: onaylanmaz, canli). `week` yoksa bugunun haftasi (takvime
+    kirpilir, §3.15 S6). Baseline yok → 409 NO_BASELINE · hafta takvimde yok → 404 NO_WEEK."""
     await visible_site(session, user, site_id)
     return await _qurr(session, site_id, week)
 
 
+#: Hucre bicimleri (§3.15: hucreler SAYI — Excel'de toplanabilir; gorunum bicimle).
+_QTY, _MHR, _RATE, _PF = "#,##0.000", "#,##0.00", "0.0000", "0.00"
+#: (baslik, alan, sayi bicimi | None = metin)
 _COLUMNS = (
-    ("Kod", "code"),
-    ("İş tipi", "name"),
-    ("Birim", "uom"),
-    ("a Önceki miktar", "a_prev_qty"),
-    ("b Miktar", "b_qty"),
-    ("c Gerçekleşen", "c_qty_cum"),
-    ("d Kalan", "d_remaining_qty"),
-    ("e Bu hafta", "e_qty_week"),
-    ("f Önceki a-s", "f_prev_budget_mhr"),
-    ("g Bütçe a-s", "g_budget_mhr"),
-    ("h Kazanılan", "h_earned_cum"),
-    ("i Harcanan", "i_spent_cum"),
-    ("j Kalan a-s", "j_remaining_mhr"),
-    ("k Bu hafta kaz.", "k_earned_week"),
-    ("l Bu hafta harc.", "l_spent_week"),
-    ("m Önceki oran", "m_prev_unit_mhr"),
-    ("n Oran", "n_unit_mhr"),
-    ("o Gerç. oran", "o_actual_unit_mhr_cum"),
-    ("p Hafta oranı", "p_actual_unit_mhr_week"),
-    ("q PF", "q_pf_cum"),
-    ("r Hafta PF", "r_pf_week"),
+    ("Kod", "code", None),
+    ("İş tipi", "name", None),
+    ("Birim", "uom", None),
+    ("a Önceki miktar", "a_prev_qty", _QTY),
+    ("b Miktar", "b_qty", _QTY),
+    ("c Gerçekleşen", "c_qty_cum", _QTY),
+    ("d Kalan", "d_remaining_qty", _QTY),
+    ("e Bu hafta", "e_qty_week", _QTY),
+    ("f Önceki a-s", "f_prev_budget_mhr", _MHR),
+    ("g Bütçe a-s", "g_budget_mhr", _MHR),
+    ("h Kazanılan", "h_earned_cum", _MHR),
+    ("i Harcanan", "i_spent_cum", _MHR),
+    ("j Kalan a-s", "j_remaining_mhr", _MHR),
+    ("k Bu hafta kaz.", "k_earned_week", _MHR),
+    ("l Bu hafta harc.", "l_spent_week", _MHR),
+    ("m Önceki oran", "m_prev_unit_mhr", _RATE),
+    ("n Oran", "n_unit_mhr", _RATE),
+    ("o Gerç. oran", "o_actual_unit_mhr_cum", _RATE),
+    ("p Hafta oranı", "p_actual_unit_mhr_week", _RATE),
+    ("q PF", "q_pf_cum", _PF),
+    ("r Hafta PF", "r_pf_week", _PF),
+)
+#: Toplam satirinda dolu olan alanlar (f–l + q, r); digerleri bos hucre.
+_TOTAL_FIELDS = frozenset(
+    {
+        "f_prev_budget_mhr",
+        "g_budget_mhr",
+        "h_earned_cum",
+        "i_spent_cum",
+        "j_remaining_mhr",
+        "k_earned_week",
+        "l_spent_week",
+        "q_pf_cum",
+        "r_pf_week",
+    }
 )
 
 
+def _append(ws, values: list) -> None:  # noqa: ANN001
+    """Satiri yazar; sayisal hucreye kolonun bicimini uygular (None → bos hucre)."""
+    ws.append(values)
+    for cell, (_, _, fmt) in zip(ws[ws.max_row], _COLUMNS, strict=True):
+        if fmt is not None and cell.value is not None:
+            cell.number_format = fmt
+
+
 def qurr_workbook(report: QurrReport) -> bytes:
-    """Saf sunum: hesap YAPMAZ, degerleri yazar (timesheet/export.py deseni; hucre = str)."""
+    """Saf sunum: hesap YAPMAZ, degerleri yazar. Sayilar SAYI hucresidir (Decimal; §3.15)."""
     wb = Workbook()
     ws = wb.active
     ws.title = f"QURR H{report.week_no}"
     ws.append([f"Haftalık QURR · H{report.week_no} · {report.week_start} – {report.week_end}"])
-    ws.append([label for label, _ in _COLUMNS])
+    ws.append([label for label, _, _ in _COLUMNS])
     for row in report.rows:
-        ws.append(
-            ["" if getattr(row, attr) is None else str(getattr(row, attr)) for _, attr in _COLUMNS]
-        )
+        _append(ws, [getattr(row, attr) for _, attr, _ in _COLUMNS])
     for t in report.totals:
-        ws.append(
-            ["", t.name, ""]
-            + [""] * 5
-            + [
-                str(v) if v is not None else ""
-                for v in (
-                    t.f_prev_budget_mhr,
-                    t.g_budget_mhr,
-                    t.h_earned_cum,
-                    t.i_spent_cum,
-                    t.j_remaining_mhr,
-                    t.k_earned_week,
-                    t.l_spent_week,
-                )
-            ]
-            + ["", "", "", ""]
-            + [str(v) if v is not None else "" for v in (t.q_pf_cum, t.r_pf_week)]
+        _append(
+            ws,
+            [
+                t.name if attr == "name" else getattr(t, attr) if attr in _TOTAL_FIELDS else None
+                for _, attr, _ in _COLUMNS
+            ],
         )
     buf = BytesIO()
     wb.save(buf)
@@ -190,7 +208,10 @@ def qurr_workbook(report: QurrReport) -> bytes:
     responses={200: {"content": {XLSX: {}}}},
 )
 async def export_weekly_report(
-    site_id: uuid.UUID, user: _User, session: _Db, week: Annotated[int, Query(ge=1, le=600)]
+    site_id: uuid.UUID,
+    user: _User,
+    session: _Db,
+    week: Annotated[int | None, Query(ge=1, le=600)] = None,
 ) -> Response:
     """QURR Excel — okuma ucuyla AYNI hesap (`_qurr`); export saf sunumdur."""
     ctx = await visible_site(session, user, site_id)
@@ -198,5 +219,9 @@ async def export_weekly_report(
     return Response(
         content=qurr_workbook(report),
         media_type=XLSX,
-        headers={"Content-Disposition": content_disposition(f"QURR-{ctx.site.name}-H{week}.xlsx")},
+        headers={
+            "Content-Disposition": content_disposition(
+                f"QURR-{ctx.site.name}-H{report.week_no}.xlsx"
+            )
+        },
     )

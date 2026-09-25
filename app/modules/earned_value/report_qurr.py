@@ -12,7 +12,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -25,15 +25,24 @@ from app.modules.earned_value.budget_snapshot import load_leaves
 from app.modules.earned_value.engine import (
     DailyReport,
     NodeMetrics,
+    PfBands,
     ProjectCalendar,
     RowKind,
     compute_daily_report,
+    pf_band,
+)
+from app.modules.earned_value.engine.policy import (
+    DEFAULT_CUMULATIVE_PF_BANDS,
+    DEFAULT_DAILY_PF_BANDS,
+    contractor_mix,
 )
 from app.modules.earned_value.ev_input import SiteInput
 from app.modules.earned_value.models import EvRevision, RevisionStatus
 from app.modules.earned_value.schemas_reports import (
     CompositeCard,
     KpiPf,
+    PfBandOut,
+    PfBandsOut,
     QurrReport,
     QurrRow,
     QurrTotal,
@@ -52,6 +61,19 @@ def revision_ref(rev: EvRevision | None) -> RevisionRef | None:
     if rev is None:
         return None
     return RevisionRef(id=rev.id, number=rev.number, name=rev.name, frozen_at=rev.frozen_at)
+
+
+def _band(b: PfBands) -> PfBandOut:
+    return PfBandOut(red_below=b.red_below, green_from=b.green_from, high_above=b.high_above)
+
+
+def pf_bands_out(site: SiteInput) -> PfBandsOut:
+    """EV-BORC-3 G2: raporun kullandigi esikler — motorun kullandigiyla AYNI (girdi, yoksa
+    motor varsayilani). Haftalik PF kumulatif esigini kullanir."""
+    return PfBandsOut(
+        daily=_band(site.inp.daily_pf_bands or DEFAULT_DAILY_PF_BANDS),
+        cumulative=_band(site.inp.cumulative_pf_bands or DEFAULT_CUMULATIVE_PF_BANDS),
+    )
 
 
 def week_range(cal: ProjectCalendar, week_no: int) -> tuple[date, date] | None:
@@ -101,11 +123,18 @@ async def previous_items(session: AsyncSession, prev: EvRevision | None) -> dict
     return out
 
 
-def _row(node_id: str, m: NodeMetrics, meta, prev: PrevItem | None) -> QurrRow:  # noqa: ANN001
+def _row(
+    node_id: str,
+    m: NodeMetrics,
+    meta,
+    prev: PrevItem | None,
+    parent_id: str,  # noqa: ANN001
+) -> QurrRow:
     prev_rate = _ratio(prev.budget, prev.qty) if prev else None
     return QurrRow(
         node_id=node_id,
         level=3,
+        parent_id=parent_id,
         code=meta.code,
         name=meta.description,
         uom=meta.uom,
@@ -137,15 +166,44 @@ def _row(node_id: str, m: NodeMetrics, meta, prev: PrevItem | None) -> QurrRow: 
     )
 
 
-def _total(kind: str, node_id: str | None, name: str, parts: list[QurrRow]) -> QurrTotal:
+@dataclass(frozen=True, slots=True)
+class _TotalMeta:
+    """Toplam satirinin agac baglami (§3.15 S1/S2)."""
+
+    parent_id: str | None = None
+    code: str | None = None
+    contractor_mix: str | None = None
+
+
+def _mix(leaves: Iterable) -> str | None:  # noqa: ANN001
+    """S7 rozeti: direct yapraklarin yuklenici tipleri (motorun disiplin kurali — policy)."""
+    mix = contractor_mix({lf.contractor_type for lf in leaves if lf.is_direct})
+    return mix.value if mix else None
+
+
+def _total(
+    kind: str,
+    node_id: str | None,
+    name: str,
+    parts: list[QurrRow],
+    bands: PfBands,
+    meta: _TotalMeta = _TotalMeta(),  # noqa: B008 - donmus dataclass, paylasimli varsayilan guvenli
+) -> QurrTotal:
     def s(attr: str) -> Decimal:
         return sum((getattr(p, attr) for p in parts), ZERO)
 
     prev = [p.f_prev_budget_mhr for p in parts if p.f_prev_budget_mhr is not None]
+    q_pf = _ratio(s("h_earned_cum"), s("i_spent_cum"))
+    r_pf = _ratio(s("k_earned_week"), s("l_spent_week"))
     return QurrTotal(
         kind=kind,  # type: ignore[arg-type]
         node_id=node_id,
         name=name,
+        parent_id=meta.parent_id,
+        code=meta.code,
+        contractor_mix=meta.contractor_mix,
+        q_band=pf_band(q_pf, bands),  # motor kurali: hafta PF'i de kumulatif esikle
+        r_band=pf_band(r_pf, bands),
         f_prev_budget_mhr=sum(prev, ZERO) if prev else None,
         g_budget_mhr=s("g_budget_mhr"),
         h_earned_cum=s("h_earned_cum"),
@@ -153,8 +211,8 @@ def _total(kind: str, node_id: str | None, name: str, parts: list[QurrRow]) -> Q
         j_remaining_mhr=s("j_remaining_mhr"),
         k_earned_week=s("k_earned_week"),
         l_spent_week=s("l_spent_week"),
-        q_pf_cum=_ratio(s("h_earned_cum"), s("i_spent_cum")),
-        r_pf_week=_ratio(s("k_earned_week"), s("l_spent_week")),
+        q_pf_cum=q_pf,
+        r_pf_week=r_pf,
     )
 
 
@@ -174,6 +232,7 @@ def build_rows(
     totals: list[QurrTotal] = []
     direct: list[QurrRow] = []
     everything: list[QurrRow] = []
+    bands = site.inp.cumulative_pf_bands or DEFAULT_CUMULATIVE_PF_BANDS
     for d in site.tree.disciplines:
         disc_rows: list[QurrRow] = []
         for g in d.groups:
@@ -182,19 +241,24 @@ def build_rows(
                 if i.id not in report.nodes:
                     continue
                 meta = _ItemMeta(i.code, i.description, i.uom, i.contractor_type, i.is_direct)
-                row = _row(i.id, report.nodes[i.id], meta, prev.get(i.id))
+                row = _row(i.id, report.nodes[i.id], meta, prev.get(i.id), g.id)
                 group_rows.append(row)
                 rows.append(row)
                 everything.append(row)
                 if i.is_direct:
                     direct.append(row)
             if group_rows:
-                totals.append(_total("group", g.id, g.name, group_rows))
+                leaves = [lf for i in g.items for lf in i.leaves]
+                gmeta = _TotalMeta(d.id, g.code, _mix(leaves))
+                totals.append(_total("group", g.id, g.name, group_rows, bands, gmeta))
                 disc_rows += group_rows
         if disc_rows:
-            totals.append(_total("discipline", d.id, d.name or "Disiplinsiz", disc_rows))
-    totals.append(_total("direct_total", None, "Σ Doğrudan", direct))
-    totals.append(_total("all_total", None, "Σ Doğrudan + Dolaylı", everything))
+            leaves = [lf for g in d.groups for i in g.items for lf in i.leaves]
+            dmeta = _TotalMeta(None, d.code, _mix(leaves))
+            name = d.name or "Disiplinsiz"
+            totals.append(_total("discipline", d.id, name, disc_rows, bands, dmeta))
+    totals.append(_total("direct_total", None, "Σ Doğrudan", direct, bands))
+    totals.append(_total("all_total", None, "Σ Doğrudan + Dolaylı", everything, bands))
     return rows, totals
 
 
@@ -223,6 +287,8 @@ class CompositeValue:
     actual: Decimal | None
     planned: Decimal | None
     deviation: Decimal | None
+    numerator_names: list[str]
+    denominator_name: str | None
 
 
 def composite_value(
@@ -245,7 +311,15 @@ def composite_value(
         actual = _ratio(sum((getattr(t, attr) for t in terms), ZERO), den.qty_cum)
         planned = _ratio(sum((t.budget_mhr for t in terms), ZERO), den.planned_qty)
     deviation = _ratio(actual - planned, planned) if actual is not None and planned else None
-    return CompositeValue(uoms.get(den_id), actual, planned, deviation)
+    names = {i.id: i.description for d in site.tree.disciplines for g in d.groups for i in g.items}
+    return CompositeValue(
+        uoms.get(den_id),
+        actual,
+        planned,
+        deviation,
+        [names[f"i:{t}"] for t in numerator_item_ids if f"i:{t}" in names],
+        names.get(den_id),
+    )
 
 
 def composite_cards(site: SiteInput, report: DailyReport, metrics) -> list[CompositeCard]:  # noqa: ANN001
@@ -261,15 +335,25 @@ def composite_cards(site: SiteInput, report: DailyReport, metrics) -> list[Compo
                 actual=v.actual,
                 planned=v.planned,
                 deviation=v.deviation,
+                numerator_names=v.numerator_names,
+                denominator_name=v.denominator_name,
             )
         )
     return cards
 
 
+def current_week(cal: ProjectCalendar) -> int:
+    """§3.15 S6: `week` verilmezse BUGUNUN haftasi — takvime kirpilir (basindan once → 1,
+    sonundan sonra → son hafta)."""
+    return cal.week_no(min(max(today(), cal.start_date), cal.end_date))
+
+
 async def build_qurr(
-    session: AsyncSession, site_id: uuid.UUID, site: SiteInput, week_no: int
+    session: AsyncSession, site_id: uuid.UUID, site: SiteInput, week_no: int | None
 ) -> QurrReport | None:
     cal = ProjectCalendar(site.inp.calendar)
+    if week_no is None:
+        week_no = current_week(cal)
     rng = week_range(cal, week_no)
     if rng is None:
         return None
@@ -300,4 +384,11 @@ async def build_qurr(
         + rw.overrun_warnings(site.tree, report)
         + rw.diary_warnings([], drafts)
         + rw.unrated_warnings(site.tree, report),
+        generated_at=datetime.now(UTC),
+        has_field_data=any(e.day <= report_date for e in site.inp.qty_entries)
+        or any(e.day <= report_date for e in site.inp.hours_entries),
+        pf_bands=pf_bands_out(site),
+        calendar_start=cal.start_date,
+        calendar_end=cal.end_date,
+        last_week_no=cal.week_no(cal.end_date),
     )

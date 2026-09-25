@@ -30,7 +30,7 @@ from app.modules.earned_value.engine import (
 )
 from app.modules.earned_value.ev_input import SiteInput, build_site_input
 from app.modules.earned_value.models import EvReportApproval, EvReportSnapshot
-from app.modules.earned_value.report_qurr import revision_ref
+from app.modules.earned_value.report_qurr import pf_bands_out, revision_ref
 from app.modules.earned_value.schemas_reports import (
     ApprovalResult,
     DailyFooter,
@@ -74,6 +74,9 @@ def _empty(day: date, site: SiteInput | None) -> DailyReport:
         footer=None,
         unrated_entries=[],
         warnings=[],
+        pf_bands=pf_bands_out(site) if site else None,
+        calendar_start=site.inp.calendar.start_date if site else None,
+        calendar_end=site.inp.calendar.end_date if site else None,
     )
 
 
@@ -133,6 +136,8 @@ def _quantities(site: SiteInput, report: EngineReport) -> list[QtyTreeRow]:
                 pf_day_band=m.pf_day_band,
                 spent_day=m.spent_day,
                 progress_pct_cum=m.progress_pct_cum,
+                pf_cum=m.pf_cum,
+                pf_cum_band=m.pf_cum_band,
             )
         )
 
@@ -271,6 +276,9 @@ async def build_live(session: AsyncSession, site_id: uuid.UUID, day: date) -> Da
         footer=footer,
         unrated_entries=rw.unrated_warnings(site.tree, report),
         warnings=warnings,
+        pf_bands=pf_bands_out(site),  # snapshot'a girer: onayli rapor KENDI esigiyle
+        calendar_start=cal.start_date,
+        calendar_end=cal.end_date,
     )
 
 

@@ -1,6 +1,8 @@
 {
  "approved_at": null,
  "approved_by": null,
+ "calendar_end": "2026-05-29",
+ "calendar_start": "2026-05-04",
  "day_no": 2,
  "draft_diary_dates": [
   "2026-05-05"
@@ -133,6 +135,18 @@
  "missing_diary_dates": [
   "2026-05-04"
  ],
+ "pf_bands": {
+  "cumulative": {
+   "green_from": "1.000",
+   "high_above": null,
+   "red_below": "0.950"
+  },
+  "daily": {
+   "green_from": "0.950",
+   "high_above": "1.050",
+   "red_below": "0.950"
+  }
+ },
  "project_start": "2026-05-04",
  "quantities": [
   {
@@ -143,6 +157,8 @@
    "level": 1,
    "name": "Kaba İnşaat",
    "node_id": "d:U2",
+   "pf_cum": "0.5882352941176470588235294118",
+   "pf_cum_band": "red",
    "pf_day": "0.5882352941176470588235294118",
    "pf_day_band": "red",
    "planned_qty": "100.000",
@@ -162,6 +178,8 @@
    "level": 2,
    "name": "Betonarme",
    "node_id": "g:U4",
+   "pf_cum": "0.5882352941176470588235294118",
+   "pf_cum_band": "red",
    "pf_day": "0.5882352941176470588235294118",
    "pf_day_band": "red",
    "planned_qty": "100.000",
@@ -181,6 +199,8 @@
    "level": 3,
    "name": "01.001 Beton",
    "node_id": "i:U5",
+   "pf_cum": "0.5882352941176470588235294118",
+   "pf_cum_band": "red",
    "pf_day": "0.5882352941176470588235294118",
    "pf_day_band": "red",
    "planned_qty": "100.000",
@@ -200,6 +220,8 @@
    "level": 1,
    "name": "Duvar & Sıva",
    "node_id": "d:U3",
+   "pf_cum": null,
+   "pf_cum_band": null,
    "pf_day": null,
    "pf_day_band": null,
    "planned_qty": "50.000",
@@ -219,6 +241,8 @@
    "level": 2,
    "name": "Duvar",
    "node_id": "g:U6",
+   "pf_cum": null,
+   "pf_cum_band": null,
    "pf_day": null,
    "pf_day_band": null,
    "planned_qty": "50.000",
@@ -238,6 +262,8 @@
    "level": 3,
    "name": "02.001 Tuğla",
    "node_id": "i:U7",
+   "pf_cum": null,
+   "pf_cum_band": null,
    "pf_day": null,
    "pf_day_band": null,
    "planned_qty": "50.000",
@@ -358,23 +384,38 @@
  "warnings": [
   {
    "code": "pf_out_of_band",
+   "item_name": null,
    "message": "01.001 Beton: PF bant dışı",
+   "planned_qty": null,
+   "qty_cum": null,
+   "section_name": null,
    "target": "node",
    "target_id": "i:U5",
+   "uom": null,
    "value": "0.5882352941176470588235294118"
   },
   {
    "code": "missing_diary",
+   "item_name": null,
    "message": "04.05.2026 günlüğü yok",
+   "planned_qty": null,
+   "qty_cum": null,
+   "section_name": null,
    "target": "day",
    "target_id": "2026-05-04",
+   "uom": null,
    "value": null
   },
   {
    "code": "draft_diary",
+   "item_name": null,
    "message": "05.05.2026 günlüğü gönderilmedi (taslak değer)",
+   "planned_qty": null,
+   "qty_cum": null,
+   "section_name": null,
    "target": "day",
    "target_id": "2026-05-05",
+   "uom": null,
    "value": null
   }
  ],

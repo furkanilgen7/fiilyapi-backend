@@ -12,7 +12,7 @@ import uuid
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.modules.earned_value.decimal_out import EvDecimal
 from app.modules.earned_value.engine import ContractorType, PfBand, RowKind, Status
@@ -41,11 +41,33 @@ class WarningOut(BaseModel):
         "draft_diary",
         "unrated_entry",
         "unknown_line",
+        "empty_rate",  # EV-BORC-3 G3: donmus baseline'da orani BOS yaprak (girisden bagimsiz)
     ]
     message: str
     target: Literal["node", "day", "leaf"]
     target_id: str | None  # dugum kimligi ya da ISO gun
     value: EvDecimal | None = None
+    # EV-BORC-3 G7: yalniz YAPRAK hedefli uyarilarda dolar (ekran metni ayristirmasin)
+    item_name: str | None = None
+    section_name: str | None = None  # None = Bolumsuz
+    uom: str | None = None
+    # §3.15 S9: yalniz `qty_overrun`da (asim = qty_cum − planned_qty = `value`)
+    qty_cum: EvDecimal | None = None
+    planned_qty: EvDecimal | None = None
+
+
+class PfBandOut(BaseModel):
+    red_below: EvDecimal
+    green_from: EvDecimal
+    high_above: EvDecimal | None
+
+
+class PfBandsOut(BaseModel):
+    """EV-BORC-3 G2: raporun KULLANDIGI PF esikleri. Haftalik PF kumulatif esigini kullanir
+    (motor: `pf_week_band` = cumulative). Gunluk raporda SNAPSHOT'a girer."""
+
+    daily: PfBandOut
+    cumulative: PfBandOut
 
 
 # ------------------------------------------------------------------ QURR
@@ -61,6 +83,7 @@ class QurrRow(BaseModel):
     uom: str | None
     contractor_type: ContractorType | None
     is_direct: bool | None
+    parent_id: str | None = None  # §3.15 S1: grup dugumu (g:…) — deterministik agac
     a_prev_qty: EvDecimal | None
     b_qty: EvDecimal | None
     c_qty_cum: EvDecimal | None
@@ -92,6 +115,11 @@ class QurrTotal(BaseModel):
     kind: Literal["discipline", "group", "direct_total", "all_total"]
     node_id: str | None
     name: str
+    parent_id: str | None = None  # §3.15 S1: grup → disiplin (d:…); disiplin/toplam → None
+    code: str | None = None  # S2: grup konum no / disiplin kodu
+    contractor_mix: str | None = None  # S2: own | subcon | mixed (direct yapraklardan, S7)
+    q_band: PfBand | None = None  # S2: kumulatif esik (motor kurali, K18)
+    r_band: PfBand | None = None
     f_prev_budget_mhr: EvDecimal | None
     g_budget_mhr: EvDecimal
     h_earned_cum: EvDecimal
@@ -119,6 +147,9 @@ class CompositeCard(BaseModel):
     actual: EvDecimal | None
     planned: EvDecimal | None  # B3-3: pay butcesi ÷ payda planli miktar
     deviation: EvDecimal | None  # (gercek − planli) ÷ planli
+    # EV-BORC-3 G5: tanim PARCALARI (bicimi frontend kurar); baseline'da olmayan kalem yazilmaz
+    numerator_names: list[str] = Field(default_factory=list)
+    denominator_name: str | None = None
 
 
 class QurrReport(BaseModel):
@@ -134,6 +165,12 @@ class QurrReport(BaseModel):
     kpis: list[KpiPf]
     composites: list[CompositeCard]
     warnings: list[WarningOut]
+    generated_at: datetime | None = None  # EV-BORC-3 G4
+    has_field_data: bool | None = None  # §3.15 S7: rapor gunune kadar miktar/saat girisi var mi
+    pf_bands: PfBandsOut | None = None  # G2
+    calendar_start: date | None = None  # G6: gezgin sinirlari
+    calendar_end: date | None = None
+    last_week_no: int | None = None
 
 
 # ------------------------------------------------------------------ GIR / PNL
@@ -195,6 +232,8 @@ class QtyTreeRow(BaseModel):
     pf_day_band: PfBand | None
     spent_day: EvDecimal
     progress_pct_cum: EvDecimal | None
+    pf_cum: EvDecimal | None = None  # §3.15 S4
+    pf_cum_band: PfBand | None = None
 
 
 class WeatherDay(BaseModel):
@@ -237,6 +276,10 @@ class DailyReport(BaseModel):
     footer: DailyFooter | None
     unrated_entries: list[WarningOut]
     warnings: list[WarningOut]
+    # EV-BORC-3 — varsayilanli: eski onayli snapshot'lar bu alanlar olmadan da dogrulanir
+    pf_bands: PfBandsOut | None = None  # G2 (snapshot'a girer: onayli rapor KENDI esigiyle)
+    calendar_start: date | None = None  # G6
+    calendar_end: date | None = None
 
 
 class ApprovalResult(BaseModel):
@@ -269,6 +312,8 @@ class CurvePoint(BaseModel):
     is_future: bool
     planned_pct_cum: EvDecimal | None
     progress_pct_cum: EvDecimal | None
+    variance: EvDecimal | None = None  # §3.15 S22: motor (tek kaynak)
+    status: Status | None = None  # K27: gosterilen puanla karar
 
 
 class BarPoint(BaseModel):
@@ -287,6 +332,8 @@ class PfPoint(BaseModel):
 
 class HistogramWeek(BaseModel):
     week_start: date
+    week_no: int | None = None  # §3.15 S5
+    week_end: date | None = None  # takvimle kirpilmis
     working_days: int
     is_future: bool  # hafta d'den sonra baslar → gerceklesen yok
     planned_people: EvDecimal | None  # planli a-s ÷ (is gunu × standart saat)
@@ -323,6 +370,14 @@ class PanelRow(BaseModel):
     pf_week_band: PfBand | None
 
 
+class PanelDiscipline(BaseModel):
+    """EV-BORC-3 G1: filtre acilir listesi — `discipline_id` filtresinden BAGIMSIZ, tum kokler."""
+
+    id: str
+    name: str
+    contractor_mix: str | None  # own | subcon | mixed (S7 rozeti)
+
+
 class PanelReport(BaseModel):
     day: date
     range: Literal["4w", "3m", "all"]
@@ -347,6 +402,10 @@ class PanelReport(BaseModel):
     standard_daily_hours: EvDecimal | None
     rows: list[PanelRow]
     warnings: list[WarningOut]
+    disciplines: list[PanelDiscipline] = Field(default_factory=list)  # EV-BORC-3 G1
+    pf_bands: PfBandsOut | None = None  # G2
+    calendar_start: date | None = None  # G6
+    calendar_end: date | None = None
 
 
 # ------------------------------------------------------------------ AYP canli onizleme
