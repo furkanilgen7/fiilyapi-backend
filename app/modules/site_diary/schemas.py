@@ -329,6 +329,8 @@ class SiteDiaryLineRead(BaseModel):
     sonradan kaldırılmış bölümlü satırda 0. Bağı kopmuş satırda `None`."""
     remaining_quantity: Decimal | None = None
     """PLN-B2.1 — `planned_quantity − leaf_cumulative_quantity`; NEGATİF = aşım."""
+    section_name: str | None
+    """DET-1.B — satırın bölümünün ANLIK adı; `None` = "Bölümsüz"."""
 
 
 class SiteDiaryWorkerCountRead(BaseModel):
@@ -342,6 +344,8 @@ class SiteDiaryWorkerCountRead(BaseModel):
     """PLN-B2.1 (B2-5) — taşeron firma satırı ise firma."""
     hours: Decimal | None = None
     """PLN-B2.1 (B2-5) — kişi başı saat."""
+    subcontractor_name: str | None
+    """DET-1.B — taşeron firma satırında firmanın ANLIK adı; firmasız satırda `None`."""
 
 
 class SiteDiaryEntryListItem(BaseModel):
@@ -415,6 +419,29 @@ class SiteDiaryEntryDetail(BaseModel):
     """EV-BORC-2: o günün PUANTAJINDAN türeyen ekip (salt okunur) — meslek + kaynak başına
     kişi sayısı ve saat. Günlük işçi satırlarıyla EŞLEME YOKTUR (ikisi de serbest metin);
     ekran kendi ekip bloğunu buradan basar. Meslek boş personel `"Belirtilmemiş"`te toplanır."""
+    site_name: str
+    project_name: str
+    section_name: str | None
+    """DET-1.B — başlık bölümünün ANLIK adı (salt okunur detay TEK istekte kurulsun)."""
+    created_by_name: str | None
+    submitted_by: uuid.UUID | None
+    """DET-1.B — gönderen; `submitted_at` ile birlikte yazılır, reopen temizler. DET-1.B
+    ÖNCESİ gönderimlerde `None` (geri doldurma yok)."""
+    submitted_by_name: str | None
+    locked: bool
+    """DET-1.B — gün kilidi (`app.core.day_hooks` portu; kilit sağlayıcı modül yoksa `False`).
+    EV izni gerektirmez: günlük görüntüleyen kilidi de görür."""
+    lock_report_date: date | None
+    """DET-1.B — kilidi koyan raporun tarihi (sağlayıcı bildirmiyorsa `None`)."""
+    prev_id: uuid.UUID | None
+    """DET-1.B — tarih sırasında ÖNCEKİ kayıt. `GET /diary/{id}?section_id=` verilirse bölüm
+    bağlamında (Kural A: başlık ∪ satır), verilmezse şantiye bağlamında. İlk kayıtta `None`."""
+    next_id: uuid.UUID | None
+    """DET-1.B — tarih sırasında SONRAKİ kayıt (bağlam `prev_id` ile aynı). Son kayıtta `None`."""
+    prev_entry_date: date | None
+    """DET-1.B — `prev_id` kaydının günü (aynı sorgudan; `prev_id` `None` ise `None`)."""
+    next_entry_date: date | None
+    """DET-1.B — `next_id` kaydının günü (aynı sorgudan; `next_id` `None` ise `None`)."""
     dropped_orphan_count: int | None = None
     """YALNIZ `PUT …/lines` yanıtında dolar (T3). Bağı kopmuş satır (`boq_item_id
     IS NULL`, FK `SET NULL`) gövdeden ADRESLENEMEZ, bu yüzden ilk kaydetmede

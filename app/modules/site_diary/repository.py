@@ -10,8 +10,9 @@ import uuid
 from collections.abc import Collection
 from datetime import date
 from decimal import Decimal
+from typing import NamedTuple
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.boq.models import BoqItem, BoqItemSectionAllocation
@@ -22,6 +23,7 @@ from app.modules.contracts.models import (
 )
 from app.modules.site_diary.models import DiaryStatus, SiteDiaryEntry, SiteDiaryLine
 from app.modules.sites.models import Section, Site
+from app.modules.users.models import User
 
 
 async def get_entry(session: AsyncSession, entry_id: uuid.UUID) -> SiteDiaryEntry | None:
@@ -241,14 +243,38 @@ def period_conditions(*, year: int | None, month: int | None) -> list:
     return [SiteDiaryEntry.entry_date.between(start, end)]
 
 
-def _list_stmt(site_id: uuid.UUID, *, year: int | None, month: int | None):
+def section_conditions(section_id: uuid.UUID | None) -> list:
+    """DET-1.B Kural A'nın TEK kopyası — liste, sayaç ve önceki/sonraki aynı gövdeyi okur.
+
+    Bölümün günlüğü = başlığı (`section_id`, bilgi alanı) bu bölüm olan gün ∪ bu bölüme
+    MİKTAR SATIRI yazılmış gün (kullanıcı kararı 2026-09-25). Satır kolu `EXISTS`tir, JOIN
+    DEĞİL: aynı günün iki satırı bölümde olsa da kayıt BİR kez döner (JOIN çoğaltırdı).
+    `None` = süzgeç yok.
+    """
+    if section_id is None:
+        return []
+    line_in_section = exists().where(
+        SiteDiaryLine.entry_id == SiteDiaryEntry.id, SiteDiaryLine.section_id == section_id
+    )
+    return [or_(SiteDiaryEntry.section_id == section_id, line_in_section)]
+
+
+def _list_stmt(
+    site_id: uuid.UUID,
+    *,
+    year: int | None,
+    month: int | None,
+    section_id: uuid.UUID | None = None,
+):
     """Liste ve sayaç sorgusunun PAYLAŞTIĞI `WHERE` gövdesi.
 
     İki sorgu ayrı süzgeç kopyası taşısaydı `total` ile `items` zamanla farklı
     kümeleri sayardı — sayfalamanın en sinsi hatası.
     """
     return select(SiteDiaryEntry).where(
-        SiteDiaryEntry.site_id == site_id, *period_conditions(year=year, month=month)
+        SiteDiaryEntry.site_id == site_id,
+        *period_conditions(year=year, month=month),
+        *section_conditions(section_id),
     )
 
 
@@ -260,11 +286,12 @@ async def list_entries(
     month: int | None,
     limit: int,
     offset: int,
+    section_id: uuid.UUID | None = None,
 ) -> list[SiteDiaryEntry]:
     """ "Son Kayıtlar": en YENİ gün önce. Eşitlik durumu UQ nedeniyle imkânsızdır
     ama `id` ikincil sıra olarak durur — sayfalamanın deterministik olması için."""
     stmt = (
-        _list_stmt(site_id, year=year, month=month)
+        _list_stmt(site_id, year=year, month=month, section_id=section_id)
         .order_by(SiteDiaryEntry.entry_date.desc(), SiteDiaryEntry.id)
         .limit(limit)
         .offset(offset)
@@ -273,9 +300,16 @@ async def list_entries(
 
 
 async def count_entries(
-    session: AsyncSession, site_id: uuid.UUID, *, year: int | None, month: int | None
+    session: AsyncSession,
+    site_id: uuid.UUID,
+    *,
+    year: int | None,
+    month: int | None,
+    section_id: uuid.UUID | None = None,
 ) -> int:
-    inner = _list_stmt(site_id, year=year, month=month).with_only_columns(SiteDiaryEntry.id)
+    inner = _list_stmt(site_id, year=year, month=month, section_id=section_id).with_only_columns(
+        SiteDiaryEntry.id
+    )
     stmt = select(func.count()).select_from(inner.subquery())
     return int((await session.execute(stmt)).scalar_one())
 
@@ -532,3 +566,76 @@ async def subcontractor_unbridged_item_count(
         .having(total > 0)
     )
     return await _count_unbridged(session, stmt)
+
+
+# --- DET-1.B: salt okunur detay bağlamı ---
+
+
+class Neighbour(NamedTuple):
+    id: uuid.UUID
+    entry_date: date
+
+
+async def neighbours(
+    session: AsyncSession,
+    site_id: uuid.UUID,
+    entry_date: date,
+    section_id: uuid.UUID | None,
+) -> tuple[Neighbour | None, Neighbour | None]:
+    """(önceki, sonraki) = aynı şantiyede bu günden hemen ÖNCEKİ / SONRAKİ kayıt + TARİHİ.
+
+    Tarih kimlikle AYNI satırdan gelir: istemci doğrudan bağlantıyla geldiği detayda komşunun
+    tarihini listeden (sayfalı) güvenilir bilemez.
+
+    Gün başına tek kayıt (`uq_site_diary_entries_site_date`) olduğundan tarih sırası
+    TAM sıradır; bölüm verilirse Kural A (`section_conditions`) ile süzülür — listeyle
+    AYNI küme, istemci listeden türetmek zorunda kalmaz.
+    """
+    base = (SiteDiaryEntry.site_id == site_id, *section_conditions(section_id))
+    prev_stmt = (
+        select(SiteDiaryEntry.id, SiteDiaryEntry.entry_date)
+        .where(*base, SiteDiaryEntry.entry_date < entry_date)
+        .order_by(SiteDiaryEntry.entry_date.desc())
+        .limit(1)
+    )
+    next_stmt = (
+        select(SiteDiaryEntry.id, SiteDiaryEntry.entry_date)
+        .where(*base, SiteDiaryEntry.entry_date > entry_date)
+        .order_by(SiteDiaryEntry.entry_date)
+        .limit(1)
+    )
+    prev_row = (await session.execute(prev_stmt)).first()
+    next_row = (await session.execute(next_stmt)).first()
+    return (
+        Neighbour(*prev_row) if prev_row is not None else None,
+        Neighbour(*next_row) if next_row is not None else None,
+    )
+
+
+async def section_names(
+    session: AsyncSession, section_ids: Collection[uuid.UUID]
+) -> dict[uuid.UUID, str]:
+    if not section_ids:
+        return {}
+    stmt = select(Section.id, Section.name).where(Section.id.in_(section_ids))
+    return dict((await session.execute(stmt)).tuples().all())
+
+
+async def subcontractor_names(
+    session: AsyncSession, subcontractor_ids: Collection[uuid.UUID]
+) -> dict[uuid.UUID, str]:
+    if not subcontractor_ids:
+        return {}
+    stmt = select(Subcontractor.id, Subcontractor.name).where(
+        Subcontractor.id.in_(subcontractor_ids)
+    )
+    return dict((await session.execute(stmt)).tuples().all())
+
+
+async def user_names(
+    session: AsyncSession, user_ids: Collection[uuid.UUID]
+) -> dict[uuid.UUID, str]:
+    if not user_ids:
+        return {}
+    stmt = select(User.id, User.full_name).where(User.id.in_(user_ids))
+    return dict((await session.execute(stmt)).tuples().all())

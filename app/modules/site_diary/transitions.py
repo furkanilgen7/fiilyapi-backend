@@ -57,8 +57,8 @@ TRANSITIONS: dict[tuple[DiaryStatus, DiaryAction], DiaryStatus] = {
 }
 
 
-def _stamp(context: EntryContext, action: DiaryAction) -> None:
-    """`submitted_at` damgası — durum kolonuyla BİRLİKTE yaşar.
+def _stamp(context: EntryContext, action: DiaryAction, actor: User) -> None:
+    """`submitted_at` + gönderen (DET-1.B) damgası — durum kolonuyla BİRLİKTE yaşar.
 
     `reopen` damgayı TEMİZLER: taslak bir kayıtta "gönderildi" saati kalsaydı
     ekran gönderilmemiş bir kaydı gönderilmiş gibi etiketler, denetim de yanlış
@@ -67,8 +67,10 @@ def _stamp(context: EntryContext, action: DiaryAction) -> None:
     """
     if action is DiaryAction.submit:
         context.entry.submitted_at = datetime.now(UTC)
+        context.entry.submitted_by_user_id = actor.id
     elif action is DiaryAction.reopen:
         context.entry.submitted_at = None
+        context.entry.submitted_by_user_id = None
 
 
 async def perform(
@@ -111,7 +113,7 @@ async def perform(
         )
 
     context.entry.status = new_status
-    _stamp(context, action)
+    _stamp(context, action, actor)
     await session.flush()
     # `updated_at` server `onupdate` ile yenilendigi icin expire olur; acik
     # refresh olmadan yanit insasi `MissingGreenlet` verir.

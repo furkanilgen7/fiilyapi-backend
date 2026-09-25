@@ -15,7 +15,8 @@ from typing import NamedTuple
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.progress_payments.calculations import quantize2
-from app.modules.site_diary import repository
+from app.modules.site_diary import detail_context, repository
+from app.modules.site_diary.detail_context import DetailContext
 from app.modules.site_diary.models import SiteDiaryEntry, SiteDiaryLine, WorkerSource
 from app.modules.site_diary.schemas import (
     OwnCrewFromTimesheet,
@@ -25,7 +26,12 @@ from app.modules.site_diary.schemas import (
     SiteDiaryLineRead,
     SiteDiaryWorkerCountRead,
 )
-from app.modules.site_diary.service import EntryContext, visible_entry, visible_site
+from app.modules.site_diary.service import (
+    EntryContext,
+    validate_section,
+    visible_entry,
+    visible_site,
+)
 from app.modules.timesheet import repository as timesheet_repository
 from app.modules.users.models import User
 
@@ -132,6 +138,7 @@ def _line_read(
     prior: dict[uuid.UUID, Decimal],
     own: dict[uuid.UUID, Decimal],
     leaf: _LeafContext,
+    extras: DetailContext,
 ) -> SiteDiaryLineRead:
     planned = planned_quantity(line, leaf)
     cumulative = leaf_cumulative(line, leaf)
@@ -146,6 +153,7 @@ def _line_read(
         cumulative_quantity=cumulative_quantity(line, prior, own),
         line_amount=line_amount(line),
         section_id=line.section_id,
+        section_name=extras.section_name(line.section_id),
         overrun_reason=line.overrun_reason,
         leaf_cumulative_quantity=cumulative,
         planned_quantity=planned,
@@ -163,7 +171,9 @@ def _own_item_totals(entry: SiteDiaryEntry) -> dict[uuid.UUID, Decimal]:
     return totals
 
 
-async def build_detail(session: AsyncSession, context: EntryContext) -> SiteDiaryEntryDetail:
+async def build_detail(
+    session: AsyncSession, context: EntryContext, *, section_context: uuid.UUID | None = None
+) -> SiteDiaryEntryDetail:
     """GÖRÜNÜRLÜK KONTROLÜ YAPMAZ — çağıranın kapsam kararını çoktan vermiş
     olması ŞARTTIR. `POST`/`PATCH`/`PUT …/lines` uçları bu yüzden `get_detail`
     değil bunu çağırır: aksi hâlde `visible_projects` sorgusu istek başına İKİ
@@ -175,11 +185,16 @@ async def build_detail(session: AsyncSession, context: EntryContext) -> SiteDiar
     DOKUNMAZ, bu yüzden `worker_counts`/`lines` `selectin` yüklemesi bozulmaz.
 
     `temperature_c` (kullanımdan kalkıyor, B2-2) `temp_max_c`den TÜRETİLİR.
+
+    DET-1.B: adlar · gün kilidi · önceki/sonraki `detail_context`ten (kayıt başına sabit
+    sorgu). `section_context` yalnız önceki/sonraki bağlamıdır; yazma uçları vermez
+    (şantiye bağlamı).
     """
     entry = context.entry
     prior = await repository.cumulative_quantities_before(session, entry.site_id, entry.entry_date)
     own = _own_item_totals(entry)
     leaf = await _leaf_context(session, entry)
+    extras = await detail_context.load(session, entry, section_context)
     return SiteDiaryEntryDetail(
         id=entry.id,
         site_id=entry.site_id,
@@ -202,7 +217,19 @@ async def build_detail(session: AsyncSession, context: EntryContext) -> SiteDiar
         created_by=entry.created_by,
         created_at=entry.created_at,
         updated_at=entry.updated_at,
-        lines=[_line_read(line, prior, own, leaf) for line in entry.lines],
+        site_name=context.site.name,
+        project_name=context.project.name,
+        section_name=extras.section_name(entry.section_id),
+        created_by_name=extras.user_name(entry.created_by),
+        submitted_by=entry.submitted_by_user_id,
+        submitted_by_name=extras.user_name(entry.submitted_by_user_id),
+        locked=extras.locked,
+        lock_report_date=extras.lock_report_date,
+        prev_id=extras.prev.id if extras.prev else None,
+        prev_entry_date=extras.prev.entry_date if extras.prev else None,
+        next_id=extras.next.id if extras.next else None,
+        next_entry_date=extras.next.entry_date if extras.next else None,
+        lines=[_line_read(line, prior, own, leaf, extras) for line in entry.lines],
         worker_counts=[
             SiteDiaryWorkerCountRead(
                 id=row.id,
@@ -210,6 +237,7 @@ async def build_detail(session: AsyncSession, context: EntryContext) -> SiteDiar
                 source=row.source,
                 count=row.count,
                 subcontractor_id=row.subcontractor_id,
+                subcontractor_name=extras.subcontractor_name(row.subcontractor_id),
                 hours=row.hours,
             )
             for row in entry.worker_counts
@@ -245,9 +273,16 @@ async def own_crew_from_timesheet(
 
 
 async def get_detail(
-    session: AsyncSession, actor: User, entry_id: uuid.UUID
+    session: AsyncSession,
+    actor: User,
+    entry_id: uuid.UUID,
+    *,
+    section_id: uuid.UUID | None = None,
 ) -> SiteDiaryEntryDetail:
-    return await build_detail(session, await visible_entry(session, actor, entry_id))
+    """Kapsam (404) → bölüm bağlamı şantiyeye ait mi (422) → detay."""
+    context = await visible_entry(session, actor, entry_id)
+    await validate_section(session, section_id, context.site)
+    return await build_detail(session, context, section_context=section_id)
 
 
 async def list_entries(
@@ -259,6 +294,7 @@ async def list_entries(
     month: int | None,
     limit: int,
     offset: int,
+    section_id: uuid.UUID | None = None,
 ) -> SiteDiaryEntryListResponse:
     """Kapsam kararı ŞANTİYE üzerinden verilir (`visible_site`): görünmeyen
     şantiyenin listesi boş liste DEĞİL 404'tür — boş liste, "şantiye var ama
@@ -268,10 +304,13 @@ async def list_entries(
     ilişki de sayfa başına TEK ek sorguda toplu yüklenir (N+1 yok).
     """
     site, _ = await visible_site(session, actor, site_id)
+    await validate_section(session, section_id, site)
     entries = await repository.list_entries(
-        session, site.id, year=year, month=month, limit=limit, offset=offset
+        session, site.id, year=year, month=month, limit=limit, offset=offset, section_id=section_id
     )
-    total = await repository.count_entries(session, site.id, year=year, month=month)
+    total = await repository.count_entries(
+        session, site.id, year=year, month=month, section_id=section_id
+    )
     return SiteDiaryEntryListResponse(
         items=[
             SiteDiaryEntryListItem(

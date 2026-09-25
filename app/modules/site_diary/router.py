@@ -67,8 +67,13 @@ async def list_site_diary_entries_endpoint(
     month: Annotated[int | None, Query(ge=1, le=12)] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
+    section_id: Annotated[uuid.UUID | None, Query()] = None,
 ) -> SiteDiaryEntryListResponse:
     """GK "Son Kayıtlar" — durum, işçi toplamı ve satır ₺ toplamı TÜREVDİR.
+
+    DET-1.B `section_id`: Bölüm Detay › Günlük Kayıt — Kural A (başlığı bu bölüm OLAN gün ∪
+    bu bölüme miktar satırı yazılmış gün; kayıt tekrarlanmaz). `total` süzülmüş kümedir;
+    başka şantiyenin / olmayan bölüm 422. Verilmezse davranış aynen.
 
     `month` YALNIZ `year` ile anlamlıdır ("her yılın temmuzu" bir dönem
     değildir); tek başına gönderilirse 422 — sessizce yok saymak, kullanıcının
@@ -77,7 +82,14 @@ async def list_site_diary_entries_endpoint(
     if month is not None and year is None:
         raise SiteValidationError(guards.YEAR_REQUIRED_FOR_MONTH)
     return await read.list_entries(
-        session, user, site_id, year=year, month=month, limit=limit, offset=offset
+        session,
+        user,
+        site_id,
+        year=year,
+        month=month,
+        limit=limit,
+        offset=offset,
+        section_id=section_id,
     )
 
 
@@ -109,8 +121,11 @@ async def get_site_diary_entry_endpoint(
     entry_id: uuid.UUID,
     user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
+    section_id: Annotated[uuid.UUID | None, Query()] = None,
 ) -> SiteDiaryEntryDetail:
-    return await read.get_detail(session, user, entry_id)
+    """DET-1.B `section_id`: `prev_id`/`next_id` bu bölümün Kural A kümesinde; verilmezse
+    şantiye bağlamında. Başka şantiyenin / olmayan bölüm 422."""
+    return await read.get_detail(session, user, entry_id, section_id=section_id)
 
 
 @router.post(
