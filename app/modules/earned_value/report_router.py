@@ -44,6 +44,7 @@ from app.modules.earned_value.schemas_reports import (
     DailyReport,
     PanelReport,
     QurrReport,
+    QurrRow,
 )
 from app.modules.users.models import User
 
@@ -56,6 +57,12 @@ _BASE = "/sites/{site_id}/earned-value/reports"
 NO_WEEK = "Hafta proje takviminde yok"
 #: §3.15 S6: baseline yoksa NO_WEEK DEGIL, `diary_adapter.NO_BASELINE` (409, durum) — tek metin.
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+#: EV-BORC-7: ucun GERCEKTEN dondugu 409'lar (proje kanonu: yalniz description; govde
+#: `{"detail": <metin>}`). Metin mesaj sabitlerinden — beyan ile yanit kaymaz.
+_QURR_409 = {409: {"description": NO_BASELINE}}
+_APPROVE_409 = {
+    409: {"description": f"{report_daily.NOT_GENERATED} · {SITE_COMPLETED_BUDGET_READ_ONLY}"}
+}
 
 
 @router.get("/sites/{site_id}/earned-value/panel", response_model=PanelReport, dependencies=[VIEW])
@@ -84,7 +91,10 @@ async def get_daily_report(
 
 
 @router.post(
-    f"{_BASE}/daily/{{day}}/approve", response_model=ApprovalResult, dependencies=[APPROVE]
+    f"{_BASE}/daily/{{day}}/approve",
+    response_model=ApprovalResult,
+    dependencies=[APPROVE],
+    responses=_APPROVE_409,
 )
 async def approve_daily_report(
     request: Request, site_id: uuid.UUID, day: date, ctx: _Writable, user: _User, session: _Db
@@ -116,7 +126,7 @@ async def _qurr(session: AsyncSession, site_id: uuid.UUID, week: int | None) -> 
     return report
 
 
-@router.get(f"{_BASE}/weekly", response_model=QurrReport, dependencies=[VIEW])
+@router.get(f"{_BASE}/weekly", response_model=QurrReport, dependencies=[VIEW], responses=_QURR_409)
 async def get_weekly_report(
     site_id: uuid.UUID,
     user: _User,
@@ -155,9 +165,11 @@ _COLUMNS = (
     ("q PF", "q_pf_cum", _PF),
     ("r Hafta PF", "r_pf_week", _PF),
 )
-#: Toplam satirinda dolu olan alanlar (f–l + q, r); digerleri bos hucre.
+#: Toplam satirinda dolu olan alanlar (kod, ad, f–l + q, r); digerleri bos hucre.
 _TOTAL_FIELDS = frozenset(
     {
+        "code",  # EV-BORC-7: grup konum no / disiplin kodu (S2)
+        "name",
         "f_prev_budget_mhr",
         "g_budget_mhr",
         "h_earned_cum",
@@ -186,13 +198,12 @@ def qurr_workbook(report: QurrReport) -> bytes:
     ws.title = f"QURR H{report.week_no}"
     ws.append([f"Haftalık QURR · H{report.week_no} · {report.week_start} – {report.week_end}"])
     ws.append([label for label, _, _ in _COLUMNS])
-    for row in report.rows:
-        _append(ws, [getattr(row, attr) for _, attr, _ in _COLUMNS])
-    for t in report.totals:
+    for line in report_qurr.tree_lines(report):  # EV-BORC-7: JSON agaciyla AYNI sira
+        is_row = isinstance(line, QurrRow)
         _append(
             ws,
             [
-                t.name if attr == "name" else getattr(t, attr) if attr in _TOTAL_FIELDS else None
+                getattr(line, attr) if is_row or attr in _TOTAL_FIELDS else None
                 for _, attr, _ in _COLUMNS
             ],
         )
@@ -205,7 +216,7 @@ def qurr_workbook(report: QurrReport) -> bytes:
     f"{_BASE}/weekly.xlsx",
     dependencies=[VIEW],
     response_class=Response,
-    responses={200: {"content": {XLSX: {}}}},
+    responses={200: {"content": {XLSX: {}}}, **_QURR_409},
 )
 async def export_weekly_report(
     site_id: uuid.UUID,

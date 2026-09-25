@@ -64008,6 +64008,9 @@
           "404": {
             "description": "Kayıt bulunamadı"
           },
+          "409": {
+            "description": "Bu günün günlüğü yok — rapor üretilemedi · Tamamlanmış şantiyenin bütçesi salt okunurdur"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -64081,6 +64084,9 @@
           "404": {
             "description": "Kayıt bulunamadı"
           },
+          "409": {
+            "description": "Şantiyede aktif (dondurulmuş) baseline yok"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -64149,6 +64155,9 @@
           },
           "404": {
             "description": "Kayıt bulunamadı"
+          },
+          "409": {
+            "description": "Şantiyede aktif (dondurulmuş) baseline yok"
           },
           "422": {
             "content": {
