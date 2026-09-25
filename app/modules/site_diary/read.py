@@ -16,8 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.progress_payments.calculations import quantize2
 from app.modules.site_diary import repository
-from app.modules.site_diary.models import SiteDiaryEntry, SiteDiaryLine
+from app.modules.site_diary.models import SiteDiaryEntry, SiteDiaryLine, WorkerSource
 from app.modules.site_diary.schemas import (
+    OwnCrewFromTimesheet,
     SiteDiaryEntryDetail,
     SiteDiaryEntryListItem,
     SiteDiaryEntryListResponse,
@@ -25,6 +26,7 @@ from app.modules.site_diary.schemas import (
     SiteDiaryWorkerCountRead,
 )
 from app.modules.site_diary.service import EntryContext, visible_entry, visible_site
+from app.modules.timesheet import repository as timesheet_repository
 from app.modules.users.models import User
 
 _ZERO_MONEY = Decimal("0.00")
@@ -214,7 +216,32 @@ async def build_detail(session: AsyncSession, context: EntryContext) -> SiteDiar
         ],
         lines_total=lines_total(entry),
         worker_total=worker_total(entry),
+        own_crew_from_timesheet=await own_crew_from_timesheet(session, entry),
     )
+
+
+#: Meslegi bos personelin grubu (kisi KAYBOLMAZ).
+UNSPECIFIED_TRADE = "Belirtilmemiş"
+
+
+async def own_crew_from_timesheet(
+    session: AsyncSession, entry: SiteDiaryEntry
+) -> list[OwnCrewFromTimesheet]:
+    """EV-BORC-2: gunun puantaji → (meslek, kaynak) basina kisi sayisi + saat. TURETILIR,
+    eslenmez: gunluk isci satirlariyla kimlik bagi yok (ikisi de serbest metin). Tek sorgu
+    (`timesheet.repository.day_person_hours` — EV dagitim izgarasiyla AYNI kaynak)."""
+    groups: dict[tuple[str, WorkerSource], list[Decimal]] = {}
+    for ts, person, _ in await timesheet_repository.day_person_hours(
+        session, entry.site_id, entry.entry_date
+    ):
+        trade = (person.trade or "").strip() or UNSPECIFIED_TRADE
+        groups.setdefault((trade, person.source), []).append(ts.hours)
+    return [
+        OwnCrewFromTimesheet(trade=trade, source=source, headcount=len(hours), hours=sum(hours))
+        for (trade, source), hours in sorted(
+            groups.items(), key=lambda kv: (kv[0][0], kv[0][1].value)
+        )
+    ]
 
 
 async def get_detail(

@@ -72,7 +72,12 @@ async def _diary_submit_blocked_handler(
     """422 + `reasons` listesi (istemci kontrol cubugunu buna gore boyar)."""
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"detail": str(exc), "reasons": exc.reasons},
+        content={
+            "detail": str(exc),
+            "reasons": exc.reasons,
+            # EV-BORC-2: her madde YAPISAL kodla (istemci metne regex'le bakmasin); ek alan.
+            "reason_items": [{"code": r.code, "message": r.message} for r in exc.items],
+        },
     )
 
 

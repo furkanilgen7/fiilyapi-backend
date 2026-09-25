@@ -64,7 +64,7 @@ async def test_submit_passes_when_weather_and_allocation_complete(
         await client.put(_day(santiye, "/allocation"), headers=saha, json=body)
     ).status_code == 200
     view = (await client.get(_day(santiye), headers=saha)).json()
-    assert view["submit"] == {"can_submit": True, "reasons": []}
+    assert view["submit"] == {"can_submit": True, "reasons": [], "reason_items": []}
     assert (await _submit(client, saha, diary)).status_code == 200
 
 

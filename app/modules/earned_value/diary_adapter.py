@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import day_hooks
 from app.core.access import AccessLevel, satisfies
-from app.core.day_hooks import SubmitContext
+from app.core.day_hooks import SubmitContext, SubmitReason
 from app.core.errors import ConflictError, EarnedValueValidationError
 from app.modules.contracts.models import Subcontractor
 from app.modules.earned_value import budget_repository as repo
@@ -51,7 +51,6 @@ from app.modules.earned_value.models import (
     EvRevision,
     RevisionStatus,
 )
-from app.modules.personnel.models import Personnel
 from app.modules.roles.repository import get_permission
 from app.modules.site_diary.models import (
     DiaryStatus,
@@ -59,7 +58,7 @@ from app.modules.site_diary.models import (
     SiteDiaryLine,
     SiteDiaryWorkerCount,
 )
-from app.modules.timesheet.models import TimesheetEntry
+from app.modules.timesheet import repository as timesheet_repository
 from app.modules.users.models import User
 
 ZERO = Decimal(0)
@@ -185,17 +184,7 @@ async def diary_entry(
 
 
 async def source_rows(session: AsyncSession, site_id: uuid.UUID, day: date) -> list[SourceRow]:
-    people = await session.execute(
-        select(TimesheetEntry, Personnel, Subcontractor)
-        .join(Personnel, Personnel.id == TimesheetEntry.personnel_id)
-        .outerjoin(Subcontractor, Subcontractor.id == Personnel.subcontractor_id)
-        .where(
-            TimesheetEntry.site_id == site_id,
-            TimesheetEntry.work_date == day,
-            TimesheetEntry.hours.is_not(None),
-        )
-        .order_by(Personnel.full_name)
-    )
+    people = await timesheet_repository.day_person_hours(session, site_id, day)
     rows = [
         SourceRow(
             kind="personnel",
@@ -208,7 +197,7 @@ async def source_rows(session: AsyncSession, site_id: uuid.UUID, day: date) -> l
             headcount=None,
             hours=ts.hours,
         )
-        for ts, p, sub in people.all()
+        for ts, p, sub in people
     ]
     entry = await diary_entry(session, site_id, day)
     if entry is not None:
@@ -462,34 +451,51 @@ def _weather_complete(entry: SiteDiaryEntry) -> bool:
     return all(getattr(entry, f, None) is not None for f in fields)
 
 
-async def submit_blockers(session: AsyncSession, ctx: SubmitContext) -> list[str]:
+#: Gonder engeli KODLARI (EV-BORC-2; istemci metne degil koda bakar — sozlesme).
+SUBMIT_NO_PERMISSION = "no_planning_permission"
+SUBMIT_WEATHER = "weather_incomplete"
+SUBMIT_NO_QUANTITY = "no_quantity"
+SUBMIT_OVERRUN = "overrun_without_reason"
+SUBMIT_UNDISTRIBUTED = "undistributed_hours"
+
+
+async def submit_blockers(session: AsyncSession, ctx: SubmitContext) -> list[SubmitReason]:
     """`day_hooks.SubmitGuard` uygulamasi (B2-3: yalniz aktif baseline'li santiye)."""
     tree = await active_tree(session, ctx.site_id)
     if tree is None:
         return []
-    reasons: list[str] = []
+    reasons: list[SubmitReason] = []
     actor = await session.get(User, ctx.actor_id)
     perm = await get_permission(session, actor.role_id, PERMISSION_MODULE) if actor else None
     if perm is None or not satisfies(perm.access_level, AccessLevel.draft):
-        reasons.append("Günlüğü göndermek planlama yazma yetkisi ister (formen gönderemez)")
+        reasons.append(
+            SubmitReason(
+                SUBMIT_NO_PERMISSION,
+                "Günlüğü göndermek planlama yazma yetkisi ister (formen gönderemez)",
+            )
+        )
     entry = await session.get(SiteDiaryEntry, ctx.entry_id)
     if entry is None:
         return reasons
     if not _weather_complete(entry):
-        reasons.append("Hava bilgisi eksik (durum, min/max sıcaklık, rüzgâr)")
+        reasons.append(
+            SubmitReason(SUBMIT_WEATHER, "Hava bilgisi eksik (durum, min/max sıcaklık, rüzgâr)")
+        )
     line_count = await session.scalar(
         select(func.count()).select_from(SiteDiaryLine).where(SiteDiaryLine.entry_id == entry.id)
     )
     if not line_count:
-        reasons.append("Miktar girilmedi")
+        reasons.append(SubmitReason(SUBMIT_NO_QUANTITY, "Miktar girilmedi"))
     elif await _has_line_overrun_without_reason(session, ctx.site_id, entry, tree):
-        reasons.append("Planlı miktarı aşan satır gerekçesiz")
+        reasons.append(SubmitReason(SUBMIT_OVERRUN, "Planlı miktarı aşan satır gerekçesiz"))
     source = sum((r.hours for r in await source_rows(session, ctx.site_id, ctx.entry_date)), ZERO)
     saved = await load_saved(session, ctx.site_id, ctx.entry_date)
     unallocated = source - allocated_hours(saved)
     reason = saved.note.unallocated_reason if saved.note else None
     if unallocated != 0 and not (reason or "").strip():
-        reasons.append(f"{unallocated} a-s dağıtılmamış; gerekçe gerekli")
+        reasons.append(
+            SubmitReason(SUBMIT_UNDISTRIBUTED, f"{unallocated} a-s dağıtılmamış; gerekçe gerekli")
+        )
     return reasons
 
 

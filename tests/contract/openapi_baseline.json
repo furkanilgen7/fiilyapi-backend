@@ -13905,6 +13905,58 @@
         "title": "ItemPatch",
         "type": "object"
       },
+      "ItemProgressOut": {
+        "description": "Is tipi (kalem, `i:<kalem>`) dugumu: TUM alt agac + kaleme DOGRUDAN yazilan saat\n(EV-BORC-2: `direct` kuralla kalem koduna yazilan saat yapraklarda gorunmez).",
+        "properties": {
+          "earned_day": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Earned Day",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "pf_day": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pf Day"
+          },
+          "qty_day": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Qty Day"
+          },
+          "spent_day": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Spent Day",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "qty_day",
+          "earned_day",
+          "spent_day",
+          "pf_day"
+        ],
+        "title": "ItemProgressOut",
+        "type": "object"
+      },
       "JournalEntryCreate": {
         "additionalProperties": false,
         "description": "`POST /journal-entries` (E8:67 `+ Yevmiye Kaydı`).\n\n🔴 K-Ş1: form mockup'ı YOKTUR ve alan İCAT EDİLMEZ — gövde yalnızca E8'in\nçizili sütunlarından türer: `Tarih` (E8:101) · `Açıklama` üst satırı\n(E8:103/113) · `Açıklama` alt satırı (`detail_note`) · satırlar.\n\n`detail_note` bir FK DEĞİLDİR: E8'in altı örneğinden biri\n(`48 personel · SGK dahil`) hiçbir varlığa çözülmez — heterojen küme =\nSERBEST METİN. FK açılsaydı MU-3'ün (entegrasyon) işi buraya sızardı.",
@@ -17014,6 +17066,35 @@
           "late_fee_amount"
         ],
         "title": "OverdueKpi",
+        "type": "object"
+      },
+      "OwnCrewFromTimesheet": {
+        "description": "Puantajdan türeyen ekip satırı (EV-BORC-2): personelin KENDİ `trade` + `source` alanı.",
+        "properties": {
+          "headcount": {
+            "title": "Headcount",
+            "type": "integer"
+          },
+          "hours": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Hours",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/WorkerSource"
+          },
+          "trade": {
+            "title": "Trade",
+            "type": "string"
+          }
+        },
+        "required": [
+          "trade",
+          "source",
+          "headcount",
+          "hours"
+        ],
+        "title": "OwnCrewFromTimesheet",
         "type": "object"
       },
       "PanelKpi": {
@@ -20977,6 +21058,13 @@
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Earned Day",
             "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ItemProgressOut"
+            },
+            "title": "Items",
+            "type": "array"
           },
           "leaves": {
             "items": {
@@ -30848,6 +30936,13 @@
             "title": "Lines Total",
             "type": "string"
           },
+          "own_crew_from_timesheet": {
+            "items": {
+              "$ref": "#/components/schemas/OwnCrewFromTimesheet"
+            },
+            "title": "Own Crew From Timesheet",
+            "type": "array"
+          },
           "ppe_checked": {
             "title": "Ppe Checked",
             "type": "boolean"
@@ -36803,6 +36898,13 @@
             "title": "Can Submit",
             "type": "boolean"
           },
+          "reason_items": {
+            "items": {
+              "$ref": "#/components/schemas/SubmitReasonOut"
+            },
+            "title": "Reason Items",
+            "type": "array"
+          },
           "reasons": {
             "items": {
               "type": "string"
@@ -36816,6 +36918,24 @@
           "reasons"
         ],
         "title": "SubmitCheckOut",
+        "type": "object"
+      },
+      "SubmitReasonOut": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "SubmitReasonOut",
         "type": "object"
       },
       "SuggestionsOut": {

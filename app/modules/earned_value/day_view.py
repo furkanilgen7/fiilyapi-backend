@@ -33,11 +33,13 @@ from app.modules.earned_value.schemas_day import (
     CodeNodeOut,
     CodeOut,
     DayView,
+    ItemProgressOut,
     LeafProgressOut,
     LockOut,
     ProgressOut,
     RowOut,
     SubmitCheckOut,
+    SubmitReasonOut,
     TotalsOut,
     UnlockOut,
     UserRef,
@@ -181,6 +183,19 @@ async def _progress(
         for *_, lf in tree.leaves()
         if lf.id in report.nodes
     ]
+    items = [
+        ItemProgressOut(
+            node_id=i.id,
+            qty_day=report.nodes[i.id].qty_day,
+            earned_day=report.nodes[i.id].earned_day,
+            spent_day=report.nodes[i.id].spent_day,
+            pf_day=report.nodes[i.id].pf_day,
+        )
+        for d in tree.disciplines
+        for g in d.groups
+        for i in g.items
+        if i.id in report.nodes
+    ]
     earned = sum(
         (report.nodes[d.id].earned_day for d in tree.disciplines if d.id in report.nodes), ZERO
     )
@@ -190,6 +205,7 @@ async def _progress(
         earned_day=earned,
         spent_day=spent,
         pf_day=None if spent == 0 else earned / spent,
+        items=items,
     )
 
 
@@ -246,7 +262,11 @@ async def build_view(session: AsyncSession, site_id: uuid.UUID, day: date, actor
         reasons = await adp.submit_blockers(
             session, SubmitContext(entry.id, site_id, day, actor.id)
         )
-        submit = SubmitCheckOut(can_submit=not reasons, reasons=reasons)
+        submit = SubmitCheckOut(
+            can_submit=not reasons,
+            reasons=[r.message for r in reasons],
+            reason_items=[SubmitReasonOut(code=r.code, message=r.message) for r in reasons],
+        )
     return DayView(
         day=day,
         day_no=day_no,

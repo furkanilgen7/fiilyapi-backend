@@ -374,6 +374,15 @@ class SiteDiaryEntryListResponse(BaseModel):
     offset: int
 
 
+class OwnCrewFromTimesheet(BaseModel):
+    """Puantajdan türeyen ekip satırı (EV-BORC-2): personelin KENDİ `trade` + `source` alanı."""
+
+    trade: str
+    source: WorkerSource
+    headcount: int
+    hours: Decimal
+
+
 class SiteDiaryEntryDetail(BaseModel):
     """`GET /diary/{entry_id}` — GK'nin tek gün görünümü."""
 
@@ -402,6 +411,10 @@ class SiteDiaryEntryDetail(BaseModel):
     temp_min_c: Decimal | None = None
     temp_max_c: Decimal | None = None
     wind_ms: Decimal | None = None
+    own_crew_from_timesheet: list[OwnCrewFromTimesheet] = Field(default_factory=list)
+    """EV-BORC-2: o günün PUANTAJINDAN türeyen ekip (salt okunur) — meslek + kaynak başına
+    kişi sayısı ve saat. Günlük işçi satırlarıyla EŞLEME YOKTUR (ikisi de serbest metin);
+    ekran kendi ekip bloğunu buradan basar. Meslek boş personel `"Belirtilmemiş"`te toplanır."""
     dropped_orphan_count: int | None = None
     """YALNIZ `PUT …/lines` yanıtında dolar (T3). Bağı kopmuş satır (`boq_item_id
     IS NULL`, FK `SET NULL`) gövdeden ADRESLENEMEZ, bu yüzden ilk kaydetmede
