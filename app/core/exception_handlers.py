@@ -85,7 +85,18 @@ async def _days_locked_handler(request: Request, exc: DaysLockedError) -> JSONRe
     """409 + `locked_days` (ISO tarih listesi) — istemci kilitli gunleri salt okunur basar."""
     return JSONResponse(
         status_code=status.HTTP_409_CONFLICT,
-        content={"detail": str(exc), "locked_days": [d.isoformat() for d in exc.locked_days]},
+        content={
+            "detail": str(exc),
+            "locked_days": [d.isoformat() for d in exc.locked_days],
+            # EV-BORC-4: gun + kilidi koyan rapor tarihi (ek alan)
+            "day_locks": [
+                {
+                    "day": lock.day.isoformat(),
+                    "report_date": lock.report_date.isoformat() if lock.report_date else None,
+                }
+                for lock in exc.day_locks
+            ],
+        },
     )
 
 

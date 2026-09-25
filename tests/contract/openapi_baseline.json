@@ -37967,6 +37967,33 @@
         "title": "TimesheetCode",
         "type": "string"
       },
+      "TimesheetDayLock": {
+        "properties": {
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "report_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Report Date"
+          }
+        },
+        "required": [
+          "day",
+          "report_date"
+        ],
+        "title": "TimesheetDayLock",
+        "type": "object"
+      },
       "TimesheetDayTotal": {
         "description": "Bir gün sütununun ayak satırı (E5 320-326).\n\n`total_hours` o günün girilmiş saat toplamıdır. `worked_day_count` SAATLİ\nhücreleri sayar (kodlu hücre çalışılmış değildir); `leave_count` ve\n`temporary_duty_count` ayrı sayaçlardır — bir gün hem izinli hem çalışılmış\nsayılmaz.",
         "properties": {
@@ -38200,6 +38227,13 @@
       "TimesheetWeek": {
         "description": "E5 ekranının tamamı: hafta şeridi + KPI + 7 günlük ızgara + tfoot.",
         "properties": {
+          "day_locks": {
+            "items": {
+              "$ref": "#/components/schemas/TimesheetDayLock"
+            },
+            "title": "Day Locks",
+            "type": "array"
+          },
           "day_totals": {
             "items": {
               "$ref": "#/components/schemas/TimesheetDayTotal"

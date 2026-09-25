@@ -32,6 +32,7 @@ from app.modules.timesheet.matrix import DayAccumulator, to_cell
 from app.modules.timesheet.models import TimesheetCode
 from app.modules.timesheet.schemas import (
     TimesheetCell,
+    TimesheetDayLock,
     TimesheetRowTotals,
     TimesheetWeek,
     TimesheetWeekRow,
@@ -148,6 +149,7 @@ async def build(
     # 5 Tem) tek bir ay seçmek gerekir; PERŞEMBE kuralı ISO'nun kendi kuralıdır
     # (haftanın ISO yılı perşembesinin yılıdır) ve aynı hafta iki ayrı şeritte
     # görünmesin diye burada da o kullanılır.
+    locks = await day_hooks.day_locks(session, site.id, days)
     anchor = days[3]
     month_weeks, month_total = await _month_strip(session, site, anchor.year, anchor.month)
 
@@ -177,7 +179,8 @@ async def build(
         ),
         rows=week_rows,
         day_totals=[total.to_schema(day) for day, total in day_totals.items()],
-        locked_days=await day_hooks.locked_days(session, site.id, days),
+        locked_days=[lock.day for lock in locks],
+        day_locks=[TimesheetDayLock(day=lock.day, report_date=lock.report_date) for lock in locks],
         month_year=anchor.year,
         month_month=anchor.month,
         month_total_hours=month_total,
