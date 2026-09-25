@@ -8,7 +8,8 @@ ikinciyi BEKLETİR; FOR SHARE yetmezdi (paylaşımlı kilitler birbirini bekletm
 Kurgu: tek kullanımlık yarış DB'si + DONMUŞ baseline (bölüm + kalem + oran + freeze) +
 puantaj (Ali 9 sa). Oturum 1 dağıtımı kaydeder (COMMIT yok); oturum 2 aynı anda kaydeder.
 * Kilitli (bugünkü kod): 2 `sites … FOR UPDATE`de BEKLER, 1 commit edince temiz yazar.
-* POZİTİF KONTROL (`lock=False`): 2 beklemez → PK çakışması → IntegrityError.
+* POZİTİF KONTROL (`lock=False`): 2 kilitte beklemez, PK satırında (INSERT) bekler → PK
+  çakışması → IntegrityError. Bariyer bu beklemeyi ölçer (FIX-B2: uyku zamanlamaya bağlıydı).
 Emsal ve bariyer: `test_evborc_settings_lock.py`, `test_b30_relock_guard.py` (PLN-B0 ders 9).
 """
 
@@ -122,7 +123,7 @@ async def _kaydet(ortam: _Ortam, session, leaf: str, ali: Personnel) -> None:  #
     )
 
 
-async def _yaris(ortam: _Ortam, *, bekle: bool) -> tuple[str, BaseException | None]:
+async def _yaris(ortam: _Ortam) -> tuple[str, BaseException | None]:
     leaf, ali = await _zemin(ortam)
 
     async def _ikinci() -> None:
@@ -136,12 +137,12 @@ async def _yaris(ortam: _Ortam, *, bekle: bool) -> tuple[str, BaseException | No
         try:
             await _kaydet(ortam, birinci, leaf, ali)
             task = asyncio.create_task(_ikinci())
-            if bekle:
-                bekleyen = await _bekleyen_sorgu(ortam)
-                await asyncio.sleep(_KESISME_PAYI)
-                assert not task.done(), "ikinci kayıt birinci commit edilmeden BİTTİ"
-            else:
-                await asyncio.sleep(_KESISME_PAYI)
+            # FIX-B2: bariyer İKİ yolda da ölçülür (kilitli: `sites FOR UPDATE`; kilitsiz:
+            # UQ/PK satırında bekleyen INSERT). Uyku DEĞİL — kilitsiz yolda uyku yetmezse
+            # ikinci oturum okumayı birincinin commit'inden SONRA yapar ve temiz geçerdi.
+            bekleyen = await _bekleyen_sorgu(ortam)
+            await asyncio.sleep(_KESISME_PAYI)
+            assert not task.done(), "ikinci kayıt birinci commit edilmeden BİTTİ"
             await birinci.commit()
         except BaseException:
             await birinci.rollback()
@@ -166,7 +167,7 @@ async def _kod_sayisi(ortam: _Ortam) -> int:
 
 async def test_EVBORC_concurrent_day_allocations_are_serialized_by_site_lock() -> None:
     async with _yaris_ortami() as ortam:
-        bekleyen, hata = await _yaris(ortam, bekle=True)
+        bekleyen, hata = await _yaris(ortam)
 
         assert "FROM sites" in bekleyen and "FOR UPDATE" in bekleyen, bekleyen
         assert hata is None, f"ikinci dağıtım başarısız: {hata!r}"
@@ -184,6 +185,8 @@ async def test_EVBORC_KONTROL_without_site_lock_concurrent_allocations_collide(
 
     monkeypatch.setattr(diary_adapter, "assert_site_writable", _kilitsiz)
     async with _yaris_ortami() as ortam:
-        _, hata = await _yaris(ortam, bekle=False)
+        bekleyen, hata = await _yaris(ortam)
 
+        # ikinci oturum sürümü/satırı OKUDU ve birincinin satırında bekliyor → çakışma kesin
+        assert bekleyen.startswith("INSERT INTO ev_day_codes"), bekleyen
         assert isinstance(hata, IntegrityError), f"kilitsiz de temiz geçti: {hata!r}"

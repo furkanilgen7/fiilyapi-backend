@@ -7,7 +7,9 @@ erken kontroldür). İki eşzamanlı onay aynı sürümü (`max+1`) hesaplar; ik
 Kurgu: tek kullanımlık yarış DB'si + donmuş baseline + puantaj (`test_evborc_day_allocation_lock`
 zemini) + GÖNDERİLMİŞ günlük. Oturum 1 onaylar (COMMIT yok), oturum 2 aynı günü onaylar.
 * Kilitli (bugünkü kod): 2 `sites … FOR UPDATE`de BEKLER; 1 commit edince sürüm 2 yazar.
-* POZİTİF KONTROL (kilitsiz): 2 beklemez → iki oturum da sürüm 1 → UQ çakışması.
+* POZİTİF KONTROL (kilitsiz): 2 sürüm 1 hesaplar, birincinin UQ satırında (INSERT) bekler →
+  birinci commit edince UQ çakışması. Bariyer bu beklemeyi ölçer (FIX-B2: uyku zamanlamaya
+  bağlıydı, CI'da ikinci okumayı commit'ten SONRA yapıp temiz geçti).
 Bariyer: `pg_stat_activity` bekleyen SORGUSU (PLN-B0 ders 9).
 """
 
@@ -55,7 +57,7 @@ async def _onayla(ortam: _Ortam, session) -> None:  # noqa: ANN001
     await report_daily.approve(session, ortam.site_id, DAY, actor)
 
 
-async def _yaris(ortam: _Ortam, *, bekle: bool) -> tuple[str, BaseException | None]:
+async def _yaris(ortam: _Ortam) -> tuple[str, BaseException | None]:
     await _zemin(ortam)
     await _gunluk(ortam)
 
@@ -70,12 +72,12 @@ async def _yaris(ortam: _Ortam, *, bekle: bool) -> tuple[str, BaseException | No
         try:
             await _onayla(ortam, birinci)
             task = asyncio.create_task(_ikinci())
-            if bekle:
-                bekleyen = await _bekleyen_sorgu(ortam)
-                await asyncio.sleep(_KESISME_PAYI)
-                assert not task.done(), "ikinci onay birinci commit edilmeden BİTTİ"
-            else:
-                await asyncio.sleep(_KESISME_PAYI)
+            # FIX-B2: bariyer İKİ yolda da ölçülür (kilitli: `sites FOR UPDATE`; kilitsiz:
+            # UQ/PK satırında bekleyen INSERT). Uyku DEĞİL — kilitsiz yolda uyku yetmezse
+            # ikinci oturum okumayı birincinin commit'inden SONRA yapar ve temiz geçerdi.
+            bekleyen = await _bekleyen_sorgu(ortam)
+            await asyncio.sleep(_KESISME_PAYI)
+            assert not task.done(), "ikinci onay birinci commit edilmeden BİTTİ"
             await birinci.commit()
         except BaseException:
             await birinci.rollback()
@@ -101,7 +103,7 @@ async def _surumler(ortam: _Ortam) -> list[int]:
 
 async def test_EVBORC5_concurrent_approvals_are_serialized_by_site_lock() -> None:
     async with _yaris_ortami() as ortam:
-        bekleyen, hata = await _yaris(ortam, bekle=True)
+        bekleyen, hata = await _yaris(ortam)
 
         assert "FROM sites" in bekleyen and "FOR UPDATE" in bekleyen, bekleyen
         assert hata is None, f"ikinci onay başarısız: {hata!r}"
@@ -119,8 +121,10 @@ async def test_EVBORC5_KONTROL_without_site_lock_approvals_collide(
 
     monkeypatch.setattr(report_daily, "assert_site_writable", _kilitsiz)
     async with _yaris_ortami() as ortam:
-        _, hata = await _yaris(ortam, bekle=False)
+        bekleyen, hata = await _yaris(ortam)
 
+        # ikinci oturum sürümü/satırı OKUDU ve birincinin satırında bekliyor → çakışma kesin
+        assert bekleyen.startswith("INSERT INTO ev_report_snapshots"), bekleyen
         assert isinstance(hata, IntegrityError), f"kilitsiz de temiz geçti: {hata!r}"
         assert await _surumler(ortam) == [1]
 

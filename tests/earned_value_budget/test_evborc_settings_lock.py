@@ -8,7 +8,8 @@ IntegrityError (500). FOR SHARE da yetmez: paylaşımlı kilitler birbirini BEKL
 
 Senaryo: oturum 1 ayarları kaydeder (COMMIT yok, kilit tutulur); oturum 2 aynı anda kaydeder.
 * Kilitli (bugünkü kod): oturum 2 `sites … FOR UPDATE`de BEKLER, 1 commit edince temiz yazar.
-* POZİTİF KONTROL (kilit `lock=False`): oturum 2 bekleyemez, satır çakışır → IntegrityError.
+* POZİTİF KONTROL (kilit `lock=False`): oturum 2 kilitte beklemez, `ev_site_settings` PK
+  satırında (INSERT) bekler → çakışır → IntegrityError. Bariyer bu beklemeyi ölçer (FIX-B2).
 Kontrol kırmızıya dönerse senaryo artık yarışı üretmiyor demektir (üstteki yeşil boştur).
 Bariyer: `pg_stat_activity` bekleyen SORGUSU (PLN-B0 dersi 9); emsal `test_b30_relock_guard`.
 """
@@ -56,19 +57,19 @@ async def _ikinci(ortam: _Ortam) -> None:
         await session.commit()
 
 
-async def _yaris(ortam: _Ortam, *, bekle: bool) -> tuple[str, BaseException | None]:
+async def _yaris(ortam: _Ortam) -> tuple[str, BaseException | None]:
     task: asyncio.Task[None] | None = None
     bekleyen = ""
     async with ortam.Session() as birinci:
         try:
             await _kaydet(ortam, birinci)
             task = asyncio.create_task(_ikinci(ortam))
-            if bekle:
-                bekleyen = await _bekleyen_sorgu(ortam)
-                await asyncio.sleep(_KESISME_PAYI)
-                assert not task.done(), "ikinci kayıt birinci commit edilmeden BİTTİ"
-            else:
-                await asyncio.sleep(_KESISME_PAYI)
+            # FIX-B2: bariyer İKİ yolda da ölçülür (kilitli: `sites FOR UPDATE`; kilitsiz:
+            # UQ/PK satırında bekleyen INSERT). Uyku DEĞİL — kilitsiz yolda uyku yetmezse
+            # ikinci oturum okumayı birincinin commit'inden SONRA yapar ve temiz geçerdi.
+            bekleyen = await _bekleyen_sorgu(ortam)
+            await asyncio.sleep(_KESISME_PAYI)
+            assert not task.done(), "ikinci kayıt birinci commit edilmeden BİTTİ"
             await birinci.commit()
         except BaseException:
             await birinci.rollback()
@@ -91,7 +92,7 @@ async def _tatil_sayisi(ortam: _Ortam) -> int:
 
 async def test_EVBORC_concurrent_settings_saves_are_serialized_by_site_lock() -> None:
     async with _yaris_ortami() as ortam:
-        bekleyen, hata = await _yaris(ortam, bekle=True)
+        bekleyen, hata = await _yaris(ortam)
 
         assert "FROM sites" in bekleyen and "FOR UPDATE" in bekleyen, bekleyen
         assert hata is None, f"ikinci kayıt başarısız: {hata!r}"
@@ -109,6 +110,8 @@ async def test_EVBORC_KONTROL_without_site_lock_first_concurrent_save_collides(
 
     monkeypatch.setattr(settings_service, "assert_site_writable", _kilitsiz)
     async with _yaris_ortami() as ortam:
-        _, hata = await _yaris(ortam, bekle=False)
+        bekleyen, hata = await _yaris(ortam)
 
+        # ikinci oturum sürümü/satırı OKUDU ve birincinin satırında bekliyor → çakışma kesin
+        assert bekleyen.startswith("INSERT INTO ev_site_settings"), bekleyen
         assert isinstance(hata, IntegrityError), f"kilitsiz de temiz geçti: {hata!r}"
