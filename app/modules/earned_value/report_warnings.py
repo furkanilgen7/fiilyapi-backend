@@ -29,6 +29,38 @@ def _names(tree: BudgetTree) -> dict[str, str]:
     return out
 
 
+def leaf_details(tree: BudgetTree) -> dict[str, dict[str, str | None]]:
+    """EV-BORC-3 G7: yaprak → {item_name, section_name, uom} (yaprak hedefli uyarilara eklenir)."""
+    return {
+        lf.id: {
+            "item_name": f"{i.code} {i.description}",
+            "section_name": lf.section_name,
+            "uom": i.uom,
+        }
+        for d in tree.disciplines
+        for g in d.groups
+        for i in g.items
+        for lf in i.leaves
+    }
+
+
+def empty_rate_warnings(tree: BudgetTree) -> list[WarningOut]:
+    """EV-BORC-3 G3: donmus baseline'da orani BOS yaprak — giristen BAGIMSIZ (freeze bunu
+    engel degil UYARI sayar). Butce ve kazanilmis hesaplanamaz."""
+    names, details = _names(tree), leaf_details(tree)
+    return [
+        WarningOut(
+            code="empty_rate",
+            message=f"{names[lf.id]}: birim oranı boş — bütçe ve kazanılmış hesaplanamıyor",
+            target="leaf",
+            target_id=lf.id,
+            **details[lf.id],
+        )
+        for *_, lf in tree.leaves()
+        if not lf.is_rated
+    ]
+
+
 def pf_warnings(tree: BudgetTree, report: DailyReport) -> list[WarningOut]:
     """Is tipi (L3) duzeyinde: kumulatif PF kirmizi ya da gunluk PF kirmizi/supheli yuksek."""
     names = _names(tree)
@@ -54,7 +86,7 @@ def pf_warnings(tree: BudgetTree, report: DailyReport) -> list[WarningOut]:
 
 
 def overrun_warnings(tree: BudgetTree, report: DailyReport) -> list[WarningOut]:
-    names = _names(tree)
+    names, details = _names(tree), leaf_details(tree)
     out = []
     for *_, lf in tree.leaves():
         m = report.nodes.get(lf.id)
@@ -66,6 +98,9 @@ def overrun_warnings(tree: BudgetTree, report: DailyReport) -> list[WarningOut]:
                     target="leaf",
                     target_id=lf.id,
                     value=m.qty_cum - m.planned_qty,
+                    qty_cum=m.qty_cum,
+                    planned_qty=m.planned_qty,
+                    **details[lf.id],
                 )
             )
     return out
@@ -107,7 +142,7 @@ def diary_warnings(missing: list[date], drafts: list[date]) -> list[WarningOut]:
 
 
 def unrated_warnings(tree: BudgetTree, report: DailyReport) -> list[WarningOut]:
-    names = _names(tree)
+    names, details = _names(tree), leaf_details(tree)
     return [
         WarningOut(
             code="unrated_entry",
@@ -115,6 +150,7 @@ def unrated_warnings(tree: BudgetTree, report: DailyReport) -> list[WarningOut]:
             target="leaf",
             target_id=str(e.node_id),
             value=e.qty,
+            **details.get(str(e.node_id), {}),
         )
         for e in report.unrated_entries
     ]

@@ -1,8 +1,12 @@
 {
+ "calendar_end": "2026-05-29",
+ "calendar_start": "2026-05-04",
  "composites": [],
  "draft_diary_dates": [
   "2026-05-05"
  ],
+ "generated_at": "<ts>",
+ "has_field_data": true,
  "kpis": [
   {
    "pf_cum": "0.5882352941176470588235294118",
@@ -19,6 +23,19 @@
    "scope": "overall_subcon"
   }
  ],
+ "last_week_no": 4,
+ "pf_bands": {
+  "cumulative": {
+   "green_from": "1.000",
+   "high_above": null,
+   "red_below": "0.950"
+  },
+  "daily": {
+   "green_from": "0.950",
+   "high_above": "1.050",
+   "red_below": "0.950"
+  }
+ },
  "previous_revision": null,
  "report_date": "2026-05-10",
  "revision": {
@@ -54,6 +71,7 @@
    "node_id": "i:U2",
    "o_actual_unit_mhr_cum": "3.40",
    "p_actual_unit_mhr_week": "3.40",
+   "parent_id": "g:U3",
    "q_band": "red",
    "q_pf_cum": "0.5882352941176470588235294118",
    "r_band": "red",
@@ -83,9 +101,10 @@
    "m_prev_unit_mhr": null,
    "n_unit_mhr": "0.5000",
    "name": "Tuğla",
-   "node_id": "i:U3",
+   "node_id": "i:U4",
    "o_actual_unit_mhr_cum": null,
    "p_actual_unit_mhr_week": null,
+   "parent_id": "g:U5",
    "q_band": null,
    "q_pf_cum": null,
    "r_band": null,
@@ -95,6 +114,8 @@
  ],
  "totals": [
   {
+   "code": "1",
+   "contractor_mix": "own",
    "f_prev_budget_mhr": null,
    "g_budget_mhr": "200.0000000",
    "h_earned_cum": "10.0000",
@@ -104,11 +125,16 @@
    "kind": "group",
    "l_spent_week": "17.00",
    "name": "Betonarme",
-   "node_id": "g:U4",
+   "node_id": "g:U3",
+   "parent_id": "d:U6",
+   "q_band": "red",
    "q_pf_cum": "0.5882352941176470588235294118",
+   "r_band": "red",
    "r_pf_week": "0.5882352941176470588235294118"
   },
   {
+   "code": "KAB",
+   "contractor_mix": "own",
    "f_prev_budget_mhr": null,
    "g_budget_mhr": "200.0000000",
    "h_earned_cum": "10.0000",
@@ -118,11 +144,16 @@
    "kind": "discipline",
    "l_spent_week": "17.00",
    "name": "Kaba İnşaat",
-   "node_id": "d:U5",
+   "node_id": "d:U6",
+   "parent_id": null,
+   "q_band": "red",
    "q_pf_cum": "0.5882352941176470588235294118",
+   "r_band": "red",
    "r_pf_week": "0.5882352941176470588235294118"
   },
   {
+   "code": "2",
+   "contractor_mix": "subcon",
    "f_prev_budget_mhr": null,
    "g_budget_mhr": "25.0000000",
    "h_earned_cum": "0",
@@ -132,11 +163,16 @@
    "kind": "group",
    "l_spent_week": "0",
    "name": "Duvar",
-   "node_id": "g:U6",
+   "node_id": "g:U5",
+   "parent_id": "d:U7",
+   "q_band": null,
    "q_pf_cum": null,
+   "r_band": null,
    "r_pf_week": null
   },
   {
+   "code": "DUV",
+   "contractor_mix": "subcon",
    "f_prev_budget_mhr": null,
    "g_budget_mhr": "25.0000000",
    "h_earned_cum": "0",
@@ -147,10 +183,15 @@
    "l_spent_week": "0",
    "name": "Duvar & Sıva",
    "node_id": "d:U7",
+   "parent_id": null,
+   "q_band": null,
    "q_pf_cum": null,
+   "r_band": null,
    "r_pf_week": null
   },
   {
+   "code": null,
+   "contractor_mix": null,
    "f_prev_budget_mhr": null,
    "g_budget_mhr": "225.0000000",
    "h_earned_cum": "10.0000",
@@ -161,10 +202,15 @@
    "l_spent_week": "17.00",
    "name": "Σ Doğrudan",
    "node_id": null,
+   "parent_id": null,
+   "q_band": "red",
    "q_pf_cum": "0.5882352941176470588235294118",
+   "r_band": "red",
    "r_pf_week": "0.5882352941176470588235294118"
   },
   {
+   "code": null,
+   "contractor_mix": null,
    "f_prev_budget_mhr": null,
    "g_budget_mhr": "225.0000000",
    "h_earned_cum": "10.0000",
@@ -175,23 +221,36 @@
    "l_spent_week": "17.00",
    "name": "Σ Doğrudan + Dolaylı",
    "node_id": null,
+   "parent_id": null,
+   "q_band": "red",
    "q_pf_cum": "0.5882352941176470588235294118",
+   "r_band": "red",
    "r_pf_week": "0.5882352941176470588235294118"
   }
  ],
  "warnings": [
   {
    "code": "pf_out_of_band",
+   "item_name": null,
    "message": "01.001 Beton: PF bant dışı",
+   "planned_qty": null,
+   "qty_cum": null,
+   "section_name": null,
    "target": "node",
    "target_id": "i:U2",
+   "uom": null,
    "value": "0.5882352941176470588235294118"
   },
   {
    "code": "draft_diary",
+   "item_name": null,
    "message": "05.05.2026 günlüğü gönderilmedi (taslak değer)",
+   "planned_qty": null,
+   "qty_cum": null,
+   "section_name": null,
    "target": "day",
    "target_id": "2026-05-05",
+   "uom": null,
    "value": null
   }
  ],

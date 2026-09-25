@@ -16,10 +16,24 @@
    "spent_day": "17.00"
   }
  ],
+ "calendar_end": "2026-05-29",
+ "calendar_start": "2026-05-04",
  "contractor_type": null,
  "day": "2026-05-05",
  "day_no": 2,
  "discipline_id": null,
+ "disciplines": [
+  {
+   "contractor_mix": "own",
+   "id": "d:U2",
+   "name": "Kaba İnşaat"
+  },
+  {
+   "contractor_mix": "subcon",
+   "id": "d:U4",
+   "name": "Duvar & Sıva"
+  }
+ ],
  "has_baseline": true,
  "has_field_data": true,
  "histogram": [
@@ -27,6 +41,8 @@
    "actual_people": "1",
    "is_future": false,
    "planned_people": "1.561264925925925925925925926",
+   "week_end": "2026-05-10",
+   "week_no": 1,
    "week_start": "2026-05-04",
    "working_days": 6
   },
@@ -34,6 +50,8 @@
    "actual_people": null,
    "is_future": true,
    "planned_people": "1.317157018518518518518518519",
+   "week_end": "2026-05-17",
+   "week_no": 2,
    "week_start": "2026-05-11",
    "working_days": 6
   },
@@ -41,6 +59,8 @@
    "actual_people": null,
    "is_future": true,
    "planned_people": "0.7026789814814814814814814815",
+   "week_end": "2026-05-24",
+   "week_no": 3,
    "week_start": "2026-05-18",
    "working_days": 6
   }
@@ -60,6 +80,18 @@
   "timesheet_total_day": "17",
   "undistributed_day": "0.00",
   "variance": "-0.08045675555555555555555555556"
+ },
+ "pf_bands": {
+  "cumulative": {
+   "green_from": "1.000",
+   "high_above": null,
+   "red_below": "0.950"
+  },
+  "daily": {
+   "green_from": "0.950",
+   "high_above": "1.050",
+   "red_below": "0.950"
+  }
  },
  "pf_trend": [
   {
@@ -247,157 +279,209 @@
    "day": "2026-05-04",
    "is_future": false,
    "planned_pct_cum": "0.0624506",
-   "progress_pct_cum": "0"
+   "progress_pct_cum": "0",
+   "status": "late",
+   "variance": "-0.0624506"
   },
   {
    "day": "2026-05-05",
    "is_future": false,
    "planned_pct_cum": "0.1249012",
-   "progress_pct_cum": "0.04444444444444444444444444444"
+   "progress_pct_cum": "0.04444444444444444444444444444",
+   "status": "late",
+   "variance": "-0.08045675555555555555555555556"
   },
   {
    "day": "2026-05-06",
    "is_future": true,
    "planned_pct_cum": "0.1873518",
-   "progress_pct_cum": null
+   "progress_pct_cum": null,
+   "status": null,
+   "variance": null
   },
   {
    "day": "2026-05-07",
    "is_future": true,
    "planned_pct_cum": "0.2498023955555555555555555556",
-   "progress_pct_cum": null
+   "progress_pct_cum": null,
+   "status": null,
+   "variance": null
   },
   {
    "day": "2026-05-08",
    "is_future": true,
    "planned_pct_cum": "0.3122529911111111111111111111",
-   "progress_pct_cum": null
+   "progress_pct_cum": null,
+   "status": null,
+   "variance": null
   },
   {
    "day": "2026-05-09",
    "is_future": true,
    "planned_pct_cum": "0.3747035822222222222222222222",
-   "progress_pct_cum": null
+   "progress_pct_cum": null,
+   "status": null,
+   "variance": null
   },
   {
    "day": "2026-05-10",
    "is_future": true,
    "planned_pct_cum": "0.3747035822222222222222222222",
-   "progress_pct_cum": null
+   "progress_pct_cum": null,
+   "status": null,
+   "variance": null
   },
   {
    "day": "2026-05-11",
    "is_future": true,
    "planned_pct_cum": "0.4371541733333333333333333333",
-   "progress_pct_cum": null
+   "progress_pct_cum": null,
+   "status": null,
+   "variance": null
   },
   {
    "day": "2026-05-12",
    "is_future": true,
    "planned_pct_cum": "0.4996047644444444444444444444",
-   "progress_pct_cum": null
+   "progress_pct_cum": null,
+   "status": null,
+   "variance": null
   },
   {
    "day": "2026-05-13",
    "is_future": true,
    "planned_pct_cum": "0.5620553555555555555555555556",
-   "progress_pct_cum": null
+   "progress_pct_cum": null,
+   "status": null,
+   "variance": null
   },
   {
    "day": "2026-05-14",
    "is_future": true,
    "planned_pct_cum": "0.6245059466666666666666666667",
-   "progress_pct_cum": null
+   "progress_pct_cum": null,
+   "status": null,
+   "variance": null
   },
   {
    "day": "2026-05-15",
    "is_future": true,
    "planned_pct_cum": "0.6869565333333333333333333333",
-   "progress_pct_cum": null
+   "progress_pct_cum": null,
+   "status": null,
+   "variance": null
   },
   {
    "day": "2026-05-16",
    "is_future": true,
    "planned_pct_cum": "0.6908212666666666666666666667",
-   "progress_pct_cum": null
+   "progress_pct_cum": null,
+   "status": null,
+   "variance": null
   },
   {
    "day": "2026-05-17",
    "is_future": true,
    "planned_pct_cum": "0.6908212666666666666666666667",
-   "progress_pct_cum": null
+   "progress_pct_cum": null,
+   "status": null,
+   "variance": null
   },
   {
    "day": "2026-05-18",
    "is_future": true,
    "planned_pct_cum": "0.7189284266666666666666666667",
-   "progress_pct_cum": null
+   "progress_pct_cum": null,
+   "status": null,
+   "variance": null
   },
   {
    "day": "2026-05-19",
    "is_future": true,
    "planned_pct_cum": "0.7470355866666666666666666667",
-   "progress_pct_cum": null
+   "progress_pct_cum": null,
+   "status": null,
+   "variance": null
   },
   {
    "day": "2026-05-20",
    "is_future": true,
    "planned_pct_cum": "0.7751427466666666666666666667",
-   "progress_pct_cum": null
+   "progress_pct_cum": null,
+   "status": null,
+   "variance": null
   },
   {
    "day": "2026-05-21",
    "is_future": true,
    "planned_pct_cum": "0.8032499066666666666666666667",
-   "progress_pct_cum": null
+   "progress_pct_cum": null,
+   "status": null,
+   "variance": null
   },
   {
    "day": "2026-05-22",
    "is_future": true,
    "planned_pct_cum": "0.8313570666666666666666666667",
-   "progress_pct_cum": null
+   "progress_pct_cum": null,
+   "status": null,
+   "variance": null
   },
   {
    "day": "2026-05-23",
    "is_future": true,
    "planned_pct_cum": "0.8594642222222222222222222222",
-   "progress_pct_cum": null
+   "progress_pct_cum": null,
+   "status": null,
+   "variance": null
   },
   {
    "day": "2026-05-24",
    "is_future": true,
    "planned_pct_cum": "0.8594642222222222222222222222",
-   "progress_pct_cum": null
+   "progress_pct_cum": null,
+   "status": null,
+   "variance": null
   },
   {
    "day": "2026-05-25",
    "is_future": true,
    "planned_pct_cum": "0.8875713777777777777777777778",
-   "progress_pct_cum": null
+   "progress_pct_cum": null,
+   "status": null,
+   "variance": null
   },
   {
    "day": "2026-05-26",
    "is_future": true,
    "planned_pct_cum": "0.9156785333333333333333333333",
-   "progress_pct_cum": null
+   "progress_pct_cum": null,
+   "status": null,
+   "variance": null
   },
   {
    "day": "2026-05-27",
    "is_future": true,
    "planned_pct_cum": "0.9437856888888888888888888889",
-   "progress_pct_cum": null
+   "progress_pct_cum": null,
+   "status": null,
+   "variance": null
   },
   {
    "day": "2026-05-28",
    "is_future": true,
    "planned_pct_cum": "0.9718928444444444444444444444",
-   "progress_pct_cum": null
+   "progress_pct_cum": null,
+   "status": null,
+   "variance": null
   },
   {
    "day": "2026-05-29",
    "is_future": true,
    "planned_pct_cum": "1",
-   "progress_pct_cum": null
+   "progress_pct_cum": null,
+   "status": null,
+   "variance": null
   }
  ],
  "standard_daily_hours": "9.00",
@@ -405,23 +489,38 @@
  "warnings": [
   {
    "code": "pf_out_of_band",
+   "item_name": null,
    "message": "01.001 Beton: PF bant dışı",
+   "planned_qty": null,
+   "qty_cum": null,
+   "section_name": null,
    "target": "node",
    "target_id": "i:U3",
+   "uom": null,
    "value": "0.5882352941176470588235294118"
   },
   {
    "code": "missing_diary",
+   "item_name": null,
    "message": "04.05.2026 günlüğü yok",
+   "planned_qty": null,
+   "qty_cum": null,
+   "section_name": null,
    "target": "day",
    "target_id": "2026-05-04",
+   "uom": null,
    "value": null
   },
   {
    "code": "draft_diary",
+   "item_name": null,
    "message": "05.05.2026 günlüğü gönderilmedi (taslak değer)",
+   "planned_qty": null,
+   "qty_cum": null,
+   "section_name": null,
    "target": "day",
    "target_id": "2026-05-05",
+   "uom": null,
    "value": null
   }
  ],

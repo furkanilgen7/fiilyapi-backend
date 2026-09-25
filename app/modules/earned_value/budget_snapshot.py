@@ -66,23 +66,36 @@ async def frozen_tree(
 ) -> BudgetTree:
     leaves = await load_leaves(session, rev.id)
     group_ids = {lf.boq_group_id for lf in leaves}
-    names = dict(
-        (
-            await session.execute(
-                select(BoqGroup.id, BoqGroup.name).where(BoqGroup.id.in_(group_ids))
-            )
-        ).all()
+    # Ad VE sira BOQ'tan canli (sira dondurulmaz; ad zaten canliydi). 🔴 Eskiden sira UUID
+    # metnine gore kuruluyordu → donmus gorunumde grup sirasi/kodu RASTGELE (§3.15 S1).
+    groups = (
+        {
+            gid: (name, sort_order)
+            for gid, name, sort_order in (
+                await session.execute(
+                    select(BoqGroup.id, BoqGroup.name, BoqGroup.sort_order).where(
+                        BoqGroup.id.in_(group_ids)
+                    )
+                )
+            ).all()
+        }
         if group_ids
-        else []
+        else {}
     )
-    boq = _snapshot_boq(leaves, names)
+    boq = _snapshot_boq(leaves, groups)
     inputs = await repo.load_inputs(session, rev.id)
     tree = build_tree(boq, disciplines, inputs, is_working_day)
     frozen = {leaf_node_id(lf.boq_item_id, lf.section_id): lf for lf in leaves}
     return BudgetTree(_stamp(tree, frozen), (), ())
 
 
-def _snapshot_boq(leaves: Sequence[EvBaselineLeaf], group_names: Mapping) -> BoqSnapshot:
+#: Silinmis BOQ grubunun sirasi: sona (ad ve kimlikle deterministik).
+_MISSING_GROUP_ORDER = 1_000_000
+
+
+def _snapshot_boq(
+    leaves: Sequence[EvBaselineLeaf], groups: Mapping[uuid.UUID, tuple[str, int]]
+) -> BoqSnapshot:
     items: dict[uuid.UUID, ItemInfo] = {}
     qty: dict[uuid.UUID, Decimal] = {}
     alloc: dict[uuid.UUID, dict[uuid.UUID, Decimal]] = {}
@@ -105,8 +118,13 @@ def _snapshot_boq(leaves: Sequence[EvBaselineLeaf], group_names: Mapping) -> Boq
             )
     return BoqSnapshot(
         groups=tuple(
-            GroupInfo(g, group_names.get(g, MISSING_GROUP_NAME), n)
-            for n, g in enumerate(sorted({i.group_id for i in items.values()}, key=str))
+            sorted(
+                (
+                    GroupInfo(g, *groups.get(g, (MISSING_GROUP_NAME, _MISSING_GROUP_ORDER)))
+                    for g in {i.group_id for i in items.values()}
+                ),
+                key=lambda gi: (gi.sort_order, gi.name, str(gi.id)),
+            )
         ),
         items=tuple(replace(i, quantity=qty[i.id]) for i in items.values()),
         allocations=alloc,

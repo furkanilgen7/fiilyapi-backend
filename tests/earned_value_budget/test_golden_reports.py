@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from datetime import date
 from pathlib import Path
 
 from .conftest import DAY
@@ -54,9 +55,19 @@ def _check(name: str, payload: object) -> None:
     assert got == json.loads(path.read_text()), f"{name}: golden farkı — elle incele"
 
 
+#: QURR takvimi `as_of = bugun` ile kurar (takvim bugune uzar → `calendar_end`, `last_week_no`
+#: bugune bagli). Golden tarih-bagimsiz olsun diye "bugun" sabitlenir (hafta 1'in sonu).
+FIXED_TODAY = date(2026, 5, 10)
+
+
 async def test_golden_daily_weekly_panel(
-    client, saha, admin, santiye, boq, baseline, saha_gunu
+    client, saha, admin, santiye, boq, baseline, saha_gunu, monkeypatch
 ) -> None:
+    from app.core import timezone
+    from app.modules.earned_value import report_qurr
+
+    monkeypatch.setattr(timezone, "today", lambda: FIXED_TODAY)
+    monkeypatch.setattr(report_qurr, "today", lambda: FIXED_TODAY)
     await _allocate(client, saha, santiye, boq, saha_gunu)
     daily = await client.get(
         _rep(santiye, "/daily"), headers=admin, params={"date": DAY.isoformat()}
