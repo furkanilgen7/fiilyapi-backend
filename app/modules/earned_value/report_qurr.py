@@ -262,6 +262,23 @@ def build_rows(
     return rows, totals
 
 
+def tree_lines(report: QurrReport) -> list[QurrRow | QurrTotal]:
+    """`build_rows` agacini TEK duz listeye acar (EV-BORC-7, Excel): her grup toplaminin
+    ONUNE o grubun kalemleri. Yeniden SIRALAMAZ — `rows` ve `totals` zaten `build_rows`un
+    agac sirasindadir; kalem gruba `parent_id` (S1) ile baglanir."""
+    by_group: dict[str | None, list[QurrRow]] = {}
+    for row in report.rows:
+        by_group.setdefault(row.parent_id, []).append(row)
+    lines: list[QurrRow | QurrTotal] = []
+    for total in report.totals:
+        if total.kind == "group":
+            lines += by_group.pop(total.node_id, [])
+        lines.append(total)
+    if by_group:
+        raise ValueError(f"QURR: grup toplami olmayan kalem(ler): {sorted(map(str, by_group))}")
+    return lines
+
+
 def _kpis(report: DailyReport) -> list[KpiPf]:
     out = []
     for kind, scope in (
