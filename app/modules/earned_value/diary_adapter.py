@@ -1,13 +1,18 @@
 """🔶 PLANLAMA ↔ SANTIYE GUNLUGU ADAPTORU — PLANLAMA-SPEC §2.7'nin TEK ISARETLI dosyasi.
 
 Kacinilmaz iki temas burada toplanir, baska yerde YOKTUR:
-1. **Gunluk "Gonder" on-kosulu** (§2, §3.12 B2-3/B2-4/B2-8) — `submit_guard`.
-2. **Gunluk ekranindaki saat dagitim bolumu** (§2) — `load_day` / `save_allocation`.
-Ayrica rapor onayinin gunluk + puantaj KILIDI (§2, B2-6) — `day_lock`.
+1. **Gunluk "Gonder" on-kosulu** (§2, §3.12 B2-3/B2-4/B2-8) — `submit_blockers`
+   (kodlu `SubmitReason`).
+2. **Gunluk ekranindaki saat dagitim bolumu** (§2) — kaynak `source_rows`, kayit
+   `save_allocation`; gorunum `day_view.build_view`.
+Ayrica rapor onayinin gunluk + puantaj KILIDI (§2, B2-6) — `day_lock` (+ kilidi koyan
+rapor tarihi `lock_report_date`).
 
-Cekirdek bu dosyayi GORMEZ: `app.core.day_hooks` portunu cagirir, bu dosya modul
-yuklenince (`register()` → `earned_value.router` import zinciri) porta kaydolur. Modul
-kurulu degilse port bos kalir ve cekirdek bugunku gibi calisir.
+Cekirdek bu dosyayi GORMEZ: `app.core.day_hooks` portunu cagirir, bu dosya `register()`
+ile porta kaydolur. 🔴 Kayit YERI `day_router.py` import yan etkisidir (`adp.register()`);
+day_router kaydi dusurulurse cekirdek kilitsiz/on-kosulsuz calisir — bekcisi
+`tests/earned_value_budget/test_day_integration.py` (port kayitli). Modul kurulu degilse port
+bos kalir ve cekirdek bugunku gibi calisir.
 
 ## EV kurallari YALNIZ aktif baseline'li santiyede (B2-3)
 Donmus baseline yoksa Gonder on-kosulu YOKTUR ve dagitim yazilamaz (kod agaci yok).

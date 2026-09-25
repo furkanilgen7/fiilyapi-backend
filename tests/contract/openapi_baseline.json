@@ -47414,7 +47414,7 @@
     },
     "/earned-value/catalog": {
       "get": {
-        "description": "Birim oran katalogu (KAT). `q` is tipi adinda harf duyarsiz arar.\n\n`actual` (gerceklesen) ve `diff_pct` K4 kuralindadir; saha verisi PLN-B2'de\ndogdugu icin B1'de her satirda bostur (`catalog_service.catalog_actuals`).",
+        "description": "Birim oran katalogu (KAT). `q` is tipi adinda harf duyarsiz arar.\n\n`actual` (gerceklesen) ve `diff_pct` K4 kuralindadir: TAMAMLANMIS santiyelerin miktar\nagirlikli ortalamasi (`catalog_service.catalog_actuals`); tamamlanmis santiye verisi\nyoksa bostur.",
         "operationId": "list_catalog_endpoint_earned_value_catalog_get",
         "parameters": [
           {
@@ -47495,7 +47495,7 @@
         ]
       },
       "post": {
-        "description": "Katalog is tipi ekler. (disiplin, ad, birim) benzersiz → 409 `CATALOG_ITEM_TAKEN`.",
+        "description": "Katalog is tipi ekler. (disiplin, ad, birim) benzersiz — ad/birim NORMALIZE\nkarsilastirilir (buyuk/kucuk harf, İ/I, bosluk) → 409 `CATALOG_ITEM_TAKEN_AS`.",
         "operationId": "create_catalog_item_endpoint_earned_value_catalog_post",
         "requestBody": {
           "content": {
@@ -47613,7 +47613,7 @@
     },
     "/earned-value/catalog/{item_id}/adopt-actual": {
       "post": {
-        "description": "KAT \"Gerceklesen standart yap\": gerceklesen ortalama yoksa 409 `CATALOG_NO_ACTUAL`.\n\n⚠️ B1'de gerceklesen hic yoktur → bu uc PLN-B3'e kadar HER ZAMAN 409 doner.",
+        "description": "KAT \"Gerceklesen standart yap\": gerceklesen ortalama yoksa 409 `CATALOG_NO_ACTUAL`.\n\nGerceklesen = TAMAMLANMIS santiyelerin miktar agirlikli ortalamasi (K4; PLN-B3'ten beri\n`actuals.completed_site_actuals`); hic tamamlanmis santiye verisi yoksa 409.",
         "operationId": "adopt_actual_endpoint_earned_value_catalog__item_id__adopt_actual_post",
         "parameters": [
           {

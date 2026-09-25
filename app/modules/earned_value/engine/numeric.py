@@ -30,9 +30,11 @@ PRORATA_QUANTUM = Decimal("1e-12")
 
 #: Yayma gun payinin sabit kuantumu (a-s). Gerekce: yaprak × gun egrisi DB'de
 #: `Numeric(24, 8)` kolonuna (donmus baseline snapshot'i, K8) BIREBIR yazilir: 1e-6
-#: kuantumlu paylar ve son gunun KALANI (butce − Σ pay; butce = qty × oran, <= 7 ondalik)
-#: kolonun 8 ondaligina kayipsiz sigar → okunan egri motorun urettigiyle ayni, Σ pay ==
-#: butce DB'den sonra da tutar. Kalan son gune verilir (`spread.spread_leaf`).
+#: kuantumlu paylar ve kuantum-alti ARTIK (butce − kuantuma inmis butce; butce = qty × oran,
+#: <= 7 ondalik) kolonun 8 ondaligina kayipsiz sigar → okunan egri motorun urettigiyle ayni,
+#: Σ pay == butce DB'den sonra da tutar. Paylastirma Hamilton (en buyuk kalan,
+#: `policy.largest_remainder`): eksik kuantumlar en buyuk kesirli gunlere, artik EN BUYUK
+#: paya verilir (`spread.spread_leaf`).
 #: 1e-6 a-s ≈ 3,6 ms: sunumda hicbir basamagi degistirmez.
 SPREAD_QUANTUM = Decimal("0.000001")
 

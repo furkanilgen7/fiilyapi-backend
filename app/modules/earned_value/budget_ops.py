@@ -5,7 +5,6 @@ Hepsi `budget_service.load_state` agacini kullanir — kural kopyasi YOK.
 
 from __future__ import annotations
 
-import re
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -35,6 +34,7 @@ from app.modules.earned_value.engine import (
     compute_spread_preview,
     preview_from_curves,
 )
+from app.modules.earned_value.labels import normalize_label  # tek kural (katalog tekilligi de)
 from app.modules.earned_value.models import (
     EvCatalogItem,
     EvItemSettings,
@@ -48,17 +48,6 @@ from app.modules.users.models import User
 ZERO = Decimal(0)
 
 # ------------------------------------------------------------ katalog eslesmesi
-
-
-def normalize_label(text: str) -> str:
-    """Ad/birim karsilastirmasi: Turkce harf duzeltmesi + ust simge + bosluk.
-
-    🔴 `"İ".casefold()` "i̇" (i + birlesik nokta) verir, "i" DEGIL — Turkce bir ad
-    kendi kucuk harfli yaziminla eslesmezdi. Once I/İ elle cevrilir.
-    """
-    s = text.replace("İ", "i").replace("I", "ı").lower()
-    s = s.replace("³", "3").replace("²", "2")
-    return re.sub(r"\s+", " ", s).strip()
 
 
 @dataclass(frozen=True, slots=True)

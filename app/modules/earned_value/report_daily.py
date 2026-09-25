@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ConflictError, EarnedValueValidationError
 from app.modules.earned_value import diary_adapter as adp
 from app.modules.earned_value import report_warnings as rw
+from app.modules.earned_value.access import assert_site_writable
 from app.modules.earned_value.engine import (
     DailyReport as EngineReport,
 )
@@ -29,6 +30,7 @@ from app.modules.earned_value.engine import (
     compute_series,
 )
 from app.modules.earned_value.ev_input import SiteInput, build_site_input
+from app.modules.earned_value.guards import SITE_COMPLETED_BUDGET_READ_ONLY
 from app.modules.earned_value.models import EvReportApproval, EvReportSnapshot
 from app.modules.earned_value.report_qurr import pf_bands_out, revision_ref
 from app.modules.earned_value.schemas_reports import (
@@ -294,6 +296,11 @@ async def build_daily(session: AsyncSession, site_id: uuid.UUID, day: date) -> D
 async def approve(
     session: AsyncSession, site_id: uuid.UUID, day: date, actor: User
 ) -> ApprovalResult:
+    # EV-BORC-5: servis içi TEK kural — şantiye satırı `FOR UPDATE` + durum kilit ALTINDA
+    # (uç bağımlılığı kilitsiz erken kontroldür). Kilit iki işi görür: tamamlanmaya karşı
+    # yarışta onay geçmez; iki eşzamanlı onay sıraya girer → sürüm (max+1) kilit altında
+    # hesaplanır, ikincisi UQ'ya çarpıp genel 409 almaz (bekçi test_evborc5_approve_lock).
+    await assert_site_writable(session, site_id, message=SITE_COMPLETED_BUDGET_READ_ONLY)
     live = await build_live(session, site_id, day)
     if live.status == "not_generated":
         raise ConflictError(NOT_GENERATED)

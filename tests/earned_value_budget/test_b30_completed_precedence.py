@@ -131,6 +131,13 @@ _HER_YAZMA = pytest.mark.parametrize(
 _GOVDESIZ: list[tuple[str, _Istek]] = [
     ("taslak-ac", lambda c, h, s, _: c.post(_budget(s, "/revisions"), headers=h)),
     ("fill-from-catalog", lambda c, h, s, _: c.post(_budget(s, "/fill-from-catalog"), headers=h)),
+    # EV-BORC-5: 13. site yazması — rapor onayı (APPROVE; aynı ekran metni)
+    (
+        "rapor-onayi",
+        lambda c, h, s, _: c.post(
+            f"/sites/{s.id}/earned-value/reports/daily/{DAY.isoformat()}/approve", headers=h
+        ),
+    ),
 ]
 
 

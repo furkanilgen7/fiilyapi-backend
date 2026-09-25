@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, DuplicateError, NotFoundError, RelatedRecordsExistError
 from app.modules.earned_value import guards
+from app.modules.earned_value.labels import normalize_label
 from app.modules.earned_value.models import (
     RATE_PRECISION,
     EvBaselineLeaf,
@@ -299,15 +300,20 @@ async def _assert_item_free(
     uom: str,
     exclude_id: uuid.UUID | None = None,
 ) -> None:
-    stmt = select(EvCatalogItem.id).where(
-        EvCatalogItem.discipline_id == discipline_id,
-        EvCatalogItem.name == name,
-        EvCatalogItem.uom == uom,
+    """Tekillik ONERI ESLESMESIYLE AYNI kuralla (`labels.normalize_label`: büyük/küçük harf,
+    Türkçe İ/I, üst simge, boşluk) — EV-BORC-5. DB UQ'su birebir kalir (normalize kolon
+    migration'i YOK: canli veride carpisan eski kayit olabilir, olcmeden UQ kurulmaz)."""
+    key = (normalize_label(name), normalize_label(uom))
+    stmt = select(EvCatalogItem.name, EvCatalogItem.uom).where(
+        EvCatalogItem.discipline_id == discipline_id
     )
     if exclude_id is not None:
         stmt = stmt.where(EvCatalogItem.id != exclude_id)
-    if (await session.execute(stmt.limit(1))).first() is not None:
-        raise DuplicateError(guards.CATALOG_ITEM_TAKEN)
+    for other_name, other_uom in (await session.execute(stmt)).all():
+        if (normalize_label(other_name), normalize_label(other_uom)) == key:
+            raise DuplicateError(
+                guards.CATALOG_ITEM_TAKEN_AS.format(name=other_name, uom=other_uom)
+            )
 
 
 async def create_catalog_item(session: AsyncSession, data: CatalogItemCreate) -> CatalogItemRow:
@@ -353,9 +359,8 @@ class AdoptResult:
 async def adopt_actual(session: AsyncSession, item_id: uuid.UUID) -> AdoptResult:
     """KAT "Gerceklesen standart yap": standart ← gerceklesen ortalama (K4).
 
-    Gerceklesen yoksa 409 — B1'de gerceklesen hic yoktur (`catalog_actuals`), yani
-    bu uc B3'e kadar HER ZAMAN 409 doner. Mevcut butceler etkilenmez (oran atama
-    aninda kopyalanir, K4).
+    Gerceklesen yoksa (hic tamamlanmis santiye verisi yok, `catalog_actuals`) 409. Mevcut
+    butceler etkilenmez (oran atama aninda kopyalanir, K4).
     """
     item = await get_catalog_item(session, item_id)
     actual = (await catalog_actuals(session, [item.id])).get(item.id)

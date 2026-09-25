@@ -23,9 +23,10 @@ benzersizlik iki kismi indeksle kurulur (PG'de `NULL <> NULL`).
 
 ## Sayi hassasiyeti
 Oran Numeric(12,4) · miktar BOQ gibi Numeric(14,3) → butce = qty × oran 7 ondalik
-tasir. Egri kolonu Numeric(24,8): yayma kuantumu (engine) + son gune verilen KALAN
-(butcenin kendi hassasiyeti) SATIR KAYBI OLMADAN yazilir — "Σ egri = butce" DB'den
-okununca da `==` tutar (bekcisi `test_ev_models.py`).
+tasir. Egri kolonu Numeric(24,8): yayma kuantumu (engine) + en buyuk paya verilen
+kuantum-alti ARTIK (Hamilton, `policy.largest_remainder`; butcenin kendi hassasiyeti)
+SATIR KAYBI OLMADAN yazilir — "Σ egri = butce" DB'den okununca da `==` tutar
+(bekcisi `tests/earned_value_budget/test_ev_models.py`).
 """
 
 from __future__ import annotations
@@ -59,7 +60,8 @@ from app.core.db import Base
 from app.modules.earned_value.engine import ContractorType
 
 #: Dagilim tipleri (B1-1/B1-2). DB enum'u motorun `Distribution` enum'undan BAGIMSIZ
-#: tanimlanir (model motor surumune kilitlenmesin); esitligi `test_ev_models.py` cviler.
+#: tanimlanir (model motor surumune kilitlenmesin); esitligi
+#: `tests/earned_value_budget/test_ev_models.py` civiler.
 DISTRIBUTION_VALUES = ("linear", "bell", "front", "back")
 DEFAULT_DISTRIBUTION = "linear"
 
