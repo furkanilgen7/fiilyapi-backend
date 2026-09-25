@@ -270,31 +270,35 @@ def _assert_odenebilir_personel(existing: list[TimesheetEntry], plan: _Plan) -> 
         person = plan.personnel[cell.personnel_id]
         if person.is_active and not person.is_draft:
             continue
-        row = by_key.get(key)
-        if (
-            row is not None
-            and row.hours == cell.hours
-            and row.code == cell.code
-            and row.section_id == cell.section_id
-        ):
+        if _cell_unchanged(by_key.get(key), cell):
             continue
         raise SiteValidationError(guards.personnel_not_payable(person.full_name))
 
 
+def _cell_unchanged(row: TimesheetEntry | None, cell: TimesheetCellInput) -> bool:
+    """ "Hücre değişmedi mi?"nin TEK kopyası (EV-BORC-6): `_apply`ın yazdığı ÜÇ eksen
+    (`hours` · `code` · `section_id`) mevcut satırla birebir aynı.
+
+    Pasif/taslak personel kapısı (`_assert_odenebilir_personel`) ve gün kilidi
+    (`_changed_days`) bu yüklemi PAYLAŞIR: iki ayrı kopya tutulsaydı `_apply`a yeni bir
+    alan eklendiğinde biri güncellenir, diğeri o alandaki değişikliği görmez ve kapı
+    sızardı. Satır yoksa (yeni hücre) DEĞİŞMİŞ sayılır.
+    """
+    return (
+        row is not None
+        and row.hours == cell.hours
+        and row.code == cell.code
+        and row.section_id == cell.section_id
+    )
+
+
 def _changed_days(existing: list[TimesheetEntry], plan: _Plan) -> set[date]:
     """Gelen ≠ mevcut olan günler: yeni hücre · silinen hücre · `_apply`ın yazdığı
-    ÜÇ eksenden (`hours` · `code` · `section_id`) birinde fark
-    (`_assert_odenebilir_personel` ile AYNI eksenler)."""
+    üç eksenden birinde fark — yüklem `_cell_unchanged` (pasif personel kapısıyla ORTAK)."""
     by_key = {guards.cell_key(row.personnel_id, row.work_date): row for row in existing}
     changed: set[date] = set()
     for key, cell in plan.cells.items():
-        row = by_key.get(key)
-        if (
-            row is None
-            or row.hours != cell.hours
-            or row.code != cell.code
-            or row.section_id != cell.section_id
-        ):
+        if not _cell_unchanged(by_key.get(key), cell):
             changed.add(cell.work_date)
     changed.update(row.work_date for key, row in by_key.items() if key not in plan.cells)
     return changed

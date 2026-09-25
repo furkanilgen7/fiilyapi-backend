@@ -279,9 +279,10 @@ class SiteDiaryLine(Base):
     # (poz, NULL)a cevirir ve ayni kayittaki Bolumsuz satirla
     # `uq_site_diary_lines_item_nosection` uzerinde CAKISIRDI (IntegrityError);
     # cakismasa bile S1'de yapilan uretim sessizce "Bolumsuz"a tasinirdi.
-    # CASCADE gonderilmis gunlugun miktarini silerdi. Bolum silme yolunda
-    # "iliskili kayit var" korkulugu YOK (`sites/service/deletes.py::delete_section`
-    # bilincli kosulsuz) → bu gecici karardir, CEO sorusu PLN-B2.1 raporunda.
+    # CASCADE gonderilmis gunlugun miktarini silerdi. Bolum silme yolunda korkuluk
+    # VAR (PLN-B2.10, CEO karari): `sites/service/deletes.py::delete_section` bolume
+    # yazilmis miktar satiri varken 409 verir (`section_has_diary_lines`, eyleme donuk
+    # metin); bu RESTRICT ikinci katmandir. (EV-BORC-6: eski "korkuluk YOK" notu bayatti.)
     section_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("sections.id", ondelete="RESTRICT"),
