@@ -57,6 +57,9 @@ from app.modules.site_diary.models import DiaryStatus
 Range = Literal["4w", "3m", "all"]
 ZERO = Decimal(0)
 NO_DISCIPLINE = "Disiplin bu şantiyenin aktif baseline'ında yok"
+# EV-BORC-9 (spec S32, kullanıcı 2026-09-26): mockup "Planlama - Panel" son satırının adı
+# BİREBİR (Ö:542 civarı). Tek yer — değiştirilecekse yalnız burası.
+NON_DIRECT_ROW_NAME = "Genel / Dolaylı · bütçe dışı"
 BAR_DAYS = 28
 # range → (S-egrisi geri, ileri gun) · PF trendi gun · histogram (geri, ileri hafta)
 _CURVE = {"4w": (27, 28), "3m": (83, 42)}
@@ -124,7 +127,13 @@ def _week_sums(s: ScopeSeries, start: date, end: date) -> tuple[Decimal, Decimal
 
 
 def _series_row(
-    site: SiteInput, s: ScopeSeries, day: date, week_start: date, scope: str, name: str
+    site: SiteInput,
+    s: ScopeSeries,
+    day: date,
+    week_start: date,
+    scope: str,
+    name: str,
+    indirect_item_names: list[str] | None = None,
 ) -> PanelRow:
     p = s.at(day)
     pf_week = _pf(*_week_sums(s, week_start, day))
@@ -148,7 +157,32 @@ def _series_row(
         pf_week=pf_week,
         pf_cum_band=pf_band(p.pf_cum, bands),
         pf_week_band=pf_band(pf_week, bands),
+        indirect_item_names=indirect_item_names or [],
     )
+
+
+def _indirect_item_names(site: SiteInput, contractor: ContractorType | None) -> list[str]:
+    """EV-BORC-9: `non_direct` satırının alt etiketi — dolaylı kalem adları.
+
+    Ağacın MEVCUT sıralı gezinmesi (`site.tree` disiplin → grup → kalem; bkz.
+    `_discipline_rows`/`_item_rows`); ikinci bir sıralama anahtarı YOK. Satırın kendi
+    kapsamıyla (contractor filtresi dahil) tutarlı — `main`/`non_direct` scope'unun
+    kullandığı AYNI `contractor` parametresiyle süzülür. Ad tekrarında ilk görünüş korunur.
+    """
+    seen: set[str] = set()
+    names: list[str] = []
+    for d in site.tree.disciplines:
+        for g in d.groups:
+            for i in g.items:
+                if i.is_direct:
+                    continue
+                if contractor is not None and i.contractor_type is not contractor:
+                    continue
+                if i.description in seen:
+                    continue
+                seen.add(i.description)
+                names.append(i.description)
+    return names
 
 
 def _kpi(site: SiteInput, s: ScopeSeries, day: date, week_start: date, footer) -> PanelKpi:  # noqa: ANN001
@@ -424,7 +458,17 @@ async def build_panel(session: AsyncSession, site_id: uuid.UUID, q: PanelQuery) 
     rows += discipline_rows
     if q.discipline_id is None:
         nd = result.get(non_direct)
-        rows.append(_series_row(site, nd, q.day, pos.week_start, "non_direct", "Doğrudan olmayan"))
+        rows.append(
+            _series_row(
+                site,
+                nd,
+                q.day,
+                pos.week_start,
+                "non_direct",
+                NON_DIRECT_ROW_NAME,
+                _indirect_item_names(site, q.contractor),
+            )
+        )
     if main.budget_mhr == 0 and not discipline_rows:
         rows = []  # mockup: "Seçilen filtrede kalem yok"
     return PanelReport(

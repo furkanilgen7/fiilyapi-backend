@@ -368,6 +368,9 @@ class PanelRow(BaseModel):
     pf_week: EvDecimal | None
     pf_cum_band: PfBand | None
     pf_week_band: PfBand | None
+    #: EV-BORC-9 (spec S32, mockup "Planlama - Panel"): yalnız `non_direct` satırında dolu —
+    #: dolaylı (is_direct=False) kalemlerin adları, BOQ sırasında, ilk görünüşle tekilleştirilmiş.
+    indirect_item_names: list[str] = Field(default_factory=list)
 
 
 class PanelDiscipline(BaseModel):

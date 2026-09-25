@@ -17695,6 +17695,13 @@
             ],
             "title": "Earned Cum"
           },
+          "indirect_item_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Indirect Item Names",
+            "type": "array"
+          },
           "name": {
             "title": "Name",
             "type": "string"
