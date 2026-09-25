@@ -32,6 +32,15 @@ class DiarySubmitBlockedError(DomainError):
         self.reasons = reasons
 
 
+class DaysLockedError(ConflictError):
+    """409 + `locked_days` (PLN-B2.x-B, spec §3.14): istemci kilitli gunleri salt okunur
+    basabilsin diye yanit KILITLI GUN LISTESINI tasir (`exception_handlers`)."""
+
+    def __init__(self, message: str, locked: list[date]) -> None:
+        super().__init__(message)
+        self.locked_days = locked
+
+
 #: Kilitli gun icin kullaniciya gosterilecek metni (kilitliyse) ya da None doner.
 DayLockCheck = Callable[[AsyncSession, uuid.UUID, date], Awaitable[str | None]]
 
@@ -80,16 +89,40 @@ def restore(snapshot: tuple[tuple[DayLockCheck, ...], tuple[SubmitGuard, ...]]) 
 
 
 async def assert_days_unlocked(
-    session: AsyncSession, site_id: uuid.UUID, days: Iterable[date]
+    session: AsyncSession,
+    site_id: uuid.UUID,
+    days: Iterable[date],
+    *,
+    report_days: Iterable[date] | None = None,
 ) -> None:
-    """Gunlerden biri kilitliyse 409 (`ConflictError`, durum engeli). Kayit yoksa no-op."""
+    """Gunlerden biri kilitliyse 409 (`DaysLockedError`, durum engeli). Kayit yoksa no-op.
+
+    Yanitin `locked_days`i `report_days` (verilmisse; orn. puantaj haftasinin 7 gunu)
+    icindeki, yoksa `days` icindeki kilitli gunlerdir."""
     if not _day_locks:
         return
     for day in sorted(set(days)):
         for check in _day_locks:
             message = await check(session, site_id, day)
             if message:
-                raise ConflictError(message)
+                scope = days if report_days is None else report_days
+                raise DaysLockedError(message, await locked_days(session, site_id, scope))
+
+
+async def locked_days(
+    session: AsyncSession, site_id: uuid.UUID, days: Iterable[date]
+) -> list[date]:
+    """Kilitli gunlerin listesi (sirali) — ekran bilgisi (PLN-B2.x-B: puantaj haftasi).
+    Ayni `DayLockCheck` kayitlarini sorar; kayit YOKSA bos liste (modulsuz kurulum)."""
+    if not _day_locks:
+        return []
+    out = []
+    for day in sorted(set(days)):
+        for check in _day_locks:
+            if await check(session, site_id, day):
+                out.append(day)
+                break
+    return out
 
 
 async def assert_submit_allowed(session: AsyncSession, ctx: SubmitContext) -> None:

@@ -176,12 +176,10 @@ async def test_liste_gerceklesen_varsa_diff_orani(
     assert row["actual"]["sites"][0]["site_name"] == "Güneşkent B-Blok"
 
 
-def test_catalog_actuals_b1de_bos_doner() -> None:
-    """B3 doldurana kadar sozlesme: her kimlik icin bos gerceklesen."""
-    import asyncio
-
+async def test_catalog_actuals_tamamlanmis_santiye_yoksa_bos(seeded_db) -> None:
+    """K4: gerceklesen yalniz TAMAMLANMIS santiyeden gelir; yoksa her kimlik icin bos."""
     ids = [uuid.uuid4(), uuid.uuid4()]
-    result = asyncio.run(catalog_service.catalog_actuals(None, ids))  # type: ignore[arg-type]
+    result = await catalog_service.catalog_actuals(seeded_db, ids)
     assert set(result) == set(ids)
     for actual in result.values():
         assert (actual.avg, actual.min, actual.max, actual.site_count, actual.sites) == (

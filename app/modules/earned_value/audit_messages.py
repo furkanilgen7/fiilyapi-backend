@@ -97,3 +97,10 @@ def day_unlocked(project_name: str, site_name: str, day: date, reason: str) -> s
         f"Gün kilidi açıldı: {_where(project_name, site_name)} · "
         f"{day.strftime('%d.%m.%Y')} · gerekçe: {reason}"
     )
+
+
+def report_approved(project_name: str, site_name: str, day: date, version: int) -> str:
+    return (
+        f"Günlük ilerleme raporu onaylandı ve gün kilitlendi: {_where(project_name, site_name)} · "
+        f"{day.strftime('%d.%m.%Y')} · sürüm {version}"
+    )

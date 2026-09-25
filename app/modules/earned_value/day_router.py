@@ -24,7 +24,15 @@ from app.modules.audit.service import record_audit
 from app.modules.earned_value import audit_messages as msg
 from app.modules.earned_value import day_view
 from app.modules.earned_value import diary_adapter as adp
-from app.modules.earned_value.access import APPROVE, VIEW, WRITE, visible_site
+from app.modules.earned_value.access import (
+    APPROVE,
+    VIEW,
+    WRITE,
+    SiteContext,
+    completed_site_guard,
+    visible_site,
+)
+from app.modules.earned_value.guards import SITE_COMPLETED_DAY_READ_ONLY
 from app.modules.earned_value.schemas_day import (
     AllocationSave,
     CodeIn,
@@ -44,6 +52,8 @@ router = APIRouter(tags=["earned-value"], responses=COMMON_ERROR_RESPONSES)
 
 _User = Annotated[User, Depends(get_current_user)]
 _Db = Annotated[AsyncSession, Depends(get_db)]
+#: Yazma uclari: gorunmeyen 404 → tamamlanmis santiye 409 → govde 422 (PLN-B3.0).
+_Writable = Annotated[SiteContext, Depends(completed_site_guard(SITE_COMPLETED_DAY_READ_ONLY))]
 _DAY = "/sites/{site_id}/earned-value/days/{day}"
 
 
@@ -66,10 +76,15 @@ async def get_day(site_id: uuid.UUID, day: date, user: _User, session: _Db) -> D
 
 @router.put(f"{_DAY}/allocation", response_model=DayView, dependencies=[WRITE])
 async def put_day_allocation(
-    request: Request, site_id: uuid.UUID, day: date, body: AllocationSave, user: _User, session: _Db
+    request: Request,
+    site_id: uuid.UUID,
+    ctx: _Writable,
+    day: date,
+    body: AllocationSave,
+    user: _User,
+    session: _Db,
 ) -> DayView:
     """Gunun saat dagitimi — TAM DEGISTIRME. Kilitli gun 409 · baseline yok 409."""
-    ctx = await visible_site(session, user, site_id)
     await adp.save_allocation(
         session,
         site_id,
@@ -126,10 +141,15 @@ async def get_previous_allocation(
 
 @router.post(f"{_DAY}/unlock", response_model=LockOut, dependencies=[APPROVE])
 async def unlock_day(
-    request: Request, site_id: uuid.UUID, day: date, body: UnlockBody, user: _User, session: _Db
+    request: Request,
+    site_id: uuid.UUID,
+    ctx: _Writable,
+    day: date,
+    body: UnlockBody,
+    user: _User,
+    session: _Db,
 ) -> LockOut:
     """Gun duzeyi kilit istisnasi (B2-6 b) — gerekceli; kilitli degilse 409."""
-    ctx = await visible_site(session, user, site_id)
     await adp.unlock_day(session, site_id, day, user, body.reason)
     await record_audit(
         session,

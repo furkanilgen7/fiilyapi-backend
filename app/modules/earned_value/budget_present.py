@@ -80,6 +80,7 @@ def _leaf(lf: LeafNode, total: Decimal) -> LeafOut:
         item_id=lf.item_id,
         section_id=lf.section_id,
         section_name=lf.section_name,
+        section_code=lf.section_code,
         planned_qty=lf.planned_qty,
         unit_mhr=lf.unit_mhr,
         rate_source=lf.rate_source,
@@ -123,6 +124,7 @@ def _group(g: GroupNode, total: Decimal) -> GroupOut:
     return GroupOut(
         id=g.id,
         group_id=g.group_id,
+        code=g.code,
         name=g.name,
         discipline_id=g.discipline_id,
         budget_mhr=_sum(leaves),
@@ -154,6 +156,14 @@ def _findings(items: Iterable[Finding]) -> list[FindingOut]:
     return [FindingOut(code=f.code, count=f.count, node_ids=list(f.node_ids)) for f in items]
 
 
+#: CEO B3 eki: "taslak yok" durumu da bulgu KODU (istemci turetmesin).
+BLOCKER_NO_DRAFT = "no_draft"
+
+
+def _no_draft(state: BudgetState) -> list[FindingOut]:
+    return [FindingOut(code=BLOCKER_NO_DRAFT, count=1, node_ids=[])]
+
+
 def totals(tree: BudgetTree) -> BudgetTotals:
     leaves = [lf for *_, lf in tree.leaves()]
     return BudgetTotals(
@@ -170,11 +180,11 @@ async def budget_view(session: AsyncSession, state: BudgetState) -> BudgetView:
     total = t.direct_budget_mhr
     return BudgetView(
         revision=await revision_out(session, state.revision) if state.revision else None,
-        editable=state.editable,
+        editable=state.editable and not state.site_completed,
         boq_synced_at=state.boq_synced_at,
         totals=t,
         disciplines=[_discipline(d, total) for d in state.tree.disciplines],
-        freeze_blockers=_findings(state.tree.blockers) if state.editable else [],
+        freeze_blockers=_findings(state.tree.blockers) if state.editable else _no_draft(state),
         freeze_warnings=_findings(state.tree.warnings) if state.editable else [],
     )
 

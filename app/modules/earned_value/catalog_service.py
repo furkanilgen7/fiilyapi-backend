@@ -38,6 +38,7 @@ from app.modules.earned_value.models import (
 )
 from app.modules.earned_value.schemas_catalog import (
     CatalogActual,
+    CatalogActualSite,
     CatalogItemCreate,
     CatalogItemRead,
     CatalogItemUpdate,
@@ -185,13 +186,39 @@ async def catalog_actuals(
     Σspent / Σqty'dir (santiyeler arasi basit ortalama DEGIL); min/max santiye
     oranlaridir; `sites` ortalamaya giren santiyelerdir.
 
-    ⚠️ B1'de BILEREK BOS doner: gerceklesenin girdisi (kalem × bolum gunluk miktari
-    + is koduna dagitilmis saat) saha verisidir ve PLN-B2'de dogar. B3 bu fonksiyonu
-    DOLDURUR; imzasi ve donus sekli sabittir, cagiranlar (liste, "gerceklesen standart
-    yap") degismez. Bugun her kalem: avg/min/max `None`, `site_count` 0, `sites` [].
+    B3: `actuals.completed_site_actuals` motoru tamamlanmis santiyelerde kosar (geç import:
+    `actuals` → `ev_input` → `settings_service` zinciri bu modulle dongu kurmasin).
     """
-    del session  # B3'te okunacak; bugun kullanilmiyor.
-    return {item_id: _empty_actual() for item_id in item_ids}
+    from app.modules.earned_value.actuals import completed_site_actuals
+
+    ids = list(item_ids)
+    per_item = await completed_site_actuals(session, ids)
+    out: dict[uuid.UUID, CatalogActual] = {}
+    for item_id in ids:
+        sites = per_item.get(item_id, [])
+        if not sites:
+            out[item_id] = _empty_actual()
+            continue
+        qty = sum((s.qty for s in sites), Decimal(0))
+        spent = sum((s.spent for s in sites), Decimal(0))
+        rates = [s.rate for s in sites]
+        out[item_id] = CatalogActual(
+            avg=spent / qty,
+            min=min(rates),
+            max=max(rates),
+            site_count=len(sites),
+            sites=[
+                CatalogActualSite(
+                    site_id=s.site_id,
+                    site_name=s.site_name,
+                    end_date=s.end_date,
+                    qty=s.qty,
+                    rate=s.rate,
+                )
+                for s in sorted(sites, key=lambda x: (x.end_date is None, x.end_date), reverse=True)
+            ],
+        )
+    return out
 
 
 def diff_ratio(actual: CatalogActual, standard: Decimal) -> Decimal | None:

@@ -20,20 +20,20 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
-from decimal import Decimal
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
+from app.modules.earned_value.decimal_out import EvDecimal
 from app.modules.earned_value.models import CompositeMeasure
 
 _STRICT = ConfigDict(extra="forbid")
 
 Dow = Annotated[int, Field(ge=0, le=6)]
 #: `ev_site_settings.daily_*`/`weekly_*` Numeric(5,3).
-Band = Annotated[Decimal, Field(ge=0, max_digits=5, decimal_places=3)]
-DailyHours = Annotated[Decimal, Field(ge=1, le=16, max_digits=4, decimal_places=2)]
-Tolerance = Annotated[Decimal, Field(ge=0, max_digits=5, decimal_places=2)]
+Band = Annotated[EvDecimal, Field(ge=0, max_digits=5, decimal_places=3)]
+DailyHours = Annotated[EvDecimal, Field(ge=1, le=16, max_digits=4, decimal_places=2)]
+Tolerance = Annotated[EvDecimal, Field(ge=0, max_digits=5, decimal_places=2)]
 HolidayNote = Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)]
 MetricName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=150)]
 
@@ -127,8 +127,8 @@ class SettingsRead(BaseModel):
     week_start_dow: int
     #: 0 = Pazartesi … 6 = Pazar (`date.weekday()`), artan sirali.
     weekly_off_days: list[int]
-    standard_daily_hours: Decimal
-    tolerance_points: Decimal
+    standard_daily_hours: EvDecimal
+    tolerance_points: EvDecimal
     pf_bands: PfBands
     #: `date_from` sirali.
     holidays: list[HolidayRead]

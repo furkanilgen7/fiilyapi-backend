@@ -788,6 +788,27 @@
         "title": "ApprovalInboxResponse",
         "type": "object"
       },
+      "ApprovalResult": {
+        "properties": {
+          "missing_diary_dates": {
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "title": "Missing Diary Dates",
+            "type": "array"
+          },
+          "report": {
+            "$ref": "#/components/schemas/DailyReport"
+          }
+        },
+        "required": [
+          "report",
+          "missing_diary_dates"
+        ],
+        "title": "ApprovalResult",
+        "type": "object"
+      },
       "ApprovalRole": {
         "description": "Onay zincirinin ADIM ROLU — sistem rolu DEGILDIR (modul docstring'i).\n\nDegerler `roles/seed_data.py` anahtarlariyla BIREBIR aynidir; bu bilinclidir\nve degistirilmemelidir (R1).",
         "enum": [
@@ -1617,6 +1638,61 @@
           "budget_mhr"
         ],
         "title": "BarOut",
+        "type": "object"
+      },
+      "BarPoint": {
+        "properties": {
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "diary_status": {
+            "enum": [
+              "none",
+              "draft",
+              "submitted"
+            ],
+            "title": "Diary Status",
+            "type": "string"
+          },
+          "earned_day": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Earned Day"
+          },
+          "is_holiday": {
+            "title": "Is Holiday",
+            "type": "boolean"
+          },
+          "spent_day": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spent Day"
+          }
+        },
+        "required": [
+          "day",
+          "is_holiday",
+          "diary_status",
+          "earned_day",
+          "spent_day"
+        ],
+        "title": "BarPoint",
         "type": "object"
       },
       "BlockCreate": {
@@ -4521,6 +4597,86 @@
         "title": "CompanyUpdate",
         "type": "object"
       },
+      "CompositeCard": {
+        "properties": {
+          "actual": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual"
+          },
+          "deviation": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deviation"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "measure": {
+            "enum": [
+              "spent",
+              "earned",
+              "budget"
+            ],
+            "title": "Measure",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "planned": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "measure",
+          "unit",
+          "actual",
+          "planned",
+          "deviation"
+        ],
+        "title": "CompositeCard",
+        "type": "object"
+      },
       "CompositeMeasure": {
         "description": "Pacal metrigin TEK olcusu (K25).",
         "enum": [
@@ -4604,6 +4760,66 @@
           "denominator_item_id"
         ],
         "title": "CompositeMetricRead",
+        "type": "object"
+      },
+      "CompositeValueOut": {
+        "description": "Duzenlenen (kaydedilmemis) pacal metrigin canli degeri — B3-3 formulu.",
+        "properties": {
+          "actual": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual"
+          },
+          "deviation": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deviation"
+          },
+          "planned": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          }
+        },
+        "required": [
+          "unit",
+          "actual",
+          "planned",
+          "deviation"
+        ],
+        "title": "CompositeValueOut",
         "type": "object"
       },
       "ConsumptionStatus": {
@@ -5237,6 +5453,51 @@
         "title": "CountPlaceholder",
         "type": "object"
       },
+      "CurvePoint": {
+        "properties": {
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "is_future": {
+            "title": "Is Future",
+            "type": "boolean"
+          },
+          "planned_pct_cum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Pct Cum"
+          },
+          "progress_pct_cum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress Pct Cum"
+          }
+        },
+        "required": [
+          "day",
+          "is_future",
+          "planned_pct_cum",
+          "progress_pct_cum"
+        ],
+        "title": "CurvePoint",
+        "type": "object"
+      },
       "CustomerCreate": {
         "properties": {
           "address": {
@@ -5511,6 +5772,50 @@
         "title": "CustomerUpdate",
         "type": "object"
       },
+      "DailyFooter": {
+        "properties": {
+          "spent_total_day": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Spent Total Day",
+            "type": "string"
+          },
+          "timesheet_total_day": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Timesheet Total Day",
+            "type": "string"
+          },
+          "unallocated_day": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Unallocated Day",
+            "type": "string"
+          },
+          "undistributed_day": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Undistributed Day",
+            "type": "string"
+          },
+          "undistributed_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Undistributed Reason"
+          }
+        },
+        "required": [
+          "spent_total_day",
+          "timesheet_total_day",
+          "undistributed_day",
+          "undistributed_reason",
+          "unallocated_day"
+        ],
+        "title": "DailyFooter",
+        "type": "object"
+      },
       "DailyPfBands-Input": {
         "additionalProperties": false,
         "description": "Gunluk PF: < `red_below` kirmizi · [`green_from`; `high_above`] yesil ·\n> `high_above` \"supheli yuksek\" (S6, K19). Sira: red ≤ green ≤ high.",
@@ -5589,6 +5894,248 @@
           "high_above"
         ],
         "title": "DailyPfBands",
+        "type": "object"
+      },
+      "DailyReport": {
+        "properties": {
+          "approved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "day_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day No"
+          },
+          "draft_diary_dates": {
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "title": "Draft Diary Dates",
+            "type": "array"
+          },
+          "footer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DailyFooter"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "kpis": {
+            "items": {
+              "$ref": "#/components/schemas/KpiRowOut"
+            },
+            "title": "Kpis",
+            "type": "array"
+          },
+          "missing_diary_dates": {
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "title": "Missing Diary Dates",
+            "type": "array"
+          },
+          "project_start": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Start"
+          },
+          "quantities": {
+            "items": {
+              "$ref": "#/components/schemas/QtyTreeRow"
+            },
+            "title": "Quantities",
+            "type": "array"
+          },
+          "report_date": {
+            "format": "date",
+            "title": "Report Date",
+            "type": "string"
+          },
+          "report_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Report No"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RevisionRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "not_generated",
+              "draft",
+              "approved"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tolerance_points": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tolerance Points"
+          },
+          "trend": {
+            "items": {
+              "$ref": "#/components/schemas/TrendPoint"
+            },
+            "title": "Trend",
+            "type": "array"
+          },
+          "unrated_entries": {
+            "items": {
+              "$ref": "#/components/schemas/WarningOut"
+            },
+            "title": "Unrated Entries",
+            "type": "array"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/WarningOut"
+            },
+            "title": "Warnings",
+            "type": "array"
+          },
+          "weather": {
+            "items": {
+              "$ref": "#/components/schemas/WeatherDay"
+            },
+            "title": "Weather",
+            "type": "array"
+          },
+          "week_end": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Week End"
+          },
+          "week_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Week No"
+          },
+          "week_start": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Week Start"
+          }
+        },
+        "required": [
+          "status",
+          "report_date",
+          "report_no",
+          "version",
+          "day_no",
+          "week_no",
+          "week_start",
+          "week_end",
+          "project_start",
+          "revision",
+          "generated_at",
+          "approved_at",
+          "approved_by",
+          "missing_diary_dates",
+          "draft_diary_dates",
+          "tolerance_points",
+          "weather",
+          "kpis",
+          "trend",
+          "quantities",
+          "footer",
+          "unrated_entries",
+          "warnings"
+        ],
+        "title": "DailyReport",
         "type": "object"
       },
       "DashboardProjectCard": {
@@ -10900,6 +11447,17 @@
             "title": "Budget Mhr",
             "type": "string"
           },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
           "direct_budget_mhr": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Direct Budget Mhr",
@@ -10974,6 +11532,56 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HistogramWeek": {
+        "properties": {
+          "actual_people": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual People"
+          },
+          "is_future": {
+            "title": "Is Future",
+            "type": "boolean"
+          },
+          "planned_people": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned People"
+          },
+          "week_start": {
+            "format": "date",
+            "title": "Week Start",
+            "type": "string"
+          },
+          "working_days": {
+            "title": "Working Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "week_start",
+          "working_days",
+          "is_future",
+          "planned_people",
+          "actual_people"
+        ],
+        "title": "HistogramWeek",
         "type": "object"
       },
       "HolidayInput": {
@@ -13781,6 +14389,297 @@
         "title": "JournalSummaryResponse",
         "type": "object"
       },
+      "KpiPf": {
+        "properties": {
+          "pf_cum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pf Cum"
+          },
+          "pf_cum_band": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PfBand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pf_week": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pf Week"
+          },
+          "pf_week_band": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PfBand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scope": {
+            "enum": [
+              "overall_own",
+              "overall_subcon"
+            ],
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "pf_cum",
+          "pf_week",
+          "pf_cum_band",
+          "pf_week_band"
+        ],
+        "title": "KpiPf",
+        "type": "object"
+      },
+      "KpiRowOut": {
+        "properties": {
+          "budget_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Budget Mhr",
+            "type": "string"
+          },
+          "contractor_mix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contractor Mix"
+          },
+          "earned_cum": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Earned Cum",
+            "type": "string"
+          },
+          "earned_day": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Earned Day",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RowKind"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Id"
+          },
+          "pf_cum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pf Cum"
+          },
+          "pf_cum_band": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PfBand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pf_day": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pf Day"
+          },
+          "pf_day_band": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PfBand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pf_week": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pf Week"
+          },
+          "pf_week_band": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PfBand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "planned_pct_cum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Pct Cum"
+          },
+          "planned_pct_day": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Pct Day"
+          },
+          "progress_pct_cum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress Pct Cum"
+          },
+          "progress_pct_day": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress Pct Day"
+          },
+          "spent_cum": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Spent Cum",
+            "type": "string"
+          },
+          "spent_day": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Spent Day",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Status"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "variance": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variance"
+          }
+        },
+        "required": [
+          "kind",
+          "node_id",
+          "name",
+          "contractor_mix",
+          "budget_mhr",
+          "earned_day",
+          "earned_cum",
+          "spent_day",
+          "spent_cum",
+          "progress_pct_day",
+          "progress_pct_cum",
+          "planned_pct_day",
+          "planned_pct_cum",
+          "variance",
+          "status",
+          "pf_day",
+          "pf_cum",
+          "pf_week",
+          "pf_day_band",
+          "pf_cum_band",
+          "pf_week_band"
+        ],
+        "title": "KpiRowOut",
+        "type": "object"
+      },
       "LandShareBalance": {
         "description": "İki denge YAN YANA döner; tek \"dengede mi\" bayrağına indirgenmez (K2).",
         "properties": {
@@ -14810,6 +15709,17 @@
                 "type": "null"
               }
             ]
+          },
+          "section_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Code"
           },
           "section_id": {
             "anyOf": [
@@ -16104,6 +17014,612 @@
           "late_fee_amount"
         ],
         "title": "OverdueKpi",
+        "type": "object"
+      },
+      "PanelKpi": {
+        "properties": {
+          "budget_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Budget Mhr",
+            "type": "string"
+          },
+          "earned_cum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Earned Cum"
+          },
+          "earned_day": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Earned Day"
+          },
+          "pf_cum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pf Cum"
+          },
+          "pf_cum_band": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PfBand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pf_week": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pf Week"
+          },
+          "pf_week_band": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PfBand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "planned_pct_cum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Pct Cum"
+          },
+          "progress_pct_cum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress Pct Cum"
+          },
+          "spent_day": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spent Day"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Status"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "timesheet_total_day": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timesheet Total Day"
+          },
+          "undistributed_day": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Undistributed Day"
+          },
+          "variance": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variance"
+          }
+        },
+        "required": [
+          "budget_mhr",
+          "earned_day",
+          "earned_cum",
+          "spent_day",
+          "progress_pct_cum",
+          "planned_pct_cum",
+          "variance",
+          "status",
+          "pf_cum",
+          "pf_week",
+          "pf_cum_band",
+          "pf_week_band",
+          "timesheet_total_day",
+          "undistributed_day"
+        ],
+        "title": "PanelKpi",
+        "type": "object"
+      },
+      "PanelReport": {
+        "properties": {
+          "actual_basis": {
+            "enum": [
+              "headcount",
+              "equivalent"
+            ],
+            "title": "Actual Basis",
+            "type": "string"
+          },
+          "bars": {
+            "items": {
+              "$ref": "#/components/schemas/BarPoint"
+            },
+            "title": "Bars",
+            "type": "array"
+          },
+          "contractor_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContractorType"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "day_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day No"
+          },
+          "discipline_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discipline Id"
+          },
+          "has_baseline": {
+            "title": "Has Baseline",
+            "type": "boolean"
+          },
+          "has_field_data": {
+            "title": "Has Field Data",
+            "type": "boolean"
+          },
+          "histogram": {
+            "items": {
+              "$ref": "#/components/schemas/HistogramWeek"
+            },
+            "title": "Histogram",
+            "type": "array"
+          },
+          "kpi": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PanelKpi"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pf_trend": {
+            "items": {
+              "$ref": "#/components/schemas/PfPoint"
+            },
+            "title": "Pf Trend",
+            "type": "array"
+          },
+          "range": {
+            "enum": [
+              "4w",
+              "3m",
+              "all"
+            ],
+            "title": "Range",
+            "type": "string"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RevisionRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/PanelRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "s_curve": {
+            "items": {
+              "$ref": "#/components/schemas/CurvePoint"
+            },
+            "title": "S Curve",
+            "type": "array"
+          },
+          "standard_daily_hours": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Standard Daily Hours"
+          },
+          "tolerance_points": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tolerance Points"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/WarningOut"
+            },
+            "title": "Warnings",
+            "type": "array"
+          },
+          "week_end": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Week End"
+          },
+          "week_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Week No"
+          },
+          "week_start": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Week Start"
+          }
+        },
+        "required": [
+          "day",
+          "range",
+          "discipline_id",
+          "contractor_type",
+          "has_baseline",
+          "has_field_data",
+          "day_no",
+          "week_no",
+          "week_start",
+          "week_end",
+          "revision",
+          "tolerance_points",
+          "kpi",
+          "s_curve",
+          "bars",
+          "pf_trend",
+          "histogram",
+          "actual_basis",
+          "standard_daily_hours",
+          "rows",
+          "warnings"
+        ],
+        "title": "PanelReport",
+        "type": "object"
+      },
+      "PanelRow": {
+        "properties": {
+          "budget_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Budget Mhr",
+            "type": "string"
+          },
+          "contractor_mix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contractor Mix"
+          },
+          "contractor_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContractorType"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "earned_cum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Earned Cum"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Id"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "pf_cum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pf Cum"
+          },
+          "pf_cum_band": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PfBand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pf_week": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pf Week"
+          },
+          "pf_week_band": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PfBand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "planned_pct_cum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Pct Cum"
+          },
+          "progress_pct_cum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress Pct Cum"
+          },
+          "scope": {
+            "enum": [
+              "overall",
+              "overall_own",
+              "overall_subcon",
+              "discipline",
+              "discipline_own",
+              "discipline_subcon",
+              "non_direct",
+              "item"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "spent_cum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spent Cum"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Status"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "uom": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uom"
+          },
+          "variance": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variance"
+          }
+        },
+        "required": [
+          "scope",
+          "node_id",
+          "parent_id",
+          "name",
+          "uom",
+          "contractor_type",
+          "contractor_mix",
+          "budget_mhr",
+          "earned_cum",
+          "spent_cum",
+          "planned_pct_cum",
+          "progress_pct_cum",
+          "variance",
+          "status",
+          "pf_cum",
+          "pf_week",
+          "pf_cum_band",
+          "pf_week_band"
+        ],
+        "title": "PanelRow",
         "type": "object"
       },
       "PasswordReset": {
@@ -19027,6 +20543,16 @@
         "title": "PersonnelUpdate",
         "type": "object"
       },
+      "PfBand": {
+        "enum": [
+          "red",
+          "amber",
+          "green",
+          "high"
+        ],
+        "title": "PfBand",
+        "type": "string"
+      },
       "PfBands-Input": {
         "additionalProperties": false,
         "properties": {
@@ -19059,6 +20585,46 @@
           "weekly"
         ],
         "title": "PfBands",
+        "type": "object"
+      },
+      "PfPoint": {
+        "properties": {
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "pf_day": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pf Day"
+          },
+          "pf_rolling": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pf Rolling"
+          }
+        },
+        "required": [
+          "day",
+          "pf_day",
+          "pf_rolling"
+        ],
+        "title": "PfPoint",
         "type": "object"
       },
       "PlanCellTag": {
@@ -19261,6 +20827,18 @@
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Indirect Budget Mhr",
             "type": "string"
+          },
+          "standard_daily_hours": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Standard Daily Hours"
           },
           "start": {
             "anyOf": [
@@ -23583,6 +25161,198 @@
         "title": "PurchasingSummaryResponse",
         "type": "object"
       },
+      "QtyTreeRow": {
+        "properties": {
+          "actual_unit_mhr_cum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual Unit Mhr Cum"
+          },
+          "actual_unit_mhr_day": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual Unit Mhr Day"
+          },
+          "contractor_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContractorType"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "is_direct": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Direct"
+          },
+          "level": {
+            "title": "Level",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "pf_day": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pf Day"
+          },
+          "pf_day_band": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PfBand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "planned_qty": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Qty"
+          },
+          "planned_unit_mhr": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Unit Mhr"
+          },
+          "progress_pct_cum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress Pct Cum"
+          },
+          "qty_cum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Qty Cum"
+          },
+          "qty_day": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Qty Day"
+          },
+          "remaining_qty": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining Qty"
+          },
+          "spent_day": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Spent Day",
+            "type": "string"
+          },
+          "uom": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uom"
+          }
+        },
+        "required": [
+          "node_id",
+          "level",
+          "name",
+          "uom",
+          "contractor_type",
+          "is_direct",
+          "planned_unit_mhr",
+          "actual_unit_mhr_day",
+          "actual_unit_mhr_cum",
+          "planned_qty",
+          "qty_day",
+          "qty_cum",
+          "remaining_qty",
+          "pf_day",
+          "pf_day_band",
+          "spent_day",
+          "progress_pct_cum"
+        ],
+        "title": "QtyTreeRow",
+        "type": "object"
+      },
       "QuantitySource": {
         "description": "Satır miktarının kaynağı — O87 \"Günlük kayıttan\" rozetinin altyapısı (spec §2).\n\n`site_diary` modülü bu dilimde YOKTUR; bu yüzden bu dilimde üretilen her satır\n`manual`dır. `diary` değeri şantiye günlüğü dilimi geldiğinde dolar.",
         "enum": [
@@ -23591,6 +25361,513 @@
         ],
         "title": "QuantitySource",
         "type": "string"
+      },
+      "QurrReport": {
+        "properties": {
+          "composites": {
+            "items": {
+              "$ref": "#/components/schemas/CompositeCard"
+            },
+            "title": "Composites",
+            "type": "array"
+          },
+          "draft_diary_dates": {
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "title": "Draft Diary Dates",
+            "type": "array"
+          },
+          "kpis": {
+            "items": {
+              "$ref": "#/components/schemas/KpiPf"
+            },
+            "title": "Kpis",
+            "type": "array"
+          },
+          "previous_revision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RevisionRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "report_date": {
+            "format": "date",
+            "title": "Report Date",
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/RevisionRef"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/QurrRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "totals": {
+            "items": {
+              "$ref": "#/components/schemas/QurrTotal"
+            },
+            "title": "Totals",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/WarningOut"
+            },
+            "title": "Warnings",
+            "type": "array"
+          },
+          "week_end": {
+            "format": "date",
+            "title": "Week End",
+            "type": "string"
+          },
+          "week_no": {
+            "title": "Week No",
+            "type": "integer"
+          },
+          "week_start": {
+            "format": "date",
+            "title": "Week Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "week_no",
+          "week_start",
+          "week_end",
+          "report_date",
+          "revision",
+          "previous_revision",
+          "draft_diary_dates",
+          "rows",
+          "totals",
+          "kpis",
+          "composites",
+          "warnings"
+        ],
+        "title": "QurrReport",
+        "type": "object"
+      },
+      "QurrRow": {
+        "description": "L3 (is tipi) satiri — Ek A §4.2 a–r kolonlari.",
+        "properties": {
+          "a_prev_qty": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "A Prev Qty"
+          },
+          "b_qty": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "B Qty"
+          },
+          "c_qty_cum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "C Qty Cum"
+          },
+          "changed_budget": {
+            "title": "Changed Budget",
+            "type": "boolean"
+          },
+          "changed_qty": {
+            "title": "Changed Qty",
+            "type": "boolean"
+          },
+          "changed_rate": {
+            "title": "Changed Rate",
+            "type": "boolean"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "contractor_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContractorType"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "d_remaining_qty": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "D Remaining Qty"
+          },
+          "e_qty_week": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "E Qty Week"
+          },
+          "f_prev_budget_mhr": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "F Prev Budget Mhr"
+          },
+          "g_budget_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "G Budget Mhr",
+            "type": "string"
+          },
+          "h_earned_cum": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "H Earned Cum",
+            "type": "string"
+          },
+          "i_spent_cum": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "I Spent Cum",
+            "type": "string"
+          },
+          "is_direct": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Direct"
+          },
+          "j_remaining_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "J Remaining Mhr",
+            "type": "string"
+          },
+          "k_earned_week": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "K Earned Week",
+            "type": "string"
+          },
+          "l_spent_week": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "L Spent Week",
+            "type": "string"
+          },
+          "level": {
+            "title": "Level",
+            "type": "integer"
+          },
+          "m_prev_unit_mhr": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "M Prev Unit Mhr"
+          },
+          "n_unit_mhr": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Unit Mhr"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "o_actual_unit_mhr_cum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "O Actual Unit Mhr Cum"
+          },
+          "p_actual_unit_mhr_week": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P Actual Unit Mhr Week"
+          },
+          "q_band": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PfBand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "q_pf_cum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Q Pf Cum"
+          },
+          "r_band": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PfBand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "r_pf_week": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "R Pf Week"
+          },
+          "uom": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uom"
+          }
+        },
+        "required": [
+          "node_id",
+          "level",
+          "code",
+          "name",
+          "uom",
+          "contractor_type",
+          "is_direct",
+          "a_prev_qty",
+          "b_qty",
+          "c_qty_cum",
+          "d_remaining_qty",
+          "e_qty_week",
+          "f_prev_budget_mhr",
+          "g_budget_mhr",
+          "h_earned_cum",
+          "i_spent_cum",
+          "j_remaining_mhr",
+          "k_earned_week",
+          "l_spent_week",
+          "m_prev_unit_mhr",
+          "n_unit_mhr",
+          "o_actual_unit_mhr_cum",
+          "p_actual_unit_mhr_week",
+          "q_pf_cum",
+          "r_pf_week",
+          "q_band",
+          "r_band",
+          "changed_qty",
+          "changed_rate",
+          "changed_budget"
+        ],
+        "title": "QurrRow",
+        "type": "object"
+      },
+      "QurrTotal": {
+        "description": "Ara toplam / Σ direct / Σ direct+non-direct — f–l + q, r.",
+        "properties": {
+          "f_prev_budget_mhr": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "F Prev Budget Mhr"
+          },
+          "g_budget_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "G Budget Mhr",
+            "type": "string"
+          },
+          "h_earned_cum": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "H Earned Cum",
+            "type": "string"
+          },
+          "i_spent_cum": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "I Spent Cum",
+            "type": "string"
+          },
+          "j_remaining_mhr": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "J Remaining Mhr",
+            "type": "string"
+          },
+          "k_earned_week": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "K Earned Week",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "discipline",
+              "group",
+              "direct_total",
+              "all_total"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "l_spent_week": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "L Spent Week",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Id"
+          },
+          "q_pf_cum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Q Pf Cum"
+          },
+          "r_pf_week": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "R Pf Week"
+          }
+        },
+        "required": [
+          "kind",
+          "node_id",
+          "name",
+          "f_prev_budget_mhr",
+          "g_budget_mhr",
+          "h_earned_cum",
+          "i_spent_cum",
+          "j_remaining_mhr",
+          "k_earned_week",
+          "l_spent_week",
+          "q_pf_cum",
+          "r_pf_week"
+        ],
+        "title": "QurrTotal",
+        "type": "object"
       },
       "RateSource": {
         "description": "Oranin nereden geldigi (K4) — atama aninda kopyalanir, kaynak saklanir.",
@@ -23601,6 +25878,57 @@
         ],
         "title": "RateSource",
         "type": "string"
+      },
+      "RecentActualOut": {
+        "description": "K4 \"son 3 santiye gerceklesen\": aday katalog kaleminin en yeni 3 TAMAMLANMIS santiyedeki\nmiktar agirlikli orani (Σspent ÷ Σqty) ve o santiyeler.",
+        "properties": {
+          "avg": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg"
+          },
+          "catalog_item_id": {
+            "format": "uuid",
+            "title": "Catalog Item Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "site_count": {
+            "title": "Site Count",
+            "type": "integer"
+          },
+          "sites": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogActualSite"
+            },
+            "title": "Sites",
+            "type": "array"
+          },
+          "uom": {
+            "title": "Uom",
+            "type": "string"
+          }
+        },
+        "required": [
+          "catalog_item_id",
+          "name",
+          "uom",
+          "avg",
+          "site_count",
+          "sites"
+        ],
+        "title": "RecentActualOut",
+        "type": "object"
       },
       "RefreshPricesResponse": {
         "properties": {
@@ -24837,6 +27165,50 @@
         "title": "RevisionOut",
         "type": "object"
       },
+      "RevisionRef": {
+        "properties": {
+          "frozen_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Frozen At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "number": {
+            "title": "Number",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "number",
+          "name",
+          "frozen_at"
+        ],
+        "title": "RevisionRef",
+        "type": "object"
+      },
       "RevisionStatus": {
         "enum": [
           "draft",
@@ -25037,6 +27409,19 @@
         ],
         "title": "RoleResponse",
         "type": "object"
+      },
+      "RowKind": {
+        "enum": [
+          "overall",
+          "overall_own",
+          "overall_subcon",
+          "discipline",
+          "discipline_own",
+          "discipline_subcon",
+          "non_direct"
+        ],
+        "title": "RowKind",
+        "type": "string"
       },
       "RowOut": {
         "properties": {
@@ -26849,6 +29234,169 @@
           "peak_week"
         ],
         "title": "SeriesOut",
+        "type": "object"
+      },
+      "SettingsPreview": {
+        "description": "AYP ekrani canli degerleri (KAYITLI ayarla). Istemci taslak tolerans/bantla yeniden\nsiniflar: durum `variance_points`a (K27), bant PF'nin 2 ondaligina (K18) bakar.",
+        "properties": {
+          "composites": {
+            "items": {
+              "$ref": "#/components/schemas/CompositeCard"
+            },
+            "title": "Composites",
+            "type": "array"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "day_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day No"
+          },
+          "has_baseline": {
+            "title": "Has Baseline",
+            "type": "boolean"
+          },
+          "pf_day": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pf Day"
+          },
+          "pf_day_band": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PfBand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pf_week": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pf Week"
+          },
+          "pf_week_band": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PfBand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Status"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "variance": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variance"
+          },
+          "variance_points": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variance Points"
+          },
+          "week_end": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Week End"
+          },
+          "week_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Week No"
+          },
+          "week_start": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Week Start"
+          }
+        },
+        "required": [
+          "day",
+          "has_baseline",
+          "day_no",
+          "week_no",
+          "week_start",
+          "week_end",
+          "variance",
+          "variance_points",
+          "status",
+          "pf_day",
+          "pf_week",
+          "pf_day_band",
+          "pf_week_band",
+          "composites"
+        ],
+        "title": "SettingsPreview",
         "type": "object"
       },
       "SettingsRead": {
@@ -30766,6 +33314,15 @@
         "title": "SoldKpi",
         "type": "object"
       },
+      "Status": {
+        "enum": [
+          "normal",
+          "ahead",
+          "late"
+        ],
+        "title": "Status",
+        "type": "string"
+      },
       "StockCategory": {
         "description": "Malzeme kartinin kategorisi (E3 99 select + tablo rozetleri).\n\nYapi Malzemesi · Demir-Celik · Elektrik · Mekanik · Ic Yapi — mockup'un\nKAPALI kumesidir, bu yuzden enum'dur. Birim (`unit`) ise aksine ACIK\nucludur ve SERBEST METIN kalir.",
         "enum": [
@@ -34271,10 +36828,18 @@
             "type": "array"
           },
           "history": {
+            "deprecated": true,
             "items": {
               "$ref": "#/components/schemas/CandidateOut"
             },
             "title": "History",
+            "type": "array"
+          },
+          "recent_actuals": {
+            "items": {
+              "$ref": "#/components/schemas/RecentActualOut"
+            },
+            "title": "Recent Actuals",
             "type": "array"
           }
         },
@@ -35166,6 +37731,14 @@
             "title": "Leave Day Count",
             "type": "integer"
           },
+          "locked_days": {
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "title": "Locked Days",
+            "type": "array"
+          },
           "month_man_days": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Month Man Days",
@@ -35458,6 +38031,126 @@
           "unallocated_hours"
         ],
         "title": "TotalsOut",
+        "type": "object"
+      },
+      "TrendPoint": {
+        "properties": {
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "delta": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delta"
+          },
+          "earned_day": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Earned Day"
+          },
+          "is_draft": {
+            "title": "Is Draft",
+            "type": "boolean"
+          },
+          "is_future": {
+            "title": "Is Future",
+            "type": "boolean"
+          },
+          "is_holiday": {
+            "title": "Is Holiday",
+            "type": "boolean"
+          },
+          "pf_day": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pf Day"
+          },
+          "pf_rolling": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pf Rolling"
+          },
+          "planned_pct_cum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Pct Cum"
+          },
+          "progress_pct_cum": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress Pct Cum"
+          },
+          "spent_day": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spent Day"
+          }
+        },
+        "required": [
+          "day",
+          "is_holiday",
+          "is_draft",
+          "is_future",
+          "planned_pct_cum",
+          "progress_pct_cum",
+          "delta",
+          "earned_day",
+          "spent_day",
+          "pf_day",
+          "pf_rolling"
+        ],
+        "title": "TrendPoint",
         "type": "object"
       },
       "TrialBalanceResponse": {
@@ -39090,6 +41783,68 @@
         "title": "WarehouseUpdate",
         "type": "object"
       },
+      "WarningOut": {
+        "description": "Uyari + hedef tipi (istemci baglantiyi hedefe gore kurar).",
+        "properties": {
+          "code": {
+            "enum": [
+              "pf_out_of_band",
+              "undistributed_hours",
+              "qty_overrun",
+              "missing_diary",
+              "draft_diary",
+              "unrated_entry",
+              "unknown_line"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "target": {
+            "enum": [
+              "node",
+              "day",
+              "leaf"
+            ],
+            "title": "Target",
+            "type": "string"
+          },
+          "target_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Id"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "target",
+          "target_id"
+        ],
+        "title": "WarningOut",
+        "type": "object"
+      },
       "Weather": {
         "description": "Hava durumu (spec §2). E7'nin BEŞLİSİ kanoniktir; GK'nin dörtlüsü alt kümedir\n(GK'de `snowy` yok) — süperset seçildi, ekran kendi listesini süzer.\n\n\"Yağışlı\" rozeti (GK370) KOLON DEĞİLDİR — frontend `weather == rainy` türevidir.",
         "enum": [
@@ -39106,6 +41861,71 @@
         ],
         "title": "Weather",
         "type": "string"
+      },
+      "WeatherDay": {
+        "properties": {
+          "condition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Condition"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "temp_max_c": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temp Max C"
+          },
+          "temp_min_c": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temp Min C"
+          },
+          "wind_ms": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wind Ms"
+          }
+        },
+        "required": [
+          "day",
+          "condition",
+          "temp_min_c",
+          "temp_max_c",
+          "wind_ms"
+        ],
+        "title": "WeatherDay",
+        "type": "object"
       },
       "WeekOut": {
         "properties": {
@@ -59320,7 +62140,7 @@
     },
     "/sites/{site_id}/earned-value/budget/items/{boq_item_id}/suggestions": {
       "get": {
-        "description": "Oran onerisi popover'i: katalog adaylari (bagli · tam · kismi). Gecmis B3'te dolar.",
+        "description": "Oran onerisi popover'i: katalog adaylari (bagli · tam · kismi) + her aday icin\n\"son 3 santiye gerceklesen\" (K4: yalniz TAMAMLANMIS santiye, miktar agirlikli).",
         "operationId": "get_budget_item_suggestions_sites__site_id__earned_value_budget_items__boq_item_id__suggestions_get",
         "parameters": [
           {
@@ -60223,6 +63043,377 @@
         ]
       }
     },
+    "/sites/{site_id}/earned-value/panel": {
+      "get": {
+        "description": "Planlama paneli — filtre (disiplin kokü `d:…`, kendi/taseron) BUTUN panele uygulanir.",
+        "operationId": "get_panel_sites__site_id__earned_value_panel_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "range",
+            "required": false,
+            "schema": {
+              "default": "4w",
+              "enum": [
+                "4w",
+                "3m",
+                "all"
+              ],
+              "title": "Range",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "discipline_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Discipline Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "contractor_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ContractorType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Contractor Type"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PanelReport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Panel",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/sites/{site_id}/earned-value/reports/daily": {
+      "get": {
+        "description": "Gunluk ilerleme raporu (GIR). Onayli + kilitli gun → donmus snapshot (B3-5).",
+        "operationId": "get_daily_report_sites__site_id__earned_value_reports_daily_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Date",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DailyReport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Daily Report",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/sites/{site_id}/earned-value/reports/daily/{day}/approve": {
+      "post": {
+        "description": "Onayla ve kilitle: K13 taslak gunluk varsa 422 · gunluk yoksa 409 · eksik gunler\n(gunlugu hic olmayan is gunleri) yanitta `missing_diary_dates` (B3-1).",
+        "operationId": "approve_daily_report_sites__site_id__earned_value_reports_daily__day__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "day",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Day",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Approve Daily Report",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/sites/{site_id}/earned-value/reports/weekly": {
+      "get": {
+        "description": "Haftalik QURR (B3-2: onaylanmaz, canli).",
+        "operationId": "get_weekly_report_sites__site_id__earned_value_reports_weekly_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "week",
+            "required": true,
+            "schema": {
+              "maximum": 600,
+              "minimum": 1,
+              "title": "Week",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QurrReport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Weekly Report",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/sites/{site_id}/earned-value/reports/weekly.xlsx": {
+      "get": {
+        "description": "QURR Excel — okuma ucuyla AYNI hesap (`_qurr`); export saf sunumdur.",
+        "operationId": "export_weekly_report_sites__site_id__earned_value_reports_weekly_xlsx_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "week",
+            "required": true,
+            "schema": {
+              "maximum": 600,
+              "minimum": 1,
+              "title": "Week",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {}
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Export Weekly Report",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
     "/sites/{site_id}/earned-value/settings": {
       "get": {
         "description": "Santiyenin EV ayarlari. Satir yoksa sabit varsayilanlar, `is_default` = true (K1).",
@@ -60336,6 +63527,187 @@
           }
         ],
         "summary": "Save Settings Endpoint",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/sites/{site_id}/earned-value/settings/preview": {
+      "get": {
+        "description": "AYP canli degerleri: bugunun sapmasi (K27 puan) · gunluk/haftalik PF · hafta no ·\nkayitli pacal metriklerin gerceklesen/planlisi (B3-3). Kayitli ayarla hesaplanir.",
+        "operationId": "get_settings_preview_sites__site_id__earned_value_settings_preview_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Varsayilan: bugun (TR)",
+            "in": "query",
+            "name": "date",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Varsayilan: bugun (TR)",
+              "title": "Date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsPreview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Settings Preview",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/sites/{site_id}/earned-value/settings/preview/composite": {
+      "get": {
+        "description": "Duzenlenen (kaydedilmemis) pacal metrigin canli degeri — kayitli metriklerle AYNI formul.",
+        "operationId": "get_composite_preview_sites__site_id__earned_value_settings_preview_composite_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "measure",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/CompositeMeasure"
+            }
+          },
+          {
+            "in": "query",
+            "name": "numerator_item_id",
+            "required": true,
+            "schema": {
+              "items": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "maxItems": 200,
+              "minItems": 1,
+              "title": "Numerator Item Id",
+              "type": "array"
+            }
+          },
+          {
+            "in": "query",
+            "name": "denominator_item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Denominator Item Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Varsayilan: bugun (TR)",
+            "in": "query",
+            "name": "date",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Varsayilan: bugun (TR)",
+              "title": "Date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompositeValueOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Composite Preview",
         "tags": [
           "earned-value"
         ]

@@ -1,0 +1,431 @@
+{
+ "actual_basis": "headcount",
+ "bars": [
+  {
+   "day": "2026-05-04",
+   "diary_status": "none",
+   "earned_day": "0",
+   "is_holiday": false,
+   "spent_day": "0"
+  },
+  {
+   "day": "2026-05-05",
+   "diary_status": "draft",
+   "earned_day": "10.0000",
+   "is_holiday": false,
+   "spent_day": "17.00"
+  }
+ ],
+ "contractor_type": null,
+ "day": "2026-05-05",
+ "day_no": 2,
+ "discipline_id": null,
+ "has_baseline": true,
+ "has_field_data": true,
+ "histogram": [
+  {
+   "actual_people": "1",
+   "is_future": false,
+   "planned_people": "1.561264925925925925925925926",
+   "week_start": "2026-05-04",
+   "working_days": 6
+  },
+  {
+   "actual_people": null,
+   "is_future": true,
+   "planned_people": "1.317157018518518518518518519",
+   "week_start": "2026-05-11",
+   "working_days": 6
+  },
+  {
+   "actual_people": null,
+   "is_future": true,
+   "planned_people": "0.7026789814814814814814814815",
+   "week_start": "2026-05-18",
+   "working_days": 6
+  }
+ ],
+ "kpi": {
+  "budget_mhr": "225.0000000",
+  "earned_cum": "10.0000",
+  "earned_day": "10.0000",
+  "pf_cum": "0.5882352941176470588235294118",
+  "pf_cum_band": "red",
+  "pf_week": "0.5882352941176470588235294118",
+  "pf_week_band": "red",
+  "planned_pct_cum": "0.1249012",
+  "progress_pct_cum": "0.04444444444444444444444444444",
+  "spent_day": "17.00",
+  "status": "late",
+  "timesheet_total_day": "17",
+  "undistributed_day": "0.00",
+  "variance": "-0.08045675555555555555555555556"
+ },
+ "pf_trend": [
+  {
+   "day": "2026-05-04",
+   "pf_day": null,
+   "pf_rolling": null
+  },
+  {
+   "day": "2026-05-05",
+   "pf_day": "0.5882352941176470588235294118",
+   "pf_rolling": "0.5882352941176470588235294118"
+  }
+ ],
+ "range": "4w",
+ "revision": {
+  "frozen_at": "<ts>",
+  "id": "U1",
+  "name": null,
+  "number": 0
+ },
+ "rows": [
+  {
+   "budget_mhr": "225.0000000",
+   "contractor_mix": null,
+   "contractor_type": null,
+   "earned_cum": "10.0000",
+   "name": "Genel",
+   "node_id": null,
+   "parent_id": null,
+   "pf_cum": "0.5882352941176470588235294118",
+   "pf_cum_band": "red",
+   "pf_week": "0.5882352941176470588235294118",
+   "pf_week_band": "red",
+   "planned_pct_cum": "0.1249012",
+   "progress_pct_cum": "0.04444444444444444444444444444",
+   "scope": "overall",
+   "spent_cum": "17.00",
+   "status": "late",
+   "uom": null,
+   "variance": "-0.08045675555555555555555555556"
+  },
+  {
+   "budget_mhr": "200.0000000",
+   "contractor_mix": null,
+   "contractor_type": null,
+   "earned_cum": "10.0000",
+   "name": "Genel – Kendi",
+   "node_id": null,
+   "parent_id": null,
+   "pf_cum": "0.5882352941176470588235294118",
+   "pf_cum_band": "red",
+   "pf_week": "0.5882352941176470588235294118",
+   "pf_week_band": "red",
+   "planned_pct_cum": "0.11778657",
+   "progress_pct_cum": "0.05",
+   "scope": "overall_own",
+   "spent_cum": "17.00",
+   "status": "late",
+   "uom": null,
+   "variance": "-0.06778657"
+  },
+  {
+   "budget_mhr": "25.0000000",
+   "contractor_mix": null,
+   "contractor_type": null,
+   "earned_cum": "0",
+   "name": "Genel – Taşeron",
+   "node_id": null,
+   "parent_id": null,
+   "pf_cum": null,
+   "pf_cum_band": null,
+   "pf_week": null,
+   "pf_week_band": null,
+   "planned_pct_cum": "0.18181824",
+   "progress_pct_cum": "0",
+   "scope": "overall_subcon",
+   "spent_cum": "0",
+   "status": "late",
+   "uom": null,
+   "variance": "-0.18181824"
+  },
+  {
+   "budget_mhr": "200.0000000",
+   "contractor_mix": "own",
+   "contractor_type": null,
+   "earned_cum": "10.0000",
+   "name": "Kaba İnşaat",
+   "node_id": "d:U2",
+   "parent_id": null,
+   "pf_cum": "0.5882352941176470588235294118",
+   "pf_cum_band": "red",
+   "pf_week": "0.5882352941176470588235294118",
+   "pf_week_band": "red",
+   "planned_pct_cum": "0.11778657",
+   "progress_pct_cum": "0.05",
+   "scope": "discipline",
+   "spent_cum": "17.00",
+   "status": "late",
+   "uom": null,
+   "variance": "-0.06778657"
+  },
+  {
+   "budget_mhr": "200.0000000",
+   "contractor_mix": null,
+   "contractor_type": "own",
+   "earned_cum": "10.0000",
+   "name": "01.001 Beton",
+   "node_id": "i:U3",
+   "parent_id": "d:U2",
+   "pf_cum": "0.5882352941176470588235294118",
+   "pf_cum_band": "red",
+   "pf_week": "0.5882352941176470588235294118",
+   "pf_week_band": "red",
+   "planned_pct_cum": "0.11778657",
+   "progress_pct_cum": "0.05",
+   "scope": "item",
+   "spent_cum": "17.00",
+   "status": "late",
+   "uom": "m3",
+   "variance": "-0.06778657"
+  },
+  {
+   "budget_mhr": "25.0000000",
+   "contractor_mix": "subcon",
+   "contractor_type": null,
+   "earned_cum": "0",
+   "name": "Duvar & Sıva",
+   "node_id": "d:U4",
+   "parent_id": null,
+   "pf_cum": null,
+   "pf_cum_band": null,
+   "pf_week": null,
+   "pf_week_band": null,
+   "planned_pct_cum": "0.18181824",
+   "progress_pct_cum": "0",
+   "scope": "discipline",
+   "spent_cum": "0",
+   "status": "late",
+   "uom": null,
+   "variance": "-0.18181824"
+  },
+  {
+   "budget_mhr": "25.0000000",
+   "contractor_mix": null,
+   "contractor_type": "subcon",
+   "earned_cum": "0",
+   "name": "02.001 Tuğla",
+   "node_id": "i:U5",
+   "parent_id": "d:U4",
+   "pf_cum": null,
+   "pf_cum_band": null,
+   "pf_week": null,
+   "pf_week_band": null,
+   "planned_pct_cum": "0.18181824",
+   "progress_pct_cum": "0",
+   "scope": "item",
+   "spent_cum": "0",
+   "status": "late",
+   "uom": "m2",
+   "variance": "-0.18181824"
+  },
+  {
+   "budget_mhr": "0",
+   "contractor_mix": null,
+   "contractor_type": null,
+   "earned_cum": "0",
+   "name": "Doğrudan olmayan",
+   "node_id": null,
+   "parent_id": null,
+   "pf_cum": null,
+   "pf_cum_band": null,
+   "pf_week": null,
+   "pf_week_band": null,
+   "planned_pct_cum": null,
+   "progress_pct_cum": null,
+   "scope": "non_direct",
+   "spent_cum": "0",
+   "status": null,
+   "uom": null,
+   "variance": null
+  }
+ ],
+ "s_curve": [
+  {
+   "day": "2026-05-04",
+   "is_future": false,
+   "planned_pct_cum": "0.0624506",
+   "progress_pct_cum": "0"
+  },
+  {
+   "day": "2026-05-05",
+   "is_future": false,
+   "planned_pct_cum": "0.1249012",
+   "progress_pct_cum": "0.04444444444444444444444444444"
+  },
+  {
+   "day": "2026-05-06",
+   "is_future": true,
+   "planned_pct_cum": "0.1873518",
+   "progress_pct_cum": null
+  },
+  {
+   "day": "2026-05-07",
+   "is_future": true,
+   "planned_pct_cum": "0.2498023955555555555555555556",
+   "progress_pct_cum": null
+  },
+  {
+   "day": "2026-05-08",
+   "is_future": true,
+   "planned_pct_cum": "0.3122529911111111111111111111",
+   "progress_pct_cum": null
+  },
+  {
+   "day": "2026-05-09",
+   "is_future": true,
+   "planned_pct_cum": "0.3747035822222222222222222222",
+   "progress_pct_cum": null
+  },
+  {
+   "day": "2026-05-10",
+   "is_future": true,
+   "planned_pct_cum": "0.3747035822222222222222222222",
+   "progress_pct_cum": null
+  },
+  {
+   "day": "2026-05-11",
+   "is_future": true,
+   "planned_pct_cum": "0.4371541733333333333333333333",
+   "progress_pct_cum": null
+  },
+  {
+   "day": "2026-05-12",
+   "is_future": true,
+   "planned_pct_cum": "0.4996047644444444444444444444",
+   "progress_pct_cum": null
+  },
+  {
+   "day": "2026-05-13",
+   "is_future": true,
+   "planned_pct_cum": "0.5620553555555555555555555556",
+   "progress_pct_cum": null
+  },
+  {
+   "day": "2026-05-14",
+   "is_future": true,
+   "planned_pct_cum": "0.6245059466666666666666666667",
+   "progress_pct_cum": null
+  },
+  {
+   "day": "2026-05-15",
+   "is_future": true,
+   "planned_pct_cum": "0.6869565333333333333333333333",
+   "progress_pct_cum": null
+  },
+  {
+   "day": "2026-05-16",
+   "is_future": true,
+   "planned_pct_cum": "0.6908212666666666666666666667",
+   "progress_pct_cum": null
+  },
+  {
+   "day": "2026-05-17",
+   "is_future": true,
+   "planned_pct_cum": "0.6908212666666666666666666667",
+   "progress_pct_cum": null
+  },
+  {
+   "day": "2026-05-18",
+   "is_future": true,
+   "planned_pct_cum": "0.7189284266666666666666666667",
+   "progress_pct_cum": null
+  },
+  {
+   "day": "2026-05-19",
+   "is_future": true,
+   "planned_pct_cum": "0.7470355866666666666666666667",
+   "progress_pct_cum": null
+  },
+  {
+   "day": "2026-05-20",
+   "is_future": true,
+   "planned_pct_cum": "0.7751427466666666666666666667",
+   "progress_pct_cum": null
+  },
+  {
+   "day": "2026-05-21",
+   "is_future": true,
+   "planned_pct_cum": "0.8032499066666666666666666667",
+   "progress_pct_cum": null
+  },
+  {
+   "day": "2026-05-22",
+   "is_future": true,
+   "planned_pct_cum": "0.8313570666666666666666666667",
+   "progress_pct_cum": null
+  },
+  {
+   "day": "2026-05-23",
+   "is_future": true,
+   "planned_pct_cum": "0.8594642222222222222222222222",
+   "progress_pct_cum": null
+  },
+  {
+   "day": "2026-05-24",
+   "is_future": true,
+   "planned_pct_cum": "0.8594642222222222222222222222",
+   "progress_pct_cum": null
+  },
+  {
+   "day": "2026-05-25",
+   "is_future": true,
+   "planned_pct_cum": "0.8875713777777777777777777778",
+   "progress_pct_cum": null
+  },
+  {
+   "day": "2026-05-26",
+   "is_future": true,
+   "planned_pct_cum": "0.9156785333333333333333333333",
+   "progress_pct_cum": null
+  },
+  {
+   "day": "2026-05-27",
+   "is_future": true,
+   "planned_pct_cum": "0.9437856888888888888888888889",
+   "progress_pct_cum": null
+  },
+  {
+   "day": "2026-05-28",
+   "is_future": true,
+   "planned_pct_cum": "0.9718928444444444444444444444",
+   "progress_pct_cum": null
+  },
+  {
+   "day": "2026-05-29",
+   "is_future": true,
+   "planned_pct_cum": "1",
+   "progress_pct_cum": null
+  }
+ ],
+ "standard_daily_hours": "9.00",
+ "tolerance_points": "2.00",
+ "warnings": [
+  {
+   "code": "pf_out_of_band",
+   "message": "01.001 Beton: PF bant dışı",
+   "target": "node",
+   "target_id": "i:U3",
+   "value": "0.5882352941176470588235294118"
+  },
+  {
+   "code": "missing_diary",
+   "message": "04.05.2026 günlüğü yok",
+   "target": "day",
+   "target_id": "2026-05-04",
+   "value": null
+  },
+  {
+   "code": "draft_diary",
+   "message": "05.05.2026 günlüğü gönderilmedi (taslak değer)",
+   "target": "day",
+   "target_id": "2026-05-05",
+   "value": null
+  }
+ ],
+ "week_end": "2026-05-10",
+ "week_no": 1,
+ "week_start": "2026-05-04"
+}

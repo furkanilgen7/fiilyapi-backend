@@ -11,8 +11,10 @@ IntegrityError ile keserdi (500). Kilit onu siraya sokar ve ikinci yazma ayni ta
 Bekci: `tests/earned_value_budget/test_budget_concurrency.py` (B1-13).
 
 * Tamamlanmis santiyede butce yazmalari SALT OKUNUR (409, §3.11 B1-12). Kural TEK yerde:
-  `_writable_site` (kilit + durum). Taslak yolu `_draft_for_write` uzerinden, taslak
-  ac/sil ve dondur ile "bosları doldur" dogrudan cagirir. Okumalar serbesttir.
+  `access.assert_site_writable` (kilit + durum kilit altinda, TEK sorgu). Buradaki giris
+  `_writable_site`dir; taslak yolu `_draft_for_write` uzerinden, taslak ac/sil ve dondur ile
+  "bosları doldur" dogrudan cagirir. Uclar ayrica `access.completed_site_guard` bagimliligiyla
+  409'u govde dogrulamasindan ONCE verir (PLN-B3.0). Okumalar serbesttir.
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ from app.core.errors import ConflictError, EarnedValueValidationError, NotFoundE
 from app.modules.boq.models import BoqGroup, BoqItem
 from app.modules.earned_value import budget_repository as repo
 from app.modules.earned_value import guards
-from app.modules.earned_value.access import SiteContext
+from app.modules.earned_value.access import SiteContext, assert_site_writable, is_site_completed
 from app.modules.earned_value.budget_snapshot import frozen_tree
 from app.modules.earned_value.budget_tree import BudgetTree, LeafKey, RevisionInputs, build_tree
 from app.modules.earned_value.models import (
@@ -45,33 +47,35 @@ from app.modules.earned_value.models import (
     RateSource,
     RevisionStatus,
 )
-from app.modules.sites.models import Section, Site, SiteStatus
+from app.modules.sites.models import Section
 from app.modules.users.models import User
 
 
 @dataclass(frozen=True, slots=True)
 class BudgetState:
     revision: EvRevision | None
-    editable: bool
+    editable: bool  # taslak gorunumu (dondurulmus agac degil)
     tree: BudgetTree
     boq_synced_at: datetime | None
+    site_completed: bool = False  # `access.is_site_completed` — ekranda editable=false
 
 
 async def _lock_site(session: AsyncSession, site_id: uuid.UUID) -> None:
-    await session.execute(select(Site.id).where(Site.id == site_id).with_for_update())
+    """Santiye satiri kilidi + durum (kilit altinda) — TEK yardimciya devredilir.
+
+    Ayri bir isim olarak kalir: B1-13 pozitif kontrolu (`test_budget_concurrency.py`) kilidi
+    tam burada no-op'a cevirir.
+    """
+    await assert_site_writable(session, site_id, message=guards.SITE_COMPLETED_BUDGET_READ_ONLY)
 
 
 async def _writable_site(session: AsyncSession, ctx: SiteContext) -> None:
     """Her butce YAZMASININ girisi: santiye satirini kilitler, tamamlanmissa 409 (B1-12).
 
-    Durum kilit ALTINDA yeniden okunur (`ctx.site` kilitten once yuklendi): santiyeyi
-    "tamamlandi"ya ceken esanli bir guncelleme ayni satiri kilitler, dolayisiyla ya
-    ondan once biter ya da bizim yazmamiz tamamlanmis durumu gorur.
+    Durum `ctx.site`ten DEGIL, kilit altinda veritabanindan okunur (`ctx.site` kilitten once
+    yuklendi). Bekci: `test_b30_relock_guard.py` (+ bayat `ctx` pozitif kontrolu).
     """
     await _lock_site(session, ctx.site.id)
-    status = await session.scalar(select(Site.status).where(Site.id == ctx.site.id))
-    if status is SiteStatus.completed:
-        raise ConflictError(guards.SITE_COMPLETED_BUDGET_READ_ONLY)
 
 
 async def get_revision(session: AsyncSession, ctx: SiteContext, rev_id: uuid.UUID) -> EvRevision:
@@ -100,13 +104,14 @@ async def load_state(
     calendar = await repo.load_calendar(session, ctx.site.id)
     disciplines = await repo.load_disciplines(session)
     synced = await repo.boq_synced_at(session, ctx.site.id)
+    completed = is_site_completed(ctx.site.status)
     if rev is not None and rev.status is not RevisionStatus.DRAFT:
         tree = await frozen_tree(session, rev, disciplines, calendar.is_working_day)
-        return BudgetState(rev, False, tree, synced)
+        return BudgetState(rev, False, tree, synced, completed)
     inputs = await repo.load_inputs(session, rev.id) if rev else RevisionInputs()
     boq = await repo.load_boq(session, ctx.site.id)
     tree = build_tree(boq, disciplines, inputs, calendar.is_working_day)
-    return BudgetState(rev, True, tree, synced)
+    return BudgetState(rev, True, tree, synced, completed)
 
 
 async def _draft_for_write(session: AsyncSession, ctx: SiteContext, actor: User) -> EvRevision:

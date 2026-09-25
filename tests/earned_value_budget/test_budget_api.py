@@ -266,6 +266,7 @@ async def test_preview_is_not_persistent_and_sums_to_budget(
     w = out["total"]["weeks"][0]
     assert D(w["required_people"]) == D(w["mhr"]) / (w["working_days"] * D(9))
     assert w["planned_people"] == 12  # hafta ortası S1 aktif
+    assert out["standard_daily_hours"] == "9.00"  # CEO B3 eki (K10 lejantı)
     view = (await client.get(_url(santiye), headers=admin)).json()
     assert view["disciplines"][0]["distribution"] == "linear"  # KAYDEDİLMEDİ
 
@@ -522,3 +523,19 @@ async def test_F0_5_deleted_draft_number_is_reused(
     ).status_code == 204
     again = (await client.post(_url(santiye, "/revisions"), headers=admin)).json()
     assert again["number"] == 1
+
+
+async def test_B3_ek_group_code_section_code_and_no_draft_blocker(
+    client, admin, seeded_db, santiye, boq, disiplinler
+) -> None:
+    boq["s1"].code = "A"
+    await seeded_db.flush()
+    view = await _map(client, santiye, admin, boq, disiplinler)
+    assert [g["code"] for d in view["disciplines"] for g in d["groups"]] == ["1", "2"]
+    assert _leaves(view)[_leaf_id(boq["i1"], boq["s1"])]["section_code"] == "A"
+    assert _leaves(view)[_leaf_id(boq["i1"], None)]["section_code"] is None
+    await _rates(client, santiye, admin, boq)
+    assert (await client.post(_url(santiye, "/freeze"), headers=admin, json={})).status_code == 200
+    frozen = (await client.get(_url(santiye), headers=admin)).json()
+    assert frozen["editable"] is False
+    assert [b["code"] for b in frozen["freeze_blockers"]] == ["no_draft"]

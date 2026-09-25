@@ -52,7 +52,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -637,4 +637,33 @@ class EvDayUnlock(Base):
     )
     unlocked_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class EvReportSnapshot(Base):
+    """Onaylanan GUNLUK raporun DONMUS payload'u (B3; §3.13 B3-5).
+
+    Onaydan sonra veri degisse de onayli rapor DEGISMEZ. Ayni gun yeniden onaylanirsa
+    (B2-6 gun acma sonrasi) YENI SURUM yazilir, eskisi tarihce olarak kalir. Rapor no =
+    proje gun no (K23); surum no ayridir.
+    """
+
+    __tablename__ = "ev_report_snapshots"
+    __table_args__ = (
+        UniqueConstraint("site_id", "report_date", "version", name="uq_ev_report_snapshots_ver"),
+        CheckConstraint("version >= 1", name="ck_ev_report_snapshots_version"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    site_id: Mapped[uuid.UUID] = _fk("sites.id", "CASCADE")
+    report_date: Mapped[date] = mapped_column(Date, nullable=False)
+    day_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    approval_id: Mapped[uuid.UUID] = _fk("ev_report_approvals.id", "CASCADE")
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    approved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    approved_by_user_id: Mapped[uuid.UUID | None] = _fk(
+        "users.id", "SET NULL", nullable=True, index=False
     )

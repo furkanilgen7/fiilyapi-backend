@@ -777,6 +777,13 @@ async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
     mevcut şemalarda yalnız EK alan + `temperature_c` deprecated (yapısal olarak ölçüldü).
     274→**279** · 396→**401**.
 
+    🔴 **PLN-B3 (+7 yol / +7 operasyon, ölçüldü 286/408):** raporlar —
+    `/sites/{id}/earned-value/panel` · `…/reports/daily` · `…/reports/daily/{day}/approve` ·
+    `…/reports/weekly` · `…/reports/weekly.xlsx` · `…/settings/preview` ·
+    `…/settings/preview/composite`. Mevcut yol DEĞİŞMEDİ; mevcut şemalarda yalnız EK (zorunlu
+    olmayan) alan + `SuggestionsOut.history` deprecated (yapısal olarak ölçüldü).
+    279→**286** · 401→**408**.
+
     🔴 **BFF İZİN LİSTESİ — `units` KÖKÜ EKSİK (ölçüldü 2026-09-05).** Dört kökten
     ÜÇÜ frontend'in `ALLOWED_ROOTS`unda VAR (`sections` · `sales` ·
     `subcontractor-contracts`), **`units` YOK**. Ölçüm yöntemi kayda geçirilir —
@@ -811,5 +818,5 @@ async def test_YOL_ve_OPERASYON_sayisi_SABIT_kalir() -> None:
     # EXPORT-XLSX bunun ÜSTÜNE +6 yol / +6 operasyon ekler (aşağıdaki
     # docstring girdisi). Rebase sonrası sayılar YENİDEN ÖLÇÜLDÜ, eski
     # 243/351'den türetilmedi: 239→245 · 348→354.
-    assert len(yollar) == 279
-    assert operasyonlar == 401
+    assert len(yollar) == 286
+    assert operasyonlar == 408

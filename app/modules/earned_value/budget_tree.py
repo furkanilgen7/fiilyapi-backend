@@ -57,6 +57,7 @@ class SectionInfo:
     end_date: date | None
     planned_worker_count: int | None
     sort_order: int
+    code: str | None = None  # CEO B3 eki: yaprak kodu (bolum kodu)
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +146,7 @@ class LeafNode:
     window_source: str | None  # override | section | union | None
     #: §3.10 F0-4: ezilen pencere bolum tarihlerinin DISINA tasiyor (uyari, engel DEGIL).
     window_outside_section: bool = False
+    section_code: str | None = None
 
     @property
     def is_rated(self) -> bool:
@@ -172,6 +174,9 @@ class GroupNode:
     name: str
     discipline_id: uuid.UUID | None
     items: tuple[ItemNode, ...]
+    #: CEO B3 eki: grup "kodu" = santiyedeki SIRA NO (BOQ grubu kod tasimaz; numarayi
+    #: `sort_order` sirasi verir — boq/models.py BoqGroup docstring'i).
+    code: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,7 +248,7 @@ def build_tree(
         items_by_group.setdefault(item.group_id, []).append(item)
 
     groups_by_disc: dict[uuid.UUID | None, list[GroupNode]] = {}
-    for group in sorted(boq.groups, key=lambda g: (g.sort_order, g.name)):
+    for position, group in enumerate(sorted(boq.groups, key=lambda g: (g.sort_order, g.name)), 1):
         disc_id = inputs.group_disciplines.get(group.id)
         disc = by_disc.get(disc_id) if disc_id else None
         default_ct = disc.default_contractor_type if disc else ContractorType.OWN
@@ -251,7 +256,9 @@ def build_tree(
             _item_node(it, boq, sections, inputs, default_ct, disc_id)
             for it in items_by_group.get(group.id, [])
         )
-        node = GroupNode(group_node_id(group.id), group.id, group.name, disc_id, items)
+        node = GroupNode(
+            group_node_id(group.id), group.id, group.name, disc_id, items, code=str(position)
+        )
         groups_by_disc.setdefault(disc_id if disc else None, []).append(node)
 
     ordered = sorted(disciplines, key=lambda d: (d.sort_order, d.code))
@@ -322,6 +329,7 @@ def _leaf_node(
         item_id=item.id,
         section_id=section_id,
         section_name=sections[section_id].name if section_id else None,
+        section_code=sections[section_id].code if section_id else None,
         planned_qty=qty,
         unit_mhr=rate,
         rate_source=s.rate_source,

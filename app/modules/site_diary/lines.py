@@ -44,7 +44,7 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import DuplicateError, SiteValidationError
+from app.core.errors import ConflictError, DuplicateError, SiteValidationError
 from app.modules.boq.models import BoqItem
 from app.modules.site_diary import guards, repository
 from app.modules.site_diary.models import SiteDiaryEntry, SiteDiaryLine, SiteDiaryWorkerCount
@@ -163,6 +163,35 @@ def _new_line(plan: _ResolvedLine) -> SiteDiaryLine:
         quantity=plan.quantity,
         overrun_reason=plan.overrun_reason,
     )
+
+
+def assert_current_line_client(entry: SiteDiaryEntry, inputs: list[SiteDiaryLineInput]) -> None:
+    """PLN-B2.x-A: kayitta bolumlu (`section_id` dolu) satir varken govdedeki HICBIR satir
+    `section_id` ANAHTARINI tasimiyorsa bu B2 oncesi istemcidir → 409, veri SILINMEZ.
+
+    Anahtarin VARLIGINA bakilir (`model_fields_set`): yeni istemci Bolumsuz satiri
+    `section_id: null` ile yollar ve gecer. Bos govde ayirt edilemez (yeni istemcinin
+    "hepsini temizle"si de bostur) → eski imza SAYILMAZ. Kayitta bolumlu satir yoksa
+    eski imza da gecer (bugunku canli akis bozulmaz).
+    """
+    legacy = bool(inputs) and all("section_id" not in i.model_fields_set for i in inputs)
+    if legacy and any(line.section_id is not None for line in entry.lines):
+        raise ConflictError(guards.STALE_CLIENT)
+
+
+def assert_current_worker_client(
+    entry: SiteDiaryEntry, inputs: list[SiteDiaryWorkerCountInput]
+) -> None:
+    """PLN-B2.x-A (isci kirilimi): kayitta firma/saat alanli satir (`subcontractor_id` ya
+    da `hours` dolu) varken govdedeki HICBIR satir bu iki anahtari tasimiyorsa → 409.
+    Kurallar `assert_current_line_client` ile ayni (bos govde eski imza sayilmaz)."""
+    new_keys = {"subcontractor_id", "hours"}
+    legacy = bool(inputs) and all(not (new_keys & i.model_fields_set) for i in inputs)
+    stored = any(
+        wc.subcontractor_id is not None or wc.hours is not None for wc in entry.worker_counts
+    )
+    if legacy and stored:
+        raise ConflictError(guards.STALE_CLIENT)
 
 
 async def apply_lines(

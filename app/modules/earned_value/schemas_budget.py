@@ -1,23 +1,24 @@
 """Butce uclarinin semalari (BUT ekrani; frontend istekleri 1–5, PLN-F0 §4.1).
 
-Sayilar `Decimal`dir, JSON'da string doner (repo deseni). Yuzde/pay 0–1 kesirdir;
-yuvarlama yalniz sunumda (§3.6).
+Sayilar `EvDecimal`dir, JSON'da sabit gosterimli string doner (ustel yok — decimal_out).
+Yuzde/pay 0–1 kesirdir; yuvarlama yalniz sunumda (§3.6).
 """
 
 from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
-from decimal import Decimal
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.modules.earned_value.decimal_out import EvDecimal
 from app.modules.earned_value.engine import ContractorType
 from app.modules.earned_value.models import RateSource, RevisionStatus
+from app.modules.earned_value.schemas_catalog import CatalogActualSite
 
 DistributionName = Literal["linear", "bell", "front", "back"]
-Rate = Annotated[Decimal, Field(ge=0, max_digits=12, decimal_places=4)]
+Rate = Annotated[EvDecimal, Field(ge=0, max_digits=12, decimal_places=4)]
 
 
 class UserRef(BaseModel):
@@ -48,15 +49,16 @@ class LeafOut(BaseModel):
     item_id: uuid.UUID
     section_id: uuid.UUID | None
     section_name: str | None
-    planned_qty: Decimal
-    unit_mhr: Decimal | None
+    section_code: str | None = None  # CEO B3 eki
+    planned_qty: EvDecimal
+    unit_mhr: EvDecimal | None
     rate_source: RateSource | None
     contractor_type: ContractorType
     contractor_source: Literal["inherited", "override"]
     is_direct: bool
     is_direct_source: Literal["inherited", "override"]
-    budget_mhr: Decimal
-    share: Decimal | None
+    budget_mhr: EvDecimal
+    share: EvDecimal | None
     window_start: date | None
     window_end: date | None
     window_source: Literal["override", "section", "union", "snapshot"] | None
@@ -64,9 +66,9 @@ class LeafOut(BaseModel):
 
 
 class _Sums(BaseModel):
-    budget_mhr: Decimal
-    direct_budget_mhr: Decimal
-    share: Decimal | None  # dogrudan butce ÷ toplam dogrudan butce
+    budget_mhr: EvDecimal
+    direct_budget_mhr: EvDecimal
+    share: EvDecimal | None  # dogrudan butce ÷ toplam dogrudan butce
 
 
 class ItemOut(_Sums):
@@ -75,7 +77,7 @@ class ItemOut(_Sums):
     code: str
     description: str
     uom: str
-    planned_qty: Decimal
+    planned_qty: EvDecimal
     contractor_type: ContractorType
     contractor_source: Literal["inherited", "item"]
     is_direct: bool
@@ -87,6 +89,7 @@ class ItemOut(_Sums):
 class GroupOut(_Sums):
     id: str
     group_id: uuid.UUID
+    code: str | None = None  # CEO B3 eki: santiyedeki sira no
     name: str
     discipline_id: uuid.UUID | None
     items: list[ItemOut]
@@ -104,8 +107,8 @@ class DisciplineOut(_Sums):
 
 
 class BudgetTotals(BaseModel):
-    direct_budget_mhr: Decimal
-    indirect_budget_mhr: Decimal
+    direct_budget_mhr: EvDecimal
+    indirect_budget_mhr: EvDecimal
     item_count: int
     leaf_count: int
     empty_rate_leaf_count: int
@@ -216,15 +219,28 @@ class CandidateOut(BaseModel):
     catalog_item_id: uuid.UUID
     name: str
     uom: str
-    standard_unit_mhr: Decimal
+    standard_unit_mhr: EvDecimal
     discipline_id: uuid.UUID
     match: Literal["linked", "exact", "partial"]
 
 
+class RecentActualOut(BaseModel):
+    """K4 "son 3 santiye gerceklesen": aday katalog kaleminin en yeni 3 TAMAMLANMIS santiyedeki
+    miktar agirlikli orani (Σspent ÷ Σqty) ve o santiyeler."""
+
+    catalog_item_id: uuid.UUID
+    name: str
+    uom: str
+    avg: EvDecimal | None
+    site_count: int
+    sites: list[CatalogActualSite]
+
+
 class SuggestionsOut(BaseModel):
     catalog: list[CandidateOut]
-    #: "Son 3 santiye gerceklesen" (K4) — saha verisi B2'de dogar, B3'te dolar. B1'de bos.
-    history: list[CandidateOut]
+    #: KULLANILMAZ (hep bos): tipi katalog adayidir, gerceklesen tasiyamaz → `recent_actuals`.
+    history: list[CandidateOut] = Field(deprecated=True)
+    recent_actuals: list[RecentActualOut] = Field(default_factory=list)
 
 
 class AmbiguousItemOut(BaseModel):
@@ -255,23 +271,23 @@ class PreviewBody(BaseModel):
 
 class DayOut(BaseModel):
     day: date
-    mhr: Decimal
-    cumulative_mhr: Decimal
-    planned_pct_cum: Decimal | None
+    mhr: EvDecimal
+    cumulative_mhr: EvDecimal
+    planned_pct_cum: EvDecimal | None
 
 
 class WeekOut(BaseModel):
     week_no: int
     week_start: date
     week_end: date
-    mhr: Decimal
+    mhr: EvDecimal
     working_days: int
-    required_people: Decimal | None
+    required_people: EvDecimal | None
     planned_people: int | None  # "bolum plani" cizgisi — yalniz toplam seride
 
 
 class SeriesOut(BaseModel):
-    budget_mhr: Decimal
+    budget_mhr: EvDecimal
     start: date | None
     end: date | None
     days: list[DayOut]
@@ -286,7 +302,7 @@ class DisciplinePreviewOut(BaseModel):
     name: str | None
     color: str | None
     distribution: DistributionName
-    share: Decimal | None
+    share: EvDecimal | None
     series: SeriesOut
 
 
@@ -295,8 +311,9 @@ class PreviewOut(BaseModel):
     end: date | None
     disciplines: list[DisciplinePreviewOut]
     total: SeriesOut
-    indirect_budget_mhr: Decimal
+    indirect_budget_mhr: EvDecimal
     unspreadable: list[str]
+    standard_daily_hours: EvDecimal | None = None  # CEO B3 eki: histogram lejanti (K10)
 
 
 # ------------------------------------------------------------------ zamanlama (Gantt)
@@ -319,7 +336,7 @@ class BarOut(BaseModel):
     end_date: date | None
     source: Literal["override", "section", "union", "snapshot"] | None
     outside_section_dates: bool  # §3.10 F0-4
-    budget_mhr: Decimal
+    budget_mhr: EvDecimal
 
 
 class ScheduleOut(BaseModel):
@@ -338,20 +355,20 @@ class LeafDiffOut(BaseModel):
     item_description: str
     section_name: str | None
     uom: str
-    prev_qty: Decimal | None
-    qty: Decimal | None
-    prev_unit_mhr: Decimal | None
-    unit_mhr: Decimal | None
-    prev_budget_mhr: Decimal
-    budget_mhr: Decimal
-    delta_mhr: Decimal
+    prev_qty: EvDecimal | None
+    qty: EvDecimal | None
+    prev_unit_mhr: EvDecimal | None
+    unit_mhr: EvDecimal | None
+    prev_budget_mhr: EvDecimal
+    budget_mhr: EvDecimal
+    delta_mhr: EvDecimal
     reason: Literal["new", "removed", "qty_changed", "rate_changed", "qty_and_rate_changed"]
 
 
 class RevisionDiffOut(BaseModel):
     revision: RevisionOut
     against: RevisionOut | None
-    direct_before_mhr: Decimal
-    direct_after_mhr: Decimal
-    direct_delta_mhr: Decimal
+    direct_before_mhr: EvDecimal
+    direct_after_mhr: EvDecimal
+    direct_delta_mhr: EvDecimal
     leaves: list[LeafDiffOut]

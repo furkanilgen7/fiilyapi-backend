@@ -1,0 +1,201 @@
+{
+ "composites": [],
+ "draft_diary_dates": [
+  "2026-05-05"
+ ],
+ "kpis": [
+  {
+   "pf_cum": "0.5882352941176470588235294118",
+   "pf_cum_band": "red",
+   "pf_week": "0.5882352941176470588235294118",
+   "pf_week_band": "red",
+   "scope": "overall_own"
+  },
+  {
+   "pf_cum": null,
+   "pf_cum_band": null,
+   "pf_week": null,
+   "pf_week_band": null,
+   "scope": "overall_subcon"
+  }
+ ],
+ "previous_revision": null,
+ "report_date": "2026-05-10",
+ "revision": {
+  "frozen_at": "<ts>",
+  "id": "U1",
+  "name": null,
+  "number": 0
+ },
+ "rows": [
+  {
+   "a_prev_qty": null,
+   "b_qty": "100.000",
+   "c_qty_cum": "5",
+   "changed_budget": false,
+   "changed_qty": false,
+   "changed_rate": false,
+   "code": "01.001",
+   "contractor_type": "own",
+   "d_remaining_qty": "95.000",
+   "e_qty_week": "5",
+   "f_prev_budget_mhr": null,
+   "g_budget_mhr": "200.0000000",
+   "h_earned_cum": "10.0000",
+   "i_spent_cum": "17.00",
+   "is_direct": true,
+   "j_remaining_mhr": "190.0000000",
+   "k_earned_week": "10.0000",
+   "l_spent_week": "17.00",
+   "level": 3,
+   "m_prev_unit_mhr": null,
+   "n_unit_mhr": "2.0000",
+   "name": "Beton",
+   "node_id": "i:U2",
+   "o_actual_unit_mhr_cum": "3.40",
+   "p_actual_unit_mhr_week": "3.40",
+   "q_band": "red",
+   "q_pf_cum": "0.5882352941176470588235294118",
+   "r_band": "red",
+   "r_pf_week": "0.5882352941176470588235294118",
+   "uom": "m3"
+  },
+  {
+   "a_prev_qty": null,
+   "b_qty": "50.000",
+   "c_qty_cum": "0",
+   "changed_budget": false,
+   "changed_qty": false,
+   "changed_rate": false,
+   "code": "02.001",
+   "contractor_type": "subcon",
+   "d_remaining_qty": "50.000",
+   "e_qty_week": "0",
+   "f_prev_budget_mhr": null,
+   "g_budget_mhr": "25.0000000",
+   "h_earned_cum": "0",
+   "i_spent_cum": "0",
+   "is_direct": true,
+   "j_remaining_mhr": "25.0000000",
+   "k_earned_week": "0",
+   "l_spent_week": "0",
+   "level": 3,
+   "m_prev_unit_mhr": null,
+   "n_unit_mhr": "0.5000",
+   "name": "Tuğla",
+   "node_id": "i:U3",
+   "o_actual_unit_mhr_cum": null,
+   "p_actual_unit_mhr_week": null,
+   "q_band": null,
+   "q_pf_cum": null,
+   "r_band": null,
+   "r_pf_week": null,
+   "uom": "m2"
+  }
+ ],
+ "totals": [
+  {
+   "f_prev_budget_mhr": null,
+   "g_budget_mhr": "200.0000000",
+   "h_earned_cum": "10.0000",
+   "i_spent_cum": "17.00",
+   "j_remaining_mhr": "190.0000000",
+   "k_earned_week": "10.0000",
+   "kind": "group",
+   "l_spent_week": "17.00",
+   "name": "Betonarme",
+   "node_id": "g:U4",
+   "q_pf_cum": "0.5882352941176470588235294118",
+   "r_pf_week": "0.5882352941176470588235294118"
+  },
+  {
+   "f_prev_budget_mhr": null,
+   "g_budget_mhr": "200.0000000",
+   "h_earned_cum": "10.0000",
+   "i_spent_cum": "17.00",
+   "j_remaining_mhr": "190.0000000",
+   "k_earned_week": "10.0000",
+   "kind": "discipline",
+   "l_spent_week": "17.00",
+   "name": "Kaba İnşaat",
+   "node_id": "d:U5",
+   "q_pf_cum": "0.5882352941176470588235294118",
+   "r_pf_week": "0.5882352941176470588235294118"
+  },
+  {
+   "f_prev_budget_mhr": null,
+   "g_budget_mhr": "25.0000000",
+   "h_earned_cum": "0",
+   "i_spent_cum": "0",
+   "j_remaining_mhr": "25.0000000",
+   "k_earned_week": "0",
+   "kind": "group",
+   "l_spent_week": "0",
+   "name": "Duvar",
+   "node_id": "g:U6",
+   "q_pf_cum": null,
+   "r_pf_week": null
+  },
+  {
+   "f_prev_budget_mhr": null,
+   "g_budget_mhr": "25.0000000",
+   "h_earned_cum": "0",
+   "i_spent_cum": "0",
+   "j_remaining_mhr": "25.0000000",
+   "k_earned_week": "0",
+   "kind": "discipline",
+   "l_spent_week": "0",
+   "name": "Duvar & Sıva",
+   "node_id": "d:U7",
+   "q_pf_cum": null,
+   "r_pf_week": null
+  },
+  {
+   "f_prev_budget_mhr": null,
+   "g_budget_mhr": "225.0000000",
+   "h_earned_cum": "10.0000",
+   "i_spent_cum": "17.00",
+   "j_remaining_mhr": "215.0000000",
+   "k_earned_week": "10.0000",
+   "kind": "direct_total",
+   "l_spent_week": "17.00",
+   "name": "Σ Doğrudan",
+   "node_id": null,
+   "q_pf_cum": "0.5882352941176470588235294118",
+   "r_pf_week": "0.5882352941176470588235294118"
+  },
+  {
+   "f_prev_budget_mhr": null,
+   "g_budget_mhr": "225.0000000",
+   "h_earned_cum": "10.0000",
+   "i_spent_cum": "17.00",
+   "j_remaining_mhr": "215.0000000",
+   "k_earned_week": "10.0000",
+   "kind": "all_total",
+   "l_spent_week": "17.00",
+   "name": "Σ Doğrudan + Dolaylı",
+   "node_id": null,
+   "q_pf_cum": "0.5882352941176470588235294118",
+   "r_pf_week": "0.5882352941176470588235294118"
+  }
+ ],
+ "warnings": [
+  {
+   "code": "pf_out_of_band",
+   "message": "01.001 Beton: PF bant dışı",
+   "target": "node",
+   "target_id": "i:U2",
+   "value": "0.5882352941176470588235294118"
+  },
+  {
+   "code": "draft_diary",
+   "message": "05.05.2026 günlüğü gönderilmedi (taslak değer)",
+   "target": "day",
+   "target_id": "2026-05-05",
+   "value": null
+  }
+ ],
+ "week_end": "2026-05-10",
+ "week_no": 1,
+ "week_start": "2026-05-04"
+}

@@ -314,6 +314,8 @@ async def update(
     # nesneleri `data`dan okunur — `model_dump` onları `dict`e çevirmiştir.
     worker_counts = data.worker_counts if "worker_counts" in changes else None
     changes.pop("worker_counts", None)
+    if worker_counts is not None:  # yazmadan ONCE: eski istemci hicbir alani degistirmesin
+        lines.assert_current_worker_client(context.entry, worker_counts)
     if "entry_date" in changes and changes["entry_date"] != context.entry.entry_date:
         await _assert_date_free(
             session, context.entry.site_id, changes["entry_date"], exclude_entry_id=entry_id
@@ -355,6 +357,7 @@ async def save_lines(
     if context.entry.status != DiaryStatus.draft:
         raise ConflictError(guards.ENTRY_NOT_EDITABLE)
 
+    lines.assert_current_line_client(context.entry, data.lines)
     dropped = await lines.apply_lines(session, context.entry, data.lines)
     await session.refresh(context.entry)
     return context, dropped

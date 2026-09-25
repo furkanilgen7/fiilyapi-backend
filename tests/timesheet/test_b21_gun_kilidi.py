@@ -59,9 +59,13 @@ async def test_degismeyen_kilitli_gun_sorun_degil_yalniz_degisen_gun_sorulur(
         client, sef_headers, santiye.id, [_hucre(mehmet, 0, "9"), _hucre(mehmet, 1, "11")]
     )
 
-    # Assert
+    # Assert: yazma yolu değişmeyen kilitli günü ENGEL saymaz (200). PLN-B2.x-B'den beri
+    # yanıt (`week.build`) ekran için haftanın 7 gününü porta sorar (`locked_days`), bu
+    # yüzden "yalnız değişen gün sorulur" kapısı burada ölçülemez; o kapının bekçisi
+    # `tests/earned_value_budget/test_b2x_locked_days.py::test_P5_unchanged_…` (+ MP1).
     assert yanit.status_code == 200, yanit.text
-    assert port.sorulan_gunler() == {hafta_gunu(1)}
+    assert yanit.json()["locked_days"] == [hafta_gunu(0).isoformat()]
+    assert hafta_gunu(1) in port.sorulan_gunler()
 
 
 async def test_kilitli_gunu_degistirmek_409_ve_hicbir_sey_yazilmaz(

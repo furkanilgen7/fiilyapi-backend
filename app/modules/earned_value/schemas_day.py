@@ -8,14 +8,15 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
-from decimal import Decimal
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.modules.earned_value.decimal_out import EvDecimal
+
 RowKind = Literal["personnel", "subcontractor"]
 Rule = Literal["direct", "prorata_by_daily_qty"]
-Hours = Annotated[Decimal, Field(gt=0, le=1000, max_digits=6, decimal_places=2)]
+Hours = Annotated[EvDecimal, Field(gt=0, le=1000, max_digits=6, decimal_places=2)]
 
 
 class UserRef(BaseModel):
@@ -31,7 +32,7 @@ class CodeNodeOut(BaseModel):
     label: str
     uom: str | None
     has_rate: bool | None  # yaprakta: oranli mi (oransiz yaprak secilemez); baslikta None
-    unit_mhr: Decimal | None
+    unit_mhr: EvDecimal | None
 
 
 class UnlockOut(BaseModel):
@@ -56,8 +57,8 @@ class RowOut(BaseModel):
     source: str | None
     subcontractor_name: str | None
     headcount: int | None
-    hours: Decimal  # CANLI kaynak saat
-    saved_hours: Decimal | None  # dagitim anindaki kopya
+    hours: EvDecimal  # CANLI kaynak saat
+    saved_hours: EvDecimal | None  # dagitim anindaki kopya
     changed: bool  # "⚠ Puantaj degisti (saved → hours)"
 
 
@@ -72,28 +73,28 @@ class CellOut(BaseModel):
     kind: RowKind
     ref_id: uuid.UUID
     node_id: str
-    hours: Decimal
+    hours: EvDecimal
 
 
 class TotalsOut(BaseModel):
-    source_hours: Decimal
-    allocated_hours: Decimal
-    unallocated_hours: Decimal  # K14 "dagitilmamis saat" (eksi = fazla dagitilmis)
+    source_hours: EvDecimal
+    allocated_hours: EvDecimal
+    unallocated_hours: EvDecimal  # K14 "dagitilmamis saat" (eksi = fazla dagitilmis)
 
 
 class LeafProgressOut(BaseModel):
     node_id: str
-    qty_day: Decimal | None
-    earned_day: Decimal
-    spent_day: Decimal
-    pf_day: Decimal | None
+    qty_day: EvDecimal | None
+    earned_day: EvDecimal
+    spent_day: EvDecimal
+    pf_day: EvDecimal | None
 
 
 class ProgressOut(BaseModel):
     leaves: list[LeafProgressOut]
-    earned_day: Decimal
-    spent_day: Decimal
-    pf_day: Decimal | None
+    earned_day: EvDecimal
+    spent_day: EvDecimal
+    pf_day: EvDecimal | None
 
 
 class SubmitCheckOut(BaseModel):
@@ -146,7 +147,7 @@ class AllocationSave(BaseModel):
 
 class ShareOut(BaseModel):
     node_id: str
-    share: Decimal  # satirin saatinin o koda dusen payi (0–1)
+    share: EvDecimal  # satirin saatinin o koda dusen payi (0–1)
 
 
 class RowPatternOut(BaseModel):
