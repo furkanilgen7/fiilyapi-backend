@@ -139,6 +139,10 @@ AI_IFSA: Final[Mapping[str, IfsaSeviyesi]] = {
     "personnel": IfsaSeviyesi.AGREGA,
     # "bordro dönem toplamları açılabilir" — aynı koşul.
     "payroll": IfsaSeviyesi.AGREGA,
+    # PLN-B2 (§3.11 B1-11): gunluk saat dagitimi KISI × is kodu × saat hucreleri tasir →
+    # KISISEL VERI. Kural "dugum toplamlari acik, kisi duzeyi kapali" = AGREGA'nin taniminin
+    # kendisi (kisi adi / S5(c) tasiyan arac kaydedilemez). B1'de ACIK'ti (kisi verisi yoktu).
+    "earned_value": IfsaSeviyesi.AGREGA,
     # --- ACIK ---------------------------------------------------------------
     "accounting": IfsaSeviyesi.ACIK,
     "ai": IfsaSeviyesi.ACIK,
@@ -146,10 +150,6 @@ AI_IFSA: Final[Mapping[str, IfsaSeviyesi]] = {
     "boq": IfsaSeviyesi.ACIK,
     "contracts": IfsaSeviyesi.ACIK,
     "dashboard": IfsaSeviyesi.ACIK,
-    # PLN-B1: adam-saat butcesi, birim oranlar, ilerleme. Kisi adi/S5(c) tasimaz
-    # (timesheet/site_diary emsali). ⚠️ CEO'ya soruldu (PLN-B1 raporu); karar
-    # degisirse bu satir degisir.
-    "earned_value": IfsaSeviyesi.ACIK,
     # ⚠️ `ACIK` burada "belge İÇERİĞİ açıktır" DEMEK DEĞİLDİR. Belge içeriği
     # AYRI bir korkulukla (S4: `documents.origin_module` + `can_read`) ve AYRI
     # bir dilimde (AI-4) ele alınır. Bu harita **modülün** kapısıdır, o

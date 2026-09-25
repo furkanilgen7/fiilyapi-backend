@@ -1,6 +1,8 @@
 import uuid
 from collections import defaultdict
 from collections.abc import Sequence
+from datetime import date
+from typing import NamedTuple
 
 from sqlalchemy import func, inspect, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,7 +25,7 @@ from app.modules.projects.models import Project
 # 59/60 — `sites.id`'ye CASCADE ile bagli ama KORKULUKSUZ kalan tablolar.
 # Dongusel import RISKI YOKTUR (olcum: dordunun de tek `app.` importu `Base`).
 # `documents.models.core` DOGRUDAN alinir (paket `__init__`i `links`i de ceker).
-from app.modules.site_diary.models import SiteDiaryEntry
+from app.modules.site_diary.models import SiteDiaryEntry, SiteDiaryLine
 from app.modules.site_planning.models import SitePlanGoal, SitePlanRow, SitePlanSprint
 from app.modules.sites.models import Section, SectionMilestone, Site
 from app.modules.timesheet.models import TimesheetEntry
@@ -397,6 +399,40 @@ async def site_has_diary(session: AsyncSession, site_id: uuid.UUID) -> bool:
         select(select(SiteDiaryEntry.id).where(SiteDiaryEntry.site_id == site_id).exists())
     )
     return bool(result.scalar_one())
+
+
+class DiaryUsage(NamedTuple):
+    """Silme korkuluğunun metni için günlük kullanım özeti (PLN-B2.10)."""
+
+    entry_count: int
+    row_count: int
+    first_date: date
+
+
+async def section_has_diary_lines(
+    session: AsyncSession, section_id: uuid.UUID
+) -> DiaryUsage | None:
+    """Bölüme yazılmış günlük MİKTAR satırı var mı (`site_diary_lines.section_id`
+    -> RESTRICT, PLN-B2.1). Varsa kaç günlükte kaç satır + ilk tarih; yoksa `None`.
+
+    DB zaten korur (RESTRICT ikinci katmandır); korkuluk olmadan kullanıcı opak
+    "Veri bütünlüğü hatası" görürdü. TEK toplu sorgu. Başlık etiketi
+    (`site_diary_entries.section_id`, SET NULL) SAYILMAZ: o bir bilgi alanıdır,
+    bölümle birlikte gitmesi veri kaybı değildir.
+    """
+    stmt = (
+        select(
+            func.count(func.distinct(SiteDiaryLine.entry_id)),
+            func.count(SiteDiaryLine.id),
+            func.min(SiteDiaryEntry.entry_date),
+        )
+        .join(SiteDiaryEntry, SiteDiaryEntry.id == SiteDiaryLine.entry_id)
+        .where(SiteDiaryLine.section_id == section_id)
+    )
+    entry_count, row_count, first_date = (await session.execute(stmt)).one()
+    if not row_count:
+        return None
+    return DiaryUsage(int(entry_count), int(row_count), first_date)
 
 
 async def site_has_documents(session: AsyncSession, site_id: uuid.UUID) -> bool:

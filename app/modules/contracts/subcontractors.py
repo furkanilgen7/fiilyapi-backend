@@ -15,7 +15,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import DuplicateError, NotFoundError, RelatedRecordsExistError
 from app.modules.contracts import repository
-from app.modules.contracts.guards import SUBCONTRACTOR_HAS_CONTRACTS, SUBCONTRACTOR_MISSING
+from app.modules.contracts.guards import (
+    SUBCONTRACTOR_HAS_CONTRACTS,
+    SUBCONTRACTOR_MISSING,
+    subcontractor_has_diary_rows,
+)
 from app.modules.contracts.models import Subcontractor
 from app.modules.contracts.schemas import SubcontractorCreate, SubcontractorUpdate
 
@@ -88,6 +92,12 @@ async def delete_subcontractor(session: AsyncSession, subcontractor_id: uuid.UUI
         raise NotFoundError(SUBCONTRACTOR_MISSING)
     if await repository.subcontractor_has_contracts(session, subcontractor.id):
         raise RelatedRecordsExistError(SUBCONTRACTOR_HAS_CONTRACTS)
+    # PLN-B2.11: gunluk FIRMA isci satiri (FK RESTRICT ikinci katmandir).
+    usage = await repository.subcontractor_has_diary_rows(session, subcontractor.id)
+    if usage is not None:
+        raise RelatedRecordsExistError(
+            subcontractor_has_diary_rows(usage.entry_count, usage.row_count, usage.first_date)
+        )
     name = subcontractor.name
     await session.delete(subcontractor)
     await session.flush()

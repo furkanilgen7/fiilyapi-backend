@@ -9,6 +9,8 @@ YAZILMAZ, router'a string gomulmez.
 
 from __future__ import annotations
 
+from datetime import date
+
 
 def _where(project_name: str, site_name: str) -> str:
     return f"{project_name} · {site_name}"
@@ -81,3 +83,17 @@ def draft_deleted(project_name: str, site_name: str, number: int) -> str:
 def revision_frozen(project_name: str, site_name: str, number: int, name: str | None) -> str:
     label = f"Rev {number}" if not name else f"Rev {number} — {name}"
     return f"Bütçe baseline donduruldu: {_where(project_name, site_name)} · {label}"
+
+
+def day_allocation_saved(project_name: str, site_name: str, day: date, cells: int) -> str:
+    return (
+        f"Günlük saat dağıtımı kaydedildi: {_where(project_name, site_name)} · "
+        f"{day.strftime('%d.%m.%Y')} · {cells} hücre"
+    )
+
+
+def day_unlocked(project_name: str, site_name: str, day: date, reason: str) -> str:
+    return (
+        f"Gün kilidi açıldı: {_where(project_name, site_name)} · "
+        f"{day.strftime('%d.%m.%Y')} · gerekçe: {reason}"
+    )

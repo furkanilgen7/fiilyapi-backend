@@ -497,3 +497,144 @@ class EvBaselineCurve(Base):
     )
     day: Mapped[date] = mapped_column(Date, primary_key=True)
     mhr: Mapped[Decimal] = mapped_column(Numeric(*MHR_PRECISION), nullable=False)
+
+
+# ------------------------------------------------------- saha: gunluk saat dagitimi (B2)
+#
+# PLANLAMA-SPEC §2 + §3.12: muhendis gunun BUTUN saatlerini is kodlarina (= butce agaci
+# dugumu) boler (kisi-hucre bolme). Satir = bir kisi (puantajdan, B2-5) ya da bir taseron
+# firmasi (gunlukteki taseron satiri: kisi × saat). Hucre = satir × kod × saat.
+# Dugum kimligi agacla AYNI metindir (`d:` · `g:` · `i:` · `l:`) — FK DEGIL: kod BOQ'tan
+# turer ve B3 onu donmus baseline agacina karsi cozer (bilinmeyen kod = uyari, sessiz kayip
+# DEGIL). 🔴 KVKK (B1-11): kisi × kod × saat hucreleri KISISEL VERIDIR; modul AI'da AGREGA.
+
+ALLOCATION_RULE_VALUES = ("direct", "prorata_by_daily_qty")
+ROW_KIND_VALUES = ("personnel", "subcontractor")
+
+
+class EvDayCode(Base):
+    """Gunun is kodu (kolon) + dagitim kurali (§2: `direct | prorata_by_daily_qty`)."""
+
+    __tablename__ = "ev_day_codes"
+
+    site_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"), primary_key=True
+    )
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    node_id: Mapped[str] = mapped_column(String(90), primary_key=True)
+    rule: Mapped[str] = mapped_column(
+        Enum(*ALLOCATION_RULE_VALUES, name="ev_allocation_rule"), nullable=False
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+
+
+class EvDayRow(Base):
+    """Dagitim izgarasinin satiri. `source_hours` = DAGITIM ANINDAKI kaynak saat kopyasi
+    (kisi: puantaj saati · taseron: kisi × saat) — sonradan puantaj degisirse ekran
+    "⚠ Puantaj degisti (9 → 11 sa)" der (§4.2)."""
+
+    __tablename__ = "ev_day_rows"
+    __table_args__ = (
+        CheckConstraint(
+            "(kind = 'personnel') = (personnel_id IS NOT NULL) AND "
+            "(kind = 'subcontractor') = (subcontractor_id IS NOT NULL)",
+            name="ck_ev_day_rows_kind_ref",
+        ),
+        CheckConstraint("source_hours >= 0", name="ck_ev_day_rows_hours"),
+        Index(
+            "uq_ev_day_rows_personnel",
+            "site_id",
+            "day",
+            "personnel_id",
+            unique=True,
+            postgresql_where=text("personnel_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_ev_day_rows_subcontractor",
+            "site_id",
+            "day",
+            "subcontractor_id",
+            unique=True,
+            postgresql_where=text("subcontractor_id IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    site_id: Mapped[uuid.UUID] = _fk("sites.id", "CASCADE")
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+    kind: Mapped[str] = mapped_column(
+        Enum(*ROW_KIND_VALUES, name="ev_day_row_kind"), nullable=False
+    )
+    personnel_id: Mapped[uuid.UUID | None] = _fk("personnel.id", "CASCADE", nullable=True)
+    subcontractor_id: Mapped[uuid.UUID | None] = _fk("subcontractors.id", "CASCADE", nullable=True)
+    source_hours: Mapped[Decimal] = mapped_column(Numeric(6, 2), nullable=False)
+
+
+class EvDayCell(Base):
+    """Satir × kod × saat (0,5 sa adim istemcide; backend > 0 ister)."""
+
+    __tablename__ = "ev_day_cells"
+    __table_args__ = (CheckConstraint("hours > 0", name="ck_ev_day_cells_hours"),)
+
+    row_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ev_day_rows.id", ondelete="CASCADE"), primary_key=True
+    )
+    node_id: Mapped[str] = mapped_column(String(90), primary_key=True)
+    hours: Mapped[Decimal] = mapped_column(Numeric(6, 2), nullable=False)
+
+
+class EvDayNote(Base):
+    """Gunun dagitim notu: dagitilmamis saat GEREKCESI (K14 "dagitilmamis saat")."""
+
+    __tablename__ = "ev_day_notes"
+
+    site_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"), primary_key=True
+    )
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    unallocated_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_by_user_id: Mapped[uuid.UUID | None] = _fk(
+        "users.id", "SET NULL", nullable=True, index=False
+    )
+    updated_at: Mapped[datetime] = _updated_at()
+
+
+# ------------------------------------------------------------- gun kilidi (B2-6)
+
+
+class EvReportApproval(Base):
+    """Onaylanan gunluk ilerleme raporu — o tarihe KADAR gunlugu ve puantaji kilitler (§2).
+
+    Satiri B3'un "rapor onayi" ucu yazar; B2 yalniz kilidi OKUR ve istisna acar.
+    """
+
+    __tablename__ = "ev_report_approvals"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    site_id: Mapped[uuid.UUID] = _fk("sites.id", "CASCADE")
+    report_date: Mapped[date] = mapped_column(Date, nullable=False)
+    approved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    approved_by_user_id: Mapped[uuid.UUID | None] = _fk(
+        "users.id", "SET NULL", nullable=True, index=False
+    )
+
+
+class EvDayUnlock(Base):
+    """GUN duzeyi kilit istisnasi (B2-6 b): yalniz o gun acilir; o tarihi kapsayan rapor
+    SONRADAN yeniden onaylaninca gun yeniden kilitlenir (istisna eski onayi ezer, yeniyi
+    DEGIL)."""
+
+    __tablename__ = "ev_day_unlocks"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    site_id: Mapped[uuid.UUID] = _fk("sites.id", "CASCADE")
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    unlocked_by_user_id: Mapped[uuid.UUID | None] = _fk(
+        "users.id", "SET NULL", nullable=True, index=False
+    )
+    unlocked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

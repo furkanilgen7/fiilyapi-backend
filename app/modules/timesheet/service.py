@@ -23,6 +23,15 @@ silen" bozuk bir uç da testi yeşil geçerdi).
 `site_diary/lines.py` kuralının aynısı: ikinci hücrede patlayan istek birincisini
 session'a eklemiş OLMAMALIDIR (kısmi yazma yok).
 
+## Gün KİLİDİ (PLN-B2.1, B2-6) — onay akışı DEĞİL, port
+
+Rapor onayı o tarihe kadar günlüğü VE puantajı kilitler (planlama spec §2). Karar
+çekirdeğin değil kayıtlı modülündür (`app.core.day_hooks`, kayıt yoksa no-op).
+🔴 Port YALNIZ GERÇEKTEN DEĞİŞEN günleri sorar (`_changed_days`): gövde haftanın
+TAM kümesidir, yani kilitli bir günü içeren haftanın kilitsiz bir gününü
+düzeltmek, kilitli günü AYNEN geri göndermeyi gerektirir — bütün hafta sorulsaydı
+kilitli tek gün bütün haftayı dondururdu.
+
 ## Onay akışı YOKTUR (spec §7 S3)
 
 Mockup'ta yalnız "Haftayı Kaydet" vardır (E5 76). `submit`/`approve` geçişi, durum
@@ -36,6 +45,7 @@ from typing import NamedTuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import day_hooks
 from app.core.errors import ConflictError, DuplicateError, NotFoundError, SiteValidationError
 from app.modules.personnel.models import Personnel
 from app.modules.projects.models import Project
@@ -271,6 +281,25 @@ def _assert_odenebilir_personel(existing: list[TimesheetEntry], plan: _Plan) -> 
         raise SiteValidationError(guards.personnel_not_payable(person.full_name))
 
 
+def _changed_days(existing: list[TimesheetEntry], plan: _Plan) -> set[date]:
+    """Gelen ≠ mevcut olan günler: yeni hücre · silinen hücre · `_apply`ın yazdığı
+    ÜÇ eksenden (`hours` · `code` · `section_id`) birinde fark
+    (`_assert_odenebilir_personel` ile AYNI eksenler)."""
+    by_key = {guards.cell_key(row.personnel_id, row.work_date): row for row in existing}
+    changed: set[date] = set()
+    for key, cell in plan.cells.items():
+        row = by_key.get(key)
+        if (
+            row is None
+            or row.hours != cell.hours
+            or row.code != cell.code
+            or row.section_id != cell.section_id
+        ):
+            changed.add(cell.work_date)
+    changed.update(row.work_date for key, row in by_key.items() if key not in plan.cells)
+    return changed
+
+
 async def save_week(
     session: AsyncSession,
     actor: User,
@@ -304,6 +333,7 @@ async def save_week(
     await _assert_person_days_free(session, site, plan)
     # Kapsam okunduktan SONRA koşar: "değişti mi" sorusu MEVCUT satırları ister.
     _assert_odenebilir_personel(existing, plan)
+    await day_hooks.assert_days_unlocked(session, site.id, _changed_days(existing, plan))
 
     # --- Buradan itibaren yazma; dogrulama YOK (yukaridaki sira kisiti). ---
     yeniler, silinecekler = _apply(site, existing, plan, actor)

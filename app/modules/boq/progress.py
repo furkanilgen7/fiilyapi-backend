@@ -33,7 +33,7 @@ KAPSAM (K-IKIZ1 karsit kanit bekcileri bunlari cakar)
 import uuid
 from decimal import ROUND_HALF_UP, Decimal
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import ColumnElement, Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.boq.models import BoqItem, BoqItemSectionAllocation
@@ -60,6 +60,19 @@ def weighted_pct(numerator: Decimal, denominator: Decimal) -> Decimal | None:
     return quantize_pct(numerator / denominator * _HUNDRED)
 
 
+def _line_section() -> ColumnElement[uuid.UUID]:
+    """🔑 Uretimin BOLUMUNUN tek tanimi (PLN-B2.12): SATIRIN bolumu; satir bolumsuzse
+    (eski veri ya da "Bolumsuz" yaprak) gunluk BASLIGININ bolumu geri donus olarak.
+
+    PLN-B2.1'den beri bolum kirilimi SATIRDADIR (yaprak = kalem × bolum). Yalniz
+    baslik okunsaydi baslik "A Blok" derken "B Blok"a yazilmis satir A'nin
+    yuzdesine girerdi; geri donus olmasaydi baslik etiketiyle girilmis ESKI
+    gunlukler hicbir bolum yuzdesine girmezdi. Iki bolum sorgusu (tekil ve
+    toplu) BUNU cagirir — ikinci bir kopya iki ekranda iki farkli "%" uretirdi.
+    """
+    return func.coalesce(SiteDiaryLine.section_id, SiteDiaryEntry.section_id)
+
+
 def _realized_line_sums(
     section_id: uuid.UUID | None = None,
 ) -> Select[tuple[uuid.UUID, Decimal]]:
@@ -68,11 +81,10 @@ def _realized_line_sums(
     🔴 `DiaryStatus.submitted` suzgeci BURADA, tek yerdedir: her cagri yerinde
     tekrarlansaydi biri unutuldugunda taslak uretim sessizce yuzdeye girerdi.
 
-    🔴 `section_id` verilirse PAY da o bolume daraltilir. Bolum kirilimi
-    SATIRDA degil BASLIKTA'dir (`SiteDiaryEntry.section_id`, models.py:116);
-    bolum etiketi olmayan gunluk santiye yuzdesine girer, hicbir BOLUM
-    yuzdesine girmez — ve bu dogru davranistir, cunku o uretimin hangi bolume
-    ait oldugu BEYAN EDILMEMISTIR.
+    🔴 `section_id` verilirse PAY da o bolume daraltilir. Bolum `_line_section()`
+    ile okunur: satirin bolumu, yoksa baslik etiketi (PLN-B2.12). Ikisi de bossa
+    uretim santiye yuzdesine girer, hicbir BOLUM yuzdesine girmez — o uretimin
+    hangi bolume ait oldugu BEYAN EDILMEMISTIR.
     """
     stmt = (
         select(
@@ -87,7 +99,7 @@ def _realized_line_sums(
         .group_by(SiteDiaryLine.boq_item_id)
     )
     if section_id is not None:
-        stmt = stmt.where(SiteDiaryEntry.section_id == section_id)
+        stmt = stmt.where(_line_section() == section_id)
     return stmt
 
 
@@ -224,7 +236,7 @@ async def physical_for_sections(
     )
     realized = (
         select(
-            SiteDiaryEntry.section_id.label("section_id"),
+            _line_section().label("section_id"),
             SiteDiaryLine.boq_item_id.label("boq_item_id"),
             func.coalesce(func.sum(SiteDiaryLine.quantity), 0).label("realized"),
         )
@@ -232,9 +244,9 @@ async def physical_for_sections(
         .where(
             SiteDiaryLine.boq_item_id.is_not(None),
             SiteDiaryEntry.status == DiaryStatus.submitted,
-            SiteDiaryEntry.section_id.in_(section_ids),
+            _line_section().in_(section_ids),
         )
-        .group_by(SiteDiaryEntry.section_id, SiteDiaryLine.boq_item_id)
+        .group_by(_line_section(), SiteDiaryLine.boq_item_id)
         .subquery()
     )
     stmt = (

@@ -7,14 +7,19 @@ KENDİSİ görünürlük kararı VERMEZ (iki katman kuralı).
 
 import calendar
 import uuid
+from collections.abc import Collection
 from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.boq.models import BoqItem
-from app.modules.contracts.models import EmployerContractItem, SubcontractorContractItem
+from app.modules.boq.models import BoqItem, BoqItemSectionAllocation
+from app.modules.contracts.models import (
+    EmployerContractItem,
+    Subcontractor,
+    SubcontractorContractItem,
+)
 from app.modules.site_diary.models import DiaryStatus, SiteDiaryEntry, SiteDiaryLine
 from app.modules.sites.models import Section, Site
 
@@ -136,6 +141,83 @@ async def cumulative_quantities_before(
         .group_by(SiteDiaryLine.boq_item_id)
     )
     return {item_id: total for item_id, total in (await session.execute(stmt)).all()}
+
+
+async def leaf_cumulative_before(
+    session: AsyncSession,
+    site_id: uuid.UUID,
+    entry_date: date,
+    item_ids: Collection[uuid.UUID],
+) -> dict[tuple[uuid.UUID, uuid.UUID | None], Decimal]:
+    """PLN-B2.1 — YAPRAK (kalem × bölüm) kümülatifinin ÖN-TOPLAMI, TÜM ZAMANLAR.
+
+    Aynı şantiyede, bu günden ÖNCE **gönderilmiş** kayıtların (kalem, bölüm)
+    bazında toplamı; Bölümsüz (NULL) kendi anahtarıdır. `cumulative_quantities_
+    before`dan FARKI: ay sınırı YOKTUR (planlı miktarla kıyaslanan budur) ve
+    bölüm kırılımlıdır. `submitted` süzgeci ve "kaydın kendisi okuma katmanında
+    eklenir" kuralı AYNIDIR. TEK sorgu (N+1 yok); boş istekte sorgu açılmaz.
+    """
+    if not item_ids:
+        return {}
+    stmt = (
+        select(
+            SiteDiaryLine.boq_item_id,
+            SiteDiaryLine.section_id,
+            func.sum(SiteDiaryLine.quantity),
+        )
+        .join(SiteDiaryEntry, SiteDiaryEntry.id == SiteDiaryLine.entry_id)
+        .where(
+            SiteDiaryEntry.site_id == site_id,
+            SiteDiaryEntry.status == DiaryStatus.submitted,
+            SiteDiaryEntry.entry_date < entry_date,
+            SiteDiaryLine.boq_item_id.in_(list(item_ids)),
+        )
+        .group_by(SiteDiaryLine.boq_item_id, SiteDiaryLine.section_id)
+    )
+    return {
+        (item_id, section_id): total
+        for item_id, section_id, total in (await session.execute(stmt)).all()
+    }
+
+
+async def allocations_for_items(
+    session: AsyncSession, item_ids: Collection[uuid.UUID]
+) -> dict[tuple[uuid.UUID, uuid.UUID], Decimal]:
+    """(kalem, bölüm) → tahsis miktarı (`boq_item_section_allocations`), TEK sorgu.
+
+    Yazma yolunda "tahsis var mı", okuma yolunda planlı miktar bunu okur.
+    """
+    if not item_ids:
+        return {}
+    stmt = select(
+        BoqItemSectionAllocation.boq_item_id,
+        BoqItemSectionAllocation.section_id,
+        BoqItemSectionAllocation.quantity,
+    ).where(BoqItemSectionAllocation.boq_item_id.in_(list(item_ids)))
+    return {
+        (item_id, section_id): quantity
+        for item_id, section_id, quantity in (await session.execute(stmt)).all()
+    }
+
+
+async def section_site_ids(
+    session: AsyncSession, section_ids: Collection[uuid.UUID]
+) -> dict[uuid.UUID, uuid.UUID]:
+    """Bölüm → şantiye, TEK sorgu (satır bölümlerinin sahiplik kontrolü)."""
+    if not section_ids:
+        return {}
+    stmt = select(Section.id, Section.site_id).where(Section.id.in_(list(section_ids)))
+    return {section_id: site_id for section_id, site_id in (await session.execute(stmt)).all()}
+
+
+async def existing_subcontractor_ids(
+    session: AsyncSession, subcontractor_ids: Collection[uuid.UUID]
+) -> set[uuid.UUID]:
+    """Var olan taşeron firmaları, TEK sorgu (işçi firma satırı doğrulaması)."""
+    if not subcontractor_ids:
+        return set()
+    stmt = select(Subcontractor.id).where(Subcontractor.id.in_(list(subcontractor_ids)))
+    return set((await session.execute(stmt)).scalars().all())
 
 
 def _month_bounds(year: int, month: int | None) -> tuple[date, date]:

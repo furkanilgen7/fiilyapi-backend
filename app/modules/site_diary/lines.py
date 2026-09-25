@@ -14,6 +14,24 @@ Taşeron `subcontractor_progress_payments/lines.py` deseninin birebiri.
 2. **Katsayı YOK.** ₺ katkısı KATSAYISIZ `quantity × unit_price`tır (spec §2) —
    fiyat farkı katsayısı hakedişin işidir, günlüğün değil.
 
+## PLN-B2.1 — bölüm kırılımı ve taşeron firma satırı
+
+* Poz satırının kimliği (`boq_item_id`, `section_id`) İKİLİSİDİR (yaprak = kalem ×
+  bölüm). `section_id` boş = "Bölümsüz": kalemin bölüme tahsis EDİLMEMİŞ kalanı.
+  **Bölümsüz her zaman yazılabilir** (kural, ölçüldü): eski istemci yalnız bu dalı
+  bilir ve canlıda tahsisli kalemler VARDIR (BOQ-SEC, 2026-08-17) — Bölümsüz'ü
+  "tahsis edilmemiş kalan > 0" şartına bağlamak eski ekranın `PUT …/lines`ını
+  tahsisli her kalemde 422'ye çevirirdi. Kalanı aşan Bölümsüz miktar ENGEL
+  değildir, okumada `remaining_quantity < 0` (aşım) olarak görünür; gerekçesi
+  `overrun_reason`dır (B2-8, zorunluluğu Gönder portunda).
+* Bölümlü YENİ satır için kalemin o bölüme TAHSİSİ şarttır (422). Kayıtta ZATEN
+  var olan bölümlü satır, tahsisi sonradan kalksa da gövdede kalabilir — DEĞİŞTİRME
+  gövdesi tam kümedir; aksi hâlde BOQ'da tahsis silinen tek kalem, aynı günün
+  diğer bütün satırlarının düzeltilmesini kilitlerdi (`timesheet.service.
+  _assert_odenebilir_personel` emsali: kapı DEĞİŞİME bağlıdır).
+* İşçi satırında `subcontractor_id` doluysa kimlik FİRMADIR (firma başına tek
+  satır); boşsa eski (`trade`, `source`) kimliği aynen geçerlidir.
+
 ## Sıra — ÖNCE TÜM DOĞRULAMALAR, SONRA TEK YAZMA
 
 `_resolve` hiçbir şey YAZMAZ, uygulama hiçbir şey DOĞRULAMAZ: ikinci satırda
@@ -32,42 +50,100 @@ from app.modules.site_diary import guards, repository
 from app.modules.site_diary.models import SiteDiaryEntry, SiteDiaryLine, SiteDiaryWorkerCount
 from app.modules.site_diary.schemas import SiteDiaryLineInput, SiteDiaryWorkerCountInput
 
+#: Poz satırının kimliği — (kalem, bölüm | Bölümsüz).
+LineKey = tuple[uuid.UUID, uuid.UUID | None]
+
 
 @dataclass(frozen=True)
 class _ResolvedLine:
     """Doğrulaması BİTMİŞ satır planı — henüz hiçbir şey yazılmadı."""
 
     item: BoqItem
+    section_id: uuid.UUID | None
     quantity: Decimal
+    overrun_reason: str | None
+
+    @property
+    def key(self) -> LineKey:
+        return (self.item.id, self.section_id)
+
+
+def line_key(line: SiteDiaryLine) -> LineKey | None:
+    """Bağı kopmuş satırın (`boq_item_id IS NULL`) kimliği YOKTUR."""
+    if line.boq_item_id is None:
+        return None
+    return (line.boq_item_id, line.section_id)
+
+
+def _assert_unique_keys(inputs: list[SiteDiaryLineInput]) -> None:
+    seen: set[LineKey] = set()
+    for line_input in inputs:
+        key = (line_input.boq_item_id, line_input.section_id)
+        if key in seen:
+            # Kismi UQ'lar (`uq_site_diary_lines_item_section` / `_item_nosection`)
+            # GOVDE ICINDE yakalanir; `IntegrityError` emniyet agi olarak kalir.
+            raise DuplicateError(guards.DUPLICATE_LINE)
+        seen.add(key)
+
+
+async def _assert_sections(
+    session: AsyncSession,
+    entry: SiteDiaryEntry,
+    inputs: list[SiteDiaryLineInput],
+    existing_keys: set[LineKey],
+) -> None:
+    """Bölüm şantiyeye ait mi (422) + YENİ bölümlü satırın tahsisi var mı (422).
+
+    İki toplu sorgu (bölümler + tahsisler) — satır başına sorgu YOK.
+    """
+    section_ids = {i.section_id for i in inputs if i.section_id is not None}
+    if not section_ids:
+        return
+    site_ids = await repository.section_site_ids(session, section_ids)
+    if any(site_ids.get(section_id) != entry.site_id for section_id in section_ids):
+        # Var OLMAYAN bolum ile BASKA santiyenin bolumu AYNI 422 (IDOR yuzeyi).
+        raise SiteValidationError(guards.LINE_SECTION_MISMATCH)
+    allocations = await repository.allocations_for_items(
+        session, {i.boq_item_id for i in inputs if i.section_id is not None}
+    )
+    for line_input in inputs:
+        key = (line_input.boq_item_id, line_input.section_id)
+        if line_input.section_id is None or key in existing_keys:
+            continue
+        if key not in allocations:
+            raise SiteValidationError(guards.LINE_SECTION_NOT_ALLOCATED)
 
 
 async def _resolve(
-    session: AsyncSession, entry: SiteDiaryEntry, inputs: list[SiteDiaryLineInput]
+    session: AsyncSession,
+    entry: SiteDiaryEntry,
+    inputs: list[SiteDiaryLineInput],
+    existing_keys: set[LineKey],
 ) -> list[_ResolvedLine]:
-    """Gövde-içi çift → poz-şantiye sahipliği. **Hiçbir yazma YAPMAZ.**
+    """Gövde-içi çift → poz-şantiye sahipliği → bölüm/tahsis. **Hiçbir yazma YAPMAZ.**
 
-    Sorgu satır başına DEĞİL gövdenin tamamı için TEK kez koşar (N+1 yok).
+    Sorgular satır başına DEĞİL gövdenin tamamı için TEK kez koşar (N+1 yok).
     """
+    _assert_unique_keys(inputs)
     items = await repository.get_boq_items_by_ids(
         session, [entry_input.boq_item_id for entry_input in inputs]
     )
-
-    seen: set[uuid.UUID] = set()
-    resolved: list[_ResolvedLine] = []
     for line_input in inputs:
-        if line_input.boq_item_id in seen:
-            # Kismi UQ `uq_site_diary_lines_boq_item` ihlali GOVDE ICINDE yakalanir;
-            # `IntegrityError` emniyet agi olarak kalir.
-            raise DuplicateError(guards.DUPLICATE_LINE)
-        seen.add(line_input.boq_item_id)
-
         item = items.get(line_input.boq_item_id)
         if item is None or item.site_id != entry.site_id:
             # Var OLMAYAN poz ile BASKA santiyenin pozu AYNI 422'yi alir
             # (IDOR yuzeyi: kimlik varligi sizdirilmaz).
             raise SiteValidationError(guards.LINE_ITEM_MISMATCH)
-        resolved.append(_ResolvedLine(item=item, quantity=line_input.quantity))
-    return resolved
+    await _assert_sections(session, entry, inputs, existing_keys)
+    return [
+        _ResolvedLine(
+            item=items[line_input.boq_item_id],
+            section_id=line_input.section_id,
+            quantity=line_input.quantity,
+            overrun_reason=line_input.overrun_reason,
+        )
+        for line_input in inputs
+    ]
 
 
 def _new_line(plan: _ResolvedLine) -> SiteDiaryLine:
@@ -79,11 +155,13 @@ def _new_line(plan: _ResolvedLine) -> SiteDiaryLine:
     """
     return SiteDiaryLine(
         boq_item_id=plan.item.id,
+        section_id=plan.section_id,
         code=plan.item.code,
         description=plan.item.description,
         unit=plan.item.unit,
         unit_price=plan.item.unit_price,
         quantity=plan.quantity,
+        overrun_reason=plan.overrun_reason,
     )
 
 
@@ -93,57 +171,99 @@ async def apply_lines(
     """Gövdeyi kayda uygular (DEĞİŞTİRME semantiği); düşen bağı-kopmuş satır
     sayısını döner.
 
-    Var olan satır KORUNUR (kimliği ve snapshot'ı ile), yalnız `quantity`
-    güncellenir. Bağı kopmuş satır (`boq_item_id IS NULL`) gövdeden ADRESLENEMEZ,
-    bu yüzden ilk kaydetmede düşer — kaçınılmaz ama SESSİZ değil: sayısı
-    döndürülür ve yanıtın `dropped_orphan_count` alanıyla bildirilir.
+    Var olan satır KORUNUR (kimliği ve snapshot'ı ile), yalnız `quantity` ve
+    `overrun_reason` güncellenir. Kimlik (kalem, bölüm) ikilisidir. Bağı kopmuş
+    satır (`boq_item_id IS NULL`) gövdeden ADRESLENEMEZ, bu yüzden ilk kaydetmede
+    düşer — kaçınılmaz ama SESSİZ değil: sayısı döndürülür ve yanıtın
+    `dropped_orphan_count` alanıyla bildirilir.
     """
-    existing = {line.boq_item_id: line for line in entry.lines if line.boq_item_id is not None}
+    existing: dict[LineKey, SiteDiaryLine] = {}
+    for line in entry.lines:
+        key = line_key(line)
+        if key is not None:
+            existing[key] = line
     dropped_orphan_count = sum(1 for line in entry.lines if line.boq_item_id is None)
-    resolved = await _resolve(session, entry, inputs)
+    resolved = await _resolve(session, entry, inputs, set(existing))
 
     # --- Buradan itibaren yazma; dogrulama YOK (yukaridaki sira kisiti). ---
     new_lines: list[SiteDiaryLine] = []
     for plan in resolved:
-        line = existing.get(plan.item.id)
+        line = existing.get(plan.key)
         if line is None:
             line = _new_line(plan)
         else:
             line.quantity = plan.quantity
+            line.overrun_reason = plan.overrun_reason
         new_lines.append(line)
     entry.lines = new_lines
     await session.flush()
     return dropped_orphan_count
 
 
-def apply_worker_counts(entry: SiteDiaryEntry, inputs: list[SiteDiaryWorkerCountInput]) -> None:
+#: İşçi satırının kimliği: (firma satırı mı, firma | meslek, kaynak). Etiket ilk
+#: öğededir — "firma" adlı bir meslek bir firma kimliğiyle ÇAKIŞAMAZ.
+_WorkerKey = tuple[bool, str, str]
+
+
+def _worker_key(subcontractor_id: uuid.UUID | None, trade: str, source: str) -> _WorkerKey:
+    if subcontractor_id is not None:
+        return (True, str(subcontractor_id), "")
+    return (False, trade, source)
+
+
+async def apply_worker_counts(
+    session: AsyncSession, entry: SiteDiaryEntry, inputs: list[SiteDiaryWorkerCountInput]
+) -> None:
     """`PATCH` gövdesindeki `worker_counts[]` — DEĞİŞTİRME semantiği.
 
-    Satır kimliği (`trade`, `source`) İKİLİSİDİR: UQ (entry_id, trade, source)
-    ihlali `IntegrityError`a DÜŞMEDEN, gövde içinde 409 olur (kullanıcı "Veri
-    bütünlüğü hatası" değil NE YAPACAĞINI görür). Aynı meslek FARKLI kaynakla
+    Satır kimliği firmasız satırda (`trade`, `source`) İKİLİSİDİR: kısmi UQ
+    (entry_id, trade, source) WHERE subcontractor_id IS NULL ihlali
+    `IntegrityError`a DÜŞMEDEN, gövde içinde 409 olur. Aynı meslek FARKLI kaynakla
     meşrudur (GK418-430) — çakışan yalnız ÜÇLÜNÜN tamamıdır.
+
+    PLN-B2.1 (B2-5): `subcontractor_id` dolu satırın kimliği FİRMADIR — firma
+    başına tek satır (409); firma var olmalıdır (422, TEK toplu sorgu).
 
     `trade` kırpılması Pydantic katmanındadır (`SiteDiaryWorkerCountInput`):
     çakışma kontrolü KIRPILMIŞ değer üzerinden koşar, yoksa " Kalıpçı" gövdede
     çakışmadan geçip DB'de UQ'ya takılırdı.
     """
-    seen: set[tuple[str, str]] = set()
+    seen: set[_WorkerKey] = set()
     for row_input in inputs:
-        key = (row_input.trade, row_input.source.value)
+        key = _worker_key(row_input.subcontractor_id, row_input.trade, row_input.source.value)
         if key in seen:
-            raise DuplicateError(guards.DUPLICATE_WORKER_COUNT)
+            raise DuplicateError(
+                guards.DUPLICATE_WORKER_SUBCONTRACTOR
+                if row_input.subcontractor_id is not None
+                else guards.DUPLICATE_WORKER_COUNT
+            )
         seen.add(key)
 
-    existing = {(row.trade, row.source.value): row for row in entry.worker_counts}
+    firm_ids = {r.subcontractor_id for r in inputs if r.subcontractor_id is not None}
+    if firm_ids and await repository.existing_subcontractor_ids(session, firm_ids) != firm_ids:
+        raise SiteValidationError(guards.WORKER_SUBCONTRACTOR_UNKNOWN)
+
+    # --- Buradan itibaren yazma; dogrulama YOK. ---
+    existing = {
+        _worker_key(row.subcontractor_id, row.trade, row.source.value): row
+        for row in entry.worker_counts
+    }
     new_rows: list[SiteDiaryWorkerCount] = []
     for row_input in inputs:
-        row = existing.get((row_input.trade, row_input.source.value))
+        key = _worker_key(row_input.subcontractor_id, row_input.trade, row_input.source.value)
+        row = existing.get(key)
         if row is None:
             row = SiteDiaryWorkerCount(
-                trade=row_input.trade, source=row_input.source, count=row_input.count
+                trade=row_input.trade,
+                source=row_input.source,
+                count=row_input.count,
+                subcontractor_id=row_input.subcontractor_id,
+                hours=row_input.hours,
             )
         else:
+            # Firma satirinda meslek kimlik DEGILDIR, guncellenir.
+            row.trade = row_input.trade
             row.count = row_input.count
+            row.hours = row_input.hours
         new_rows.append(row)
     entry.worker_counts = new_rows

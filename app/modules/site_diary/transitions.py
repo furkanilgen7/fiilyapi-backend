@@ -33,6 +33,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import day_hooks
 from app.core.errors import ConflictError
 from app.modules.site_diary import guards, service
 from app.modules.site_diary.models import DiaryStatus
@@ -81,14 +82,33 @@ async def perform(
     atlatır, gönderilmiş kayda satır yazabilirdi (`service.save_lines` bu
     kilidin karşı tarafıdır).
 
-    Zorunluluk doğrulaması (dolu olması gereken alanlar) BU DİLİMDE YOKTUR:
+    Zorunluluk doğrulaması (dolu olması gereken alanlar) ÇEKİRDEKTE YOKTUR:
     hangi alanın zorunlu olduğu mockup'ta işaretli değildir ve icat edilmez.
+
+    PLN-B2.1 — iki PORT (`app.core.day_hooks`, kayıt yoksa no-op):
+    * KİLİT (B2-6): İKİ eylem de kilitli güne 409 alır — `reopen` da bir yazmadır;
+      kilidi açmak modülün (gerekçeli, gün düzeyi) işidir, çekirdeğin değil.
+    * GÖNDER (B2-3/4/8): `submit` DB'ye YAZMADAN ÖNCE modülün ön-koşullarını sorar
+      (422 + `reasons`). Sıra: kapsam(404) → kilit(409) → tablo(409) → port(422)
+      → damga. Tablo porttan ÖNCE koşar: gönderilmiş kaydın ikinci `submit`i
+      ön-koşul listesi değil "geçiş yapılamaz" almalıdır.
     """
     context = await service.visible_entry_locked(session, actor, entry_id)
+    await service.assert_entry_days_unlocked(session, context.entry)
 
     new_status = TRANSITIONS.get((context.entry.status, action))
     if new_status is None:
         raise ConflictError(guards.INVALID_STATUS_TRANSITION)
+    if action is DiaryAction.submit:
+        await day_hooks.assert_submit_allowed(
+            session,
+            day_hooks.SubmitContext(
+                entry_id=context.entry.id,
+                site_id=context.entry.site_id,
+                entry_date=context.entry.entry_date,
+                actor_id=actor.id,
+            ),
+        )
 
     context.entry.status = new_status
     _stamp(context, action)

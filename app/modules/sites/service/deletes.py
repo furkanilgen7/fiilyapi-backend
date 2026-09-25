@@ -83,7 +83,8 @@ async def delete_site(session: AsyncSession, actor: User, site_id: uuid.UUID) ->
 
 
 async def delete_section(session: AsyncSession, actor: User, section_id: uuid.UUID) -> str:
-    """Spec §7.1. Bolum silme KOSULSUZDUR — uydurma bir engel yazilmaz.
+    """Spec §7.1. Bolum silme TEK engelle kosulludur (PLN-B2.10): bolume yazilmis
+    gunluk miktar satiri. Baska uydurma engel yazilmaz.
 
     🔴 ESKI METIN YANLISTI (BOQ-SEC'te olculdu): "sections.id'yi hedefleyen
     HICBIR FK yoktur" cumlesi yazildigi gunden beri bayattir — BUGUN ON BIR FK
@@ -117,6 +118,15 @@ async def delete_section(session: AsyncSession, actor: User, section_id: uuid.UU
     olmadan ONCE kurulur.
     """
     section, site = await _visible_section(session, actor, section_id)
+    # PLN-B2.10 (CEO): "kosulsuz" kural DARALDI — bolume yazilmis gunluk MIKTAR
+    # satiri (PLN-B2.1, yaprak = kalem × bolum) varken silme 409'dur. Satirin
+    # bolumu KIMLIGININ parcasidir; SET NULL uretimi sessizce "Bolumsuz"e
+    # tasirdi. FK RESTRICT ikinci katmandir; bu korkuluk eyleme donuk metin verir.
+    usage = await repository.section_has_diary_lines(session, section.id)
+    if usage is not None:
+        raise RelatedRecordsExistError(
+            guards.section_has_diary_lines(usage.entry_count, usage.row_count, usage.first_date)
+        )
     detail = messages.section_deleted(site.name, section.name)
     await session.delete(section)
     await session.flush()

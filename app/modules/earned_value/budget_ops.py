@@ -123,7 +123,9 @@ async def fill_from_catalog(session: AsyncSession, ctx: SiteContext, actor: User
     """ "Bosları doldur" (B1-4): yalniz BAGLI ya da TEK tam eslesmeli kalem; bag kaydedilir.
 
     Doldurulan = orani BOS (None) yaprak. Acikca 0 yazilmis oran bir KARARDIR, ezilmez.
+    Doldurulacak yaprak olmasa da bir YAZMA ucudur: tamamlanmis santiyede 409 (B1-12).
     """
+    await svc._writable_site(session, ctx)  # noqa: SLF001
     state = await svc.load_state(session, ctx)
     catalog = await _catalog(session)
     plan: list[tuple[ItemNode, EvCatalogItem]] = []
@@ -287,7 +289,7 @@ def _planned_people(result: SpreadPreview, sections) -> dict[date, int]:  # noqa
 async def freeze(
     session: AsyncSession, ctx: SiteContext, actor: User, name: str | None, description: str | None
 ) -> EvRevision:
-    await svc._lock_site(session, ctx.site.id)  # noqa: SLF001
+    await svc._writable_site(session, ctx)  # noqa: SLF001
     draft = await repo.revision_by_status(session, ctx.site.id, RevisionStatus.DRAFT)
     if draft is None:
         raise ConflictError(guards.NO_DRAFT)

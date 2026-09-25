@@ -541,6 +541,46 @@
         "title": "AiToolRead",
         "type": "object"
       },
+      "AllocationSave": {
+        "additionalProperties": false,
+        "description": "TAM DEGISTIRME: govde gunun kod + hucre kumesinin TAMAMIDIR.",
+        "properties": {
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/CellIn"
+            },
+            "maxItems": 20000,
+            "title": "Cells",
+            "type": "array"
+          },
+          "codes": {
+            "items": {
+              "$ref": "#/components/schemas/CodeIn"
+            },
+            "maxItems": 500,
+            "title": "Codes",
+            "type": "array"
+          },
+          "unallocated_reason": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unallocated Reason"
+          }
+        },
+        "required": [
+          "codes",
+          "cells"
+        ],
+        "title": "AllocationSave",
+        "type": "object"
+      },
       "AmbiguousItemOut": {
         "properties": {
           "boq_item_id": {
@@ -3641,6 +3681,74 @@
         "title": "CatalogItemUpdate",
         "type": "object"
       },
+      "CellIn": {
+        "properties": {
+          "hours": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 1000.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,4}|(?=[\\d.]{1,7}0*$)\\d{0,4}\\.\\d{0,2}0*$)",
+                "type": "string"
+              }
+            ],
+            "title": "Hours"
+          },
+          "node_id": {
+            "maxLength": 90,
+            "minLength": 3,
+            "title": "Node Id",
+            "type": "string"
+          },
+          "row": {
+            "$ref": "#/components/schemas/RowRef"
+          }
+        },
+        "required": [
+          "row",
+          "node_id",
+          "hours"
+        ],
+        "title": "CellIn",
+        "type": "object"
+      },
+      "CellOut": {
+        "properties": {
+          "hours": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Hours",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "personnel",
+              "subcontractor"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "ref_id": {
+            "format": "uuid",
+            "title": "Ref Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "ref_id",
+          "node_id",
+          "hours"
+        ],
+        "title": "CellOut",
+        "type": "object"
+      },
       "ChartAccountCreate": {
         "additionalProperties": false,
         "description": "`POST /chart-of-accounts` (HP:50 `+ Hesap Ekle`).\n\n🔴 K-Ş1: form mockup'ı YOKTUR ve alan İCAT EDİLMEZ — gövde yalnızca HP:58-62'nin\nçizili sütunlarından türer: `Kod` · `Hesap Adı` · `Tür` · `Durum`.\n(`Bakiye` sütunu türevdir, gövdeye giremez.)\n\n`is_active` gövdeden gelebilir çünkü kullanımdan kaldırma yolu odur (repo\nkanonu: DELETE değil `is_active=false`).\n\nEbeveyn kaydı ZORUNLU DEĞİLDİR: `NNN.NN` alt hesap `e5f6a7b8c9d0`\ntohumunda hiç YAZILMAZ (K2) ve kullanıcı doğrudan `120.01` girebilir; ayrıca\n`120` gibi tohumlanmış bir ana hesabı silmiş ya da hiç migrate etmemiş\nolabilir (R14). Zorunlu kılınsaydı hiçbir mockup'ın istemediği bir giriş\nsırası dayatılırdı.",
@@ -3857,6 +3965,160 @@
           }
         },
         "title": "ChartAccountUpdate",
+        "type": "object"
+      },
+      "CodeIn": {
+        "properties": {
+          "node_id": {
+            "maxLength": 90,
+            "minLength": 3,
+            "title": "Node Id",
+            "type": "string"
+          },
+          "rule": {
+            "enum": [
+              "direct",
+              "prorata_by_daily_qty"
+            ],
+            "title": "Rule",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "rule"
+        ],
+        "title": "CodeIn",
+        "type": "object"
+      },
+      "CodeNodeOut": {
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "has_rate": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has Rate"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "level": {
+            "title": "Level",
+            "type": "integer"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "unit_mhr": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Mhr"
+          },
+          "uom": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uom"
+          }
+        },
+        "required": [
+          "id",
+          "parent_id",
+          "level",
+          "code",
+          "label",
+          "uom",
+          "has_rate",
+          "unit_mhr"
+        ],
+        "title": "CodeNodeOut",
+        "type": "object"
+      },
+      "CodeOut": {
+        "properties": {
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "level": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "rule": {
+            "enum": [
+              "direct",
+              "prorata_by_daily_qty"
+            ],
+            "title": "Rule",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "rule",
+          "label",
+          "level"
+        ],
+        "title": "CodeOut",
         "type": "object"
       },
       "CollectionKpi": {
@@ -5468,6 +5730,135 @@
         "title": "DayOut",
         "type": "object"
       },
+      "DayView": {
+        "properties": {
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/CellOut"
+            },
+            "title": "Cells",
+            "type": "array"
+          },
+          "codes": {
+            "items": {
+              "$ref": "#/components/schemas/CodeOut"
+            },
+            "title": "Codes",
+            "type": "array"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "day_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day No"
+          },
+          "has_baseline": {
+            "title": "Has Baseline",
+            "type": "boolean"
+          },
+          "lock": {
+            "$ref": "#/components/schemas/LockOut"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProgressOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision Number"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/RowOut"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "submit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubmitCheckOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "totals": {
+            "$ref": "#/components/schemas/TotalsOut"
+          },
+          "unallocated_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unallocated Reason"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          },
+          "week_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Week No"
+          }
+        },
+        "required": [
+          "day",
+          "day_no",
+          "week_no",
+          "has_baseline",
+          "revision_number",
+          "lock",
+          "rows",
+          "codes",
+          "cells",
+          "totals",
+          "unallocated_reason",
+          "warnings",
+          "progress",
+          "submit"
+        ],
+        "title": "DayView",
+        "type": "object"
+      },
       "DeedCondition": {
         "description": "F156 \"Tapu Devir Kosulu\": Tum odeme tamamlaninca · Pesinat sonrasi · Sozlesme imzasinda.",
         "enum": [
@@ -5749,6 +6140,16 @@
           },
           "sort_order": {
             "title": "Sort Order",
+            "type": "integer"
+          },
+          "used_by_item_count": {
+            "default": 0,
+            "title": "Used By Item Count",
+            "type": "integer"
+          },
+          "used_by_site_count": {
+            "default": 0,
+            "title": "Used By Site Count",
             "type": "integer"
           }
         },
@@ -14596,6 +14997,57 @@
         "title": "LeafPatch",
         "type": "object"
       },
+      "LeafProgressOut": {
+        "properties": {
+          "earned_day": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Earned Day",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "pf_day": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pf Day"
+          },
+          "qty_day": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Qty Day"
+          },
+          "spent_day": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Spent Day",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "qty_day",
+          "earned_day",
+          "spent_day",
+          "pf_day"
+        ],
+        "title": "LeafProgressOut",
+        "type": "object"
+      },
       "LeaveApproveRequest": {
         "additionalProperties": false,
         "description": "Onay gövdesi — **ALAN YOKTUR** (spec §5 K4: onay TEK adım, veri taşımaz).\n\nGövde tümüyle İSTEĞE BAĞLIDIR (uç gövdesiz de çağrılabilir); ama BOŞ OLMAYAN\nbir gövde gönderilirse `extra=\"forbid\"` onu reddeder. Şemayı büsbütün\nkaldırmak bu reddi de kaldırır ve `{\"decided_by\": ...}` sessizce yutulurdu.",
@@ -15293,6 +15745,67 @@
           "pending_module"
         ],
         "title": "ListPlaceholder",
+        "type": "object"
+      },
+      "LockOut": {
+        "properties": {
+          "approved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locked": {
+            "title": "Locked",
+            "type": "boolean"
+          },
+          "report_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Report Date"
+          },
+          "unlock": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UnlockOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "locked",
+          "report_date",
+          "approved_at",
+          "approved_by",
+          "unlock"
+        ],
+        "title": "LockOut",
         "type": "object"
       },
       "LoginRequest": {
@@ -18783,6 +19296,44 @@
         "title": "PreviewOut",
         "type": "object"
       },
+      "PreviousAllocationOut": {
+        "description": "B2-7: son GONDERILMIS gunun deseni. Doldurma/olcekleme istemcide.",
+        "properties": {
+          "codes": {
+            "items": {
+              "$ref": "#/components/schemas/CodeIn"
+            },
+            "title": "Codes",
+            "type": "array"
+          },
+          "day": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/RowPatternOut"
+            },
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "day",
+          "codes",
+          "rows"
+        ],
+        "title": "PreviousAllocationOut",
+        "type": "object"
+      },
       "PriceIndexType": {
         "description": "Fiyat farki endeks tipi (spec §2.4). Mockup satir 128 sirasi.",
         "enum": [
@@ -18840,6 +19391,47 @@
           "duration_pct"
         ],
         "title": "ProgressBlock",
+        "type": "object"
+      },
+      "ProgressOut": {
+        "properties": {
+          "earned_day": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Earned Day",
+            "type": "string"
+          },
+          "leaves": {
+            "items": {
+              "$ref": "#/components/schemas/LeafProgressOut"
+            },
+            "title": "Leaves",
+            "type": "array"
+          },
+          "pf_day": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pf Day"
+          },
+          "spent_day": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Spent Day",
+            "type": "string"
+          }
+        },
+        "required": [
+          "leaves",
+          "earned_day",
+          "spent_day",
+          "pf_day"
+        ],
+        "title": "ProgressOut",
         "type": "object"
       },
       "ProgressPaymentCreate": {
@@ -24446,6 +25038,160 @@
         "title": "RoleResponse",
         "type": "object"
       },
+      "RowOut": {
+        "properties": {
+          "changed": {
+            "title": "Changed",
+            "type": "boolean"
+          },
+          "headcount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Headcount"
+          },
+          "hours": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Hours",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "personnel",
+              "subcontractor"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "ref_id": {
+            "format": "uuid",
+            "title": "Ref Id",
+            "type": "string"
+          },
+          "saved_hours": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Saved Hours"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "subcontractor_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subcontractor Name"
+          },
+          "trade": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trade"
+          }
+        },
+        "required": [
+          "kind",
+          "ref_id",
+          "label",
+          "trade",
+          "source",
+          "subcontractor_name",
+          "headcount",
+          "hours",
+          "saved_hours",
+          "changed"
+        ],
+        "title": "RowOut",
+        "type": "object"
+      },
+      "RowPatternOut": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "personnel",
+              "subcontractor"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "ref_id": {
+            "format": "uuid",
+            "title": "Ref Id",
+            "type": "string"
+          },
+          "shares": {
+            "items": {
+              "$ref": "#/components/schemas/ShareOut"
+            },
+            "title": "Shares",
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind",
+          "ref_id",
+          "shares"
+        ],
+        "title": "RowPatternOut",
+        "type": "object"
+      },
+      "RowRef": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "personnel",
+              "subcontractor"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "ref_id": {
+            "format": "uuid",
+            "title": "Ref Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "ref_id"
+        ],
+        "title": "RowRef",
+        "type": "object"
+      },
       "SaleCancelInput": {
         "description": "`POST /sales/{id}/cancel` gövdesi — gerekçe ZORUNLUDUR.\n\nGerekçe `unit_sales`te bir kolona DEĞİL denetim günlüğüne yazılır\n(`transitions.py` gerekçesi): iptal kaydın bir niteliği değil bir olaydır.\nBoşluk kırpılır ki \" \" gönderen istemci \"gerekçe verdim\" sanmasın.",
         "properties": {
@@ -26263,6 +27009,25 @@
         "title": "SettingsSave",
         "type": "object"
       },
+      "ShareOut": {
+        "properties": {
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "share": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Share",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "share"
+        ],
+        "title": "ShareOut",
+        "type": "object"
+      },
       "ShareholderInput": {
         "description": "P9 spec §4.1: `id` OPSIYONELDIR ve satirin KIMLIGINI korur.\n\nid verilirse mevcut satir yerinde guncellenir (`units.shareholder_id` bagi\nayakta kalir); verilmezse yeni satirdir. id'siz eski govdeler geriye uyumlu\ncalisir. Bilinmeyen ya da baska projeye ait id sessizce yeni satira DONMEZ,\n422 verir (bkz. `service._merge_shareholders`).",
         "properties": {
@@ -27365,6 +28130,40 @@
             ],
             "title": "Section Id"
           },
+          "temp_max_c": {
+            "anyOf": [
+              {
+                "maximum": 60.0,
+                "minimum": -60.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,3}|(?=[\\d.]{1,5}0*$)\\d{0,3}\\.\\d{0,1}0*$)",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temp Max C"
+          },
+          "temp_min_c": {
+            "anyOf": [
+              {
+                "maximum": 60.0,
+                "minimum": -60.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,3}|(?=[\\d.]{1,5}0*$)\\d{0,3}\\.\\d{0,1}0*$)",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temp Min C"
+          },
           "temperature_c": {
             "anyOf": [
               {
@@ -27380,6 +28179,8 @@
                 "type": "null"
               }
             ],
+            "deprecated": true,
+            "description": "KULLANIMDAN KALKIYOR (PLN-B2.1): `temp_min_c` + `temp_max_c` kullanın. İstekte yeni alanlar YOKSA kabul edilir ve ikisine de yazılır; yeni alanlardan biri gelirse bu alan YOK SAYILIR. Yanıtta `temp_max_c`nin salt okunur kopyasıdır.",
             "title": "Temperature C"
           },
           "weather": {
@@ -27391,6 +28192,23 @@
                 "type": "null"
               }
             ]
+          },
+          "wind_ms": {
+            "anyOf": [
+              {
+                "maximum": 80.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,3}|(?=[\\d.]{1,5}0*$)\\d{0,3}\\.\\d{0,1}0*$)",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wind Ms"
           },
           "work_done": {
             "anyOf": [
@@ -27527,6 +28345,30 @@
             ],
             "title": "Submitted At"
           },
+          "temp_max_c": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temp Max C"
+          },
+          "temp_min_c": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temp Min C"
+          },
           "temperature_c": {
             "anyOf": [
               {
@@ -27537,6 +28379,8 @@
                 "type": "null"
               }
             ],
+            "deprecated": true,
+            "description": "KULLANIMDAN KALKIYOR (PLN-B2.1): `temp_min_c` + `temp_max_c` kullanın. İstekte yeni alanlar YOKSA kabul edilir ve ikisine de yazılır; yeni alanlardan biri gelirse bu alan YOK SAYILIR. Yanıtta `temp_max_c`nin salt okunur kopyasıdır.",
             "title": "Temperature C"
           },
           "updated_at": {
@@ -27553,6 +28397,18 @@
                 "type": "null"
               }
             ]
+          },
+          "wind_ms": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wind Ms"
           },
           "work_done": {
             "anyOf": [
@@ -27808,6 +28664,40 @@
             ],
             "title": "Section Id"
           },
+          "temp_max_c": {
+            "anyOf": [
+              {
+                "maximum": 60.0,
+                "minimum": -60.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,3}|(?=[\\d.]{1,5}0*$)\\d{0,3}\\.\\d{0,1}0*$)",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temp Max C"
+          },
+          "temp_min_c": {
+            "anyOf": [
+              {
+                "maximum": 60.0,
+                "minimum": -60.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,3}|(?=[\\d.]{1,5}0*$)\\d{0,3}\\.\\d{0,1}0*$)",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temp Min C"
+          },
           "temperature_c": {
             "anyOf": [
               {
@@ -27823,6 +28713,8 @@
                 "type": "null"
               }
             ],
+            "deprecated": true,
+            "description": "KULLANIMDAN KALKIYOR (PLN-B2.1): `temp_min_c` + `temp_max_c` kullanın. İstekte yeni alanlar YOKSA kabul edilir ve ikisine de yazılır; yeni alanlardan biri gelirse bu alan YOK SAYILIR. Yanıtta `temp_max_c`nin salt okunur kopyasıdır.",
             "title": "Temperature C"
           },
           "weather": {
@@ -27834,6 +28726,23 @@
                 "type": "null"
               }
             ]
+          },
+          "wind_ms": {
+            "anyOf": [
+              {
+                "maximum": 80.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,3}|(?=[\\d.]{1,5}0*$)\\d{0,3}\\.\\d{0,1}0*$)",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wind Ms"
           },
           "work_done": {
             "anyOf": [
@@ -27873,6 +28782,17 @@
             "title": "Boq Item Id",
             "type": "string"
           },
+          "overrun_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overrun Reason"
+          },
           "quantity": {
             "anyOf": [
               {
@@ -27885,6 +28805,18 @@
               }
             ],
             "title": "Quantity"
+          },
+          "section_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Id"
           }
         },
         "required": [
@@ -27928,15 +28860,74 @@
             "title": "Id",
             "type": "string"
           },
+          "leaf_cumulative_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leaf Cumulative Quantity"
+          },
           "line_amount": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Line Amount",
             "type": "string"
           },
+          "overrun_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overrun Reason"
+          },
+          "planned_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Quantity"
+          },
           "quantity": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Quantity",
             "type": "string"
+          },
+          "remaining_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining Quantity"
+          },
+          "section_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Id"
           },
           "unit": {
             "maxLength": 50,
@@ -28158,8 +29149,37 @@
             "title": "Count",
             "type": "integer"
           },
+          "hours": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 24.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*(?:\\d{0,3}|(?=[\\d.]{1,5}0*$)\\d{0,3}\\.\\d{0,1}0*$)",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hours"
+          },
           "source": {
             "$ref": "#/components/schemas/WorkerSource"
+          },
+          "subcontractor_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subcontractor Id"
           },
           "trade": {
             "maxLength": 100,
@@ -28182,6 +29202,18 @@
             "title": "Count",
             "type": "integer"
           },
+          "hours": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hours"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -28189,6 +29221,18 @@
           },
           "source": {
             "$ref": "#/components/schemas/WorkerSource"
+          },
+          "subcontractor_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subcontractor Id"
           },
           "trade": {
             "maxLength": 100,
@@ -33196,6 +34240,27 @@
         "title": "SubcontractorUpdate",
         "type": "object"
       },
+      "SubmitCheckOut": {
+        "properties": {
+          "can_submit": {
+            "title": "Can Submit",
+            "type": "boolean"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          }
+        },
+        "required": [
+          "can_submit",
+          "reasons"
+        ],
+        "title": "SubmitCheckOut",
+        "type": "object"
+      },
       "SuggestionsOut": {
         "properties": {
           "catalog": {
@@ -34367,6 +35432,32 @@
           "refresh_token"
         ],
         "title": "TokenPair",
+        "type": "object"
+      },
+      "TotalsOut": {
+        "properties": {
+          "allocated_hours": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Allocated Hours",
+            "type": "string"
+          },
+          "source_hours": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Source Hours",
+            "type": "string"
+          },
+          "unallocated_hours": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Unallocated Hours",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_hours",
+          "allocated_hours",
+          "unallocated_hours"
+        ],
+        "title": "TotalsOut",
         "type": "object"
       },
       "TrialBalanceResponse": {
@@ -37247,6 +38338,51 @@
         "title": "UnitValueBasis",
         "type": "string"
       },
+      "UnlockBody": {
+        "properties": {
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "UnlockBody",
+        "type": "object"
+      },
+      "UnlockOut": {
+        "properties": {
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "unlocked_at": {
+            "format": "date-time",
+            "title": "Unlocked At",
+            "type": "string"
+          },
+          "unlocked_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "unlocked_at",
+          "unlocked_by",
+          "reason"
+        ],
+        "title": "UnlockOut",
+        "type": "object"
+      },
       "UpcomingCollection": {
         "description": "S220-234'ün tek satırı: \"A · Daire 19 — Hasan Demir · Taksit 6 & 7 …\".",
         "properties": {
@@ -37961,7 +39097,12 @@
           "partly_cloudy",
           "cloudy",
           "rainy",
-          "snowy"
+          "snowy",
+          "heavy_rain",
+          "drizzle",
+          "windy",
+          "dusty",
+          "foggy"
         ],
         "title": "Weather",
         "type": "string"
@@ -58738,6 +59879,345 @@
           }
         ],
         "summary": "Put Budget Windows",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/sites/{site_id}/earned-value/code-tree": {
+      "get": {
+        "description": "\"+ Is kodu ekle\" secicisi: AKTIF baseline agaci (oransiz yaprak `has_rate=false`).",
+        "operationId": "get_code_tree_sites__site_id__earned_value_code_tree_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CodeNodeOut"
+                  },
+                  "title": "Response Get Code Tree Sites  Site Id  Earned Value Code Tree Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Code Tree",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/sites/{site_id}/earned-value/days/{day}": {
+      "get": {
+        "description": "Gunun dagitim baglami + kilit + ilerleme onizlemesi + Gonder kontrolu (§4.2).",
+        "operationId": "get_day_sites__site_id__earned_value_days__day__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "day",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Day",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DayView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Day",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/sites/{site_id}/earned-value/days/{day}/allocation": {
+      "put": {
+        "description": "Gunun saat dagitimi — TAM DEGISTIRME. Kilitli gun 409 · baseline yok 409.",
+        "operationId": "put_day_allocation_sites__site_id__earned_value_days__day__allocation_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "day",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Day",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AllocationSave"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DayView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Put Day Allocation",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/sites/{site_id}/earned-value/days/{day}/previous-allocation": {
+      "get": {
+        "description": "B2-7 \"Dunku dagilimi kopyala\": son GONDERILMIS gunun deseni (satir basina pay).",
+        "operationId": "get_previous_allocation_sites__site_id__earned_value_days__day__previous_allocation_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "day",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Day",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviousAllocationOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Previous Allocation",
+        "tags": [
+          "earned-value"
+        ]
+      }
+    },
+    "/sites/{site_id}/earned-value/days/{day}/unlock": {
+      "post": {
+        "description": "Gun duzeyi kilit istisnasi (B2-6 b) — gerekceli; kilitli degilse 409.",
+        "operationId": "unlock_day_sites__site_id__earned_value_days__day__unlock_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "day",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Day",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnlockBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LockOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Yetkisiz işlem"
+          },
+          "404": {
+            "description": "Kayıt bulunamadı"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Unlock Day",
         "tags": [
           "earned-value"
         ]

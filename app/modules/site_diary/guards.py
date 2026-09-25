@@ -8,10 +8,19 @@ görünmeyen bir şantiye için `sites` ucundan FARKLI bir cümle dönerse, elin
 UUID olan kullanıcı iki uç arasındaki farktan kaydın var olduğunu çıkarabilir.
 """
 
+from decimal import Decimal
+
 from app.modules.sites.guards import SITE_MISSING
 
 __all__ = [
     "DELETE_NOT_ALLOWED",
+    "DUPLICATE_WORKER_SUBCONTRACTOR",
+    "LINE_SECTION_MISMATCH",
+    "LINE_SECTION_NOT_ALLOCATED",
+    "TEMP_ORDER",
+    "WORKER_SUBCONTRACTOR_SOURCE",
+    "WORKER_SUBCONTRACTOR_UNKNOWN",
+    "temp_order_ok",
     "DUPLICATE_LINE",
     "INVALID_STATUS_TRANSITION",
     "DUPLICATE_WORKER_COUNT",
@@ -90,7 +99,7 @@ LINE_ITEM_MISMATCH = "Seçilen poz bu şantiyenin BOQ'suna ait değil"
 # 409 (`DuplicateError`) — kısmi UQ `uq_site_diary_lines_boq_item` ihlali GÖVDE
 # İÇİNDE yakalanır. `IntegrityError` emniyet ağı olarak kalır ama kullanıcının
 # normalde göreceği cümle budur ("Veri bütünlüğü hatası" değil).
-DUPLICATE_LINE = "Aynı poz gövdede birden fazla kez gönderildi"
+DUPLICATE_LINE = "Aynı poz (aynı bölümle) gövdede birden fazla kez gönderildi"
 
 # 409 (`DuplicateError`) — UQ (entry_id, trade, source) ihlali. Aynı meslek FARKLI
 # kaynakla meşrudur (GK418-430 rozetleri); çakışan yalnız ÜÇLÜNÜN tamamıdır.
@@ -140,3 +149,33 @@ SUGGESTION_NO_BRIDGE = (
 # Sessizce yok saymak, kullanıcının filtrelediğini sandığı bir listeyi filtresiz
 # göstermek olurdu.
 YEAR_REQUIRED_FOR_MONTH = "Ay filtresi için yıl da belirtilmelidir"
+
+# --- PLN-B2.1: çekirdek iyileştirmeleri (hava · bölüm kırılımı · taşeron satırı) ---
+
+# 422 — min > max. Gövde içinde şema, PATCH'te BİRLEŞİK değer (gövde + mevcut)
+# üzerinden servis söyler; DB CHECK `ck_site_diary_entries_temp_min_le_max` son ağdır.
+TEMP_ORDER = "Minimum sıcaklık maksimum sıcaklıktan büyük olamaz"
+
+
+def temp_order_ok(temp_min: Decimal | None, temp_max: Decimal | None) -> bool:
+    """İkisi de doluysa min ≤ max; biri boşsa kural yok (taslak yarım doldurulabilir)."""
+    return temp_min is None or temp_max is None or temp_min <= temp_max
+
+
+# 422 — satırın bölümü günlüğün şantiyesine ait değil (var olmayan bölüm AYNI cümle).
+LINE_SECTION_MISMATCH = "Satırdaki bölüm bu şantiyeye ait değil"
+
+# 422 — kalemin o bölüme TAHSİSİ yok. Yaprak = kalem × bölüm (spec §2); tahsis
+# edilmemiş kısım "Bölümsüz" satıra (section_id boş) yazılır.
+LINE_SECTION_NOT_ALLOCATED = (
+    "Kalemin bu bölüme tahsisi yok; miktarı Bölümsüz satıra yazın ya da önce BOQ'da tahsis edin"
+)
+
+# 422 — firma bağı yalnız taşeron kaynaklı satırda anlamlıdır (DB CHECK ikizi).
+WORKER_SUBCONTRACTOR_SOURCE = "Taşeron firması yalnız kaynağı taşeron olan satıra bağlanabilir"
+
+# 422 — var olmayan firma (kimlik bir alan DEĞERİDİR; ayrı kaynak değil).
+WORKER_SUBCONTRACTOR_UNKNOWN = "Seçilen taşeron firması bulunamadı"
+
+# 409 — kısmi UQ `uq_site_diary_worker_counts_entry_subcontractor` gövde içinde.
+DUPLICATE_WORKER_SUBCONTRACTOR = "Aynı taşeron firması için birden fazla işçi satırı gönderildi"

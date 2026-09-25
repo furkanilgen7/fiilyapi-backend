@@ -64,6 +64,15 @@ BEKLENEN: dict[tuple[str, str], str] = {
     ("ev_leaf_settings", "section_id"): "CASCADE",
     # PLN-B1: disiplin × bolum pencere EZMESI — bolumsuz ezme anlamsiz.
     ("ev_windows", "section_id"): "CASCADE",
+    # --- ÜÇÜNCÜ kova (PLN-B2.1): bölüm KİMLİĞİN parçası ama kayıt bölümden BAĞIMSIZ ---
+    # Günlük miktar satırının kimliği (kayıt, kalem, bölüm)dür. SET NULL (kalem, S1)
+    # satırını (kalem, NULL)a çevirip aynı kayıttaki Bölümsüz satırla kısmi tekil
+    # indekste ÇAKIŞTIRIR (IntegrityError) ve S1 üretimini sessizce "Bölümsüz"e
+    # taşırdı; CASCADE GÖNDERİLMİŞ günlüğün miktarını silerdi. RESTRICT: bölüm,
+    # miktarı yazılmışken silinemez (bugün genel 409). 🔴 GEÇİCİ — bölüm silme
+    # yolunda "ilişkili kayıt var" korkuluğu yok (`sites/service/deletes.py::
+    # delete_section` bilinçli koşulsuz); CEO sorusu PLN-B2.1 raporunda.
+    ("site_diary_lines", "section_id"): "RESTRICT",
 }
 
 

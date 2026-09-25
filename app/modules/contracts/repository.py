@@ -7,6 +7,8 @@ kalemleri TEK ek sorguda (IN listesi) toplu gelir.
 """
 
 import uuid
+from datetime import date
+from typing import NamedTuple
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +23,7 @@ from app.modules.contracts.models import (
     SubcontractorContractItem,
 )
 from app.modules.projects.models import Project, ProjectContract
+from app.modules.site_diary.models import SiteDiaryEntry, SiteDiaryWorkerCount
 from app.modules.sites.models import Site
 
 
@@ -473,3 +476,36 @@ async def get_employer_item_groups(
     )
     result = await session.execute(stmt)
     return [(row[0], row[1], row[2]) for row in result.all()]
+
+
+class DiaryUsage(NamedTuple):
+    """Silme korkuluğunun metni için günlük kullanım özeti (PLN-B2.11)."""
+
+    entry_count: int
+    row_count: int
+    first_date: date
+
+
+async def subcontractor_has_diary_rows(
+    session: AsyncSession, subcontractor_id: uuid.UUID
+) -> DiaryUsage | None:
+    """Taşerona bağlı günlük FİRMA işçi satırı var mı (`site_diary_worker_counts.
+    subcontractor_id` -> RESTRICT, PLN-B2.1). Varsa kaç günlükte kaç satır + ilk
+    tarih; yoksa `None`. DB zaten korur; korkuluk opak "Veri bütünlüğü hatası"nın
+    yerine eyleme dönük metin verir. TEK toplu sorgu.
+
+    Import yönü güvenli: `site_diary/models.py` yalnız `app.core.db`ye bağlıdır.
+    """
+    stmt = (
+        select(
+            func.count(func.distinct(SiteDiaryWorkerCount.entry_id)),
+            func.count(SiteDiaryWorkerCount.id),
+            func.min(SiteDiaryEntry.entry_date),
+        )
+        .join(SiteDiaryEntry, SiteDiaryEntry.id == SiteDiaryWorkerCount.entry_id)
+        .where(SiteDiaryWorkerCount.subcontractor_id == subcontractor_id)
+    )
+    entry_count, row_count, first_date = (await session.execute(stmt)).one()
+    if not row_count:
+        return None
+    return DiaryUsage(int(entry_count), int(row_count), first_date)

@@ -90,6 +90,8 @@ class DisciplineRead(BaseModel):
     color: str
     default_contractor_type: ContractorType
     sort_order: int
+    used_by_item_count: int = 0  # katalog is tipi sayisi
+    used_by_site_count: int = 0  # BOQ grubu eslenmis / baseline'i olan santiye; >0 silinemez
 
 
 class DisciplineRef(BaseModel):
