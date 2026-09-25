@@ -180,16 +180,6 @@ async def assert_entry_days_unlocked(
     await day_hooks.assert_days_unlocked(session, entry.site_id, [entry.entry_date, *extra_days])
 
 
-def _sync_legacy_temperature(entry: SiteDiaryEntry) -> None:
-    """`temperature_c` kolonu = `temp_max_c` — TEK yazar (model notu: genişlet/daralt).
-
-    CLEAN-B1 Faz 1: alan API'den kalktı, kolon DB'de KALIR — geçiş sırasında eski konteyner
-    (ya da geri alınmış kod) okur. Faz 2 (en az bir sürüm sonra) kolonla birlikte bu
-    fonksiyonu kaldırır.
-    """
-    entry.temperature_c = entry.temp_max_c
-
-
 def _assert_temperature_order(entry: SiteDiaryEntry) -> None:
     """BİRLEŞİK değer (gövde + mevcut) üzerinden min ≤ max — PATCH tek alan getirebilir."""
     if not guards.temp_order_ok(entry.temp_min_c, entry.temp_max_c):
@@ -254,7 +244,6 @@ async def create(
         **data.model_dump(),
     )
     _assert_temperature_order(entry)
-    _sync_legacy_temperature(entry)
     entry.lines = await _build_lines(session, site.id)
     session.add(entry)
     await session.flush()
@@ -304,7 +293,6 @@ async def update(
     for field, value in changes.items():
         setattr(context.entry, field, value)
     _assert_temperature_order(context.entry)
-    _sync_legacy_temperature(context.entry)
     if worker_counts is not None:
         await lines.apply_worker_counts(session, context.entry, worker_counts)
     await session.flush()

@@ -97,12 +97,6 @@ class SiteDiaryEntry(Base):
     __tablename__ = "site_diary_entries"
     __table_args__ = (
         UniqueConstraint("site_id", "entry_date", name="uq_site_diary_entries_site_date"),
-        # Sicaklik -99.9 .. 999.9 arasi (Numeric(4,1)) — is mantiginda daha dar bir
-        # aralik uygulanabilir; DB yalniz olcegi zorlar.
-        CheckConstraint(
-            "temperature_c IS NULL OR temperature_c BETWEEN -60 AND 60",
-            name="ck_site_diary_entries_temperature_range",
-        ),
         # PLN-B2.1 (B2-2): min/max sicaklik + ruzgar. Sinirlar semadaki alan
         # dogrulamasiyla BIREBIR (`schemas._TEMP_*`, `_WIND_MAX`).
         CheckConstraint(
@@ -147,14 +141,10 @@ class SiteDiaryEntry(Base):
     # Hava/sicaklik/aciklama alanlari NULLABLE: taslak yarim doldurulabilir
     # (P6 `is_draft` gerekcesinin aynisi — zorunluluk `submit` katmanindadir).
     weather: Mapped[Weather | None] = mapped_column(Enum(Weather, name="weather"), nullable=True)
-    # 🔴 KULLANIMDAN KALKIYOR (PLN-B2.1, B2-2): tek dogruluk kaynagi `temp_max_c`dir.
-    # Kolon BU SURUMDE KALIR (genislet/daralt): Railway acilista `alembic upgrade`
-    # kosar ve eski konteyner yeni migration'dan sonra bir sure daha trafik alir —
-    # kolon dusurulseydi eski kodun SELECT'i o pencerede 500 verirdi; kod geri
-    # alinirsa (redeploy) da ayni. Servis her yazmada `temperature_c = temp_max_c`
-    # esitler (`service._sync_legacy_temperature`, TEK yer). Alan F2 merge'unden
-    # sonra ayri gorevle kolonla birlikte kalkar.
-    temperature_c: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), nullable=True)
+    # Sicaklik yalniz min/max'tir (PLN-B2.1, B2-2). Eski tek sicaklik kolonu
+    # CLEAN-B2'de modelden ve yazicisindan kalkti. Kolonun DB'den dusmesi AYRI bir
+    # migration'dir ve bu modelin canlida oldugu surumden SONRA gelir (genislet/daralt:
+    # eski konteyner kolonu esliyorsa DROP penceresinde her SELECT'i 500 verir).
     temp_min_c: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), nullable=True)
     temp_max_c: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), nullable=True)
     # m/s (mockup "Rüzgâr m/s"; km/s istemci türevi).

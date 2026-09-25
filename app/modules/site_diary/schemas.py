@@ -37,8 +37,8 @@ __all__ = [
     "SubcontractorDiarySuggestion",
 ]
 
-# `ck_site_diary_entries_temperature_range` ile BİREBİR: DB CHECK'i son savunmadır
-# ama kullanıcıya "Veri bütünlüğü hatası" der; alan hatası burada yakalanınca 422
+# `ck_site_diary_entries_temp_min_range` / `_temp_max_range` ile BİREBİR: DB CHECK'i son
+# savunmadır ama kullanıcıya "Veri bütünlüğü hatası" der; alan hatası burada yakalanınca 422
 # gövdesi hangi alanın yanlış olduğunu söyler.
 _TEMP_MIN = Decimal("-60")
 _TEMP_MAX = Decimal("60")
@@ -51,8 +51,8 @@ _TENTHS_DECIMALS = 1
 # PLN-B2.1 (B2-5): `ck_site_diary_worker_counts_hours_range` ile BİREBİR (0 < h ≤ 24).
 _HOURS_MAX = Decimal("24")
 
-#: CLEAN-B1 Faz 1: `temperature_c` API'den KALDIRILDI (PLN-B2.1'de kullanımdan kalkmıştı).
-#: Kolon Faz 2'ye kadar DB'de kalır (eski konteyner okur; `service._sync_legacy_temperature`).
+#: CLEAN-B1 Faz 1: `temperature_c` API'den KALDIRILDI (PLN-B2.1'de kullanımdan kalkmıştı);
+#: CLEAN-B2: modelden ve servisten de kalktı. Eski istemciye açık 422 KALIR (API sözleşmesi).
 TEMPERATURE_C_REMOVED = "`temperature_c` kaldırıldı — `temp_min_c` ve `temp_max_c` kullanın"
 
 
