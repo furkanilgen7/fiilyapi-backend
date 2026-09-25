@@ -38,6 +38,7 @@ from app.modules.procurement.numbering import (
     generate_request_number,
 )
 from tests._time import YIL_SINIRI_UTC, sabit_saat
+from tests._yaris import YARIS_TAVANI_SN
 
 
 async def _add_request(
@@ -306,7 +307,7 @@ async def test_eszamanli_uretim_ayni_numarayi_vermez():
             )
 
             await birinci.commit()
-            ikinci_numara = await asyncio.wait_for(gorev, timeout=10)
+            ikinci_numara = await asyncio.wait_for(gorev, timeout=YARIS_TAVANI_SN)
 
         assert ilk_numara == "SAT-2026-0001"
         assert ikinci_numara == "SAT-2026-0002"

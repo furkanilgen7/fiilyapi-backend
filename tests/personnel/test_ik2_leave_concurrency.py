@@ -46,6 +46,7 @@ from app.modules.personnel.schemas import LeaveBalanceUpdate, LeaveRejectRequest
 from app.modules.roles.models import Role
 from app.modules.site_diary.models import WorkerSource
 from app.modules.users.models import User
+from tests._yaris import YARIS_TAVANI_SN
 from tests.conftest import test_engine
 
 pytestmark = pytest.mark.asyncio
@@ -275,7 +276,7 @@ async def test_iki_esZamanli_onay_hak_asimini_atlatamaz() -> None:
         task1 = asyncio.create_task(
             _onayla_ve_tut(kurulum.request_ids[0], kurulum.actor_ids[0], kilit_alindi, kilidi_birak)
         )
-        await asyncio.wait_for(kilit_alindi.wait(), timeout=5)
+        await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_onayla(kurulum.request_ids[1], kurulum.actor_ids[1]))
         await asyncio.sleep(0.3)
@@ -285,8 +286,8 @@ async def test_iki_esZamanli_onay_hak_asimini_atlatamaz() -> None:
         )
 
         kilidi_birak.set()
-        sonuc1 = await asyncio.wait_for(task1, timeout=5)
-        sonuc2 = await asyncio.wait_for(task2, timeout=5)
+        sonuc1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
+        sonuc2 = await asyncio.wait_for(task2, timeout=YARIS_TAVANI_SN)
         assert sorted([sonuc1, sonuc2]) == ["approved", "conflict"]
 
         async with _SessionFactory() as dogrula:
@@ -335,7 +336,7 @@ async def test_iki_esZamanli_onay_cakismayi_atlatamaz() -> None:
         task1 = asyncio.create_task(
             _onayla_ve_tut(kurulum.request_ids[0], kurulum.actor_ids[0], kilit_alindi, kilidi_birak)
         )
-        await asyncio.wait_for(kilit_alindi.wait(), timeout=5)
+        await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_onayla(kurulum.request_ids[1], kurulum.actor_ids[1]))
         await asyncio.sleep(0.3)
@@ -345,8 +346,8 @@ async def test_iki_esZamanli_onay_cakismayi_atlatamaz() -> None:
         )
 
         kilidi_birak.set()
-        sonuc1 = await asyncio.wait_for(task1, timeout=5)
-        sonuc2 = await asyncio.wait_for(task2, timeout=5)
+        sonuc1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
+        sonuc2 = await asyncio.wait_for(task2, timeout=YARIS_TAVANI_SN)
         assert sorted([sonuc1, sonuc2]) == ["approved", "conflict"]
 
         async with _SessionFactory() as dogrula:
@@ -386,7 +387,7 @@ async def test_ayni_talebe_esZamanli_onay_ve_red_tek_damga_birakir() -> None:
         task1 = asyncio.create_task(
             _onayla_ve_tut(talep_id, kurulum.actor_ids[0], kilit_alindi, kilidi_birak)
         )
-        await asyncio.wait_for(kilit_alindi.wait(), timeout=5)
+        await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_reddet(talep_id, kurulum.actor_ids[1]))
         await asyncio.sleep(0.3)
@@ -396,8 +397,8 @@ async def test_ayni_talebe_esZamanli_onay_ve_red_tek_damga_birakir() -> None:
         )
 
         kilidi_birak.set()
-        sonuc1 = await asyncio.wait_for(task1, timeout=5)
-        sonuc2 = await asyncio.wait_for(task2, timeout=5)
+        sonuc1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
+        sonuc2 = await asyncio.wait_for(task2, timeout=YARIS_TAVANI_SN)
         assert sonuc1 == "approved"
         assert sonuc2 == "conflict", "red, tazelenmiş `approved` durumunu GÖRMEDİ"
 
@@ -449,7 +450,7 @@ async def test_ayni_talebe_esZamanli_onay_ve_geri_cekme_tek_damga_birakir() -> N
         task1 = asyncio.create_task(
             _onayla_ve_tut(talep_id, kurulum.actor_ids[0], kilit_alindi, kilidi_birak)
         )
-        await asyncio.wait_for(kilit_alindi.wait(), timeout=5)
+        await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_geri_cek(talep_id, kurulum.actor_ids[1]))
         await asyncio.sleep(0.3)
@@ -465,8 +466,8 @@ async def test_ayni_talebe_esZamanli_onay_ve_geri_cekme_tek_damga_birakir() -> N
         )
 
         kilidi_birak.set()
-        sonuc1 = await asyncio.wait_for(task1, timeout=5)
-        sonuc2 = await asyncio.wait_for(task2, timeout=5)
+        sonuc1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
+        sonuc2 = await asyncio.wait_for(task2, timeout=YARIS_TAVANI_SN)
         assert sorted([sonuc1, sonuc2]) == ["approved", "conflict"], (
             "iki istek de BAŞARILI döndü: onay kararı sessizce kayboldu "
             f"(sonuçlar: {sonuc1!r}, {sonuc2!r})"
@@ -584,7 +585,7 @@ async def test_iki_esZamanli_bakiye_putu_tek_satir_birakir() -> None:
                 return yanit.carried_over
 
         task1 = asyncio.create_task(yaz_ve_tut())
-        await asyncio.wait_for(kilit_alindi.wait(), timeout=5)
+        await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(yaz())
         await asyncio.sleep(0.3)
@@ -594,8 +595,8 @@ async def test_iki_esZamanli_bakiye_putu_tek_satir_birakir() -> None:
         )
 
         kilidi_birak.set()
-        await asyncio.wait_for(task1, timeout=5)
-        assert await asyncio.wait_for(task2, timeout=5) == Decimal("5")
+        await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
+        assert await asyncio.wait_for(task2, timeout=YARIS_TAVANI_SN) == Decimal("5")
 
         async with _SessionFactory() as dogrula:
             satirlar = (

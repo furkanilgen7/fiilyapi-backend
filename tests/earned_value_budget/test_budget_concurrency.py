@@ -52,11 +52,13 @@ from app.modules.projects.models import Project
 from app.modules.roles.models import Role
 from app.modules.sites.models import Site
 from app.modules.users.models import User
+from tests._yaris import YARIS_TAVANI_SN
 
 pytestmark = pytest.mark.asyncio
 
 #: Bariyer süreleri. Bekleyen sorguyu arama sabit uyku DEĞİL, koşul yoklamasıdır.
-_BEKLEME_SINIRI = 5.0
+#: FIX-B3: ortak geniş tavan (5 sn CI yükünde yetmiyordu; bkz. `tests/_yaris.py`).
+_BEKLEME_SINIRI = YARIS_TAVANI_SN
 _YOKLAMA_ARALIGI = 0.05
 _KESISME_PAYI = 0.3
 

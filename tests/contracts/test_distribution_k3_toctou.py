@@ -53,6 +53,7 @@ from app.modules.projects.models import Project, ProjectContract
 from app.modules.roles.models import Role
 from app.modules.sites.models import Section, Site
 from app.modules.users.models import User, UserProjectAccess
+from tests._yaris import YARIS_TAVANI_SN
 from tests.conftest import test_engine
 
 pytestmark = pytest.mark.asyncio
@@ -112,7 +113,7 @@ async def test_toctou_araya_giren_yukseltme_kotayi_asagi_cekebilir(kurulum: _Kur
             existing_by_key = distribution_quantity.index_allocations(site_boq_items)
 
             read_done.set()
-            await asyncio.wait_for(t2_done.wait(), timeout=5)
+            await asyncio.wait_for(t2_done.wait(), timeout=YARIS_TAVANI_SN)
 
             alloc = schemas.ContractAllocationInput(
                 contract_item_id=kurulum.item_id, site_id=kurulum.site_id, quantity=_T1_HEDEF
@@ -133,7 +134,7 @@ async def test_toctou_araya_giren_yukseltme_kotayi_asagi_cekebilir(kurulum: _Kur
             return "yazildi"
 
     async def t2() -> None:
-        await asyncio.wait_for(read_done.wait(), timeout=5)
+        await asyncio.wait_for(read_done.wait(), timeout=YARIS_TAVANI_SN)
         async with _SessionFactory() as s2:
             actor = await s2.get(User, kurulum.user_id)
             await boq_service.update_item(
@@ -156,8 +157,8 @@ async def test_toctou_araya_giren_yukseltme_kotayi_asagi_cekebilir(kurulum: _Kur
 
     task1 = asyncio.create_task(t1())
     task2 = asyncio.create_task(t2())
-    sonuc1 = await asyncio.wait_for(task1, timeout=10)
-    await asyncio.wait_for(task2, timeout=10)
+    sonuc1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
+    await asyncio.wait_for(task2, timeout=YARIS_TAVANI_SN)
 
     assert sonuc1 == "reddedildi", (
         "T1, araya giren T2'nin yükselttiği kotayı ve eklediği tahsisi hiç "

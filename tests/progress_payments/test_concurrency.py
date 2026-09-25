@@ -28,6 +28,7 @@ from app.modules.progress_payments.models import ProgressPayment, ProgressPaymen
 from app.modules.projects.models import Project, ProjectContract
 from app.modules.roles.models import Module, ModuleGroup, Role, RolePermission
 from app.modules.users.models import User
+from tests._yaris import YARIS_TAVANI_SN
 from tests.conftest import test_engine
 
 pytestmark = pytest.mark.asyncio
@@ -52,7 +53,7 @@ async def test_iki_esZamanli_olusturma_yalniz_biri_gecer() -> None:
         task1 = asyncio.create_task(
             _attempt_create_and_hold(project_id, user_id, lock_acquired, release_lock)
         )
-        await asyncio.wait_for(lock_acquired.wait(), timeout=5)
+        await asyncio.wait_for(lock_acquired.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_attempt_create(project_id, user_id))
         await asyncio.sleep(0.3)
@@ -62,8 +63,8 @@ async def test_iki_esZamanli_olusturma_yalniz_biri_gecer() -> None:
         )
 
         release_lock.set()
-        result1 = await asyncio.wait_for(task1, timeout=5)
-        result2 = await asyncio.wait_for(task2, timeout=5)
+        result1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
+        result2 = await asyncio.wait_for(task2, timeout=YARIS_TAVANI_SN)
 
         assert sorted([result1, result2]) == ["conflict", "created"]
 
@@ -210,7 +211,7 @@ async def test_iki_esZamanli_onay_yalniz_biri_gecer() -> None:
         task1 = asyncio.create_task(
             _attempt_approve_and_hold(payment_id, user_id, lock_acquired, release_lock)
         )
-        await asyncio.wait_for(lock_acquired.wait(), timeout=5)
+        await asyncio.wait_for(lock_acquired.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_attempt_approve(payment_id, ikinci_user_id))
         await asyncio.sleep(0.3)
@@ -220,8 +221,8 @@ async def test_iki_esZamanli_onay_yalniz_biri_gecer() -> None:
         )
 
         release_lock.set()
-        result1 = await asyncio.wait_for(task1, timeout=5)
-        result2 = await asyncio.wait_for(task2, timeout=5)
+        result1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
+        result2 = await asyncio.wait_for(task2, timeout=YARIS_TAVANI_SN)
         assert sorted([result1, result2]) == ["approved", "conflict"]
 
         async with _SessionFactory() as verify_session:
@@ -335,7 +336,7 @@ async def test_gecis_hakedis_satirinin_kilidini_bekler() -> None:
             )
             await tutan.rollback()
 
-        assert await asyncio.wait_for(task, timeout=5) == "approved"
+        assert await asyncio.wait_for(task, timeout=YARIS_TAVANI_SN) == "approved"
     finally:
         await _onay_temizligi(project_id, user_id, ikinci_user_id)
 
@@ -367,7 +368,7 @@ async def test_silinirken_esZamanli_onay_kazanirsa_409_alir() -> None:
         task_approve = asyncio.create_task(
             _attempt_approve_and_hold(payment_id, user_id, lock_acquired, release_lock)
         )
-        await asyncio.wait_for(lock_acquired.wait(), timeout=5)
+        await asyncio.wait_for(lock_acquired.wait(), timeout=YARIS_TAVANI_SN)
 
         task_delete = asyncio.create_task(_attempt_delete(payment_id, ikinci_user_id))
         await asyncio.sleep(0.3)
@@ -378,8 +379,8 @@ async def test_silinirken_esZamanli_onay_kazanirsa_409_alir() -> None:
         )
 
         release_lock.set()
-        onay_sonucu = await asyncio.wait_for(task_approve, timeout=5)
-        silme_sonucu = await asyncio.wait_for(task_delete, timeout=5)
+        onay_sonucu = await asyncio.wait_for(task_approve, timeout=YARIS_TAVANI_SN)
+        silme_sonucu = await asyncio.wait_for(task_delete, timeout=YARIS_TAVANI_SN)
 
         assert onay_sonucu == "approved"
         assert silme_sonucu == "conflict", (
@@ -573,13 +574,16 @@ async def _kilitte_bekledigini_dogrula(task: asyncio.Task, *, mesaj: str) -> Non
     beklemez ve buraya `TimeoutError` DEĞİL, `task.done()` ile düşer — mesaj
     tam olarak o mutantı adlandırır.
     """
-    for _ in range(100):
+    # FIX-B3: sayaçla (100 × 0,05 ≈ 5 sn) DEĞİL duvar saatiyle, ortak geniş tavanla.
+    loop = asyncio.get_running_loop()
+    son = loop.time() + YARIS_TAVANI_SN
+    while loop.time() < son:
         if task.done():
             raise AssertionError(mesaj)
         if await _lock_bekleyen_pid(set()) is not None:
             return
         await asyncio.sleep(0.05)
-    raise AssertionError(f"5 sn içinde SATIR KİLİDİ beklemesi GÖRÜLMEDİ: {mesaj}")
+    raise AssertionError(f"{YARIS_TAVANI_SN} sn içinde SATIR KİLİDİ beklemesi GÖRÜLMEDİ: {mesaj}")
 
 
 async def _attempt_save_lines(payment_id: uuid.UUID, actor_id: uuid.UUID) -> str:
@@ -629,7 +633,7 @@ async def test_satir_yazma_esZamanli_onay_kazanirsa_409_alir() -> None:
             _attempt_approve_and_hold(payment_id, user_id, lock_acquired, release_lock)
         )
         gorevler.append(task_approve)
-        await asyncio.wait_for(lock_acquired.wait(), timeout=5)
+        await asyncio.wait_for(lock_acquired.wait(), timeout=YARIS_TAVANI_SN)
 
         task_lines = asyncio.create_task(_attempt_save_lines(payment_id, ikinci_user_id))
         gorevler.append(task_lines)
@@ -648,8 +652,8 @@ async def test_satir_yazma_esZamanli_onay_kazanirsa_409_alir() -> None:
         finally:
             release_lock.set()
 
-        onay_sonucu = await asyncio.wait_for(task_approve, timeout=10)
-        satir_sonucu = await asyncio.wait_for(task_lines, timeout=10)
+        onay_sonucu = await asyncio.wait_for(task_approve, timeout=YARIS_TAVANI_SN)
+        satir_sonucu = await asyncio.wait_for(task_lines, timeout=YARIS_TAVANI_SN)
 
         assert onay_sonucu == "approved"
         assert satir_sonucu == "conflict", (

@@ -41,6 +41,7 @@ from app.modules.equipment.models import Equipment, EquipmentCategory, Equipment
 from app.modules.equipment.schemas import WorkLogCreate
 from app.modules.roles.models import Role
 from app.modules.users.models import User
+from tests._yaris import YARIS_TAVANI_SN
 from tests.conftest import test_engine
 
 pytestmark = pytest.mark.asyncio
@@ -188,7 +189,7 @@ async def test_iki_esZamanli_kayit_gunluk_tavani_atlatamaz() -> None:
                 kurulum.equipment_id, kurulum.actor_ids[0], "20", kilit_alindi, kilidi_birak
             )
         )
-        await asyncio.wait_for(kilit_alindi.wait(), timeout=5)
+        await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         task2 = asyncio.create_task(_kaydet(kurulum.equipment_id, kurulum.actor_ids[1], "20"))
         await asyncio.sleep(0.3)
@@ -198,8 +199,8 @@ async def test_iki_esZamanli_kayit_gunluk_tavani_atlatamaz() -> None:
         )
 
         kilidi_birak.set()
-        sonuc1 = await asyncio.wait_for(task1, timeout=5)
-        sonuc2 = await asyncio.wait_for(task2, timeout=5)
+        sonuc1 = await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN)
+        sonuc2 = await asyncio.wait_for(task2, timeout=YARIS_TAVANI_SN)
         assert sorted([sonuc1, sonuc2]) == ["created", "rejected"]
 
         toplam = await _gun_toplami(kurulum.equipment_id)
@@ -233,7 +234,7 @@ async def test_esZamanli_silme_ve_kayit_ayni_kilit_sirasini_paylasir() -> None:
                 kurulum.equipment_id, kurulum.actor_ids[0], "10", kilit_alindi, kilidi_birak
             )
         )
-        await asyncio.wait_for(kilit_alindi.wait(), timeout=5)
+        await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
         async def sil() -> str:
             async with _SessionFactory() as session:
@@ -250,8 +251,8 @@ async def test_esZamanli_silme_ve_kayit_ayni_kilit_sirasini_paylasir() -> None:
         )
 
         kilidi_birak.set()
-        assert await asyncio.wait_for(task1, timeout=5) == "created"
-        assert await asyncio.wait_for(task2, timeout=5) == "deleted"
+        assert await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN) == "created"
+        assert await asyncio.wait_for(task2, timeout=YARIS_TAVANI_SN) == "deleted"
         assert await _gun_toplami(kurulum.equipment_id) == Decimal("10.00")
     finally:
         await _gorevleri_bosalt(task1, task2)

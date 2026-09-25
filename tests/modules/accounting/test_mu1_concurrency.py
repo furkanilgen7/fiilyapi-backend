@@ -53,6 +53,7 @@ from app.modules.accounting.models import (
 from app.modules.accounting.transitions import JournalAction
 from app.modules.roles.models import Role
 from app.modules.users.models import User
+from tests._yaris import YARIS_TAVANI_SN
 from tests.conftest import test_engine
 
 _SessionFactory = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
@@ -230,7 +231,7 @@ async def _yarisi_kos(kurulum: _Kurulum, action: JournalAction) -> list[str]:
     task1 = asyncio.create_task(
         _gecis_ve_tut(kurulum.entry_id, kurulum.actor_id, action, kilit_alindi, birak)
     )
-    await asyncio.wait_for(kilit_alindi.wait(), timeout=5)
+    await asyncio.wait_for(kilit_alindi.wait(), timeout=YARIS_TAVANI_SN)
 
     task2 = asyncio.create_task(_gecis(kurulum.entry_id, kurulum.ikinci_actor_id, action))
     await asyncio.sleep(0.3)
@@ -242,8 +243,8 @@ async def _yarisi_kos(kurulum: _Kurulum, action: JournalAction) -> list[str]:
 
     birak.set()
     sonuclar = [
-        await asyncio.wait_for(task1, timeout=5),
-        await asyncio.wait_for(task2, timeout=5),
+        await asyncio.wait_for(task1, timeout=YARIS_TAVANI_SN),
+        await asyncio.wait_for(task2, timeout=YARIS_TAVANI_SN),
     ]
     return sorted(sonuclar)
 

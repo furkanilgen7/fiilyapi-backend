@@ -33,6 +33,7 @@ kalabilir. Bu dosya HEM TEK BAŞINA HEM DOSYA BÜTÜN koşturulup raporlanır.
 """
 
 import asyncio
+import sys
 import uuid
 from contextlib import asynccontextmanager, suppress
 from datetime import date
@@ -198,27 +199,48 @@ async def _danisma_kilidinde_bekleyen_var_mi(gozlemci: AsyncSession) -> bool:
     bariyer, bu testin kilidi HİÇ alınmasa bile yeşil geçerdi — yani bekçi
     doğru sonucu YANLIŞ SEBEPLE verirdi. `pid <> pg_backend_pid()` ise
     gözlemcinin kendisini saymamak içindir.
+
+    🔴 FIX-B3 (CI #130 kırmızısı, yerelde deterministik üretildi): `pg_stat_activity`
+    görüntüsü TRANSACTION BAŞINA önbelleklenir (ilk erişimde alınır, transaction bitene
+    kadar TAZELENMEZ). Yoklamalar aynı transaction'da koşarken ilk yoklama ikinci onay
+    kilide varmadan alınırsa bariyer tüm süre boyunca BAYAT görüntüyü okur ve kilitte
+    bekleyen oturumu HİÇ görmezdi (ikinci oturum 0,5 sn geciktirilince 20 sn tavanla
+    24 sn'de "BEKLEMEDİ"). Her yoklamadan sonra gözlemcinin transaction'ı KAPATILIR.
     """
-    sayi = await gozlemci.scalar(
-        text(
-            "SELECT count(*) FROM pg_stat_activity "
-            "WHERE wait_event_type = 'Lock' AND wait_event = 'advisory' "
-            "AND datname = current_database() AND pid <> pg_backend_pid()"
+    try:
+        sayi = await gozlemci.scalar(
+            text(
+                "SELECT count(*) FROM pg_stat_activity "
+                "WHERE wait_event_type = 'Lock' AND wait_event = 'advisory' "
+                "AND datname = current_database() AND pid <> pg_backend_pid()"
+            )
         )
-    )
+    finally:
+        await gozlemci.rollback()
     return bool(sayi)
 
 
 async def _bariyer(gozlemci: AsyncSession, gorev: asyncio.Task) -> None:
-    """Kilit GÖRÜNENE KADAR yoklar; görünmezse AÇIKÇA düşer."""
-    gecen = 0.0
-    while gecen < BARIYER_TIMEOUT_SN:
+    """Kilit GÖRÜNENE KADAR yoklar; görünmezse AÇIKÇA düşer.
+
+    Süre DUVAR SAATİYLE ölçülür (yoklama sorgusunun süresi de sayılır). Görev kilitte
+    beklemeden BİTERSE mesaj onun sonucunu/istisnasını taşır: "BEKLEMEDİ" demek, görev
+    bir bağlantı hatasıyla düştüğünde asıl sebebi gizlerdi (`_gorevi_sonlandir`
+    istisnayı tüketir).
+    """
+    loop = asyncio.get_running_loop()
+    son = loop.time() + BARIYER_TIMEOUT_SN
+    while loop.time() < son:
         if await _danisma_kilidinde_bekleyen_var_mi(gozlemci):
             return
         if gorev.done():
-            break
+            hata = gorev.exception()
+            sonuc = repr(hata) if hata is not None else repr(gorev.result())
+            raise AssertionError(
+                "ikinci onay danışma kilidinde BEKLEMEDEN bitti — `post_document` "
+                f"KİLİTSİZ olabilir; görevin sonucu: {sonuc}"
+            ) from hata
         await asyncio.sleep(BARIYER_ARALIK_SN)
-        gecen += BARIYER_ARALIK_SN
     raise AssertionError(
         "ikinci onay danışma kilidinde BEKLEMEDİ — `post_document` KİLİTSİZ: iki "
         "eşzamanlı onay aynı belgeye iki fiş yazmayı deneyebilir"
@@ -281,6 +303,25 @@ async def test_eszamanli_iki_onay_TEK_fis_uretir():
                 # çıkışı onun bağlantısını altından çeker ve asyncpg gürültüsü
                 # asıl hatayı ezer. Sıra ŞART: görev önce, oturumlar sonra.
                 await _gorevi_sonlandir(gorev)
+
+
+async def test_BARIYER_gec_varan_bekleyeni_de_gorur(monkeypatch: pytest.MonkeyPatch):
+    """🔴 FIX-B3 bekçisi: ikinci onay kilide GEÇ varsa da bariyer onu görmelidir.
+
+    Kusur: gözlemci tüm yoklamaları TEK transaction'da koşuyordu; `pg_stat_activity`
+    görüntüsü transaction başına önbelleklendiğinden ilk yoklama ikinci onay kilide
+    varmadan alınınca bariyer bekleyeni HİÇ görmüyordu (CI #130 kırmızısı). İkinci
+    oturumu 0,5 sn geciktirmek bu durumu DETERMİNİSTİK kurar: düzeltme öncesi 20 sn
+    tavanla 24 sn'de "BEKLEMEDİ" ile düşüyordu, sonrası yeşil.
+    """
+    asil = _fisle_ve_commit
+
+    async def _gec_varan(ortam: _Ortam, session: AsyncSession, belge_id: uuid.UUID):  # noqa: ANN202
+        await asyncio.sleep(0.5)  # ilk yoklama ikinci onay kilide VARMADAN koşsun
+        return await asil(ortam, session, belge_id)
+
+    monkeypatch.setattr(sys.modules[__name__], "_fisle_ve_commit", _gec_varan)
+    await test_eszamanli_iki_onay_TEK_fis_uretir()
 
 
 async def test_KILIT_OLMASA_DA_DB_ikinci_fisi_REDDEDER():
