@@ -3,7 +3,7 @@
 CLEAN-B1 Faz 1 (KIRICI, F2 canlıda + frontend geri düşüşü kalkınca aynı gün merge):
 * `temperature_c` API'den KALKTI — yanıtta yok; istekte (POST ve PATCH) AÇIK 422
   (`schemas.TEMPERATURE_C_REMOVED`; Create'te sessizce yutulup sıcaklık kaybolmasın).
-* Kolon Faz 2'ye kadar KALIR ve servis onu `temp_max_c`ye eşitler (eski konteyner okur).
+* CLEAN-B2: kolon modelden, eşitleyici servisten kalktı (bekçi: `test_clean_b2_temperature_c`).
 """
 
 from decimal import Decimal
@@ -57,7 +57,7 @@ async def test_yeni_hava_degerleri_yazilir_ve_okunur(
     assert yanit.json()["weather"] == hava
 
 
-async def test_min_max_ruzgar_yazilir_ve_eski_kolon_max_kopyasi_kalir(
+async def test_min_max_ruzgar_yazilir_ve_kalici_okunur(
     client: AsyncClient, admin_headers, santiye, seeded_db: AsyncSession
 ) -> None:
     site, _, _ = santiye
@@ -72,8 +72,13 @@ async def test_min_max_ruzgar_yazilir_ve_eski_kolon_max_kopyasi_kalir(
     assert Decimal(govde["temp_max_c"]) == Decimal("28.5")
     assert Decimal(govde["wind_ms"]) == Decimal("4.2")
     assert "temperature_c" not in govde  # CLEAN-B1 Faz 1: yanıtta YOK
-    # Geri uyum kolonu Faz 2'ye kadar temp_max_c'ye esitlenir (eski konteyner okur).
-    assert (await _kolon(seeded_db, govde["id"])).temperature_c == Decimal("28.5")
+    # CLEAN-B2: eski tek kolon yok; kalıcı değer yalnız min/max/rüzgârdır (DB'den yeniden oku).
+    kayit = await _kolon(seeded_db, govde["id"])
+    assert (kayit.temp_min_c, kayit.temp_max_c, kayit.wind_ms) == (
+        Decimal("17"),
+        Decimal("28.5"),
+        Decimal("4.2"),
+    )
 
 
 async def test_POST_temperature_c_acik_422_ve_kayit_acilmaz(
