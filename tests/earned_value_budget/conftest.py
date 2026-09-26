@@ -5,8 +5,11 @@
 G1 Betonarme  I1 01.001 "Beton"  m3  100 → S1 60 · S2 30 · Bölümsüz 10
 G2 Duvar      I2 02.001 "Tuğla"  m2   50 → S1 50
 Disiplinler   KAB (own) · DUV (subcon)
-Katalog       KAB "Beton" m³ 1,80 · DUV "Tuğla" m2 0,55 · DUV "TUĞLA" m2 0,60 (belirsiz)
+Katalog       KAB "Beton" m³ 1,80 · DUV "Tuğla" m2 0,55 · KAB "TUĞLA" m2 0,60
 ```
+"TUĞLA" KAB'dadir: ayni disiplinde "Tuğla" ile yan yana DURAMAZ (KATALOG-UQ,
+`uq_ev_catalog_items_disc_name_key_uom_key`). Belirsizlik artik yalniz DISIPLINSIZ kalemde
+dogar (G2 eslenmezse I2 her iki disiplinin tam eslesmesini gorur).
 earned_value matrisi: system_admin A · site_chief APPROVE · field_engineer DRAFT ·
 accounting VIEW · hr_manager NONE.
 """
@@ -174,7 +177,7 @@ async def katalog(seeded_db: AsyncSession, disiplinler) -> dict:
             default_contractor_type=ContractorType.SUBCON,
         ),
         "tugla2": EvCatalogItem(
-            discipline_id=duv.id,
+            discipline_id=kab.id,
             name="TUĞLA",
             uom="m2",
             standard_unit_mhr=D("0.60"),

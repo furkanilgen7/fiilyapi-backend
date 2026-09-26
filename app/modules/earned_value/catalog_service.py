@@ -5,7 +5,8 @@ Sirket duzeyidir: santiye kapsami YOKTUR (izin kapisi yeter, `access.py`).
 ## Benzersizlik
 Disiplin kodu ve katalogun (disiplin, ad, birim) uclusu once acik SELECT ile
 sinanir → `DuplicateError` alanina ozel Turkce metinle (409). DB `UniqueConstraint`
-yaris durumu emniyet agi olarak KALIR (`IntegrityError` → 409 genel isleyici).
+yaris durumu emniyet agi olarak KALIR (`IntegrityError` → 409 genel isleyici). Katalogun
+UQ'su normalize anahtar kolonlarindadir (`name_key`/`uom_key`, KATALOG-UQ).
 
 ## Silme
 Disiplin yalniz HICBIR EV tablosunda kullanilmiyorsa silinir (B1-9); katalog
@@ -301,19 +302,19 @@ async def _assert_item_free(
     exclude_id: uuid.UUID | None = None,
 ) -> None:
     """Tekillik ONERI ESLESMESIYLE AYNI kuralla (`labels.normalize_label`: büyük/küçük harf,
-    Türkçe İ/I, üst simge, boşluk) — EV-BORC-5. DB UQ'su birebir kalir (normalize kolon
-    migration'i YOK: canli veride carpisan eski kayit olabilir, olcmeden UQ kurulmaz)."""
-    key = (normalize_label(name), normalize_label(uom))
+    Türkçe İ/I, üst simge, boşluk) — EV-BORC-5. KATALOG-UQ'dan beri anahtar kolonlarda
+    saklidir (`EvCatalogItem._sync_key`) ve DB `uq_ev_catalog_items_disc_name_key_uom_key`
+    ile zorlar; bu SELECT yalniz alana ozel Turkce 409 metni icindir."""
     stmt = select(EvCatalogItem.name, EvCatalogItem.uom).where(
-        EvCatalogItem.discipline_id == discipline_id
+        EvCatalogItem.discipline_id == discipline_id,
+        EvCatalogItem.name_key == normalize_label(name),
+        EvCatalogItem.uom_key == normalize_label(uom),
     )
     if exclude_id is not None:
         stmt = stmt.where(EvCatalogItem.id != exclude_id)
-    for other_name, other_uom in (await session.execute(stmt)).all():
-        if (normalize_label(other_name), normalize_label(other_uom)) == key:
-            raise DuplicateError(
-                guards.CATALOG_ITEM_TAKEN_AS.format(name=other_name, uom=other_uom)
-            )
+    taken = (await session.execute(stmt.limit(1))).first()
+    if taken is not None:
+        raise DuplicateError(guards.CATALOG_ITEM_TAKEN_AS.format(name=taken.name, uom=taken.uom))
 
 
 async def create_catalog_item(session: AsyncSession, data: CatalogItemCreate) -> CatalogItemRow:

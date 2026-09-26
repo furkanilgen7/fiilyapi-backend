@@ -41,17 +41,13 @@ def _leaves(view: dict) -> dict[str, dict]:
     }
 
 
-async def _map(client, site, headers, boq, disciplines) -> dict:  # noqa: ANN001
+async def _map(client, site, headers, boq, disciplines, *, g2: bool = True) -> dict:  # noqa: ANN001
     kab, duv = disciplines
+    items = [{"boq_group_id": str(boq["g1"].id), "discipline_id": str(kab.id)}]
+    if g2:
+        items.append({"boq_group_id": str(boq["g2"].id), "discipline_id": str(duv.id)})
     resp = await client.put(
-        _url(site, "/group-disciplines"),
-        headers=headers,
-        json={
-            "items": [
-                {"boq_group_id": str(boq["g1"].id), "discipline_id": str(kab.id)},
-                {"boq_group_id": str(boq["g2"].id), "discipline_id": str(duv.id)},
-            ]
-        },
+        _url(site, "/group-disciplines"), headers=headers, json={"items": items}
     )
     assert resp.status_code == 200, resp.text
     return resp.json()
@@ -191,13 +187,15 @@ async def test_item_patch_explicit_null_is_direct_is_422(client, admin, santiye,
 async def test_fill_from_catalog_exact_unique_and_ambiguous(
     client, admin, santiye, boq, disiplinler, katalog
 ) -> None:
-    await _map(client, santiye, admin, boq, disiplinler)
+    # G2 disiplinsiz: I2 disiplin süzgecinden geçmez (KATALOG-UQ: aynı disiplinde iki
+    # normalize-eş kalem artık DB'de duramaz, belirsizlik yalnız disiplinler arası doğar).
+    await _map(client, santiye, admin, boq, disiplinler, g2=False)
     resp = await client.post(_url(santiye, "/fill-from-catalog"), headers=admin)
     assert resp.status_code == 200, resp.text
     out = resp.json()
     # I1 "Beton" m3 ↔ katalog "Beton" m³ (üst simge normalize) TEK tam eşleşme → 3 yaprak
     assert (out["filled_item_count"], out["filled_leaf_count"]) == (1, 3)
-    # I2 "Tuğla" ↔ "Tuğla" + "TUĞLA" (Türkçe büyük harf normalize) → belirsiz
+    # I2 "Tuğla" ↔ DUV "Tuğla" + KAB "TUĞLA" (Türkçe büyük harf normalize) → belirsiz
     assert out["ambiguous_count"] == 1 and out["unmatched_count"] == 0
     assert {c["name"] for c in out["ambiguous"][0]["candidates"]} == {"Tuğla", "TUĞLA"}
     view = (await client.get(_url(santiye), headers=admin)).json()
@@ -210,7 +208,7 @@ async def test_fill_from_catalog_exact_unique_and_ambiguous(
 async def test_suggestions_rank_linked_exact(
     client, admin, santiye, boq, disiplinler, katalog
 ) -> None:
-    await _map(client, santiye, admin, boq, disiplinler)
+    await _map(client, santiye, admin, boq, disiplinler, g2=False)  # iki disiplinden tam eş
     resp = await client.get(_url(santiye, f"/items/{boq['i2'].id}/suggestions"), headers=admin)
     assert resp.status_code == 200
     out = resp.json()

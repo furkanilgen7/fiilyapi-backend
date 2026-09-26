@@ -54,10 +54,11 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, validates
 
 from app.core.db import Base
 from app.modules.earned_value.engine import ContractorType
+from app.modules.earned_value.labels import normalize_label
 
 #: Dagilim tipleri (B1-1/B1-2). DB enum'u motorun `Distribution` enum'undan BAGIMSIZ
 #: tanimlanir (model motor surumune kilitlenmesin); esitligi
@@ -156,11 +157,22 @@ class EvDiscipline(Base):
 
 
 class EvCatalogItem(Base):
-    """Birim oran katalogu satiri — sirket geneli is tipi (KAT). Silme/arsiv YOK (B1-9)."""
+    """Birim oran katalogu satiri — sirket geneli is tipi (KAT). Silme/arsiv YOK (B1-9).
+
+    Tekillik (KATALOG-UQ): `(discipline_id, name_key, uom_key)`. Anahtarlari UYGULAMA yazar
+    (`labels.normalize_label`, TEK kaynak; `_sync_key` ad/birim her atandiginda), DB yalniz
+    ESITLIGI zorlar. Ifade indeksi (`lower()` …) KULLANILMAZ: Postgres'in kucultmesi DB
+    ctype'ina ve glibc/ICU surumune bagli, Python'la birebir degil (KATALOG-UQ K1).
+    """
 
     __tablename__ = "ev_catalog_items"
     __table_args__ = (
-        UniqueConstraint("discipline_id", "name", "uom", name="uq_ev_catalog_items_disc_name_uom"),
+        UniqueConstraint(
+            "discipline_id",
+            "name_key",
+            "uom_key",
+            name="uq_ev_catalog_items_disc_name_key_uom_key",
+        ),
         CheckConstraint("standard_unit_mhr > 0", name="ck_ev_catalog_items_rate_positive"),
     )
 
@@ -168,6 +180,11 @@ class EvCatalogItem(Base):
     discipline_id: Mapped[uuid.UUID] = _fk("ev_disciplines.id", "RESTRICT")
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     uom: Mapped[str] = mapped_column(String(50), nullable=False)
+    #: `normalize_label(name)` / `normalize_label(uom)` — elle YAZILMAZ, `_sync_key` turetir.
+    #: Uzunluk kaynaginkiyle ayni: normalize metni UZATMAZ (tek genisleyen `İ`→`i̇` once
+    #: `replace` ile tek harfe cevrilir; bosluk dizisi tek bosluga iner).
+    name_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    uom_key: Mapped[str] = mapped_column(String(50), nullable=False)
     standard_unit_mhr: Mapped[Decimal] = mapped_column(Numeric(*RATE_PRECISION), nullable=False)
     default_contractor_type: Mapped[ContractorType] = mapped_column(
         _contractor_enum(), nullable=False
@@ -178,6 +195,13 @@ class EvCatalogItem(Base):
     )
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()
+
+    @validates("name", "uom")
+    def _sync_key(self, field: str, value: str) -> str:
+        """Ad/birim her atandiginda (kurucu dahil) anahtar yeniden turer — bayat anahtar
+        olamaz. Toplu `update()` ifadesi bu kancayi ATLAR: katalogda oyle bir yazar yoktur."""
+        setattr(self, f"{field}_key", normalize_label(value))
+        return value
 
 
 # ---------------------------------------------------- santiye duzeyi (revizyonsuz)
